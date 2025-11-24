@@ -1,0 +1,37 @@
+#!/bin/bash
+
+# codemap wrapper script
+# This script is intended to be used when installed via Homebrew or manual distribution.
+# It expects the following directory structure relative to the script location (bin/codemap):
+# ../libexec/bin/codemap-scanner (Go binary)
+# ../libexec/renderer/render.py (Python script)
+# ../libexec/venv (Python virtual environment)
+
+# Resolve the directory of this script
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do # resolve $SOURCE until the file is no longer a symlink
+  DIR="$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE" # if $SOURCE was a relative symlink, we need to resolve it relative to the path where the symlink file was located
+done
+DIR="$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )"
+
+# Paths
+SCANNER_BIN="$DIR/../libexec/bin/codemap-scanner"
+RENDERER_SCRIPT="$DIR/../libexec/renderer/render.py"
+PYTHON_BIN="$DIR/../libexec/venv/bin/python3"
+
+# Check if artifacts exist
+if [ ! -f "$SCANNER_BIN" ] || [ ! -f "$RENDERER_SCRIPT" ] || [ ! -f "$PYTHON_BIN" ]; then
+    echo "Error: codemap installation is corrupt or incomplete."
+    echo "Expected scanner at: $SCANNER_BIN"
+    echo "Expected renderer at: $RENDERER_SCRIPT"
+    echo "Expected python at: $PYTHON_BIN"
+    exit 1
+fi
+
+# Target directory (default to current)
+TARGET_DIR="${1:-.}"
+
+# Run
+"$SCANNER_BIN" "$TARGET_DIR" | "$PYTHON_BIN" "$RENDERER_SCRIPT"
