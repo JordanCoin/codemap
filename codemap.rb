@@ -8,8 +8,8 @@ class Codemap < Formula
   depends_on "go" => :build
 
   def install
-    # Install tree-sitter queries for --deps mode
-    (libexec/"queries").install Dir["scanner/queries/*.scm"]
+    # Build FIRST (before moving files - go:embed needs scanner/queries/ in place)
+    system "go", "build", "-o", libexec/"codemap", "."
 
     # Build grammars for --deps mode
     (libexec/"grammars").mkpath
@@ -18,9 +18,6 @@ class Codemap < Formula
     end
     (libexec/"grammars").install Dir["scanner/grammars/*.dylib"]
     (libexec/"grammars").install Dir["scanner/grammars/*.so"]
-
-    # Build from root with embedded paths
-    system "go", "build", "-o", libexec/"codemap", "."
 
     # Create wrapper script with environment variables
     (bin/"codemap").write <<~EOS
