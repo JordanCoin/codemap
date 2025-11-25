@@ -102,10 +102,67 @@ codemap --skyline --animate
 
 Each building represents a language in your project — taller buildings mean more code. Add `--animate` for rising buildings, twinkling stars, and shooting stars.
 
+## Dependency Flow Mode
+
+See how your code connects with `--deps`:
+
+```bash
+codemap --deps /path/to/project
+```
+
+```
+╭──────────────────────────────────────────────────────────────╮
+│                    MyApp - Dependency Flow                   │
+├──────────────────────────────────────────────────────────────┤
+│ Go: chi, zap, testify                                        │
+│ Py: fastapi, pydantic, httpx                                 │
+╰──────────────────────────────────────────────────────────────╯
+
+Backend ════════════════════════════════════════════════════
+  server ───▶ validate ───▶ rules, config
+  api ───▶ handlers, middleware
+
+Frontend ═══════════════════════════════════════════════════
+  App ──┬──▶ Dashboard
+        ├──▶ Settings
+        └──▶ api
+
+HUBS: config (12←), api (8←), utils (5←)
+45 files · 312 functions · 89 deps
+```
+
+**What it shows:**
+- 📦 **External dependencies** grouped by language (from go.mod, requirements.txt, package.json, etc.)
+- 🔗 **Internal dependency chains** showing how files import each other
+- 🎯 **Hub files** — the most-imported files in your codebase
+
+### Supported Languages
+
+codemap supports **16 languages** for dependency analysis:
+
+| Language | Extensions | Import Detection |
+|----------|------------|------------------|
+| Go | .go | import statements |
+| Python | .py | import, from...import |
+| JavaScript | .js, .jsx, .mjs | import, require |
+| TypeScript | .ts, .tsx | import, require |
+| Rust | .rs | use, mod |
+| Ruby | .rb | require, require_relative |
+| C | .c, .h | #include |
+| C++ | .cpp, .hpp, .cc | #include |
+| Java | .java | import |
+| Swift | .swift | import |
+| Kotlin | .kt, .kts | import |
+| C# | .cs | using |
+| PHP | .php | use, require, include |
+| Dart | .dart | import |
+| R | .r, .R | library, require, source |
+| Bash | .sh, .bash | source, . |
+
 ## Roadmap
 
 - [x] **Skyline Mode** (`codemap --skyline`) — ASCII cityscape visualization
-- [ ] **Dependency mapping** (import graph)
+- [x] **Dependency Flow** (`codemap --deps`) — function/import analysis with 16 language support
 
 ## Contributing
 

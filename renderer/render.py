@@ -13,9 +13,10 @@ from rich.layout import Layout
 from rich.align import Align
 from rich.style import Style
 
-# Import cityscape from same directory (works when run as script)
+# Import modules from same directory (works when run as script)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cityscape
+import depgraph
 
 def load_data():
     """Load JSON data from stdin or file."""
@@ -245,6 +246,10 @@ def main():
 
     if mode == 'skyline':
         cityscape.render(files, project_name, animate=animate)
+        return
+
+    if mode == 'deps':
+        depgraph.render(data, project_name)
         return
 
     # Stats

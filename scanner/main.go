@@ -26,22 +26,24 @@ type Project struct {
 }
 
 var ignoredDirs = map[string]bool{
-	".git":          true,
-	"node_modules":  true,
-	"Pods":          true,
-	"build":         true,
-	"DerivedData":   true,
-	".idea":         true,
-	".vscode":       true,
-	"__pycache__":   true,
-	".DS_Store":     true,
-	"venv":          true,
-	".env":          true,
-	".pytest_cache": true,
-	"dist":          true,
-	".next":         true,
-	".nuxt":         true,
-	"target":        true,
+	".git":            true,
+	"node_modules":    true,
+	"Pods":            true,
+	"build":           true,
+	"DerivedData":     true,
+	".idea":           true,
+	".vscode":         true,
+	"__pycache__":     true,
+	".DS_Store":       true,
+	"venv":            true,
+	".env":            true,
+	".pytest_cache":   true,
+	"dist":            true,
+	".next":           true,
+	".nuxt":           true,
+	"target":          true,
+	".grammar-build":  true,
+	"grammars":        true,
 }
 
 func loadGitignore(root string) *ignore.GitIgnore {
@@ -59,6 +61,7 @@ func loadGitignore(root string) *ignore.GitIgnore {
 func main() {
 	skylineMode := flag.Bool("skyline", false, "Enable skyline visualization mode")
 	animateMode := flag.Bool("animate", false, "Enable animation (use with --skyline)")
+	depsMode := flag.Bool("deps", false, "Enable dependency graph mode (function/import analysis)")
 	flag.Parse()
 	root := flag.Arg(0)
 	if root == "" {
@@ -73,6 +76,12 @@ func main() {
 
 	// Load .gitignore if it exists
 	gitignore := loadGitignore(root)
+
+	// Handle --deps mode separately
+	if *depsMode {
+		runDepsMode(absRoot, root, gitignore)
+		return
+	}
 
 	mode := "tree"
 	if *skylineMode {
@@ -137,6 +146,65 @@ func main() {
 	encoder := json.NewEncoder(os.Stdout)
 
 	if err := encoder.Encode(project); err != nil {
+		fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runDepsMode(absRoot, root string, gitignore *ignore.GitIgnore) {
+	loader := NewGrammarLoader()
+
+	depsProject := DepsProject{
+		Root:         absRoot,
+		Mode:         "deps",
+		Files:        []FileAnalysis{},
+		ExternalDeps: ReadExternalDeps(absRoot),
+	}
+
+	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		relPath, _ := filepath.Rel(root, path)
+
+		// Skip ignored dirs
+		if info.IsDir() {
+			if ignoredDirs[info.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		if ignoredDirs[info.Name()] {
+			return nil
+		}
+
+		// Skip if matched by .gitignore
+		if gitignore != nil && gitignore.MatchesPath(relPath) {
+			return nil
+		}
+
+		// Only analyze supported languages
+		if DetectLanguage(path) == "" {
+			return nil
+		}
+
+		// Analyze file
+		analysis, err := loader.AnalyzeFile(path)
+		if err != nil || analysis == nil {
+			return nil
+		}
+
+		// Use relative path in output
+		analysis.Path = relPath
+		depsProject.Files = append(depsProject.Files, *analysis)
+
+		return nil
+	})
+
+	encoder := json.NewEncoder(os.Stdout)
+	if err := encoder.Encode(depsProject); err != nil {
 		fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
 		os.Exit(1)
 	}

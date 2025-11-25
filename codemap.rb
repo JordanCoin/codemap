@@ -1,8 +1,8 @@
 class Codemap < Formula
   desc "Generates a compact, visually structured 'brain map' of your codebase for LLM context"
   homepage "https://github.com/JordanCoin/codemap"
-  url "https://github.com/JordanCoin/codemap/archive/refs/tags/v1.5.tar.gz"
-  sha256 "4ee69e65f992d7bbe24e9d536db041f131db27b9687c7f51ccf78d2338778b05"
+  url "https://github.com/JordanCoin/codemap/archive/refs/tags/v1.6.tar.gz"
+  sha256 "PLACEHOLDER_SHA256"
   license "MIT"
 
   depends_on "go" => :build
@@ -15,35 +15,41 @@ class Codemap < Formula
     sha256 "9be308cb1fe2f1f57d67ce99e95af38a1e2bc71ad9813b0e247cf7ffbcc3a432"
   end
 
-  # Add other python dependencies if needed (e.g. markdown-it-py, pygments, etc.)
-  # For simplicity in this template, we assume rich is the main one. 
-  # In a real formula, you'd use `poet` to generate all resource blocks.
-
   def install
-    # 1. Build Go Scanner
+    # 1. Build Go Scanner (includes deps.go for --deps mode)
     cd "scanner" do
-      system "go", "build", "-o", "codemap-scanner", "main.go"
+      system "go", "build", "-o", "codemap-scanner", "."
       (libexec/"bin").install "codemap-scanner"
+
+      # Install tree-sitter queries
+      (libexec/"queries").install Dir["queries/*.scm"]
+
+      # Build grammars for --deps mode
+      (libexec/"grammars").mkpath
+      system "bash", "build-grammars.sh"
+      (libexec/"grammars").install Dir["grammars/*.dylib"]
+      (libexec/"grammars").install Dir["grammars/*.so"]
     end
 
-    # 2. Install Python Renderer
+    # 2. Install Python Renderers
     (libexec/"renderer").install "renderer/render.py"
     (libexec/"renderer").install "renderer/cityscape.py"
+    (libexec/"renderer").install "renderer/depgraph.py"
 
     # 3. Create Virtual Environment and Install Dependencies
     venv = virtualenv_create(libexec/"venv", "python3")
     venv.pip_install resources
 
     # 4. Install Wrapper Script
-    # We create a wrapper that points to the artifacts in libexec
     (bin/"codemap").write <<~EOS
       #!/bin/bash
+      export CODEMAP_GRAMMAR_DIR="#{libexec}/grammars"
+      export CODEMAP_QUERY_DIR="#{libexec}/queries"
       "#{libexec}/bin/codemap-scanner" "$@" | "#{libexec}/venv/bin/python3" "#{libexec}/renderer/render.py"
     EOS
   end
 
   test do
-    # Simple test to verify it runs
     system "#{bin}/codemap", "."
   end
 end
