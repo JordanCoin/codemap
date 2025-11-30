@@ -36,42 +36,182 @@ env:
     r:r-lib/tree-sitter-r:main:src
 
 jobs:
-  build:
+  build-macos:
+    strategy:
+      matrix:
+        include:
+          - runner: macos-13
+            goarch: amd64
+            name: codemap-darwin-amd64
+          - runner: macos-14
+            goarch: arm64
+            name: codemap-darwin-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Build Go binary
+        env:
+          CGO_ENABLED: 1
+        run: go build -o codemap .
+
+      - name: Build grammars
+        run: |
+          mkdir -p grammars
+
+          echo "$GRAMMARS" | while IFS=: read -r lang repo branch src_dir; do
+            [ -z "$lang" ] && continue
+            echo "Building $lang..."
+
+            curl -sL "https://github.com/$repo/archive/refs/heads/$branch.tar.gz" | tar xz
+            extracted_dir=$(ls -d */ 2>/dev/null | head -1)
+            src_path="${extracted_dir}${src_dir}"
+
+            if [ ! -d "$src_path" ]; then
+              echo "  ✗ Source not found"
+              rm -rf "$extracted_dir"
+              continue
+            fi
+
+            sources="$src_path/parser.c"
+            if [ -f "$src_path/scanner.c" ]; then
+              sources="$sources $src_path/scanner.c"
+            elif [ -f "$src_path/scanner.cc" ]; then
+              clang++ -c -fPIC -I"$src_path" "$src_path/scanner.cc" -o scanner.o
+              sources="$sources scanner.o"
+            fi
+
+            clang -shared -fPIC -I"$src_path" $sources -o "grammars/libtree-sitter-$lang.dylib"
+            rm -rf "$extracted_dir" scanner.o 2>/dev/null
+
+            [ -f "grammars/libtree-sitter-$lang.dylib" ] && echo "  ✓ Built" || echo "  ✗ Failed"
+          done
+
+          ls -la grammars/
+
+      - name: Create release archive
+        run: |
+          mkdir -p release/${{ matrix.name }}
+          cp codemap release/${{ matrix.name }}/
+          cp -r grammars release/${{ matrix.name }}/
+          cp -r scanner/queries release/${{ matrix.name }}/
+          cat > release/${{ matrix.name }}/README.txt << 'EOF'
+          codemap - Generate a brain map of your codebase for LLM context
+
+          Usage:
+            codemap .              # Project structure
+            codemap --deps         # Dependency flow
+            codemap --diff         # Changed files vs main
+
+          Keep grammars/ next to codemap, or set CODEMAP_GRAMMAR_DIR.
+          More info: https://github.com/JordanCoin/codemap
+          EOF
+          cd release && tar -czvf ../${{ matrix.name }}.tar.gz ${{ matrix.name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}.tar.gz
+
+  build-linux:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
-          - goos: darwin
-            goarch: amd64
-            zig_target: x86_64-macos
-            lib_ext: dylib
-            archive_ext: tar.gz
-            name: codemap-darwin-amd64
-          - goos: darwin
-            goarch: arm64
-            zig_target: aarch64-macos
-            lib_ext: dylib
-            archive_ext: tar.gz
-            name: codemap-darwin-arm64
-          - goos: linux
-            goarch: amd64
-            zig_target: x86_64-linux-gnu
-            lib_ext: so
-            archive_ext: tar.gz
+          - goarch: amd64
             name: codemap-linux-amd64
-          - goos: linux
-            goarch: arm64
-            zig_target: aarch64-linux-gnu
-            lib_ext: so
-            archive_ext: tar.gz
+          - goarch: arm64
+            cc: aarch64-linux-gnu-gcc
             name: codemap-linux-arm64
-          - goos: windows
-            goarch: amd64
-            zig_target: x86_64-windows-gnu
-            lib_ext: dll
-            archive_ext: zip
-            name: codemap-windows-amd64
+    steps:
+      - uses: actions/checkout@v4
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install cross-compiler
+        if: matrix.goarch == 'arm64'
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build Go binary
+        env:
+          CGO_ENABLED: 1
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          CC: ${{ matrix.cc || 'gcc' }}
+        run: go build -o codemap .
+
+      - name: Build grammars
+        run: |
+          mkdir -p grammars
+          CC="${{ matrix.cc || 'gcc' }}"
+
+          echo "$GRAMMARS" | while IFS=: read -r lang repo branch src_dir; do
+            [ -z "$lang" ] && continue
+            echo "Building $lang..."
+
+            curl -sL "https://github.com/$repo/archive/refs/heads/$branch.tar.gz" | tar xz
+            extracted_dir=$(ls -d */ 2>/dev/null | head -1)
+            src_path="${extracted_dir}${src_dir}"
+
+            if [ ! -d "$src_path" ]; then
+              echo "  ✗ Source not found"
+              rm -rf "$extracted_dir"
+              continue
+            fi
+
+            sources="$src_path/parser.c"
+            if [ -f "$src_path/scanner.c" ]; then
+              sources="$sources $src_path/scanner.c"
+            elif [ -f "$src_path/scanner.cc" ]; then
+              ${CC/gcc/g++} -c -fPIC -I"$src_path" "$src_path/scanner.cc" -o scanner.o 2>/dev/null || \
+              g++ -c -fPIC -I"$src_path" "$src_path/scanner.cc" -o scanner.o
+              sources="$sources scanner.o"
+            fi
+
+            $CC -shared -fPIC -I"$src_path" $sources -o "grammars/libtree-sitter-$lang.so" 2>/dev/null || echo "  Warning: build issue"
+            rm -rf "$extracted_dir" scanner.o 2>/dev/null
+
+            [ -f "grammars/libtree-sitter-$lang.so" ] && echo "  ✓ Built" || echo "  ✗ Failed"
+          done
+
+          ls -la grammars/
+
+      - name: Create release archive
+        run: |
+          mkdir -p release/${{ matrix.name }}
+          cp codemap release/${{ matrix.name }}/
+          cp -r grammars release/${{ matrix.name }}/
+          cp -r scanner/queries release/${{ matrix.name }}/
+          cat > release/${{ matrix.name }}/README.txt << 'EOF'
+          codemap - Generate a brain map of your codebase for LLM context
+
+          Usage:
+            codemap .              # Project structure
+            codemap --deps         # Dependency flow
+            codemap --diff         # Changed files vs main
+
+          Keep grammars/ next to codemap, or set CODEMAP_GRAMMAR_DIR.
+          More info: https://github.com/JordanCoin/codemap
+          EOF
+          cd release && tar -czvf ../${{ matrix.name }}.tar.gz ${{ matrix.name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}.tar.gz
+
+  build-windows:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -85,126 +225,69 @@ jobs:
         with:
           version: 0.11.0
 
-      - name: Create zig wrapper scripts
+      - name: Create zig wrapper
         run: |
-          # Create wrapper scripts for zig cc/c++
           mkdir -p "$HOME/zigcc"
-
           cat > "$HOME/zigcc/zcc" << 'SCRIPT'
           #!/bin/sh
-          zig cc -target $ZIG_TARGET $@
+          zig cc -target x86_64-windows-gnu "$@"
           SCRIPT
-
           cat > "$HOME/zigcc/zxx" << 'SCRIPT'
           #!/bin/sh
-          zig c++ -target $ZIG_TARGET $@
+          zig c++ -target x86_64-windows-gnu "$@"
           SCRIPT
-
           chmod +x "$HOME/zigcc/zcc" "$HOME/zigcc/zxx"
 
-      - name: Build Go binary with CGO
+      - name: Build Go binary
         env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          ZIG_TARGET: ${{ matrix.zig_target }}
           CGO_ENABLED: 1
-        run: |
-          export CC="$HOME/zigcc/zcc"
-          export CXX="$HOME/zigcc/zxx"
+          GOOS: windows
+          GOARCH: amd64
+          CC: /home/runner/zigcc/zcc
+          CXX: /home/runner/zigcc/zxx
+        run: go build -ldflags="-s -w" -o codemap.exe .
 
-          # -s -w strips debug symbols (avoids dsymutil issue when cross-compiling for macOS)
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            go build -ldflags="-s -w" -o codemap.exe .
-          else
-            go build -ldflags="-s -w" -o codemap .
-          fi
-
-      - name: Download and build grammars
+      - name: Build grammars
         run: |
           mkdir -p grammars
 
           echo "$GRAMMARS" | while IFS=: read -r lang repo branch src_dir; do
             [ -z "$lang" ] && continue
-            echo "Building $lang from $repo ($branch) - src: $src_dir"
+            echo "Building $lang..."
 
-            # Download tarball
             curl -sL "https://github.com/$repo/archive/refs/heads/$branch.tar.gz" | tar xz
-
-            # Find extracted directory (handle various naming patterns)
             extracted_dir=$(ls -d */ 2>/dev/null | head -1)
             src_path="${extracted_dir}${src_dir}"
 
-            echo "  Source path: $src_path"
-
             if [ ! -d "$src_path" ]; then
-              echo "  ✗ Source directory not found: $src_path"
+              echo "  ✗ Source not found"
               rm -rf "$extracted_dir"
               continue
             fi
 
-            # Determine sources to compile
             sources="$src_path/parser.c"
-            extra_flags=""
-
             if [ -f "$src_path/scanner.c" ]; then
-              echo "  Including scanner.c"
               sources="$sources $src_path/scanner.c"
             elif [ -f "$src_path/scanner.cc" ]; then
-              echo "  Including scanner.cc (C++)"
-              # For C++ scanner, compile separately then link
-              zig c++ -target ${{ matrix.zig_target }} -c -fPIC \
-                -I"$src_path" \
-                "$src_path/scanner.cc" \
-                -o scanner.o 2>&1 || echo "  Warning: C++ scanner compile issue"
-              if [ -f scanner.o ]; then
-                sources="$sources scanner.o"
-              fi
+              zig c++ -target x86_64-windows-gnu -c -fPIC -I"$src_path" "$src_path/scanner.cc" -o scanner.o 2>/dev/null || echo "  Warning: C++ issue"
+              [ -f scanner.o ] && sources="$sources scanner.o"
             fi
 
-            # Compile shared library
-            zig cc -target ${{ matrix.zig_target }} -shared -fPIC \
-              -I"$src_path" \
-              $sources \
-              -o "grammars/libtree-sitter-$lang.${{ matrix.lib_ext }}" 2>&1 || \
-              echo "  Warning: Build had issues"
-
-            # Cleanup
+            zig cc -target x86_64-windows-gnu -shared -fPIC -I"$src_path" $sources -o "grammars/libtree-sitter-$lang.dll" 2>/dev/null || echo "  Warning: build issue"
             rm -rf "$extracted_dir" scanner.o 2>/dev/null
 
-            # Verify
-            if [ -f "grammars/libtree-sitter-$lang.${{ matrix.lib_ext }}" ]; then
-              size=$(ls -lh "grammars/libtree-sitter-$lang.${{ matrix.lib_ext }}" | awk '{print $5}')
-              echo "  ✓ Built libtree-sitter-$lang.${{ matrix.lib_ext }} ($size)"
-            else
-              echo "  ✗ Failed to build $lang"
-            fi
+            [ -f "grammars/libtree-sitter-$lang.dll" ] && echo "  ✓ Built" || echo "  ✗ Failed"
           done
 
-          echo ""
-          echo "=== Built grammars ==="
-          ls -lh grammars/ || echo "No grammars built"
+          ls -la grammars/
 
       - name: Create release archive
         run: |
-          mkdir -p release/${{ matrix.name }}
-
-          # Copy binary
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            cp codemap.exe release/${{ matrix.name }}/
-          else
-            cp codemap release/${{ matrix.name }}/
-          fi
-
-          # Copy grammars
-          if [ -d grammars ] && [ "$(ls -A grammars)" ]; then
-            cp -r grammars release/${{ matrix.name }}/
-          fi
-
-          # Copy queries
-          cp -r scanner/queries release/${{ matrix.name }}/
-
-          # Create README for the release
-          cat > release/${{ matrix.name }}/README.txt << 'EOF'
+          mkdir -p release/codemap-windows-amd64
+          cp codemap.exe release/codemap-windows-amd64/
+          cp -r grammars release/codemap-windows-amd64/
+          cp -r scanner/queries release/codemap-windows-amd64/
+          cat > release/codemap-windows-amd64/README.txt << 'EOF'
           codemap - Generate a brain map of your codebase for LLM context
 
           Usage:
@@ -212,29 +295,19 @@ jobs:
             codemap --deps         # Dependency flow
             codemap --diff         # Changed files vs main
 
-          The grammars/ folder contains tree-sitter parsers for --deps mode.
-          Make sure to keep grammars/ next to the codemap binary, or set:
-            CODEMAP_GRAMMAR_DIR=/path/to/grammars
-
+          Keep grammars/ next to codemap.exe, or set CODEMAP_GRAMMAR_DIR.
           More info: https://github.com/JordanCoin/codemap
           EOF
-
-          # Create archive
-          cd release
-          if [ "${{ matrix.archive_ext }}" = "zip" ]; then
-            zip -r ../${{ matrix.name }}.zip ${{ matrix.name }}
-          else
-            tar -czvf ../${{ matrix.name }}.tar.gz ${{ matrix.name }}
-          fi
+          cd release && zip -r ../codemap-windows-amd64.zip codemap-windows-amd64
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.name }}
-          path: ${{ matrix.name }}.${{ matrix.archive_ext }}
+          name: codemap-windows-amd64
+          path: codemap-windows-amd64.zip
 
   release:
-    needs: build
+    needs: [build-macos, build-linux, build-windows]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.skip_release == false)
     steps:
