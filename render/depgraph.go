@@ -45,12 +45,6 @@ var stdlibNames = map[string]bool{
 	"react": true, "filepath": true, "embed": true,
 }
 
-// Language labels for display
-var langLabels = map[string]string{
-	"go": "Go", "javascript": "JS", "python": "Py", "rust": "Rs", "ruby": "Rb",
-	"swift": "Swift", "bash": "Sh", "kotlin": "Kt", "c_sharp": "C#", "php": "PHP",
-	"dart": "Dart", "r": "R",
-}
 
 // normalizeImport normalizes an import string
 func normalizeImport(imp, lang string) string {
@@ -247,7 +241,7 @@ func Depgraph(project scanner.DepsProject) {
 
 	for _, lang := range langOrder {
 		if names, ok := extByLang[lang]; ok {
-			label := langLabels[lang]
+			label := scanner.LangDisplay[lang].Short
 			if label == "" {
 				label = strings.Title(lang)
 			}

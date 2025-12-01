@@ -37,6 +37,11 @@ type ImportersInput struct {
 	File string `json:"file" jsonschema:"Relative path to the file to check (e.g. src/utils.ts)"`
 }
 
+type ListProjectsInput struct {
+	Path    string `json:"path" jsonschema:"Parent directory containing projects (e.g. /Users/name/Code or ~/Code)"`
+	Pattern string `json:"pattern,omitempty" jsonschema:"Optional filter to match project names (case-insensitive substring)"`
+}
+
 func main() {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "codemap",
@@ -78,6 +83,12 @@ func main() {
 		Name:        "status",
 		Description: "Check codemap MCP server status. Returns version and confirms local filesystem access is available.",
 	}, handleStatus)
+
+	// Tool: list_projects - Discover projects in a directory
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "list_projects",
+		Description: "List project directories under a parent path. Use this to discover projects when you only know the general location (e.g., ~/Code) but not the exact folder name. Optionally filter by pattern to find specific projects. Returns directory names with file counts and primary language.",
+	}, handleListProjects)
 
 	// Run server on stdio
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
@@ -236,11 +247,111 @@ Working directory: %s
 Home directory: %s
 
 Available tools:
-  get_structure  - Project tree view
+  list_projects    - Discover projects in a directory
+  get_structure    - Project tree view
   get_dependencies - Import/function analysis
-  get_diff       - Changed files vs branch
-  find_file      - Search by filename
-  get_importers  - Find what imports a file`, cwd, home)), nil, nil
+  get_diff         - Changed files vs branch
+  find_file        - Search by filename
+  get_importers    - Find what imports a file`, cwd, home)), nil, nil
+}
+
+func handleListProjects(ctx context.Context, req *mcp.CallToolRequest, input ListProjectsInput) (*mcp.CallToolResult, any, error) {
+	// Expand ~ to home directory
+	path := input.Path
+	if strings.HasPrefix(path, "~/") {
+		home := os.Getenv("HOME")
+		path = filepath.Join(home, path[2:])
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return errorResult("Invalid path: " + err.Error()), nil, nil
+	}
+
+	entries, err := os.ReadDir(absPath)
+	if err != nil {
+		return errorResult("Cannot read directory: " + err.Error()), nil, nil
+	}
+
+	pattern := strings.ToLower(input.Pattern)
+	var projects []string
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+
+		// Skip hidden directories and common non-project dirs
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+
+		// Filter by pattern if provided
+		if pattern != "" && !strings.Contains(strings.ToLower(name), pattern) {
+			continue
+		}
+
+		// Get project stats
+		projectPath := filepath.Join(absPath, name)
+		stats := getProjectStats(projectPath)
+
+		projects = append(projects, fmt.Sprintf("%-30s %s", name+"/", stats))
+	}
+
+	if len(projects) == 0 {
+		if pattern != "" {
+			return textResult(fmt.Sprintf("No projects matching '%s' in %s", input.Pattern, absPath)), nil, nil
+		}
+		return textResult("No project directories found in " + absPath), nil, nil
+	}
+
+	header := fmt.Sprintf("Projects in %s", absPath)
+	if pattern != "" {
+		header = fmt.Sprintf("Projects matching '%s' in %s", input.Pattern, absPath)
+	}
+
+	return textResult(fmt.Sprintf("%s:\n\n%s", header, strings.Join(projects, "\n"))), nil, nil
+}
+
+// getProjectStats returns a brief summary of a project directory
+// Uses the same scanner logic as the main codemap command (respects .gitignore)
+func getProjectStats(path string) string {
+	gitignore := scanner.LoadGitignore(path)
+	files, err := scanner.ScanFiles(path, gitignore)
+	if err != nil {
+		return "(error scanning)"
+	}
+
+	// Count files by language
+	langCounts := make(map[string]int)
+	for _, f := range files {
+		lang := scanner.DetectLanguage(f.Path)
+		if lang != "" {
+			langCounts[lang]++
+		}
+	}
+
+	// Find primary language
+	var primaryLang string
+	var maxCount int
+	for lang, count := range langCounts {
+		if count > maxCount {
+			maxCount = count
+			primaryLang = lang
+		}
+	}
+
+	// Check if it's a git repo
+	isGit := ""
+	if _, err := os.Stat(filepath.Join(path, ".git")); err == nil {
+		isGit = " [git]"
+	}
+
+	if info, ok := scanner.LangDisplay[primaryLang]; ok {
+		return fmt.Sprintf("(%d files, %s%s)", len(files), info.Full, isGit)
+	}
+	return fmt.Sprintf("(%d files%s)", len(files), isGit)
 }
 
 func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input ImportersInput) (*mcp.CallToolResult, any, error) {

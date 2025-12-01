@@ -26,6 +26,32 @@ type GrammarLoader struct {
 	grammarDir string
 }
 
+// LangInfo holds display names for a language
+type LangInfo struct {
+	Short string // Compact label: "JS", "Py"
+	Full  string // Full name: "JavaScript", "Python"
+}
+
+// LangDisplay maps internal language names to display names
+var LangDisplay = map[string]LangInfo{
+	"go":         {"Go", "Go"},
+	"python":     {"Py", "Python"},
+	"javascript": {"JS", "JavaScript"},
+	"typescript": {"TS", "TypeScript"},
+	"rust":       {"Rs", "Rust"},
+	"ruby":       {"Rb", "Ruby"},
+	"c":          {"C", "C"},
+	"cpp":        {"C++", "C++"},
+	"java":       {"Java", "Java"},
+	"swift":      {"Swift", "Swift"},
+	"bash":       {"Sh", "Bash"},
+	"kotlin":     {"Kt", "Kotlin"},
+	"c_sharp":    {"C#", "C#"},
+	"php":        {"PHP", "PHP"},
+	"dart":       {"Dart", "Dart"},
+	"r":          {"R", "R"},
+}
+
 // Extension to language mapping
 var extToLang = map[string]string{
 	".go":    "go",
