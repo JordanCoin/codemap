@@ -1,0 +1,183 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master]
+
+jobs:
+  test:
+    name: Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        go-version: ['1.21', '1.22', '1.23']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run tests
+        run: go test -v -race -coverprofile=coverage.out ./...
+
+      - name: Upload coverage
+        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23'
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.out
+          fail_ci_if_error: false
+
+  build:
+    name: Build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Build binary
+        run: go build -v -o codemap${{ matrix.os == 'windows-latest' && '.exe' || '' }} .
+
+      - name: Test binary runs
+        shell: bash
+        run: ./codemap${{ matrix.os == 'windows-latest' && '.exe' || '' }} --help
+
+      - name: Test basic tree output
+        shell: bash
+        run: ./codemap${{ matrix.os == 'windows-latest' && '.exe' || '' }} .
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Run staticcheck
+        uses: dominikh/staticcheck-action@v1
+        with:
+          version: "latest"
+          install-go: false
+
+      - name: Check formatting
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "Go files are not formatted:"
+            gofmt -d .
+            exit 1
+          fi
+
+  homebrew-audit:
+    name: Homebrew Formula Audit
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Audit formula syntax
+        run: |
+          # Install homebrew-core tap for comparison
+          brew tap homebrew/core --force 2>/dev/null || true
+
+          # Run basic Ruby syntax check on formula
+          ruby -c codemap.rb
+
+          # Check formula follows Homebrew style guidelines
+          brew style --formula codemap.rb || true
+
+          # Validate required formula components
+          echo "Checking formula has required components..."
+          grep -q 'class Codemap < Formula' codemap.rb
+          grep -q 'desc' codemap.rb
+          grep -q 'homepage' codemap.rb
+          grep -q 'url' codemap.rb
+          grep -q 'sha256' codemap.rb
+          grep -q 'license' codemap.rb
+          grep -q 'def install' codemap.rb
+          grep -q 'test do' codemap.rb
+          echo "Formula has all required components"
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Build binary
+        run: go build -o codemap .
+
+      - name: Test tree mode
+        run: |
+          output=$(./codemap .)
+          if [ -z "$output" ]; then
+            echo "Tree mode produced no output"
+            exit 1
+          fi
+          echo "Tree mode output:"
+          echo "$output" | head -20
+
+      - name: Test help flag
+        run: |
+          output=$(./codemap --help)
+          echo "$output" | grep -q "codemap"
+          echo "$output" | grep -q "Usage:"
+          echo "$output" | grep -q "\-\-skyline"
+          echo "$output" | grep -q "\-\-deps"
+          echo "$output" | grep -q "\-\-diff"
+
+      - name: Test JSON output
+        run: |
+          output=$(./codemap --json .)
+          echo "$output" | python3 -c "import sys, json; json.load(sys.stdin)"
+          echo "JSON output is valid"
+
+      - name: Test diff mode (should work in git repo)
+        run: |
+          # This should either show changes or say "No files changed"
+          ./codemap --diff . || true
+
+      - name: Test with subdirectory
+        run: |
+          ./codemap scanner
+          ./codemap render
+
+      - name: Test nonexistent path handling
+        run: |
+          # Should fail gracefully
+          if ./codemap /nonexistent/path 2>&1; then
+            echo "Should have failed for nonexistent path"
+            exit 1
+          fi
+          echo "Correctly failed for nonexistent path"

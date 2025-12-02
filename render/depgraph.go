@@ -45,7 +45,6 @@ var stdlibNames = map[string]bool{
 	"react": true, "filepath": true, "embed": true,
 }
 
-
 // normalizeImport normalizes an import string
 func normalizeImport(imp, lang string) string {
 	imp = strings.Trim(imp, "\"'")
