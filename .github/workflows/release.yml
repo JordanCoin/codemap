@@ -1,4 +1,4 @@
-name: Release
+name: Release (GoReleaser)
 
 on:
   push:
@@ -6,8 +6,8 @@ on:
       - 'v*'
   workflow_dispatch:
     inputs:
-      skip_release:
-        description: 'Build artifacts only (no GitHub release)'
+      dry_run:
+        description: 'Dry run (no release)'
         required: false
         default: true
         type: boolean
@@ -15,230 +15,198 @@ on:
 permissions:
   contents: write
 
-env:
-  # Grammar repos and their source directories
-  GRAMMARS: |
-    go:tree-sitter/tree-sitter-go:master:src
-    python:tree-sitter/tree-sitter-python:master:src
-    javascript:tree-sitter/tree-sitter-javascript:master:src
-    typescript:tree-sitter/tree-sitter-typescript:master:typescript/src
-    rust:tree-sitter/tree-sitter-rust:master:src
-    ruby:tree-sitter/tree-sitter-ruby:master:src
-    c:tree-sitter/tree-sitter-c:master:src
-    cpp:tree-sitter/tree-sitter-cpp:master:src
-    java:tree-sitter/tree-sitter-java:master:src
-    swift:tree-sitter/tree-sitter-swift:master:src
-    bash:tree-sitter/tree-sitter-bash:master:src
-    kotlin:fwcd/tree-sitter-kotlin:main:src
-    c_sharp:tree-sitter/tree-sitter-c-sharp:master:src
-    php:tree-sitter/tree-sitter-php:master:php/src
-    dart:UserNobody14/tree-sitter-dart:master:src
-    r:r-lib/tree-sitter-r:main:src
-
 jobs:
-  build-macos:
+  # ============================================================
+  # STAGE 1: Build grammars per platform
+  # ============================================================
+  build-grammars-macos:
     strategy:
       matrix:
         include:
           - runner: macos-13
-            goarch: amd64
-            name: codemap-darwin-amd64
+            arch: amd64
           - runner: macos-14
-            goarch: arm64
-            name: codemap-darwin-arm64
+            arch: arm64
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Build Go binary
-        env:
-          CGO_ENABLED: 1
-        run: go build -o codemap .
-
       - name: Build grammars
         run: |
-          set -e
-          mkdir -p grammars
+          chmod +x scripts/build-grammars.sh
+          ./scripts/build-grammars.sh darwin
 
-          echo "$GRAMMARS" | while IFS=: read -r lang repo branch src_dir; do
-            [ -z "$lang" ] && continue
-            echo "Building $lang from $repo..."
-
-            # Extract to temp dir to avoid conflicts
-            rm -rf _grammar_build && mkdir _grammar_build && cd _grammar_build
-            curl -sL "https://github.com/$repo/archive/refs/heads/$branch.tar.gz" | tar xz
-            extracted_dir=$(ls -d */ | head -1)
-            src_path="${extracted_dir}${src_dir}"
-
-            if [ ! -d "$src_path" ]; then
-              echo "  ✗ Source not found: $src_path"
-              exit 1
-            fi
-
-            sources="$src_path/parser.c"
-            use_cxx=false
-            if [ -f "$src_path/scanner.c" ]; then
-              sources="$sources $src_path/scanner.c"
-            elif [ -f "$src_path/scanner.cc" ]; then
-              use_cxx=true
-              clang++ -c -fPIC -I"$src_path" "$src_path/scanner.cc" -o scanner.o
-              sources="$sources scanner.o"
-            fi
-
-            # Use clang++ for linking when C++ scanner is present
-            if $use_cxx; then
-              clang++ -shared -fPIC -I"$src_path" $sources -o ../grammars/libtree-sitter-$lang.dylib
-            else
-              clang -shared -fPIC -I"$src_path" $sources -o ../grammars/libtree-sitter-$lang.dylib
-            fi
-            cd .. && rm -rf _grammar_build
-
-            echo "  ✓ Built $lang"
-          done
-
-          echo ""
-          echo "Built grammars:"
-          ls -la grammars/
-
-      - name: Create release archive
-        run: |
-          mkdir -p release/${{ matrix.name }}
-          cp codemap release/${{ matrix.name }}/
-          cp -r grammars release/${{ matrix.name }}/
-          cp -r scanner/queries release/${{ matrix.name }}/
-          cat > release/${{ matrix.name }}/README.txt << 'EOF'
-          codemap - Generate a brain map of your codebase for LLM context
-
-          Usage:
-            codemap .              # Project structure
-            codemap --deps         # Dependency flow
-            codemap --diff         # Changed files vs main
-
-          Keep grammars/ next to codemap, or set CODEMAP_GRAMMAR_DIR.
-          More info: https://github.com/JordanCoin/codemap
-          EOF
-          cd release && tar -czvf ../${{ matrix.name }}.tar.gz ${{ matrix.name }}
-
-      - name: Upload artifact
+      - name: Upload grammars
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.name }}
-          path: ${{ matrix.name }}.tar.gz
+          name: grammars-darwin-${{ matrix.arch }}
+          path: grammars/
 
-  build-linux:
-    runs-on: ubuntu-latest
+  build-grammars-linux:
     strategy:
       matrix:
         include:
-          - goarch: amd64
-            name: codemap-linux-amd64
-          - goarch: arm64
+          - arch: amd64
+            cc: gcc
+            cxx: g++
+          - arch: arm64
             cc: aarch64-linux-gnu-gcc
-            name: codemap-linux-arm64
+            cxx: aarch64-linux-gnu-g++
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Install cross-compiler
+        if: matrix.arch == 'arm64'
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Build grammars
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: |
+          chmod +x scripts/build-grammars.sh
+          ./scripts/build-grammars.sh linux
+
+      - name: Upload grammars
+        uses: actions/upload-artifact@v4
+        with:
+          name: grammars-linux-${{ matrix.arch }}
+          path: grammars/
+
+  build-grammars-windows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.11.0
+
+      - name: Build grammars
+        env:
+          CC: "zig cc -target x86_64-windows-gnu"
+          CXX: "zig c++ -target x86_64-windows-gnu"
+        run: |
+          chmod +x scripts/build-grammars.sh
+          ./scripts/build-grammars.sh windows
+
+      - name: Upload grammars
+        uses: actions/upload-artifact@v4
+        with:
+          name: grammars-windows-amd64
+          path: grammars/
+
+  # ============================================================
+  # STAGE 2: Build Go binaries + package
+  # ============================================================
+  release-darwin:
+    needs: [build-grammars-macos]
+    strategy:
+      matrix:
+        include:
+          - runner: macos-13
+            arch: amd64
+          - runner: macos-14
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Download grammars
+        uses: actions/download-artifact@v4
+        with:
+          name: grammars-darwin-${{ matrix.arch }}
+          path: grammars/
+
+      - name: Build
+        env:
+          CGO_ENABLED: "1"
+        run: go build -trimpath -ldflags="-s -w" -o codemap .
+
+      - name: Create archive
+        run: |
+          mkdir -p dist/codemap-darwin-${{ matrix.arch }}
+          cp codemap dist/codemap-darwin-${{ matrix.arch }}/
+          cp -r grammars dist/codemap-darwin-${{ matrix.arch }}/
+          cp -r scanner/queries dist/codemap-darwin-${{ matrix.arch }}/
+          cp README.md dist/codemap-darwin-${{ matrix.arch }}/ 2>/dev/null || true
+          cd dist && tar -czvf codemap-darwin-${{ matrix.arch }}.tar.gz codemap-darwin-${{ matrix.arch }}
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: codemap-darwin-${{ matrix.arch }}
+          path: dist/codemap-darwin-${{ matrix.arch }}.tar.gz
+
+  release-linux:
+    needs: [build-grammars-linux]
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            cc: gcc
+          - arch: arm64
+            cc: aarch64-linux-gnu-gcc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
         with:
           go-version: '1.21'
 
       - name: Install cross-compiler
-        if: matrix.goarch == 'arm64'
+        if: matrix.arch == 'arm64'
         run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
 
-      - name: Build Go binary
+      - name: Download grammars
+        uses: actions/download-artifact@v4
+        with:
+          name: grammars-linux-${{ matrix.arch }}
+          path: grammars/
+
+      - name: Build
         env:
-          CGO_ENABLED: 1
+          CGO_ENABLED: "1"
           GOOS: linux
-          GOARCH: ${{ matrix.goarch }}
-          CC: ${{ matrix.cc || 'gcc' }}
-        run: go build -o codemap .
+          GOARCH: ${{ matrix.arch }}
+          CC: ${{ matrix.cc }}
+        run: go build -trimpath -ldflags="-s -w" -o codemap .
 
-      - name: Build grammars
+      - name: Create archive
         run: |
-          set -e
-          mkdir -p grammars
-          CC="${{ matrix.cc || 'gcc' }}"
-          CXX="${CC/gcc/g++}"
+          mkdir -p dist/codemap-linux-${{ matrix.arch }}
+          cp codemap dist/codemap-linux-${{ matrix.arch }}/
+          cp -r grammars dist/codemap-linux-${{ matrix.arch }}/
+          cp -r scanner/queries dist/codemap-linux-${{ matrix.arch }}/
+          cp README.md dist/codemap-linux-${{ matrix.arch }}/ 2>/dev/null || true
+          cd dist && tar -czvf codemap-linux-${{ matrix.arch }}.tar.gz codemap-linux-${{ matrix.arch }}
 
-          echo "$GRAMMARS" | while IFS=: read -r lang repo branch src_dir; do
-            [ -z "$lang" ] && continue
-            echo "Building $lang from $repo..."
-
-            # Extract to temp dir to avoid conflicts
-            rm -rf _grammar_build && mkdir _grammar_build && cd _grammar_build
-            curl -sL "https://github.com/$repo/archive/refs/heads/$branch.tar.gz" | tar xz
-            extracted_dir=$(ls -d */ | head -1)
-            src_path="${extracted_dir}${src_dir}"
-
-            if [ ! -d "$src_path" ]; then
-              echo "  ✗ Source not found: $src_path"
-              exit 1
-            fi
-
-            sources="$src_path/parser.c"
-            use_cxx=false
-            if [ -f "$src_path/scanner.c" ]; then
-              sources="$sources $src_path/scanner.c"
-            elif [ -f "$src_path/scanner.cc" ]; then
-              use_cxx=true
-              $CXX -c -fPIC -I"$src_path" "$src_path/scanner.cc" -o scanner.o
-              sources="$sources scanner.o"
-            fi
-
-            # Use g++ for linking when C++ scanner is present (links libstdc++)
-            if $use_cxx; then
-              $CXX -shared -fPIC -I"$src_path" $sources -o ../grammars/libtree-sitter-$lang.so
-            else
-              $CC -shared -fPIC -I"$src_path" $sources -o ../grammars/libtree-sitter-$lang.so
-            fi
-            cd .. && rm -rf _grammar_build
-
-            echo "  ✓ Built $lang"
-          done
-
-          echo ""
-          echo "Built grammars:"
-          ls -la grammars/
-
-      - name: Create release archive
-        run: |
-          mkdir -p release/${{ matrix.name }}
-          cp codemap release/${{ matrix.name }}/
-          cp -r grammars release/${{ matrix.name }}/
-          cp -r scanner/queries release/${{ matrix.name }}/
-          cat > release/${{ matrix.name }}/README.txt << 'EOF'
-          codemap - Generate a brain map of your codebase for LLM context
-
-          Usage:
-            codemap .              # Project structure
-            codemap --deps         # Dependency flow
-            codemap --diff         # Changed files vs main
-
-          Keep grammars/ next to codemap, or set CODEMAP_GRAMMAR_DIR.
-          More info: https://github.com/JordanCoin/codemap
-          EOF
-          cd release && tar -czvf ../${{ matrix.name }}.tar.gz ${{ matrix.name }}
-
-      - name: Upload artifact
+      - name: Upload archive
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.name }}
-          path: ${{ matrix.name }}.tar.gz
+          name: codemap-linux-${{ matrix.arch }}
+          path: dist/codemap-linux-${{ matrix.arch }}.tar.gz
 
-  build-windows:
+  release-windows:
+    needs: [build-grammars-windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version: '1.21'
 
@@ -247,158 +215,199 @@ jobs:
         with:
           version: 0.11.0
 
-      - name: Create zig wrapper
+      - name: Create Zig wrapper
         run: |
           mkdir -p "$HOME/zigcc"
-          cat > "$HOME/zigcc/zcc" << 'SCRIPT'
-          #!/bin/sh
-          zig cc -target x86_64-windows-gnu "$@"
-          SCRIPT
-          cat > "$HOME/zigcc/zxx" << 'SCRIPT'
-          #!/bin/sh
-          zig c++ -target x86_64-windows-gnu "$@"
-          SCRIPT
-          chmod +x "$HOME/zigcc/zcc" "$HOME/zigcc/zxx"
+          echo '#!/bin/sh' > "$HOME/zigcc/zcc"
+          echo 'zig cc -target x86_64-windows-gnu "$@"' >> "$HOME/zigcc/zcc"
+          chmod +x "$HOME/zigcc/zcc"
+          echo "$HOME/zigcc" >> "$GITHUB_PATH"
 
-      - name: Build Go binary
+      - name: Download grammars
+        uses: actions/download-artifact@v4
+        with:
+          name: grammars-windows-amd64
+          path: grammars/
+
+      - name: Build
         env:
-          CGO_ENABLED: 1
+          CGO_ENABLED: "1"
           GOOS: windows
           GOARCH: amd64
-          CC: /home/runner/zigcc/zcc
-          CXX: /home/runner/zigcc/zxx
-        run: go build -ldflags="-s -w" -o codemap.exe .
+          CC: zcc
+        run: go build -trimpath -ldflags="-s -w" -o codemap.exe .
 
-      - name: Build grammars
+      - name: Create archive
         run: |
-          set -e
-          mkdir -p grammars
+          mkdir -p dist/codemap-windows-amd64
+          cp codemap.exe dist/codemap-windows-amd64/
+          cp -r grammars dist/codemap-windows-amd64/
+          cp -r scanner/queries dist/codemap-windows-amd64/
+          cp README.md dist/codemap-windows-amd64/ 2>/dev/null || true
+          cd dist && zip -r codemap-windows-amd64.zip codemap-windows-amd64
 
-          echo "$GRAMMARS" | while IFS=: read -r lang repo branch src_dir; do
-            [ -z "$lang" ] && continue
-            echo "Building $lang from $repo..."
-
-            # Extract to temp dir to avoid conflicts
-            rm -rf _grammar_build && mkdir _grammar_build && cd _grammar_build
-            curl -sL "https://github.com/$repo/archive/refs/heads/$branch.tar.gz" | tar xz
-            extracted_dir=$(ls -d */ | head -1)
-            src_path="${extracted_dir}${src_dir}"
-
-            if [ ! -d "$src_path" ]; then
-              echo "  ✗ Source not found: $src_path"
-              exit 1
-            fi
-
-            sources="$src_path/parser.c"
-            use_cxx=false
-            if [ -f "$src_path/scanner.c" ]; then
-              sources="$sources $src_path/scanner.c"
-            elif [ -f "$src_path/scanner.cc" ]; then
-              use_cxx=true
-              zig c++ -target x86_64-windows-gnu -c -fPIC -I"$src_path" "$src_path/scanner.cc" -o scanner.o
-              sources="$sources scanner.o"
-            fi
-
-            # Use zig c++ for linking when C++ scanner is present (links libstdc++)
-            if $use_cxx; then
-              zig c++ -target x86_64-windows-gnu -shared -fPIC -I"$src_path" $sources -o ../grammars/libtree-sitter-$lang.dll
-            else
-              zig cc -target x86_64-windows-gnu -shared -fPIC -I"$src_path" $sources -o ../grammars/libtree-sitter-$lang.dll
-            fi
-            cd .. && rm -rf _grammar_build
-
-            echo "  ✓ Built $lang"
-          done
-
-          echo ""
-          echo "Built grammars:"
-          ls -la grammars/
-
-      - name: Create release archive
-        run: |
-          mkdir -p release/codemap-windows-amd64
-          cp codemap.exe release/codemap-windows-amd64/
-          cp -r grammars release/codemap-windows-amd64/
-          cp -r scanner/queries release/codemap-windows-amd64/
-          cat > release/codemap-windows-amd64/README.txt << 'EOF'
-          codemap - Generate a brain map of your codebase for LLM context
-
-          Usage:
-            codemap .              # Project structure
-            codemap --deps         # Dependency flow
-            codemap --diff         # Changed files vs main
-
-          Keep grammars/ next to codemap.exe, or set CODEMAP_GRAMMAR_DIR.
-          More info: https://github.com/JordanCoin/codemap
-          EOF
-          cd release && zip -r ../codemap-windows-amd64.zip codemap-windows-amd64
-
-      - name: Upload artifact
+      - name: Upload archive
         uses: actions/upload-artifact@v4
         with:
           name: codemap-windows-amd64
-          path: codemap-windows-amd64.zip
+          path: dist/codemap-windows-amd64.zip
 
-  release:
-    needs: [build-macos, build-linux, build-windows]
+  # ============================================================
+  # STAGE 3: Create GitHub Release + Update Package Managers
+  # ============================================================
+  publish:
+    needs: [release-darwin, release-linux, release-windows]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.skip_release == false)
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false)
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: codemap-*
 
       - name: List artifacts
         run: find artifacts -type f
 
-      - name: Create Release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            artifacts/**/*.zip
             artifacts/**/*.tar.gz
+            artifacts/**/*.zip
           generate_release_notes: true
 
-  update-scoop:
-    needs: [release]
+  update-homebrew:
+    needs: [publish]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'  # Only on tag push, not manual workflow
+    env:
+      TAG_NAME: ${{ github.ref_name }}
     steps:
       - name: Wait for release assets
-        run: sleep 30  # Give GitHub time to process release assets
+        run: sleep 30
 
-      - name: Get version from tag
-        id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
-
-      - name: Download Windows zip and get hash
-        id: hash
+      - name: Get version and hashes
+        id: info
+        env:
+          TAG_NAME: ${{ github.ref_name }}
         run: |
-          curl -L -o codemap.zip "https://github.com/JordanCoin/codemap/releases/download/${GITHUB_REF_NAME}/codemap-windows-amd64.zip"
-          SHA256=$(sha256sum codemap.zip | cut -d' ' -f1)
-          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+          VERSION="${TAG_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Update Scoop manifest
+          # Get Darwin ARM64 tarball hash
+          curl -sL "https://github.com/JordanCoin/codemap/releases/download/${TAG_NAME}/codemap-darwin-arm64.tar.gz" -o darwin-arm64.tar.gz
+          SHA_ARM64=$(shasum -a 256 darwin-arm64.tar.gz | cut -d' ' -f1)
+          echo "sha_arm64=$SHA_ARM64" >> "$GITHUB_OUTPUT"
+
+          # Get Darwin AMD64 tarball hash
+          curl -sL "https://github.com/JordanCoin/codemap/releases/download/${TAG_NAME}/codemap-darwin-amd64.tar.gz" -o darwin-amd64.tar.gz
+          SHA_AMD64=$(shasum -a 256 darwin-amd64.tar.gz | cut -d' ' -f1)
+          echo "sha_amd64=$SHA_AMD64" >> "$GITHUB_OUTPUT"
+
+      - name: Update Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: JordanCoin/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update formula
+        env:
+          VERSION: ${{ steps.info.outputs.version }}
+          SHA_ARM64: ${{ steps.info.outputs.sha_arm64 }}
+          SHA_AMD64: ${{ steps.info.outputs.sha_amd64 }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          cd homebrew-tap
+          cat > codemap.rb << EOF
+          class Codemap < Formula
+            desc "Generate a brain map of your codebase for LLM context"
+            homepage "https://github.com/JordanCoin/codemap"
+            version "${VERSION}"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/JordanCoin/codemap/releases/download/${TAG_NAME}/codemap-darwin-arm64.tar.gz"
+                sha256 "${SHA_ARM64}"
+              else
+                url "https://github.com/JordanCoin/codemap/releases/download/${TAG_NAME}/codemap-darwin-amd64.tar.gz"
+                sha256 "${SHA_AMD64}"
+              end
+            end
+
+            def install
+              bin.install "codemap"
+              (libexec/"grammars").install Dir["grammars/*"] if Dir.exist?("grammars")
+              (libexec/"queries").install Dir["queries/*"] if Dir.exist?("queries")
+            end
+
+            def caveats
+              <<~EOS
+                Tree-sitter grammars installed to:
+                  #{libexec}/grammars
+
+                For --deps mode, codemap will find them automatically.
+              EOS
+            end
+
+            test do
+              system "#{bin}/codemap", "--help"
+            end
+          end
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add codemap.rb
+          git commit -m "Update codemap to ${VERSION}"
+          git push
+
+  update-scoop:
+    needs: [publish]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for release assets
+        run: sleep 30
+
+      - name: Get version and hash
+        id: info
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          curl -sL "https://github.com/JordanCoin/codemap/releases/download/${TAG_NAME}/codemap-windows-amd64.zip" -o codemap.zip
+          SHA256=$(sha256sum codemap.zip | cut -d' ' -f1)
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+
+      - name: Update Scoop bucket
         uses: actions/checkout@v4
         with:
           repository: JordanCoin/scoop-codemap
           token: ${{ secrets.SCOOP_TOKEN }}
           path: scoop-bucket
 
-      - name: Update manifest and push
+      - name: Update manifest
+        env:
+          VERSION: ${{ steps.info.outputs.version }}
+          SHA256: ${{ steps.info.outputs.sha256 }}
+          TAG_NAME: ${{ github.ref_name }}
         run: |
           cd scoop-bucket
           cat > codemap.json << EOF
           {
-            "version": "${{ steps.version.outputs.version }}",
+            "version": "${VERSION}",
             "description": "Generate a brain map of your codebase for LLM context",
             "homepage": "https://github.com/JordanCoin/codemap",
             "license": "MIT",
             "architecture": {
               "64bit": {
-                "url": "https://github.com/JordanCoin/codemap/releases/download/${GITHUB_REF_NAME}/codemap-windows-amd64.zip",
-                "hash": "${{ steps.hash.outputs.sha256 }}"
+                "url": "https://github.com/JordanCoin/codemap/releases/download/${TAG_NAME}/codemap-windows-amd64.zip",
+                "hash": "${SHA256}"
               }
             },
             "bin": "codemap-windows-amd64\\\\codemap.exe",
@@ -412,8 +421,9 @@ jobs:
             }
           }
           EOF
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add codemap.json
-          git commit -m "Update codemap to ${{ steps.version.outputs.version }}"
+          git commit -m "Update codemap to ${VERSION}"
           git push
