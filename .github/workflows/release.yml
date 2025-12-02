@@ -6,8 +6,17 @@ on:
       - 'v*'
   workflow_dispatch:
     inputs:
+      bump:
+        description: 'Version bump type'
+        required: false
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - minor
+          - major
       dry_run:
-        description: 'Dry run (no release)'
+        description: 'Dry run (build only, no release)'
         required: false
         default: true
         type: boolean
@@ -17,9 +26,61 @@ permissions:
 
 jobs:
   # ============================================================
+  # Version Bump: Create tag based on bump type (manual trigger)
+  # ============================================================
+  bump-version:
+    if: github.event_name == 'workflow_dispatch' && inputs.bump != 'none'
+    runs-on: ubuntu-latest
+    outputs:
+      new_tag: ${{ steps.bump.outputs.new_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get latest tag and bump version
+        id: bump
+        env:
+          BUMP_TYPE: ${{ inputs.bump }}
+        run: |
+          # Get latest tag (or default to v0.0)
+          LATEST=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0")
+          echo "Latest tag: $LATEST"
+
+          # Parse version: v2.10 -> major=2, minor=10
+          VERSION="${LATEST#v}"
+          MAJOR="${VERSION%%.*}"
+          MINOR="${VERSION#*.}"
+
+          if [ "$BUMP_TYPE" = "major" ]; then
+            # Major: 2.10 -> 3.0
+            NEW_MAJOR=$((MAJOR + 1))
+            NEW_TAG="v${NEW_MAJOR}.0"
+          else
+            # Minor: 2.9 -> 2.10
+            NEW_MINOR=$((MINOR + 1))
+            NEW_TAG="v${MAJOR}.${NEW_MINOR}"
+          fi
+
+          echo "Bumping $LATEST -> $NEW_TAG ($BUMP_TYPE)"
+          echo "new_tag=$NEW_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        env:
+          NEW_TAG: ${{ steps.bump.outputs.new_tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$NEW_TAG"
+          git push origin "$NEW_TAG"
+          echo "✓ Created and pushed $NEW_TAG"
+
+  # ============================================================
   # Build: One job per platform (grammars + Go + archive)
+  # Skipped when bump != none (tag push triggers fresh run)
   # ============================================================
   build-darwin-amd64:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.bump != 'none') }}
     runs-on: macos-13
     steps:
       - uses: actions/checkout@v4
@@ -52,6 +113,7 @@ jobs:
           path: dist/codemap-darwin-amd64.tar.gz
 
   build-darwin-arm64:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.bump != 'none') }}
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -84,6 +146,7 @@ jobs:
           path: dist/codemap-darwin-arm64.tar.gz
 
   build-linux-amd64:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.bump != 'none') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -116,6 +179,7 @@ jobs:
           path: dist/codemap-linux-amd64.tar.gz
 
   build-linux-arm64:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.bump != 'none') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -157,6 +221,7 @@ jobs:
           path: dist/codemap-linux-arm64.tar.gz
 
   build-windows-amd64:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.bump != 'none') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
