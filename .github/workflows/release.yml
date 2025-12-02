@@ -1,4 +1,4 @@
-name: Release (GoReleaser)
+name: Release
 
 on:
   push:
@@ -17,67 +17,152 @@ permissions:
 
 jobs:
   # ============================================================
-  # STAGE 1: Build grammars per platform
+  # Build: One job per platform (grammars + Go + archive)
   # ============================================================
-  build-grammars-macos:
-    strategy:
-      matrix:
-        include:
-          - runner: macos-13
-            arch: amd64
-          - runner: macos-14
-            arch: arm64
-    runs-on: ${{ matrix.runner }}
+  build-darwin-amd64:
+    runs-on: macos-13
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
 
       - name: Build grammars
         run: |
           chmod +x scripts/build-grammars.sh
           ./scripts/build-grammars.sh darwin
 
-      - name: Upload grammars
-        uses: actions/upload-artifact@v4
-        with:
-          name: grammars-darwin-${{ matrix.arch }}
-          path: grammars/
+      - name: Build Go binary
+        env:
+          CGO_ENABLED: "1"
+        run: go build -trimpath -ldflags="-s -w" -o codemap .
 
-  build-grammars-linux:
-    strategy:
-      matrix:
-        include:
-          - arch: amd64
-            cc: gcc
-            cxx: g++
-          - arch: arm64
-            cc: aarch64-linux-gnu-gcc
-            cxx: aarch64-linux-gnu-g++
+      - name: Create archive
+        run: |
+          mkdir -p dist/codemap-darwin-amd64
+          cp codemap dist/codemap-darwin-amd64/
+          cp -r grammars dist/codemap-darwin-amd64/
+          cp -r scanner/queries dist/codemap-darwin-amd64/
+          cp README.md dist/codemap-darwin-amd64/ 2>/dev/null || true
+          cd dist && tar -czvf codemap-darwin-amd64.tar.gz codemap-darwin-amd64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codemap-darwin-amd64
+          path: dist/codemap-darwin-amd64.tar.gz
+
+  build-darwin-arm64:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Build grammars
+        run: |
+          chmod +x scripts/build-grammars.sh
+          ./scripts/build-grammars.sh darwin
+
+      - name: Build Go binary
+        env:
+          CGO_ENABLED: "1"
+        run: go build -trimpath -ldflags="-s -w" -o codemap .
+
+      - name: Create archive
+        run: |
+          mkdir -p dist/codemap-darwin-arm64
+          cp codemap dist/codemap-darwin-arm64/
+          cp -r grammars dist/codemap-darwin-arm64/
+          cp -r scanner/queries dist/codemap-darwin-arm64/
+          cp README.md dist/codemap-darwin-arm64/ 2>/dev/null || true
+          cd dist && tar -czvf codemap-darwin-arm64.tar.gz codemap-darwin-arm64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codemap-darwin-arm64
+          path: dist/codemap-darwin-arm64.tar.gz
+
+  build-linux-amd64:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install cross-compiler
-        if: matrix.arch == 'arm64'
-        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
 
       - name: Build grammars
-        env:
-          CC: ${{ matrix.cc }}
-          CXX: ${{ matrix.cxx }}
         run: |
           chmod +x scripts/build-grammars.sh
           ./scripts/build-grammars.sh linux
 
-      - name: Upload grammars
-        uses: actions/upload-artifact@v4
-        with:
-          name: grammars-linux-${{ matrix.arch }}
-          path: grammars/
+      - name: Build Go binary
+        env:
+          CGO_ENABLED: "1"
+        run: go build -trimpath -ldflags="-s -w" -o codemap .
 
-  build-grammars-windows:
+      - name: Create archive
+        run: |
+          mkdir -p dist/codemap-linux-amd64
+          cp codemap dist/codemap-linux-amd64/
+          cp -r grammars dist/codemap-linux-amd64/
+          cp -r scanner/queries dist/codemap-linux-amd64/
+          cp README.md dist/codemap-linux-amd64/ 2>/dev/null || true
+          cd dist && tar -czvf codemap-linux-amd64.tar.gz codemap-linux-amd64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codemap-linux-amd64
+          path: dist/codemap-linux-amd64.tar.gz
+
+  build-linux-arm64:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install cross-compiler
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Build grammars
+        env:
+          CC: aarch64-linux-gnu-gcc
+          CXX: aarch64-linux-gnu-g++
+        run: |
+          chmod +x scripts/build-grammars.sh
+          ./scripts/build-grammars.sh linux
+
+      - name: Build Go binary
+        env:
+          CGO_ENABLED: "1"
+          GOOS: linux
+          GOARCH: arm64
+          CC: aarch64-linux-gnu-gcc
+        run: go build -trimpath -ldflags="-s -w" -o codemap .
+
+      - name: Create archive
+        run: |
+          mkdir -p dist/codemap-linux-arm64
+          cp codemap dist/codemap-linux-arm64/
+          cp -r grammars dist/codemap-linux-arm64/
+          cp -r scanner/queries dist/codemap-linux-arm64/
+          cp README.md dist/codemap-linux-arm64/ 2>/dev/null || true
+          cd dist && tar -czvf codemap-linux-arm64.tar.gz codemap-linux-arm64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codemap-linux-arm64
+          path: dist/codemap-linux-arm64.tar.gz
+
+  build-windows-amd64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
 
       - name: Set up Zig
         uses: goto-bus-stop/setup-zig@v2
@@ -85,157 +170,21 @@ jobs:
           version: 0.11.0
 
       - name: Build grammars
-        env:
-          CC: "zig cc -target x86_64-windows-gnu"
-          CXX: "zig c++ -target x86_64-windows-gnu"
         run: |
           chmod +x scripts/build-grammars.sh
+          CC="zig cc -target x86_64-windows-gnu" \
+          CXX="zig c++ -target x86_64-windows-gnu" \
           ./scripts/build-grammars.sh windows
 
-      - name: Upload grammars
-        uses: actions/upload-artifact@v4
-        with:
-          name: grammars-windows-amd64
-          path: grammars/
-
-  # ============================================================
-  # STAGE 2: Build Go binaries + package
-  # ============================================================
-  release-darwin:
-    needs: [build-grammars-macos]
-    strategy:
-      matrix:
-        include:
-          - runner: macos-13
-            arch: amd64
-          - runner: macos-14
-            arch: arm64
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Download grammars
-        uses: actions/download-artifact@v4
-        with:
-          name: grammars-darwin-${{ matrix.arch }}
-          path: grammars/
-
-      - name: Build
-        env:
-          CGO_ENABLED: "1"
-        run: go build -trimpath -ldflags="-s -w" -o codemap .
-
-      - name: Create archive
-        run: |
-          mkdir -p dist/codemap-darwin-${{ matrix.arch }}
-          cp codemap dist/codemap-darwin-${{ matrix.arch }}/
-          cp -r grammars dist/codemap-darwin-${{ matrix.arch }}/
-          cp -r scanner/queries dist/codemap-darwin-${{ matrix.arch }}/
-          cp README.md dist/codemap-darwin-${{ matrix.arch }}/ 2>/dev/null || true
-          cd dist && tar -czvf codemap-darwin-${{ matrix.arch }}.tar.gz codemap-darwin-${{ matrix.arch }}
-
-      - name: Upload archive
-        uses: actions/upload-artifact@v4
-        with:
-          name: codemap-darwin-${{ matrix.arch }}
-          path: dist/codemap-darwin-${{ matrix.arch }}.tar.gz
-
-  release-linux:
-    needs: [build-grammars-linux]
-    strategy:
-      matrix:
-        include:
-          - arch: amd64
-            cc: gcc
-          - arch: arm64
-            cc: aarch64-linux-gnu-gcc
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Install cross-compiler
-        if: matrix.arch == 'arm64'
-        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
-
-      - name: Download grammars
-        uses: actions/download-artifact@v4
-        with:
-          name: grammars-linux-${{ matrix.arch }}
-          path: grammars/
-
-      - name: Build
-        env:
-          CGO_ENABLED: "1"
-          GOOS: linux
-          GOARCH: ${{ matrix.arch }}
-          CC: ${{ matrix.cc }}
-        run: go build -trimpath -ldflags="-s -w" -o codemap .
-
-      - name: Create archive
-        run: |
-          mkdir -p dist/codemap-linux-${{ matrix.arch }}
-          cp codemap dist/codemap-linux-${{ matrix.arch }}/
-          cp -r grammars dist/codemap-linux-${{ matrix.arch }}/
-          cp -r scanner/queries dist/codemap-linux-${{ matrix.arch }}/
-          cp README.md dist/codemap-linux-${{ matrix.arch }}/ 2>/dev/null || true
-          cd dist && tar -czvf codemap-linux-${{ matrix.arch }}.tar.gz codemap-linux-${{ matrix.arch }}
-
-      - name: Upload archive
-        uses: actions/upload-artifact@v4
-        with:
-          name: codemap-linux-${{ matrix.arch }}
-          path: dist/codemap-linux-${{ matrix.arch }}.tar.gz
-
-  release-windows:
-    needs: [build-grammars-windows]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Set up Zig
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.11.0
-
-      - name: Create Zig wrapper
+      - name: Build Go binary
         run: |
           mkdir -p "$HOME/zigcc"
           echo '#!/bin/sh' > "$HOME/zigcc/zcc"
           echo 'zig cc -target x86_64-windows-gnu "$@"' >> "$HOME/zigcc/zcc"
           chmod +x "$HOME/zigcc/zcc"
-          echo "$HOME/zigcc" >> "$GITHUB_PATH"
 
-      - name: Download grammars
-        uses: actions/download-artifact@v4
-        with:
-          name: grammars-windows-amd64
-          path: grammars/
-
-      - name: Build
-        env:
-          CGO_ENABLED: "1"
-          GOOS: windows
-          GOARCH: amd64
-          CC: zcc
-        run: go build -trimpath -ldflags="-s -w" -o codemap.exe .
+          CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC="$HOME/zigcc/zcc" \
+          go build -trimpath -ldflags="-s -w" -o codemap.exe .
 
       - name: Create archive
         run: |
@@ -246,17 +195,16 @@ jobs:
           cp README.md dist/codemap-windows-amd64/ 2>/dev/null || true
           cd dist && zip -r codemap-windows-amd64.zip codemap-windows-amd64
 
-      - name: Upload archive
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: codemap-windows-amd64
           path: dist/codemap-windows-amd64.zip
 
   # ============================================================
-  # STAGE 3: Create GitHub Release + Update Package Managers
+  # Publish: Create GitHub Release + Update Package Managers
   # ============================================================
   publish:
-    needs: [release-darwin, release-linux, release-windows]
+    needs: [build-darwin-amd64, build-darwin-arm64, build-linux-amd64, build-linux-arm64, build-windows-amd64]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false)
     steps:
@@ -266,7 +214,6 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          pattern: codemap-*
 
       - name: List artifacts
         run: find artifacts -type f
@@ -282,8 +229,6 @@ jobs:
   update-homebrew:
     needs: [publish]
     runs-on: ubuntu-latest
-    env:
-      TAG_NAME: ${{ github.ref_name }}
     steps:
       - name: Wait for release assets
         run: sleep 30
@@ -296,12 +241,10 @@ jobs:
           VERSION="${TAG_NAME#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-          # Get Darwin ARM64 tarball hash
           curl -sL "https://github.com/JordanCoin/codemap/releases/download/${TAG_NAME}/codemap-darwin-arm64.tar.gz" -o darwin-arm64.tar.gz
           SHA_ARM64=$(shasum -a 256 darwin-arm64.tar.gz | cut -d' ' -f1)
           echo "sha_arm64=$SHA_ARM64" >> "$GITHUB_OUTPUT"
 
-          # Get Darwin AMD64 tarball hash
           curl -sL "https://github.com/JordanCoin/codemap/releases/download/${TAG_NAME}/codemap-darwin-amd64.tar.gz" -o darwin-amd64.tar.gz
           SHA_AMD64=$(shasum -a 256 darwin-amd64.tar.gz | cut -d' ' -f1)
           echo "sha_amd64=$SHA_AMD64" >> "$GITHUB_OUTPUT"
