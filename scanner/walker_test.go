@@ -415,14 +415,14 @@ func TestNestedGitignoreMonorepo(t *testing.T) {
 
 	// Create files that SHOULD be ignored
 	ignored := []string{
-		"debug.log",                    // root *.log
-		"ProjectA/error.log",           // root *.log cascades to subdirs
-		"ProjectA/data.cache",          // ProjectA *.cache
-		"ProjectA/build/binary",        // ProjectA build/
-		"ProjectB/temp.tmp",            // ProjectB *.tmp
-		"ProjectB/dist/bundle.js",      // ProjectB dist/
-		"ProjectC/backup.bak",          // ProjectC *.bak
-		"ProjectC/output/result.json",  // ProjectC output/
+		"debug.log",                   // root *.log
+		"ProjectA/error.log",          // root *.log cascades to subdirs
+		"ProjectA/data.cache",         // ProjectA *.cache
+		"ProjectA/build/binary",       // ProjectA build/
+		"ProjectB/temp.tmp",           // ProjectB *.tmp
+		"ProjectB/dist/bundle.js",     // ProjectB dist/
+		"ProjectC/backup.bak",         // ProjectC *.bak
+		"ProjectC/output/result.json", // ProjectC output/
 	}
 	for _, f := range ignored {
 		if err := os.WriteFile(filepath.Join(tmpDir, f), []byte("ignored"), 0644); err != nil {
