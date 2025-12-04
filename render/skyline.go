@@ -246,8 +246,6 @@ func Skyline(project scanner.Project, animate bool) {
 // renderStatic renders static skyline
 func renderStatic(arranged []building, width, leftMargin, sceneLeft, sceneRight, sceneWidth int,
 	codeFiles []scanner.FileInfo, projectName string, sorted []extAgg) {
-
-
 	// Build grid
 	grid := make([][]rune, skyHeight+maxHeight+1)
 	for i := range grid {
@@ -600,8 +598,6 @@ func (m animationModel) View() string {
 // renderAnimated renders animated skyline using bubbletea
 func renderAnimated(arranged []building, width, leftMargin, sceneLeft, sceneRight, sceneWidth int,
 	codeFiles []scanner.FileInfo, projectName string, sorted []extAgg) {
-
-
 	// Generate star positions
 	var starPositions [][2]int
 	for row := 0; row < skyHeight; row++ {
