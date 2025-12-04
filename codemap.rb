@@ -1,90 +1,80 @@
 class Codemap < Formula
   desc "Generate a brain map of your codebase for LLM context"
   homepage "https://github.com/JordanCoin/codemap"
-  url "https://github.com/JordanCoin/codemap/archive/refs/tags/v2.8.tar.gz"
-  sha256 "d8c709f21de099277474f25c4d02ed9ab065d5f3036b1de1c0cbf89ad800e746"
+  url "https://github.com/JordanCoin/codemap/archive/refs/tags/v2.8.3.tar.gz"
+  sha256 "63031e83aefff6c74ba4c6515a8cafc1b61b9d144300bf8192b486f4876a2f26"
   license "MIT"
 
   depends_on "go" => :build
 
   resource "tree-sitter-go" do
-    url "https://github.com/tree-sitter/tree-sitter-go/archive/refs/heads/master.tar.gz"
-    sha256 "1c746cac06741178f3b0b21258a8ff04599f3bef176044121b985ff17917bf25"
+    url "https://github.com/tree-sitter/tree-sitter-go/archive/refs/tags/v0.25.0.tar.gz"
+    sha256 "2dc241b97872c53195e01b86542b411a3c1a6201d9c946c78d5c60c063bba1ef"
   end
 
   resource "tree-sitter-python" do
-    url "https://github.com/tree-sitter/tree-sitter-python/archive/refs/heads/master.tar.gz"
-    sha256 "874479d1f7058159f417fdeb706f279e4edd6b2c392bd8a642bc5d552f45e9cd"
+    url "https://github.com/tree-sitter/tree-sitter-python/archive/refs/tags/v0.25.0.tar.gz"
+    sha256 "4609a3665a620e117acf795ff01b9e965880f81745f287a16336f4ca86cf270c"
   end
 
   resource "tree-sitter-javascript" do
-    url "https://github.com/tree-sitter/tree-sitter-javascript/archive/refs/heads/master.tar.gz"
-    sha256 "0ee41a73f53ddc31bd6567cafa5864f0678e71ebb9c9c618f6d67ca788a22455"
+    url "https://github.com/tree-sitter/tree-sitter-javascript/archive/refs/tags/v0.25.0.tar.gz"
+    sha256 "9712fc283d3dc01d996d20b6392143445d05867a7aad76fdd723824468428b86"
   end
 
   resource "tree-sitter-typescript" do
-    url "https://github.com/tree-sitter/tree-sitter-typescript/archive/refs/heads/master.tar.gz"
-    sha256 "c5bf6e925d299bce34e7ae373b46d5363f2e896e6ea282091d163fd1f831b497"
+    url "https://github.com/tree-sitter/tree-sitter-typescript/archive/refs/tags/v0.23.2.tar.gz"
+    sha256 "2c4ce711ae8d1218a3b2f899189298159d672870b5b34dff5d937bed2f3e8983"
   end
 
   resource "tree-sitter-rust" do
-    url "https://github.com/tree-sitter/tree-sitter-rust/archive/refs/heads/master.tar.gz"
-    sha256 "dc93e09d9ea2b20e91c87c6202b53dc57513e0db3730231c60d154582a74dfc0"
+    url "https://github.com/tree-sitter/tree-sitter-rust/archive/refs/tags/v0.24.0.tar.gz"
+    sha256 "79c9eb05af4ebcce8c40760fc65405e0255e2d562702314b813a5dec1273b9a2"
   end
 
   resource "tree-sitter-ruby" do
-    url "https://github.com/tree-sitter/tree-sitter-ruby/archive/refs/heads/master.tar.gz"
-    sha256 "93df5566a3bee1c16f6fb7da492d58a34840d488347dc05a2327e3730e53aa20"
+    url "https://github.com/tree-sitter/tree-sitter-ruby/archive/refs/tags/v0.23.1.tar.gz"
+    sha256 "e7e49577ddc1f2de8e42d42353b477e338c15bbb95b2558e123ddc13d88789f0"
   end
 
   resource "tree-sitter-c" do
-    url "https://github.com/tree-sitter/tree-sitter-c/archive/refs/heads/master.tar.gz"
-    sha256 "d4e3f07154466ad60c7bb1cc9719be3bc2e8b9212d39849f6aa4a2b90cac2415"
+    url "https://github.com/tree-sitter/tree-sitter-c/archive/refs/tags/v0.24.1.tar.gz"
+    sha256 "25dd4bb3dec770769a407e0fc803f424ce02c494a56ce95fedc525316dcf9b48"
   end
 
   resource "tree-sitter-cpp" do
-    url "https://github.com/tree-sitter/tree-sitter-cpp/archive/refs/heads/master.tar.gz"
-    sha256 "6c8f7d6bf2203b35490f5c91f81ed644a8dfb0a1e0274f15fa8e47b0b17f0d9c"
+    url "https://github.com/tree-sitter/tree-sitter-cpp/archive/refs/tags/v0.23.4.tar.gz"
+    sha256 "7a2c55afe3028f4105f25762ea58cc16537d1f5a1dcd9cca90410b3cd5d46051"
   end
 
   resource "tree-sitter-java" do
-    url "https://github.com/tree-sitter/tree-sitter-java/archive/refs/heads/master.tar.gz"
-    sha256 "a41ad5bd64ed71a026b001434319e7bcdc7e44ca1e28c39a87ab9e7ea1b1c575"
-  end
-
-  resource "tree-sitter-swift" do
-    url "https://github.com/tree-sitter/tree-sitter-swift/archive/refs/heads/master.tar.gz"
-    sha256 "2576f1f8da5ffa199a5b4bf1a21564106fa1f94fec19e4a375796d2286ac96bd"
+    url "https://github.com/tree-sitter/tree-sitter-java/archive/refs/tags/v0.23.5.tar.gz"
+    sha256 "cb199e0faae4b2c08425f88cbb51c1a9319612e7b96315a174a624db9bf3d9f0"
   end
 
   resource "tree-sitter-bash" do
-    url "https://github.com/tree-sitter/tree-sitter-bash/archive/refs/heads/master.tar.gz"
-    sha256 "86ffaeafc9d3a01a3da828b0fab5ef1b9d765d245764b066794577daee512f23"
+    url "https://github.com/tree-sitter/tree-sitter-bash/archive/refs/tags/v0.25.1.tar.gz"
+    sha256 "2e785a761225b6c433410ef9c7b63cfb0a4e83a35a19e0f2aec140b42c06b52d"
   end
 
   resource "tree-sitter-kotlin" do
-    url "https://github.com/fwcd/tree-sitter-kotlin/archive/refs/heads/main.tar.gz"
-    sha256 "4c63bab70f70bb884d97446a14ff78037944ff7c389f0482b5f49e4a32fe24c4"
+    url "https://github.com/fwcd/tree-sitter-kotlin/archive/refs/tags/0.3.8.tar.gz"
+    sha256 "7dd60975786bf9cb4be6a5176f5ccb5fed505f9929a012da30762505b1015669"
   end
 
   resource "tree-sitter-c-sharp" do
-    url "https://github.com/tree-sitter/tree-sitter-c-sharp/archive/refs/heads/master.tar.gz"
-    sha256 "81d4d39508dad98a56969acb76e979945f1eb8c9bf3e5921a4b66bd634dc1266"
+    url "https://github.com/tree-sitter/tree-sitter-c-sharp/archive/refs/tags/v0.23.1.tar.gz"
+    sha256 "c0b008dca3c6820604bf0853b9668ba034f9750d89d170ba834261e94e2cd917"
   end
 
   resource "tree-sitter-php" do
-    url "https://github.com/tree-sitter/tree-sitter-php/archive/refs/heads/master.tar.gz"
-    sha256 "df40197bb1bee56f96e52dc301ddd7e2ef0b33284dcd50de0a2bc53bd140e9a1"
-  end
-
-  resource "tree-sitter-dart" do
-    url "https://github.com/UserNobody14/tree-sitter-dart/archive/refs/heads/master.tar.gz"
-    sha256 "a38f682088b39813ed271eae942a3ad3c42c3c6c0086bd3484e8cdea26e04e0c"
+    url "https://github.com/tree-sitter/tree-sitter-php/archive/refs/tags/v0.24.2.tar.gz"
+    sha256 "0e73ad63dda67ac12c0e012726a4e1a9811c26b020a0a2dea3e889f8246d9cf4"
   end
 
   resource "tree-sitter-r" do
-    url "https://github.com/r-lib/tree-sitter-r/archive/refs/heads/main.tar.gz"
-    sha256 "b6e0df92204cbd956790b20165adf13f2a9879cda5e86b70949d918302634e0f"
+    url "https://github.com/r-lib/tree-sitter-r/archive/refs/tags/v1.2.0.tar.gz"
+    sha256 "a95b6e79a40b6b906a3b61ec040c15422c549d599e01d87092bf7ae78ebcadc5"
   end
 
   def install
@@ -93,6 +83,10 @@ class Codemap < Formula
 
     # Create grammars directory
     (libexec/"grammars").mkpath
+
+    # Copy query files
+    (libexec/"queries").mkpath
+    cp_r Dir["scanner/queries/*.scm"], libexec/"queries/"
 
     # Build and install each grammar resource
     resources.each do |r|
@@ -138,6 +132,10 @@ class Codemap < Formula
   end
 
   test do
-    system bin/"codemap", "."
+    # Test basic tree output
+    assert_match "Files:", shell_output("#{bin}/codemap .")
+
+    # Test help flag
+    assert_match "Usage:", shell_output("#{bin}/codemap --help")
   end
 end

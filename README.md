@@ -52,7 +52,7 @@ One command → a compact, structured “brain map” of your codebase that LLMs
 
 **codemap** is a single Go binary — fast and dependency-free:
 1.  **Scanner**: Instantly traverses your directory, respecting `.gitignore` and ignoring junk.
-2.  **Analyzer**: Uses tree-sitter grammars to parse imports/functions across 16 languages.
+2.  **Analyzer**: Uses tree-sitter grammars to parse imports/functions across 14 languages.
 3.  **Renderer**: Outputs a clean, dense "brain map" that is both human-readable and LLM-optimized.
 
 ## ⚡ Performance
@@ -216,7 +216,7 @@ Each building represents a language in your project — taller buildings mean mo
 
 ## Supported Languages
 
-codemap supports **16 languages** for dependency analysis:
+codemap supports **14 languages** for dependency analysis:
 
 | Language | Extensions | Import Detection |
 |----------|------------|------------------|
@@ -229,13 +229,13 @@ codemap supports **16 languages** for dependency analysis:
 | C | .c, .h | #include |
 | C++ | .cpp, .hpp, .cc | #include |
 | Java | .java | import |
-| Swift | .swift | import |
 | Kotlin | .kt, .kts | import |
 | C# | .cs | using |
 | PHP | .php | use, require, include |
-| Dart | .dart | import |
 | R | .r, .R | library, require, source |
 | Bash | .sh, .bash | source, . |
+
+> **Note:** Swift and Dart support is temporarily unavailable via Homebrew due to upstream tree-sitter grammars lacking tagged releases. These languages work when building from source with `make build-grammars`. We're tracking this and will restore support once stable releases are available.
 
 ## Claude Integrations
 
@@ -324,7 +324,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 - [x] **Diff Mode** (`codemap --diff`) — show changed files with impact analysis
 - [x] **Skyline Mode** (`codemap --skyline`) — ASCII cityscape visualization
-- [x] **Dependency Flow** (`codemap --deps`) — function/import analysis with 16 language support
+- [x] **Dependency Flow** (`codemap --deps`) — function/import analysis with 14 language support
 - [x] **Claude Code Skill** — automatic invocation based on user questions
 - [x] **MCP Server** — deep integration with 7 tools for codebase analysis
 
