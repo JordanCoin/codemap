@@ -119,8 +119,8 @@ func handleGetStructure(ctx context.Context, req *mcp.CallToolRequest, input Pat
 		return errorResult("Invalid path: " + err.Error()), nil, nil
 	}
 
-	gitignore := scanner.LoadGitignore(input.Path)
-	files, err := scanner.ScanFiles(input.Path, gitignore)
+	gitCache := scanner.NewGitIgnoreCache(input.Path)
+	files, err := scanner.ScanFiles(input.Path, gitCache)
 	if err != nil {
 		return errorResult("Scan error: " + err.Error()), nil, nil
 	}
@@ -144,10 +144,10 @@ func handleGetDependencies(ctx context.Context, req *mcp.CallToolRequest, input 
 		return errorResult("Invalid path: " + err.Error()), nil, nil
 	}
 
-	gitignore := scanner.LoadGitignore(input.Path)
+	gitCache := scanner.NewGitIgnoreCache(input.Path)
 	loader := scanner.NewGrammarLoader()
 
-	analyses, err := scanner.ScanForDeps(input.Path, gitignore, loader)
+	analyses, err := scanner.ScanForDeps(input.Path, gitCache, loader)
 	if err != nil {
 		return errorResult("Scan error: " + err.Error()), nil, nil
 	}
@@ -186,8 +186,8 @@ func handleGetDiff(ctx context.Context, req *mcp.CallToolRequest, input DiffInpu
 		return textResult("No files changed vs " + ref), nil, nil
 	}
 
-	gitignore := scanner.LoadGitignore(input.Path)
-	files, err := scanner.ScanFiles(input.Path, gitignore)
+	gitCache := scanner.NewGitIgnoreCache(input.Path)
+	files, err := scanner.ScanFiles(input.Path, gitCache)
 	if err != nil {
 		return errorResult("Scan error: " + err.Error()), nil, nil
 	}
@@ -211,8 +211,8 @@ func handleGetDiff(ctx context.Context, req *mcp.CallToolRequest, input DiffInpu
 }
 
 func handleFindFile(ctx context.Context, req *mcp.CallToolRequest, input FindInput) (*mcp.CallToolResult, any, error) {
-	gitignore := scanner.LoadGitignore(input.Path)
-	files, err := scanner.ScanFiles(input.Path, gitignore)
+	gitCache := scanner.NewGitIgnoreCache(input.Path)
+	files, err := scanner.ScanFiles(input.Path, gitCache)
 	if err != nil {
 		return errorResult("Scan error: " + err.Error()), nil, nil
 	}
@@ -315,10 +315,10 @@ func handleListProjects(ctx context.Context, req *mcp.CallToolRequest, input Lis
 }
 
 // getProjectStats returns a brief summary of a project directory
-// Uses the same scanner logic as the main codemap command (respects .gitignore)
+// Uses the same scanner logic as the main codemap command (respects nested .gitignore files)
 func getProjectStats(path string) string {
-	gitignore := scanner.LoadGitignore(path)
-	files, err := scanner.ScanFiles(path, gitignore)
+	gitCache := scanner.NewGitIgnoreCache(path)
+	files, err := scanner.ScanFiles(path, gitCache)
 	if err != nil {
 		return "(error scanning)"
 	}
@@ -355,10 +355,10 @@ func getProjectStats(path string) string {
 }
 
 func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input ImportersInput) (*mcp.CallToolResult, any, error) {
-	gitignore := scanner.LoadGitignore(input.Path)
+	gitCache := scanner.NewGitIgnoreCache(input.Path)
 	loader := scanner.NewGrammarLoader()
 
-	analyses, err := scanner.ScanForDeps(input.Path, gitignore, loader)
+	analyses, err := scanner.ScanForDeps(input.Path, gitCache, loader)
 	if err != nil {
 		return errorResult("Scan error: " + err.Error()), nil, nil
 	}

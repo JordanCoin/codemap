@@ -9,8 +9,6 @@ import (
 
 	"codemap/render"
 	"codemap/scanner"
-
-	ignore "github.com/sabhiram/go-gitignore"
 )
 
 func main() {
@@ -58,18 +56,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Load .gitignore if it exists
-	gitignore := scanner.LoadGitignore(root)
+	// Initialize gitignore cache (supports nested .gitignore files)
+	gitCache := scanner.NewGitIgnoreCache(root)
 
 	if *debugMode {
 		fmt.Fprintf(os.Stderr, "[debug] Root path: %s\n", root)
 		fmt.Fprintf(os.Stderr, "[debug] Absolute path: %s\n", absRoot)
-		gitignorePath := filepath.Join(root, ".gitignore")
-		if gitignore != nil {
-			fmt.Fprintf(os.Stderr, "[debug] Loaded .gitignore from: %s\n", gitignorePath)
-		} else {
-			fmt.Fprintf(os.Stderr, "[debug] No .gitignore found at: %s\n", gitignorePath)
-		}
+		fmt.Fprintf(os.Stderr, "[debug] GitIgnore cache initialized (supports nested .gitignore files)\n")
 	}
 
 	// Get changed files if --diff is specified
@@ -94,7 +87,7 @@ func main() {
 		if diffInfo != nil {
 			changedFiles = diffInfo.Changed
 		}
-		runDepsMode(absRoot, root, gitignore, *jsonMode, *diffRef, changedFiles)
+		runDepsMode(absRoot, root, gitCache, *jsonMode, *diffRef, changedFiles)
 		return
 	}
 
@@ -104,7 +97,7 @@ func main() {
 	}
 
 	// Scan files
-	files, err := scanner.ScanFiles(root, gitignore)
+	files, err := scanner.ScanFiles(root, gitCache)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error walking tree: %v\n", err)
 		os.Exit(1)
@@ -138,7 +131,7 @@ func main() {
 	}
 }
 
-func runDepsMode(absRoot, root string, gitignore *ignore.GitIgnore, jsonMode bool, diffRef string, changedFiles map[string]bool) {
+func runDepsMode(absRoot, root string, gitCache *scanner.GitIgnoreCache, jsonMode bool, diffRef string, changedFiles map[string]bool) {
 	loader := scanner.NewGrammarLoader()
 
 	// Check if grammars are available
@@ -156,7 +149,7 @@ func runDepsMode(absRoot, root string, gitignore *ignore.GitIgnore, jsonMode boo
 		os.Exit(1)
 	}
 
-	analyses, err := scanner.ScanForDeps(root, gitignore, loader)
+	analyses, err := scanner.ScanForDeps(root, gitCache, loader)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error scanning for deps: %v\n", err)
 		os.Exit(1)
