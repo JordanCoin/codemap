@@ -15,11 +15,9 @@ import (
 func titleCase(s string) string {
 	words := strings.Fields(s)
 	for i, w := range words {
-		if len(w) > 0 {
-			r := []rune(w)
-			r[0] = unicode.ToUpper(r[0])
-			words[i] = string(r)
-		}
+		r := []rune(w)
+		r[0] = unicode.ToUpper(r[0])
+		words[i] = string(r)
 	}
 	return strings.Join(words, " ")
 }
