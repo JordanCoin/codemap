@@ -3,7 +3,7 @@ package render
 import (
 	"fmt"
 	"math"
-	"math/rand"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,6 +15,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"golang.org/x/term"
 )
+
+// rng is a reproducible random generator for consistent skyline layouts
+var rng = rand.New(rand.NewPCG(42, 0))
 
 // Code extensions for skyline (what counts as "source code")
 var codeExtensions = map[string]bool{
@@ -149,7 +152,6 @@ func createBuildings(sorted []extAgg, width int) []building {
 		return minHeight + int(ratio*float64(maxHeight-minHeight))
 	}
 
-	rand.Seed(42)
 	var buildings []building
 
 	for idx, agg := range sorted {
@@ -166,7 +168,7 @@ func createBuildings(sorted []extAgg, width int) []building {
 			extLabel: extLabel,
 			count:    agg.count,
 			size:     agg.size,
-			gap:      []int{1, 2, 2, 3}[rand.Intn(4)],
+			gap:      []int{1, 2, 2, 3}[rng.IntN(4)],
 		})
 	}
 
@@ -245,7 +247,6 @@ func Skyline(project scanner.Project, animate bool) {
 func renderStatic(arranged []building, width, leftMargin, sceneLeft, sceneRight, sceneWidth int,
 	codeFiles []scanner.FileInfo, projectName string, sorted []extAgg) {
 
-	rand.Seed(42)
 
 	// Build grid
 	grid := make([][]rune, skyHeight+maxHeight+1)
@@ -259,10 +260,10 @@ func renderStatic(arranged []building, width, leftMargin, sceneLeft, sceneRight,
 	// Render sky
 	for row := 0; row < skyHeight; row++ {
 		for i := 0; i < sceneWidth/10; i++ {
-			col := rand.Intn(sceneRight-sceneLeft) + sceneLeft
+			col := rng.IntN(sceneRight-sceneLeft) + sceneLeft
 			if col >= 0 && col < width {
 				stars := []rune{'·', '·', '·', '✦', '*', '·'}
-				grid[row][col] = stars[rand.Intn(len(stars))]
+				grid[row][col] = stars[rng.IntN(len(stars))]
 			}
 		}
 	}
@@ -446,7 +447,7 @@ func (m animationModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			} else if m.frame == 10 || m.frame == 28 {
 				m.shootingStarActive = true
-				m.shootingStarRow = rand.Intn(3)
+				m.shootingStarRow = rng.IntN(3)
 				m.shootingStarCol = m.sceneLeft
 			}
 			if m.frame >= 40 {
@@ -471,9 +472,9 @@ func (m animationModel) View() string {
 
 		// Stars (random twinkling)
 		for _, pos := range m.starPositions {
-			if pos[0] == row && rand.Float32() > 0.25 {
+			if pos[0] == row && rng.Float32() > 0.25 {
 				stars := []rune{'·', '·', '✦', '*'}
-				line[pos[1]] = stars[rand.Intn(len(stars))]
+				line[pos[1]] = stars[rng.IntN(len(stars))]
 			}
 		}
 
@@ -600,13 +601,12 @@ func (m animationModel) View() string {
 func renderAnimated(arranged []building, width, leftMargin, sceneLeft, sceneRight, sceneWidth int,
 	codeFiles []scanner.FileInfo, projectName string, sorted []extAgg) {
 
-	rand.Seed(42)
 
 	// Generate star positions
 	var starPositions [][2]int
 	for row := 0; row < skyHeight; row++ {
 		for i := 0; i < sceneWidth/8; i++ {
-			col := rand.Intn(sceneRight-sceneLeft) + sceneLeft
+			col := rng.IntN(sceneRight-sceneLeft) + sceneLeft
 			if col >= 0 && col < width {
 				starPositions = append(starPositions, [2]int{row, col})
 			}

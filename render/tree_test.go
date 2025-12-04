@@ -42,7 +42,7 @@ func TestBuildTreeStructureEmpty(t *testing.T) {
 	root := buildTreeStructure(files)
 
 	if root == nil {
-		t.Error("Root should not be nil")
+		t.Fatal("Root should not be nil")
 	}
 	if len(root.children) != 0 {
 		t.Error("Empty file list should produce empty tree")

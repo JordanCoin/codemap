@@ -22,12 +22,11 @@ func TestIgnoredDirs(t *testing.T) {
 
 func TestLoadGitignore(t *testing.T) {
 	// Test loading from current directory (should have .gitignore)
-	gitignore := LoadGitignore("..")
-	// This test is conditional - may or may not have .gitignore
 	// Just ensure it doesn't panic
+	_ = LoadGitignore("..")
 
 	// Test loading from nonexistent directory
-	gitignore = LoadGitignore("/nonexistent/path")
+	gitignore := LoadGitignore("/nonexistent/path")
 	if gitignore != nil {
 		t.Error("Expected nil gitignore for nonexistent path")
 	}

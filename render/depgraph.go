@@ -6,9 +6,23 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 
 	"codemap/scanner"
 )
+
+// titleCase capitalizes the first letter of each word
+func titleCase(s string) string {
+	words := strings.Fields(s)
+	for i, w := range words {
+		if len(w) > 0 {
+			r := []rune(w)
+			r[0] = unicode.ToUpper(r[0])
+			words[i] = string(r)
+		}
+	}
+	return strings.Join(words, " ")
+}
 
 // Language compatibility groups
 var langGroups = map[string]string{
@@ -152,11 +166,11 @@ func getSystemName(dirPath string) string {
 		name := meaningful[0]
 		name = strings.ReplaceAll(name, "_", " ")
 		name = strings.ReplaceAll(name, "-", " ")
-		return strings.Title(name)
+		return titleCase(name)
 	}
 
 	if len(parts) > 0 {
-		return strings.Title(parts[len(parts)-1])
+		return titleCase(parts[len(parts)-1])
 	}
 	return "Root"
 }
@@ -242,7 +256,7 @@ func Depgraph(project scanner.DepsProject) {
 		if names, ok := extByLang[lang]; ok {
 			label := scanner.LangDisplay[lang].Short
 			if label == "" {
-				label = strings.Title(lang)
+				label = titleCase(lang)
 			}
 			line := fmt.Sprintf("%s: %s", label, strings.Join(names, ", "))
 			depLines = append(depLines, line)
