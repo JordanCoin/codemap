@@ -1,0 +1,13 @@
+id: lua-imports
+language: lua
+rule:
+  any:
+    - kind: function_call
+      pattern: require($$$)
+    - kind: function_call
+      pattern: dofile($$$)
+---
+id: lua-functions
+language: lua
+rule:
+  kind: function_declaration

@@ -1,0 +1,9 @@
+id: solidity-imports
+language: solidity
+rule:
+  kind: import_directive
+---
+id: solidity-functions
+language: solidity
+rule:
+  kind: function_definition

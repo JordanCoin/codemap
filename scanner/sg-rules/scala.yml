@@ -1,0 +1,9 @@
+id: scala-imports
+language: scala
+rule:
+  kind: import_declaration
+---
+id: scala-functions
+language: scala
+rule:
+  kind: function_definition

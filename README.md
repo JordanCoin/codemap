@@ -52,7 +52,7 @@ One command → a compact, structured “brain map” of your codebase that LLMs
 
 **codemap** is a fast Go binary with minimal dependencies:
 1.  **Scanner**: Instantly traverses your directory, respecting `.gitignore` and ignoring junk.
-2.  **Analyzer**: Uses [ast-grep](https://ast-grep.github.io/) to parse imports/functions across 14 languages.
+2.  **Analyzer**: Uses [ast-grep](https://ast-grep.github.io/) to parse imports/functions across 18 languages.
 3.  **Renderer**: Outputs a clean, dense "brain map" that is both human-readable and LLM-optimized.
 
 ## ⚡ Performance
@@ -208,7 +208,7 @@ Each building represents a language in your project — taller buildings mean mo
 
 ## Supported Languages
 
-codemap supports **14 languages** for dependency analysis (powered by [ast-grep](https://ast-grep.github.io/)):
+codemap supports **18 languages** for dependency analysis (powered by [ast-grep](https://ast-grep.github.io/)):
 
 | Language | Extensions | Import Detection |
 |----------|------------|------------------|
@@ -226,6 +226,10 @@ codemap supports **14 languages** for dependency analysis (powered by [ast-grep]
 | C# | .cs | using |
 | PHP | .php | use, require, include |
 | Bash | .sh, .bash | source, . |
+| Lua | .lua | require, dofile |
+| Scala | .scala, .sc | import |
+| Elixir | .ex, .exs | import, alias, use, require |
+| Solidity | .sol | import |
 
 ## Claude Integrations
 

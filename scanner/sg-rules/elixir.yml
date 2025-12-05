@@ -1,0 +1,21 @@
+id: elixir-imports
+language: elixir
+rule:
+  any:
+    - kind: call
+      pattern: import $$$
+    - kind: call
+      pattern: alias $$$
+    - kind: call
+      pattern: use $$$
+    - kind: call
+      pattern: require $$$
+---
+id: elixir-functions
+language: elixir
+rule:
+  any:
+    - kind: call
+      pattern: def $$$
+    - kind: call
+      pattern: defp $$$

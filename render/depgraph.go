@@ -38,6 +38,10 @@ var langGroups = map[string]string{
 	"kotlin":     "kotlin",
 	"csharp":     "csharp",
 	"php":        "php",
+	"lua":        "lua",
+	"scala":      "scala",
+	"elixir":     "elixir",
+	"solidity":   "solidity",
 }
 
 // Standard library names to filter out
@@ -246,7 +250,7 @@ func Depgraph(project scanner.DepsProject) {
 
 	// Format dep lines
 	var depLines []string
-	langOrder := []string{"go", "javascript", "python", "swift", "rust", "ruby", "bash", "kotlin", "csharp", "php"}
+	langOrder := []string{"go", "javascript", "python", "swift", "rust", "ruby", "bash", "kotlin", "csharp", "php", "lua", "scala", "elixir", "solidity"}
 
 	for _, lang := range langOrder {
 		if names, ok := extByLang[lang]; ok {

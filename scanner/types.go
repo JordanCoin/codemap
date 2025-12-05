@@ -66,6 +66,12 @@ var extToLang = map[string]string{
 	".kts":   "kotlin",
 	".cs":    "csharp",
 	".php":   "php",
+	".lua":   "lua",
+	".scala": "scala",
+	".sc":    "scala",
+	".ex":    "elixir",
+	".exs":   "elixir",
+	".sol":   "solidity",
 }
 
 // DetectLanguage returns the language name for a file path
@@ -90,6 +96,10 @@ var LangDisplay = map[string]string{
 	"kotlin":     "Kotlin",
 	"csharp":     "C#",
 	"php":        "PHP",
+	"lua":        "Lua",
+	"scala":      "Scala",
+	"elixir":     "Elixir",
+	"solidity":   "Solidity",
 }
 
 // dedupe removes duplicate strings from a slice
