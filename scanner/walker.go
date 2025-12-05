@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -195,64 +196,17 @@ func ScanFiles(root string, cache *GitIgnoreCache) ([]FileInfo, error) {
 	return files, err
 }
 
-// ScanForDeps walks the directory tree and analyzes files for dependencies.
-// Supports nested .gitignore files via GitIgnoreCache.
-func ScanForDeps(root string, cache *GitIgnoreCache, loader *GrammarLoader) ([]FileAnalysis, error) {
-	var analyses []FileAnalysis
-	absRoot, _ := filepath.Abs(root)
+// ScanForDeps uses ast-grep for batched dependency analysis.
+func ScanForDeps(root string) ([]FileAnalysis, error) {
+	scanner, err := NewAstGrepScanner()
+	if err != nil {
+		return nil, err
+	}
+	defer scanner.Close()
 
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
+	if !scanner.Available() {
+		return nil, fmt.Errorf("ast-grep (sg) not found in PATH")
+	}
 
-		name := info.Name()
-
-		// Fast path: skip hardcoded ignored dirs/files
-		if IgnoredDirs[name] {
-			if info.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		// Compute absolute path once for gitignore checks and relative path calculation
-		absPath, _ := filepath.Abs(path)
-
-		// For directories: load any .gitignore, then check if dir itself should be skipped
-		if info.IsDir() {
-			if cache != nil {
-				cache.tryLoadGitignore(absPath)
-				if cache.ShouldIgnore(absPath) {
-					return filepath.SkipDir
-				}
-			}
-			return nil
-		}
-
-		// For files: check gitignore
-		if cache != nil && cache.ShouldIgnore(absPath) {
-			return nil
-		}
-
-		// Only analyze supported languages
-		if DetectLanguage(path) == "" {
-			return nil
-		}
-
-		// Analyze file
-		analysis, err := loader.AnalyzeFile(path)
-		if err != nil || analysis == nil {
-			return nil
-		}
-
-		// Use relative path in output
-		relPath, _ := filepath.Rel(absRoot, absPath)
-		analysis.Path = relPath
-		analyses = append(analyses, *analysis)
-
-		return nil
-	})
-
-	return analyses, err
+	return scanner.ScanDirectory(root)
 }

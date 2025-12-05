@@ -87,7 +87,7 @@ func main() {
 		if diffInfo != nil {
 			changedFiles = diffInfo.Changed
 		}
-		runDepsMode(absRoot, root, gitCache, *jsonMode, *diffRef, changedFiles)
+		runDepsMode(absRoot, root, *jsonMode, *diffRef, changedFiles)
 		return
 	}
 
@@ -131,27 +131,14 @@ func main() {
 	}
 }
 
-func runDepsMode(absRoot, root string, gitCache *scanner.GitIgnoreCache, jsonMode bool, diffRef string, changedFiles map[string]bool) {
-	loader := scanner.NewGrammarLoader()
-
-	// Check if grammars are available
-	if !loader.HasGrammars() {
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "⚠️  No tree-sitter grammars found for --deps mode.")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "To enable dependency analysis, either:")
-		fmt.Fprintln(os.Stderr, "  • Install via Homebrew: brew install JordanCoin/tap/codemap")
-		fmt.Fprintln(os.Stderr, "  • Download release with grammars: https://github.com/JordanCoin/codemap/releases")
-		fmt.Fprintln(os.Stderr, "  • Build from source: make deps && go build")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Or set CODEMAP_GRAMMAR_DIR to your grammars directory.")
-		fmt.Fprintln(os.Stderr, "")
-		os.Exit(1)
-	}
-
-	analyses, err := scanner.ScanForDeps(root, gitCache, loader)
+func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFiles map[string]bool) {
+	analyses, err := scanner.ScanForDeps(root)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error scanning for deps: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "The --deps feature requires ast-grep. Install it with:")
+		fmt.Fprintln(os.Stderr, "  brew install ast-grep")
+		fmt.Fprintln(os.Stderr, "")
 		os.Exit(1)
 	}
 

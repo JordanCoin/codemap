@@ -1,0 +1,11 @@
+id: bash-imports
+language: bash
+rule:
+  any:
+    - pattern: source $FILE
+    - pattern: . $FILE
+---
+id: bash-functions
+language: bash
+rule:
+  kind: function_definition

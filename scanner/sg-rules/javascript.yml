@@ -1,0 +1,11 @@
+id: js-imports
+language: javascript
+rule:
+  kind: import_statement
+---
+id: js-functions
+language: javascript
+rule:
+  any:
+    - kind: function_declaration
+    - kind: method_definition

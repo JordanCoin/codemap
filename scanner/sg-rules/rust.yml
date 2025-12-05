@@ -1,0 +1,9 @@
+id: rust-imports
+language: rust
+rule:
+  kind: use_declaration
+---
+id: rust-functions
+language: rust
+rule:
+  kind: function_item

@@ -252,7 +252,7 @@ func Depgraph(project scanner.DepsProject) {
 
 	for _, lang := range langOrder {
 		if names, ok := extByLang[lang]; ok {
-			label := scanner.LangDisplay[lang].Short
+			label := scanner.LangDisplay[lang]
 			if label == "" {
 				label = titleCase(lang)
 			}

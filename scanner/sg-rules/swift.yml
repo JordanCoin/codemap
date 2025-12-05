@@ -1,0 +1,9 @@
+id: swift-imports
+language: swift
+rule:
+  kind: import_declaration
+---
+id: swift-functions
+language: swift
+rule:
+  kind: function_declaration

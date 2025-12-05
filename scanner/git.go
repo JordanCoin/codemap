@@ -2,7 +2,6 @@ package scanner
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -162,7 +161,7 @@ type ImpactInfo struct {
 }
 
 // AnalyzeImpact checks which changed files are imported by other files
-// Uses tree-sitter to extract actual imports for accuracy
+// Uses ast-grep to extract actual imports for accuracy
 func AnalyzeImpact(root string, changedFiles []FileInfo) []ImpactInfo {
 	if len(changedFiles) == 0 {
 		return nil
@@ -185,42 +184,23 @@ func AnalyzeImpact(root string, changedFiles []FileInfo) []ImpactInfo {
 		}
 	}
 
-	// Scan all files to get their imports using tree-sitter
-	loader := NewGrammarLoader()
+	// Scan all files to get their imports using ast-grep
+	analyses, err := ScanForDeps(root)
+	if err != nil {
+		return nil
+	}
+
 	usageCounts := make(map[string]int)
-
-	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-
-		// Skip ignored directories
-		if info.IsDir() {
-			if IgnoredDirs[info.Name()] {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		// Analyze file imports
-		analysis, err := loader.AnalyzeFile(path)
-		if err != nil || analysis == nil {
-			return nil
-		}
-
-		relPath, _ := filepath.Rel(root, path)
-
+	for _, analysis := range analyses {
 		// Check each import to see if it references a changed file
 		for _, imp := range analysis.Imports {
 			// Extract the last component of the import path
-			// e.g., "./components/Header" -> "Header"
-			// e.g., "codemap/scanner" -> "scanner"
 			impBase := filepath.Base(imp)
 			impBase = strings.TrimSuffix(impBase, filepath.Ext(impBase))
 
 			// Check if this import matches a changed file (by filename)
 			if changedPath, ok := changedBases[impBase]; ok {
-				if relPath != changedPath {
+				if analysis.Path != changedPath {
 					usageCounts[changedPath]++
 				}
 			}
@@ -228,14 +208,12 @@ func AnalyzeImpact(root string, changedFiles []FileInfo) []ImpactInfo {
 			// Also check if import matches a changed directory (Go packages)
 			if changedPath, ok := changedDirs[impBase]; ok {
 				changedDir := filepath.Dir(changedPath)
-				// Don't count imports from same directory
-				if filepath.Dir(relPath) != changedDir {
+				if filepath.Dir(analysis.Path) != changedDir {
 					usageCounts[changedDir+"/"]++
 				}
 			}
 		}
-		return nil
-	})
+	}
 
 	// Build impact info
 	var impacts []ImpactInfo

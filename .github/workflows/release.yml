@@ -44,35 +44,23 @@ jobs:
         env:
           BUMP_TYPE: ${{ inputs.bump }}
         run: |
-          # Get latest tag (or default to v0.0.0)
           LATEST=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
           echo "Latest tag: $LATEST"
 
-          # Parse version: v2.1.3 -> major=2, minor=1, patch=3
           VERSION="${LATEST#v}"
           MAJOR="${VERSION%%.*}"
           REST="${VERSION#*.}"
           MINOR="${REST%%.*}"
           PATCH="${REST#*.}"
 
-          # Handle 2-part versions like v2.0 -> v2.0.0
           if [ "$PATCH" = "$MINOR" ]; then
             PATCH="0"
           fi
 
           case "$BUMP_TYPE" in
-            major)
-              # 2.1.3 -> 3.0.0
-              NEW_TAG="v$((MAJOR + 1)).0.0"
-              ;;
-            minor)
-              # 2.1.3 -> 2.2.0
-              NEW_TAG="v${MAJOR}.$((MINOR + 1)).0"
-              ;;
-            patch)
-              # 2.1.3 -> 2.1.4
-              NEW_TAG="v${MAJOR}.${MINOR}.$((PATCH + 1))"
-              ;;
+            major) NEW_TAG="v$((MAJOR + 1)).0.0" ;;
+            minor) NEW_TAG="v${MAJOR}.$((MINOR + 1)).0" ;;
+            patch) NEW_TAG="v${MAJOR}.${MINOR}.$((PATCH + 1))" ;;
           esac
 
           echo "Bumping $LATEST -> $NEW_TAG ($BUMP_TYPE)"
@@ -86,394 +74,32 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag "$NEW_TAG"
           git push origin "$NEW_TAG"
-          echo "✓ Created and pushed $NEW_TAG"
+          echo "Created and pushed $NEW_TAG"
 
   # ============================================================
-  # Build: One job per platform (grammars + Go + archive)
-  # Waits for bump-version if it runs, otherwise starts immediately
+  # Release: Build and publish with GoReleaser
   # ============================================================
-  build-darwin-amd64:
-    needs: [bump-version]
-    if: always() && !cancelled()
-    runs-on: macos-13
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.bump-version.outputs.new_tag || github.ref }}
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Build grammars
-        run: |
-          chmod +x scripts/build-grammars.sh
-          ./scripts/build-grammars.sh darwin
-
-      - name: Build Go binary
-        env:
-          CGO_ENABLED: "1"
-        run: go build -trimpath -ldflags="-s -w" -o codemap .
-
-      - name: Create archive
-        run: |
-          mkdir -p dist/codemap-darwin-amd64
-          cp codemap dist/codemap-darwin-amd64/
-          cp -r grammars dist/codemap-darwin-amd64/
-          cp -r scanner/queries dist/codemap-darwin-amd64/
-          cp README.md dist/codemap-darwin-amd64/ 2>/dev/null || true
-          cd dist && tar -czvf codemap-darwin-amd64.tar.gz codemap-darwin-amd64
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: codemap-darwin-amd64
-          path: dist/codemap-darwin-amd64.tar.gz
-
-  build-darwin-arm64:
-    needs: [bump-version]
-    if: always() && !cancelled()
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.bump-version.outputs.new_tag || github.ref }}
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Build grammars
-        run: |
-          chmod +x scripts/build-grammars.sh
-          ./scripts/build-grammars.sh darwin
-
-      - name: Build Go binary
-        env:
-          CGO_ENABLED: "1"
-        run: go build -trimpath -ldflags="-s -w" -o codemap .
-
-      - name: Create archive
-        run: |
-          mkdir -p dist/codemap-darwin-arm64
-          cp codemap dist/codemap-darwin-arm64/
-          cp -r grammars dist/codemap-darwin-arm64/
-          cp -r scanner/queries dist/codemap-darwin-arm64/
-          cp README.md dist/codemap-darwin-arm64/ 2>/dev/null || true
-          cd dist && tar -czvf codemap-darwin-arm64.tar.gz codemap-darwin-arm64
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: codemap-darwin-arm64
-          path: dist/codemap-darwin-arm64.tar.gz
-
-  build-linux-amd64:
+  goreleaser:
     needs: [bump-version]
     if: always() && !cancelled()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           ref: ${{ needs.bump-version.outputs.new_tag || github.ref }}
+
       - uses: actions/setup-go@v5
         with:
           go-version: '1.21'
 
-      - name: Build grammars
-        run: |
-          chmod +x scripts/build-grammars.sh
-          ./scripts/build-grammars.sh linux
-
-      - name: Build Go binary
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '--snapshot --clean' || '--clean' }}
         env:
-          CGO_ENABLED: "1"
-        run: go build -trimpath -ldflags="-s -w" -o codemap .
-
-      - name: Create archive
-        run: |
-          mkdir -p dist/codemap-linux-amd64
-          cp codemap dist/codemap-linux-amd64/
-          cp -r grammars dist/codemap-linux-amd64/
-          cp -r scanner/queries dist/codemap-linux-amd64/
-          cp README.md dist/codemap-linux-amd64/ 2>/dev/null || true
-          cd dist && tar -czvf codemap-linux-amd64.tar.gz codemap-linux-amd64
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: codemap-linux-amd64
-          path: dist/codemap-linux-amd64.tar.gz
-
-  build-linux-arm64:
-    needs: [bump-version]
-    if: always() && !cancelled()
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.bump-version.outputs.new_tag || github.ref }}
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Install cross-compiler
-        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-
-      - name: Build grammars
-        env:
-          CC: aarch64-linux-gnu-gcc
-          CXX: aarch64-linux-gnu-g++
-        run: |
-          chmod +x scripts/build-grammars.sh
-          ./scripts/build-grammars.sh linux
-
-      - name: Build Go binary
-        env:
-          CGO_ENABLED: "1"
-          GOOS: linux
-          GOARCH: arm64
-          CC: aarch64-linux-gnu-gcc
-        run: go build -trimpath -ldflags="-s -w" -o codemap .
-
-      - name: Create archive
-        run: |
-          mkdir -p dist/codemap-linux-arm64
-          cp codemap dist/codemap-linux-arm64/
-          cp -r grammars dist/codemap-linux-arm64/
-          cp -r scanner/queries dist/codemap-linux-arm64/
-          cp README.md dist/codemap-linux-arm64/ 2>/dev/null || true
-          cd dist && tar -czvf codemap-linux-arm64.tar.gz codemap-linux-arm64
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: codemap-linux-arm64
-          path: dist/codemap-linux-arm64.tar.gz
-
-  build-windows-amd64:
-    needs: [bump-version]
-    if: always() && !cancelled()
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.bump-version.outputs.new_tag || github.ref }}
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Set up Zig
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.11.0
-
-      - name: Build grammars
-        run: |
-          chmod +x scripts/build-grammars.sh
-          CC="zig cc -target x86_64-windows-gnu" \
-          CXX="zig c++ -target x86_64-windows-gnu" \
-          ./scripts/build-grammars.sh windows
-
-      - name: Build Go binary
-        run: |
-          mkdir -p "$HOME/zigcc"
-          echo '#!/bin/sh' > "$HOME/zigcc/zcc"
-          echo 'zig cc -target x86_64-windows-gnu "$@"' >> "$HOME/zigcc/zcc"
-          chmod +x "$HOME/zigcc/zcc"
-
-          CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC="$HOME/zigcc/zcc" \
-          go build -trimpath -ldflags="-s -w" -o codemap.exe .
-
-      - name: Create archive
-        run: |
-          mkdir -p dist/codemap-windows-amd64
-          cp codemap.exe dist/codemap-windows-amd64/
-          cp -r grammars dist/codemap-windows-amd64/
-          cp -r scanner/queries dist/codemap-windows-amd64/
-          cp README.md dist/codemap-windows-amd64/ 2>/dev/null || true
-          cd dist && zip -r codemap-windows-amd64.zip codemap-windows-amd64
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: codemap-windows-amd64
-          path: dist/codemap-windows-amd64.zip
-
-  # ============================================================
-  # Publish: Create GitHub Release + Update Package Managers
-  # ============================================================
-  publish:
-    needs: [bump-version, build-darwin-amd64, build-darwin-arm64, build-linux-amd64, build-linux-arm64, build-windows-amd64]
-    runs-on: ubuntu-latest
-    if: always() && !cancelled() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false))
-    outputs:
-      tag_name: ${{ steps.tag.outputs.tag_name }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Determine tag name
-        id: tag
-        run: |
-          if [ -n "${{ needs.bump-version.outputs.new_tag }}" ]; then
-            echo "tag_name=${{ needs.bump-version.outputs.new_tag }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag_name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: List artifacts
-        run: find artifacts -type f
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ steps.tag.outputs.tag_name }}
-          files: |
-            artifacts/**/*.tar.gz
-            artifacts/**/*.zip
-          generate_release_notes: true
-
-  update-homebrew:
-    needs: [publish]
-    if: always() && needs.publish.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Wait for release assets
-        run: sleep 30
-
-      - name: Get version and hashes
-        id: info
-        env:
-          TAG_NAME: ${{ needs.publish.outputs.tag_name }}
-        run: |
-          VERSION="${TAG_NAME#v}"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-          curl -sL "https://github.com/JordanCoin/codemap/releases/download/${TAG_NAME}/codemap-darwin-arm64.tar.gz" -o darwin-arm64.tar.gz
-          SHA_ARM64=$(shasum -a 256 darwin-arm64.tar.gz | cut -d' ' -f1)
-          echo "sha_arm64=$SHA_ARM64" >> "$GITHUB_OUTPUT"
-
-          curl -sL "https://github.com/JordanCoin/codemap/releases/download/${TAG_NAME}/codemap-darwin-amd64.tar.gz" -o darwin-amd64.tar.gz
-          SHA_AMD64=$(shasum -a 256 darwin-amd64.tar.gz | cut -d' ' -f1)
-          echo "sha_amd64=$SHA_AMD64" >> "$GITHUB_OUTPUT"
-
-      - name: Update Homebrew tap
-        uses: actions/checkout@v4
-        with:
-          repository: JordanCoin/homebrew-tap
-          token: ${{ secrets.SCOOP_TOKEN }}
-          path: homebrew-tap
-
-      - name: Update formula
-        env:
-          VERSION: ${{ steps.info.outputs.version }}
-          SHA_ARM64: ${{ steps.info.outputs.sha_arm64 }}
-          SHA_AMD64: ${{ steps.info.outputs.sha_amd64 }}
-          TAG_NAME: ${{ needs.publish.outputs.tag_name }}
-        run: |
-          cd homebrew-tap
-          cat > codemap.rb << EOF
-          class Codemap < Formula
-            desc "Generate a brain map of your codebase for LLM context"
-            homepage "https://github.com/JordanCoin/codemap"
-            version "${VERSION}"
-            license "MIT"
-
-            on_macos do
-              if Hardware::CPU.arm?
-                url "https://github.com/JordanCoin/codemap/releases/download/${TAG_NAME}/codemap-darwin-arm64.tar.gz"
-                sha256 "${SHA_ARM64}"
-              else
-                url "https://github.com/JordanCoin/codemap/releases/download/${TAG_NAME}/codemap-darwin-amd64.tar.gz"
-                sha256 "${SHA_AMD64}"
-              end
-            end
-
-            def install
-              bin.install "codemap"
-              (libexec/"grammars").install Dir["grammars/*"] if Dir.exist?("grammars")
-              (libexec/"queries").install Dir["queries/*"] if Dir.exist?("queries")
-            end
-
-            def caveats
-              <<~EOS
-                Tree-sitter grammars installed to:
-                  #{libexec}/grammars
-
-                For --deps mode, codemap will find them automatically.
-              EOS
-            end
-
-            test do
-              system "#{bin}/codemap", "--help"
-            end
-          end
-          EOF
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add codemap.rb
-          git commit -m "Update codemap to ${VERSION}"
-          git push
-
-  update-scoop:
-    needs: [publish]
-    if: always() && needs.publish.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Wait for release assets
-        run: sleep 30
-
-      - name: Get version and hash
-        id: info
-        env:
-          TAG_NAME: ${{ needs.publish.outputs.tag_name }}
-        run: |
-          VERSION="${TAG_NAME#v}"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-          curl -sL "https://github.com/JordanCoin/codemap/releases/download/${TAG_NAME}/codemap-windows-amd64.zip" -o codemap.zip
-          SHA256=$(sha256sum codemap.zip | cut -d' ' -f1)
-          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
-
-      - name: Update Scoop bucket
-        uses: actions/checkout@v4
-        with:
-          repository: JordanCoin/scoop-codemap
-          token: ${{ secrets.SCOOP_TOKEN }}
-          path: scoop-bucket
-
-      - name: Update manifest
-        env:
-          VERSION: ${{ steps.info.outputs.version }}
-          SHA256: ${{ steps.info.outputs.sha256 }}
-          TAG_NAME: ${{ needs.publish.outputs.tag_name }}
-        run: |
-          cd scoop-bucket
-          cat > codemap.json << EOF
-          {
-            "version": "${VERSION}",
-            "description": "Generate a brain map of your codebase for LLM context",
-            "homepage": "https://github.com/JordanCoin/codemap",
-            "license": "MIT",
-            "architecture": {
-              "64bit": {
-                "url": "https://github.com/JordanCoin/codemap/releases/download/${TAG_NAME}/codemap-windows-amd64.zip",
-                "hash": "${SHA256}"
-              }
-            },
-            "bin": "codemap-windows-amd64\\\\codemap.exe",
-            "checkver": "github",
-            "autoupdate": {
-              "architecture": {
-                "64bit": {
-                  "url": "https://github.com/JordanCoin/codemap/releases/download/v\$version/codemap-windows-amd64.zip"
-                }
-              }
-            }
-          }
-          EOF
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add codemap.json
-          git commit -m "Update codemap to ${VERSION}"
-          git push
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.SCOOP_TOKEN }}
+          SCOOP_TOKEN: ${{ secrets.SCOOP_TOKEN }}

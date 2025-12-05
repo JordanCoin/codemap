@@ -1,11 +1,6 @@
 venv/
 __pycache__/
 
-# Grammar build artifacts
-scanner/.grammar-build/
-scanner/grammars/
-
 # Built binaries
 codemap
 codemap-mcp
-scanner/codemap-scanner

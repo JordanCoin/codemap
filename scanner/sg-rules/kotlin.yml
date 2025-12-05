@@ -1,0 +1,9 @@
+id: kotlin-imports
+language: kotlin
+rule:
+  kind: import_header
+---
+id: kotlin-functions
+language: kotlin
+rule:
+  kind: function_declaration

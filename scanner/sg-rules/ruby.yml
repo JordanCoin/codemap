@@ -1,0 +1,13 @@
+id: ruby-imports
+language: ruby
+rule:
+  any:
+    - kind: call
+      pattern: require $$$
+    - kind: call
+      pattern: require_relative $$$
+---
+id: ruby-functions
+language: ruby
+rule:
+  kind: method

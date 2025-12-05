@@ -1,0 +1,9 @@
+id: go-imports
+language: go
+rule:
+  kind: import_spec
+---
+id: go-functions
+language: go
+rule:
+  kind: function_declaration

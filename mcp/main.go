@@ -144,10 +144,7 @@ func handleGetDependencies(ctx context.Context, req *mcp.CallToolRequest, input 
 		return errorResult("Invalid path: " + err.Error()), nil, nil
 	}
 
-	gitCache := scanner.NewGitIgnoreCache(input.Path)
-	loader := scanner.NewGrammarLoader()
-
-	analyses, err := scanner.ScanForDeps(input.Path, gitCache, loader)
+	analyses, err := scanner.ScanForDeps(input.Path)
 	if err != nil {
 		return errorResult("Scan error: " + err.Error()), nil, nil
 	}
@@ -348,17 +345,14 @@ func getProjectStats(path string) string {
 		isGit = " [git]"
 	}
 
-	if info, ok := scanner.LangDisplay[primaryLang]; ok {
-		return fmt.Sprintf("(%d files, %s%s)", len(files), info.Full, isGit)
+	if lang, ok := scanner.LangDisplay[primaryLang]; ok {
+		return fmt.Sprintf("(%d files, %s%s)", len(files), lang, isGit)
 	}
 	return fmt.Sprintf("(%d files%s)", len(files), isGit)
 }
 
 func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input ImportersInput) (*mcp.CallToolResult, any, error) {
-	gitCache := scanner.NewGitIgnoreCache(input.Path)
-	loader := scanner.NewGrammarLoader()
-
-	analyses, err := scanner.ScanForDeps(input.Path, gitCache, loader)
+	analyses, err := scanner.ScanForDeps(input.Path)
 	if err != nil {
 		return errorResult("Scan error: " + err.Error()), nil, nil
 	}

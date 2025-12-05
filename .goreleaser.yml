@@ -1,0 +1,84 @@
+version: 2
+
+project_name: codemap
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: codemap
+    main: .
+    binary: codemap
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - README.md
+      - LICENSE*
+      - src: scanner/sg-rules/*
+        dst: sg-rules
+
+checksum:
+  name_template: 'checksums.txt'
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+
+release:
+  github:
+    owner: JordanCoin
+    name: codemap
+
+brews:
+  - repository:
+      owner: JordanCoin
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: .
+    homepage: https://github.com/JordanCoin/codemap
+    description: Generate a brain map of your codebase for LLM context
+    license: MIT
+    dependencies:
+      - name: ast-grep
+    install: |
+      bin.install "codemap"
+      (pkgshare/"sg-rules").install Dir["sg-rules/*.yml"] if Dir.exist?("sg-rules")
+    caveats: |
+      The --deps mode uses ast-grep for code analysis.
+    test: |
+      system "#{bin}/codemap", "--help"
+
+scoops:
+  - repository:
+      owner: JordanCoin
+      name: scoop-codemap
+      token: "{{ .Env.SCOOP_TOKEN }}"
+    homepage: https://github.com/JordanCoin/codemap
+    description: Generate a brain map of your codebase for LLM context
+    license: MIT

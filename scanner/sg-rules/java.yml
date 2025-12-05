@@ -1,0 +1,9 @@
+id: java-imports
+language: java
+rule:
+  kind: import_declaration
+---
+id: java-functions
+language: java
+rule:
+  kind: method_declaration

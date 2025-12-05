@@ -1,0 +1,9 @@
+id: cpp-imports
+language: cpp
+rule:
+  kind: preproc_include
+---
+id: cpp-functions
+language: cpp
+rule:
+  kind: function_definition

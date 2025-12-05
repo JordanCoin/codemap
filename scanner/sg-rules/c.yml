@@ -1,0 +1,9 @@
+id: c-imports
+language: c
+rule:
+  kind: preproc_include
+---
+id: c-functions
+language: c
+rule:
+  kind: function_definition

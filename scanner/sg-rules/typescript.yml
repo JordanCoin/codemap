@@ -1,0 +1,11 @@
+id: ts-imports
+language: typescript
+rule:
+  kind: import_statement
+---
+id: ts-functions
+language: typescript
+rule:
+  any:
+    - kind: function_declaration
+    - kind: method_definition

@@ -1,0 +1,11 @@
+id: py-imports
+language: python
+rule:
+  any:
+    - kind: import_statement
+    - kind: import_from_statement
+---
+id: py-functions
+language: python
+rule:
+  kind: function_definition
