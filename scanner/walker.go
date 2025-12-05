@@ -1,19 +1,22 @@
 package scanner
 
 import (
+	"bufio"
 	"os"
 	"path/filepath"
+	"strings"
 
 	ignore "github.com/sabhiram/go-gitignore"
 )
 
 // GitIgnoreCache manages nested .gitignore files throughout a project.
-// It lazily loads gitignore files as directories are visited and efficiently
-// checks paths against all applicable rules.
+// It lazily loads gitignore files as directories are visited and checks
+// paths against all applicable rules from root to leaf.
 type GitIgnoreCache struct {
-	root    string
-	cache   map[string]*ignore.GitIgnore // abs dir path -> compiled gitignore (only dirs WITH gitignores)
-	visited map[string]struct{}          // tracks visited dirs to avoid re-checking for .gitignore
+	root     string
+	cache    map[string]*ignore.GitIgnore // abs dir path -> compiled gitignore (only dirs WITH gitignores)
+	patterns map[string][]string          // abs dir path -> raw pattern lines
+	visited  map[string]struct{}          // tracks visited dirs to avoid re-checking for .gitignore
 }
 
 // NewGitIgnoreCache creates a cache that supports nested .gitignore files.
@@ -21,9 +24,10 @@ type GitIgnoreCache struct {
 func NewGitIgnoreCache(root string) *GitIgnoreCache {
 	absRoot, _ := filepath.Abs(root)
 	c := &GitIgnoreCache{
-		root:    absRoot,
-		cache:   make(map[string]*ignore.GitIgnore),
-		visited: make(map[string]struct{}),
+		root:     absRoot,
+		cache:    make(map[string]*ignore.GitIgnore),
+		patterns: make(map[string][]string),
+		visited:  make(map[string]struct{}),
 	}
 	c.tryLoadGitignore(absRoot)
 	return c
@@ -38,44 +42,59 @@ func (c *GitIgnoreCache) tryLoadGitignore(dir string) {
 	c.visited[dir] = struct{}{}
 
 	gitignorePath := filepath.Join(dir, ".gitignore")
-	if gi, err := ignore.CompileIgnoreFile(gitignorePath); err == nil {
-		c.cache[dir] = gi
+	f, err := os.Open(gitignorePath)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" && !strings.HasPrefix(line, "#") {
+			lines = append(lines, line)
+		}
+	}
+
+	if len(lines) > 0 {
+		c.patterns[dir] = lines
+		c.cache[dir] = ignore.CompileIgnoreLines(lines...)
 	}
 }
 
 // ShouldIgnore checks if a path should be ignored based on all applicable .gitignore files.
-// absPath must be an absolute path within the cache's root.
+// Git evaluates rules from root to leaf, with later rules overriding earlier ones.
 func (c *GitIgnoreCache) ShouldIgnore(absPath string) bool {
-	// Fast path: no gitignores loaded
 	if len(c.cache) == 0 {
 		return false
 	}
 
-	// Walk up from file's parent to root, checking each cached gitignore
-	dir := filepath.Dir(absPath)
-	for {
-		if gi, ok := c.cache[dir]; ok {
-			relToGitignore, _ := filepath.Rel(dir, absPath)
-			if gi.MatchesPath(relToGitignore) {
-				return true
-			}
-		}
-
-		// Stop at root
-		if dir == c.root {
+	// Collect directories from leaf to root
+	var dirs []string
+	for dir := filepath.Dir(absPath); ; dir = filepath.Dir(dir) {
+		dirs = append(dirs, dir)
+		if dir == c.root || dir == filepath.Dir(dir) {
 			break
 		}
-
-		// Move up one level
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			// Filesystem root, shouldn't happen but guard against infinite loop
-			break
-		}
-		dir = parent
 	}
 
-	return false
+	// Combine all patterns from root to leaf into one gitignore.
+	// This allows negation patterns in child .gitignore to override parent rules.
+	var allPatterns []string
+	for i := len(dirs) - 1; i >= 0; i-- {
+		if patterns, ok := c.patterns[dirs[i]]; ok {
+			allPatterns = append(allPatterns, patterns...)
+		}
+	}
+
+	if len(allPatterns) == 0 {
+		return false
+	}
+
+	combined := ignore.CompileIgnoreLines(allPatterns...)
+	relPath, _ := filepath.Rel(c.root, absPath)
+	return combined.MatchesPath(relPath)
 }
 
 // IgnoredDirs are directories to skip during scanning

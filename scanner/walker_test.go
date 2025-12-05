@@ -465,6 +465,47 @@ func TestNestedGitignoreMonorepo(t *testing.T) {
 	}
 }
 
+// TestNestedGitignoreUnignore verifies child .gitignore can use ! to un-ignore parent rules.
+func TestNestedGitignoreUnignore(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.MkdirAll(filepath.Join(tmpDir, "sub"), 0755)
+
+	os.WriteFile(filepath.Join(tmpDir, ".gitignore"), []byte("*.log\n"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "sub", ".gitignore"), []byte("!keep.log\n"), 0644)
+
+	os.WriteFile(filepath.Join(tmpDir, "debug.log"), []byte("debug"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "sub", "app.go"), []byte("package app"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "sub", "keep.log"), []byte("important"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "sub", "other.log"), []byte("other"), 0644)
+
+	cache := NewGitIgnoreCache(tmpDir)
+	files, err := ScanFiles(tmpDir, cache)
+	if err != nil {
+		t.Fatalf("ScanFiles failed: %v", err)
+	}
+
+	foundPaths := make(map[string]bool)
+	for _, f := range files {
+		foundPaths[f.Path] = true
+	}
+
+	if !foundPaths[filepath.Join("sub", "app.go")] {
+		t.Error("Should include sub/app.go")
+	}
+	if !foundPaths[filepath.Join("sub", "keep.log")] {
+		t.Error("Should include sub/keep.log (un-ignored by !keep.log)")
+	}
+	if foundPaths["debug.log"] {
+		t.Error("Should ignore debug.log")
+	}
+	if foundPaths[filepath.Join("sub", "other.log")] {
+		t.Error("Should ignore sub/other.log")
+	}
+	if len(files) != 4 {
+		t.Errorf("Expected 4 files, got %d: %v", len(files), foundPaths)
+	}
+}
+
 // TestNestedGitignoreDirectoryIgnore verifies that directory patterns
 // skip the entire directory (not just pattern-match files inside)
 func TestNestedGitignoreDirectoryIgnore(t *testing.T) {
