@@ -82,3 +82,5 @@ scoops:
     homepage: https://github.com/JordanCoin/codemap
     description: Generate a brain map of your codebase for LLM context
     license: MIT
+    depends:
+      - ast-grep
