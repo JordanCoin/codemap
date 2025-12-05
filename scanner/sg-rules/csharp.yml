@@ -1,0 +1,9 @@
+id: csharp-imports
+language: csharp
+rule:
+  kind: using_directive
+---
+id: csharp-functions
+language: csharp
+rule:
+  kind: method_declaration

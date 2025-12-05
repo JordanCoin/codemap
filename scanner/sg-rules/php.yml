@@ -1,0 +1,14 @@
+id: php-imports
+language: php
+rule:
+  any:
+    - kind: namespace_use_declaration
+    - kind: require_expression
+    - kind: require_once_expression
+    - kind: include_expression
+    - kind: include_once_expression
+---
+id: php-functions
+language: php
+rule:
+  kind: function_definition

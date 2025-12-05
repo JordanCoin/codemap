@@ -64,6 +64,8 @@ var extToLang = map[string]string{
 	".bash":  "bash",
 	".kt":    "kotlin",
 	".kts":   "kotlin",
+	".cs":    "csharp",
+	".php":   "php",
 }
 
 // DetectLanguage returns the language name for a file path
@@ -86,6 +88,8 @@ var LangDisplay = map[string]string{
 	"swift":      "Swift",
 	"bash":       "Bash",
 	"kotlin":     "Kotlin",
+	"csharp":     "C#",
+	"php":        "PHP",
 }
 
 // dedupe removes duplicate strings from a slice

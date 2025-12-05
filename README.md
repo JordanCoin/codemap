@@ -50,9 +50,9 @@ One command → a compact, structured “brain map” of your codebase that LLMs
 
 ## ⚙️ How It Works
 
-**codemap** is a single Go binary — fast and dependency-free:
+**codemap** is a fast Go binary with minimal dependencies:
 1.  **Scanner**: Instantly traverses your directory, respecting `.gitignore` and ignoring junk.
-2.  **Analyzer**: Uses tree-sitter grammars to parse imports/functions across 14 languages.
+2.  **Analyzer**: Uses [ast-grep](https://ast-grep.github.io/) to parse imports/functions across 14 languages.
 3.  **Renderer**: Outputs a clean, dense "brain map" that is both human-readable and LLM-optimized.
 
 ## ⚡ Performance
@@ -77,7 +77,7 @@ scoop install codemap
 
 ### Download Binary
 
-Pre-built binaries with full `--deps` support are available for all platforms on the [Releases page](https://github.com/JordanCoin/codemap/releases):
+Pre-built binaries are available for all platforms on the [Releases page](https://github.com/JordanCoin/codemap/releases):
 
 - **macOS**: `codemap-darwin-amd64.tar.gz` (Intel) or `codemap-darwin-arm64.tar.gz` (Apple Silicon)
 - **Linux**: `codemap-linux-amd64.tar.gz` or `codemap-linux-arm64.tar.gz`
@@ -87,17 +87,9 @@ Pre-built binaries with full `--deps` support are available for all platforms on
 # Example: download and install on Linux/macOS
 curl -L https://github.com/JordanCoin/codemap/releases/latest/download/codemap-linux-amd64.tar.gz | tar xz
 sudo mv codemap-linux-amd64/codemap /usr/local/bin/
-sudo mv codemap-linux-amd64/grammars /usr/local/lib/codemap/
 ```
 
-```powershell
-# Example: Windows (PowerShell)
-Invoke-WebRequest -Uri "https://github.com/JordanCoin/codemap/releases/latest/download/codemap-windows-amd64.zip" -OutFile codemap.zip
-Expand-Archive codemap.zip -DestinationPath C:\codemap
-# Add C:\codemap\codemap-windows-amd64 to your PATH
-```
-
-Each release includes the binary, tree-sitter grammars, and query files for full `--deps` support.
+> **Note:** The `--deps` feature requires [ast-grep](https://ast-grep.github.io/). Install via `brew install ast-grep`, `pip install ast-grep-cli`, or `cargo install ast-grep`.
 
 ### From source
 
@@ -161,7 +153,7 @@ myproject
 - 📊 **Change summary**: Total files and lines changed vs main branch
 - ✨ **New vs modified**: `(new)` for untracked files, `✎` for modified
 - 📈 **Line counts**: `(+45 -12)` shows additions and deletions per file
-- ⚠️ **Impact analysis**: Which changed files are imported by others (uses tree-sitter)
+- ⚠️ **Impact analysis**: Which changed files are imported by others
 
 Compare against a different branch:
 ```bash
@@ -216,7 +208,7 @@ Each building represents a language in your project — taller buildings mean mo
 
 ## Supported Languages
 
-codemap supports **14 languages** for dependency analysis:
+codemap supports **14 languages** for dependency analysis (powered by [ast-grep](https://ast-grep.github.io/)):
 
 | Language | Extensions | Import Detection |
 |----------|------------|------------------|
@@ -229,13 +221,11 @@ codemap supports **14 languages** for dependency analysis:
 | C | .c, .h | #include |
 | C++ | .cpp, .hpp, .cc | #include |
 | Java | .java | import |
+| Swift | .swift | import |
 | Kotlin | .kt, .kts | import |
 | C# | .cs | using |
 | PHP | .php | use, require, include |
-| R | .r, .R | library, require, source |
 | Bash | .sh, .bash | source, . |
-
-> **Note:** Swift and Dart support is temporarily unavailable via Homebrew due to upstream tree-sitter grammars lacking tagged releases. These languages work when building from source with `make build-grammars`. We're tracking this and will restore support once stable releases are available.
 
 ## Claude Integrations
 
