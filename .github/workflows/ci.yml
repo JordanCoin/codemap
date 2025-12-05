@@ -24,6 +24,15 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
 
+      - name: Install ast-grep
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            pip install ast-grep-cli
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            brew install ast-grep
+          fi
+        shell: bash
+
       - name: Download dependencies
         run: go mod download
 
@@ -137,6 +146,9 @@ jobs:
         with:
           go-version: '1.21'
 
+      - name: Install ast-grep
+        run: pip install ast-grep-cli
+
       - name: Build binary
         run: go build -o codemap .
 
@@ -169,6 +181,12 @@ jobs:
         run: |
           # This should either show changes or say "No files changed"
           ./codemap --diff . || true
+
+      - name: Test deps mode
+        run: |
+          output=$(./codemap --deps .)
+          echo "$output"
+          echo "$output" | grep -q "Dependency Flow"
 
       - name: Test with subdirectory
         run: |
