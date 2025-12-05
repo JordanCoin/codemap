@@ -317,6 +317,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 - [x] **Dependency Flow** (`codemap --deps`) — function/import analysis with 14 language support
 - [x] **Claude Code Skill** — automatic invocation based on user questions
 - [x] **MCP Server** — deep integration with 7 tools for codebase analysis
+- [ ] **Enhanced Analysis** — entry points, key types, exported function counts for richer LLM context
 
 ## Contributing
 
