@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,20 @@ import (
 )
 
 func main() {
+	// Handle "watch" subcommand before flag parsing
+	if len(os.Args) >= 2 && os.Args[1] == "watch" {
+		subCmd := "status"
+		if len(os.Args) >= 3 {
+			subCmd = os.Args[2]
+		}
+		root, _ := os.Getwd()
+		if len(os.Args) >= 4 {
+			root = os.Args[3]
+		}
+		runWatchSubcommand(subCmd, root)
+		return
+	}
+
 	// Handle "hook" subcommand before flag parsing
 	if len(os.Args) >= 2 && os.Args[1] == "hook" {
 		if len(os.Args) < 3 {
@@ -299,4 +314,96 @@ func runImportersMode(root, file string) {
 		}
 		fmt.Printf("   Imports %d hub(s): %s\n", len(hubImports), strings.Join(hubImports, ", "))
 	}
+}
+
+func runWatchSubcommand(subCmd, root string) {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	switch subCmd {
+	case "start":
+		if watch.IsRunning(absRoot) {
+			fmt.Println("Watch daemon already running")
+			return
+		}
+		// Fork a background daemon
+		exe, err := os.Executable()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		cmd := exec.Command(exe, "watch", "daemon", absRoot)
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		cmd.Stdin = nil
+		// Detach from parent process group
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := cmd.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error starting daemon: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Watch daemon started (pid %d)\n", cmd.Process.Pid)
+
+	case "daemon":
+		// Internal: run as the actual daemon process
+		runDaemon(absRoot)
+
+	case "stop":
+		if !watch.IsRunning(absRoot) {
+			fmt.Println("Watch daemon not running")
+			return
+		}
+		if err := watch.Stop(absRoot); err != nil {
+			fmt.Fprintf(os.Stderr, "Error stopping daemon: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("Watch daemon stopped")
+
+	case "status":
+		if watch.IsRunning(absRoot) {
+			state := watch.ReadState(absRoot)
+			if state != nil {
+				fmt.Printf("Watch daemon running\n")
+				fmt.Printf("  Files: %d\n", state.FileCount)
+				fmt.Printf("  Hubs: %d\n", len(state.Hubs))
+				fmt.Printf("  Updated: %s\n", state.UpdatedAt.Format("15:04:05"))
+			} else {
+				fmt.Println("Watch daemon running (no state)")
+			}
+		} else {
+			fmt.Println("Watch daemon not running")
+		}
+
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown watch command: %s\n", subCmd)
+		fmt.Fprintln(os.Stderr, "Usage: codemap watch [start|stop|status]")
+		os.Exit(1)
+	}
+}
+
+func runDaemon(root string) {
+	daemon, err := watch.NewDaemon(root, false)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := daemon.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error starting watch: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Write PID file
+	watch.WritePID(root)
+
+	// Wait for stop signal (SIGTERM or state file removal)
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
+	<-sigChan
+
+	daemon.Stop()
+	watch.RemovePID(root)
 }

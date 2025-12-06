@@ -13,7 +13,39 @@ import (
 	"time"
 
 	"codemap/scanner"
+	"codemap/watch"
 )
+
+// hubInfo contains hub file information from daemon or fresh scan
+type hubInfo struct {
+	Hubs      []string
+	Importers map[string][]string
+	Imports   map[string][]string
+}
+
+// getHubInfo returns hub info from daemon state (fast) or fresh scan (slow)
+func getHubInfo(root string) *hubInfo {
+	// Try daemon state first (instant)
+	if state := watch.ReadState(root); state != nil {
+		return &hubInfo{
+			Hubs:      state.Hubs,
+			Importers: state.Importers,
+			Imports:   state.Imports,
+		}
+	}
+
+	// Fall back to fresh scan (slower)
+	fg, err := scanner.BuildFileGraph(root)
+	if err != nil {
+		return nil
+	}
+
+	return &hubInfo{
+		Hubs:      fg.HubFiles(),
+		Importers: fg.Importers,
+		Imports:   fg.Imports,
+	}
+}
 
 // RunHook executes the named hook with the given project root
 func RunHook(hookName, root string) error {
@@ -35,12 +67,17 @@ func RunHook(hookName, root string) error {
 	}
 }
 
-// hookSessionStart shows project structure and hub file warnings
+// hookSessionStart shows project structure, starts daemon, and shows hub warnings
 func hookSessionStart(root string) error {
+	// Start the watch daemon in background (if not already running)
+	if !watch.IsRunning(root) {
+		startDaemon(root)
+	}
+
 	fmt.Println("📍 Project Context:")
 	fmt.Println()
 
-	// Show project structure (limited to 40 lines)
+	// Show project structure
 	gitCache := scanner.NewGitIgnoreCache(root)
 	files, err := scanner.ScanFiles(root, gitCache)
 	if err != nil {
@@ -83,25 +120,37 @@ func hookSessionStart(root string) error {
 	fmt.Println()
 	fmt.Println()
 
-	// Show hub files
-	fg, err := scanner.BuildFileGraph(root)
-	if err == nil {
-		hubs := fg.HubFiles()
-		if len(hubs) > 0 {
-			fmt.Println("⚠️  High-impact files (hubs):")
-			for i, hub := range hubs {
-				if i >= 10 {
-					fmt.Printf("   ... and %d more\n", len(hubs)-10)
-					break
-				}
-				importers := len(fg.Importers[hub])
-				fmt.Printf("   ⚠️  HUB FILE: %s (imported by %d files)\n", hub, importers)
+	// Show hub files (from daemon if running, otherwise fresh scan)
+	info := getHubInfo(root)
+	if info != nil && len(info.Hubs) > 0 {
+		fmt.Println("⚠️  High-impact files (hubs):")
+		for i, hub := range info.Hubs {
+			if i >= 10 {
+				fmt.Printf("   ... and %d more\n", len(info.Hubs)-10)
+				break
 			}
+			importers := len(info.Importers[hub])
+			fmt.Printf("   ⚠️  HUB FILE: %s (imported by %d files)\n", hub, importers)
 		}
 	}
 
 	_ = project // silence unused warning
 	return nil
+}
+
+// startDaemon launches the watch daemon in background
+func startDaemon(root string) {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	cmd := exec.Command(exe, "watch", "start", root)
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	cmd.Stdin = nil
+	cmd.Start()
+	// Give daemon a moment to initialize
+	time.Sleep(200 * time.Millisecond)
 }
 
 // hookPreEdit warns before editing hub files (reads JSON from stdin)
@@ -160,14 +209,14 @@ func hookPromptSubmit(root string) error {
 	fmt.Println()
 	fmt.Println("📍 Context for mentioned files:")
 
-	fg, err := scanner.BuildFileGraph(root)
-	if err != nil {
+	info := getHubInfo(root)
+	if info == nil {
 		return nil
 	}
 
 	for _, file := range filesMentioned {
 		// Try to find the file in the graph
-		if importers := fg.Importers[file]; len(importers) > 0 {
+		if importers := info.Importers[file]; len(importers) > 0 {
 			if len(importers) >= 3 {
 				fmt.Printf("   ⚠️  %s is a HUB (imported by %d files)\n", file, len(importers))
 			} else {
@@ -187,13 +236,8 @@ func hookPreCompact(root string) error {
 		return err
 	}
 
-	fg, err := scanner.BuildFileGraph(root)
-	if err != nil {
-		return nil // silently skip if deps unavailable
-	}
-
-	hubs := fg.HubFiles()
-	if len(hubs) == 0 {
+	info := getHubInfo(root)
+	if info == nil || len(info.Hubs) == 0 {
 		return nil
 	}
 
@@ -206,84 +250,140 @@ func hookPreCompact(root string) error {
 	defer f.Close()
 
 	fmt.Fprintf(f, "# Hub files at %s\n", time.Now().Format(time.RFC3339))
-	for _, hub := range hubs {
+	for _, hub := range info.Hubs {
 		fmt.Fprintln(f, hub)
 	}
 
 	fmt.Println()
 	fmt.Printf("💾 Saved hub state to .codemap/hubs.txt before compact\n")
-	fmt.Printf("   (%d hub files tracked)\n", len(hubs))
+	fmt.Printf("   (%d hub files tracked)\n", len(info.Hubs))
 	fmt.Println()
 
 	return nil
 }
 
-// hookSessionStop summarizes what changed in the session
+// hookSessionStop summarizes what changed in the session and stops the daemon
 func hookSessionStop(root string) error {
+	// Read state BEFORE stopping daemon (includes timeline)
+	state := watch.ReadState(root)
+
+	// Stop the watch daemon
+	stopDaemon(root)
+
 	fmt.Println()
 	fmt.Println("📊 Session Summary")
 	fmt.Println("==================")
 
-	// Get modified files from git
-	cmd := exec.Command("git", "diff", "--name-only")
-	cmd.Dir = root
-	output, err := cmd.Output()
-	if err != nil {
-		return nil // not a git repo or no changes
-	}
+	// Show timeline from daemon events (if available)
+	if state != nil && len(state.RecentEvents) > 0 {
+		fmt.Println()
+		fmt.Println("Edit Timeline:")
 
-	modified := strings.TrimSpace(string(output))
-	if modified == "" {
-		fmt.Println("No files modified.")
-		return nil
-	}
+		// Calculate stats
+		totalDelta := 0
+		fileEdits := make(map[string]int) // file -> edit count
+		hubEdits := 0
 
-	fg, _ := scanner.BuildFileGraph(root) // best effort
-
-	fmt.Println()
-	fmt.Println("Files modified:")
-	scanner := bufio.NewScanner(strings.NewReader(modified))
-	count := 0
-	for scanner.Scan() {
-		file := scanner.Text()
-		count++
-		if count > 10 {
-			fmt.Printf("  ... and more\n")
-			break
+		for _, e := range state.RecentEvents {
+			totalDelta += e.Delta
+			fileEdits[e.Path]++
+			if e.IsHub {
+				hubEdits++
+			}
 		}
 
-		if fg != nil && fg.IsHub(file) {
-			importers := len(fg.Importers[file])
-			fmt.Printf("  ⚠️  %s (HUB - imported by %d files)\n", file, importers)
-		} else {
-			fmt.Printf("  • %s\n", file)
+		// Show last 10 events
+		events := state.RecentEvents
+		start := 0
+		if len(events) > 10 {
+			start = len(events) - 10
+			fmt.Printf("  ... %d earlier events\n", start)
 		}
-	}
 
-	// Show new untracked files
-	cmd = exec.Command("git", "ls-files", "--others", "--exclude-standard")
-	cmd.Dir = root
-	output, err = cmd.Output()
-	if err == nil {
-		untracked := strings.TrimSpace(string(output))
-		if untracked != "" {
-			fmt.Println()
-			fmt.Println("New files created:")
-			scanner := bufio.NewScanner(strings.NewReader(untracked))
-			count := 0
-			for scanner.Scan() {
-				count++
-				if count > 5 {
-					fmt.Printf("  ... and more\n")
-					break
-				}
-				fmt.Printf("  + %s\n", scanner.Text())
+		for _, e := range events[start:] {
+			deltaStr := ""
+			if e.Delta > 0 {
+				deltaStr = fmt.Sprintf(" +%d", e.Delta)
+			} else if e.Delta < 0 {
+				deltaStr = fmt.Sprintf(" %d", e.Delta)
+			}
+
+			hubStr := ""
+			if e.IsHub {
+				hubStr = " ⚠️HUB"
+			}
+
+			fmt.Printf("  %s %-6s %s%s%s\n",
+				e.Time.Format("15:04:05"),
+				e.Op,
+				e.Path,
+				deltaStr,
+				hubStr,
+			)
+		}
+
+		// Show stats
+		fmt.Println()
+		fmt.Printf("Stats: %d events, %d files touched, %+d lines",
+			len(state.RecentEvents), len(fileEdits), totalDelta)
+		if hubEdits > 0 {
+			fmt.Printf(", %d hub edits", hubEdits)
+		}
+		fmt.Println()
+	} else {
+		// Fallback to git diff if no daemon events
+		gitCmd := exec.Command("git", "diff", "--name-only")
+		gitCmd.Dir = root
+		output, err := gitCmd.Output()
+		if err != nil {
+			fmt.Println("No changes tracked.")
+			return nil
+		}
+
+		modified := strings.TrimSpace(string(output))
+		if modified == "" {
+			fmt.Println("No files modified.")
+			return nil
+		}
+
+		info := getHubInfo(root)
+
+		fmt.Println()
+		fmt.Println("Files modified:")
+		lineScanner := bufio.NewScanner(strings.NewReader(modified))
+		count := 0
+		for lineScanner.Scan() {
+			file := lineScanner.Text()
+			count++
+			if count > 10 {
+				fmt.Printf("  ... and more\n")
+				break
+			}
+
+			if info != nil && info.isHub(file) {
+				importers := len(info.Importers[file])
+				fmt.Printf("  ⚠️  %s (HUB - imported by %d files)\n", file, importers)
+			} else {
+				fmt.Printf("  • %s\n", file)
 			}
 		}
 	}
 
 	fmt.Println()
 	return nil
+}
+
+// stopDaemon stops the watch daemon
+func stopDaemon(root string) {
+	if !watch.IsRunning(root) {
+		return
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	cmd := exec.Command(exe, "watch", "stop", root)
+	cmd.Run()
 }
 
 // extractFilePathFromStdin reads JSON from stdin and extracts file_path
@@ -314,8 +414,8 @@ func extractFilePathFromStdin() (string, error) {
 
 // checkFileImporters checks if a file is a hub and shows its importers
 func checkFileImporters(root, filePath string) error {
-	fg, err := scanner.BuildFileGraph(root)
-	if err != nil {
+	info := getHubInfo(root)
+	if info == nil {
 		return nil // silently skip if deps unavailable
 	}
 
@@ -326,7 +426,7 @@ func checkFileImporters(root, filePath string) error {
 		}
 	}
 
-	importers := fg.Importers[filePath]
+	importers := info.Importers[filePath]
 	if len(importers) >= 3 {
 		fmt.Println()
 		fmt.Printf("⚠️  HUB FILE: %s\n", filePath)
@@ -349,10 +449,10 @@ func checkFileImporters(root, filePath string) error {
 	}
 
 	// Also check if this file imports any hubs
-	imports := fg.Imports[filePath]
+	imports := info.Imports[filePath]
 	var hubImports []string
 	for _, imp := range imports {
-		if fg.IsHub(imp) {
+		if info.isHub(imp) {
 			hubImports = append(hubImports, imp)
 		}
 	}
@@ -362,4 +462,9 @@ func checkFileImporters(root, filePath string) error {
 	}
 
 	return nil
+}
+
+// isHub checks if a file is a hub (has 3+ importers)
+func (h *hubInfo) isHub(path string) bool {
+	return len(h.Importers[path]) >= 3
 }
