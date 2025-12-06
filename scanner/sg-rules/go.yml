@@ -1,7 +1,10 @@
 id: go-imports
 language: go
 rule:
-  kind: import_spec
+  pattern: '"$PATH"'
+  kind: interpreted_string_literal
+  inside:
+    kind: import_spec
 ---
 id: go-functions
 language: go

@@ -1,7 +1,10 @@
 id: ts-imports
 language: typescript
 rule:
-  kind: import_statement
+  any:
+    - pattern: import $$$_ from "$PATH"
+    - pattern: import "$PATH"
+    - pattern: require("$PATH")
 ---
 id: ts-functions
 language: typescript

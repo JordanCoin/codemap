@@ -1,7 +1,10 @@
 id: rust-imports
 language: rust
 rule:
-  kind: use_declaration
+  any:
+    - pattern: use $PATH;
+    - pattern: use $PATH::$$$_;
+    - pattern: mod $PATH;
 ---
 id: rust-functions
 language: rust

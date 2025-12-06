@@ -1,0 +1,15 @@
+2025-12-06 14:46:15 | WRITE  | src/auth/auth.go                         |   19 |     +4 | dirty
+2025-12-06 14:46:16 | CREATE | src/auth/tokens.go                       |    0 |        | 
+2025-12-06 14:46:16 | WRITE  | src/api/server.go                        |   12 |     +1 | dirty
+2025-12-06 14:46:17 | WRITE  | src/api/server.go                        |   13 |     +1 | dirty
+2025-12-06 14:46:17 | WRITE  | src/api/server.go                        |   14 |     +1 | dirty
+2025-12-06 14:46:17 | WRITE  | src/api/server.go                        |   15 |     +1 | dirty
+2025-12-06 14:46:18 | WRITE  | src/api/server.go                        |   16 |     +1 | dirty
+2025-12-06 14:46:18 | WRITE  | src/utils/helpers.go                     |   19 |     +4 | dirty
+2025-12-06 14:46:19 | CREATE | src/utils/.!94219!helpers.go             |   21 |    +21 | 
+2025-12-06 14:46:19 | REMOVE | src/utils/helpers.go                     |    0 |    -19 | 
+2025-12-06 14:46:19 | REMOVE | src/utils/helpers.go                     |    0 |        | 
+2025-12-06 14:46:20 | CREATE | src/api/middleware.go                    |    0 |        | 
+2025-12-06 14:46:20 | WRITE  | src/api/middleware.go                    |   13 |    +13 | 
+2025-12-06 14:46:20 | CREATE | tests/api_test.go                        |    0 |        | 
+2025-12-06 14:46:21 | WRITE  | tests/auth_test.go                       |   13 |     +6 | dirty

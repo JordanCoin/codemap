@@ -1,7 +1,10 @@
 id: js-imports
 language: javascript
 rule:
-  kind: import_statement
+  any:
+    - pattern: import $$$_ from "$PATH"
+    - pattern: import "$PATH"
+    - pattern: require("$PATH")
 ---
 id: js-functions
 language: javascript

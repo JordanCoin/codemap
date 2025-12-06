@@ -22,7 +22,12 @@ type ScanMatch struct {
 			Column int `json:"column"`
 		} `json:"start"`
 	} `json:"range"`
-	Text string `json:"text"`
+	Text          string `json:"text"`
+	MetaVariables struct {
+		Single map[string]struct {
+			Text string `json:"text"`
+		} `json:"single"`
+	} `json:"metaVariables"`
 }
 
 // AstGrepScanner uses ast-grep with YAML rules for code analysis
@@ -120,8 +125,13 @@ func (s *AstGrepScanner) ScanDirectory(root string) ([]FileAnalysis, error) {
 		}
 
 		if strings.HasSuffix(m.RuleID, "-imports") {
-			// Extract module path from import text
-			mod := extractImportPath(m.Text)
+			// Use metaVariable PATH if available, otherwise fall back to text extraction
+			var mod string
+			if pathVar, ok := m.MetaVariables.Single["PATH"]; ok && pathVar.Text != "" {
+				mod = pathVar.Text
+			} else {
+				mod = extractImportPath(m.Text)
+			}
 			if mod != "" {
 				fileMap[relPath].Imports = append(fileMap[relPath].Imports, mod)
 			}

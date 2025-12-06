@@ -4,6 +4,7 @@ go 1.24.0
 
 require (
 	github.com/charmbracelet/bubbletea v1.3.10
+	github.com/fsnotify/fsnotify v1.9.0
 	github.com/modelcontextprotocol/go-sdk v1.1.0
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
 	golang.org/x/term v0.37.0

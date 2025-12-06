@@ -9,12 +9,22 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"codemap/render"
 	"codemap/scanner"
+	"codemap/watch"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+// Global watcher registry - tracks active watchers per project
+var (
+	watchers   = make(map[string]*watch.Daemon)
+	watchersMu sync.RWMutex
 )
 
 // Input types for tools
@@ -40,6 +50,15 @@ type ImportersInput struct {
 type ListProjectsInput struct {
 	Path    string `json:"path" jsonschema:"Parent directory containing projects (e.g. /Users/name/Code or ~/Code)"`
 	Pattern string `json:"pattern,omitempty" jsonschema:"Optional filter to match project names (case-insensitive substring)"`
+}
+
+type WatchInput struct {
+	Path string `json:"path" jsonschema:"Path to the project directory to watch"`
+}
+
+type WatchActivityInput struct {
+	Path    string `json:"path" jsonschema:"Path to the project directory"`
+	Minutes int    `json:"minutes,omitempty" jsonschema:"Look back this many minutes (default: 30)"`
 }
 
 func main() {
@@ -90,6 +109,40 @@ func main() {
 		Description: "List project directories under a parent path. Use this to discover projects when you only know the general location (e.g., ~/Code) but not the exact folder name. Optionally filter by pattern to find specific projects. Returns directory names with file counts and primary language.",
 	}, handleListProjects)
 
+	// === LIVE WATCH TOOLS ===
+
+	// Tool: start_watch - Start watching a project
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "start_watch",
+		Description: "Start live file watching for a project. Tracks file changes in real-time with timestamps, line deltas, and git status. The watcher runs in background - use get_activity to see what's happening.",
+	}, handleStartWatch)
+
+	// Tool: stop_watch - Stop watching a project
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "stop_watch",
+		Description: "Stop the live file watcher for a project.",
+	}, handleStopWatch)
+
+	// Tool: get_activity - Get recent coding activity
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_activity",
+		Description: "Get recent coding activity for a watched project. Shows what files were edited, when, and how much changed. Use this to understand what the user has been working on. Returns hot files, recent changes, and session summary.",
+	}, handleGetActivity)
+
+	// === FILE GRAPH TOOLS ===
+
+	// Tool: get_hubs - Get critical hub files
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hubs",
+		Description: "Get all hub files in a project (files imported by 3+ other files). These are the critical files where changes have the most impact. Use this before making changes to understand what's important.",
+	}, handleGetHubs)
+
+	// Tool: get_file_context - Get full context for a file
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_file_context",
+		Description: "Get complete dependency context for a specific file: what it imports, what imports it, whether it's a hub, and all connected files. Use this before editing a file to understand its role in the codebase.",
+	}, handleGetFileContext)
+
 	// Run server on stdio
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Printf("Server error: %v", err)
@@ -134,6 +187,26 @@ func handleGetStructure(ctx context.Context, req *mcp.CallToolRequest, input Pat
 	output := captureOutput(func() {
 		render.Tree(project)
 	})
+
+	// Add hub file summary
+	fg, err := scanner.BuildFileGraph(input.Path)
+	if err == nil {
+		hubs := fg.HubFiles()
+		if len(hubs) > 0 {
+			output += "\n⚠️  HUB FILES (high-impact, 3+ dependents):\n"
+			// Sort by importer count
+			sort.Slice(hubs, func(i, j int) bool {
+				return len(fg.Importers[hubs[i]]) > len(fg.Importers[hubs[j]])
+			})
+			for i, hub := range hubs {
+				if i >= 5 {
+					output += fmt.Sprintf("   ... and %d more hubs\n", len(hubs)-5)
+					break
+				}
+				output += fmt.Sprintf("   %s (%d importers)\n", hub, len(fg.Importers[hub]))
+			}
+		}
+	}
 
 	return textResult(output), nil, nil
 }
@@ -237,11 +310,26 @@ func handleStatus(ctx context.Context, req *mcp.CallToolRequest, input EmptyInpu
 	cwd, _ := os.Getwd()
 	home := os.Getenv("HOME")
 
-	return textResult(fmt.Sprintf(`codemap MCP server v2.0.0
+	// Check active watchers
+	watchersMu.RLock()
+	activeWatchers := len(watchers)
+	var watchedPaths []string
+	for path := range watchers {
+		watchedPaths = append(watchedPaths, path)
+	}
+	watchersMu.RUnlock()
+
+	watchStatus := "none"
+	if activeWatchers > 0 {
+		watchStatus = fmt.Sprintf("%d active: %s", activeWatchers, strings.Join(watchedPaths, ", "))
+	}
+
+	return textResult(fmt.Sprintf(`codemap MCP server v2.1.0
 Status: connected
 Local filesystem access: enabled
 Working directory: %s
 Home directory: %s
+Active watchers: %s
 
 Available tools:
   list_projects    - Discover projects in a directory
@@ -249,7 +337,12 @@ Available tools:
   get_dependencies - Import/function analysis
   get_diff         - Changed files vs branch
   find_file        - Search by filename
-  get_importers    - Find what imports a file`, cwd, home)), nil, nil
+  get_importers    - Find what imports a file
+
+Live watch tools:
+  start_watch      - Start watching a project for changes
+  stop_watch       - Stop watching a project
+  get_activity     - See recent coding activity (hot files, edits, timeline)`, cwd, home, watchStatus)), nil, nil
 }
 
 func handleListProjects(ctx context.Context, req *mcp.CallToolRequest, input ListProjectsInput) (*mcp.CallToolResult, any, error) {
@@ -352,39 +445,23 @@ func getProjectStats(path string) string {
 }
 
 func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input ImportersInput) (*mcp.CallToolResult, any, error) {
-	analyses, err := scanner.ScanForDeps(input.Path)
+	fg, err := scanner.BuildFileGraph(input.Path)
 	if err != nil {
-		return errorResult("Scan error: " + err.Error()), nil, nil
+		return errorResult("Failed to build file graph: " + err.Error()), nil, nil
 	}
 
-	targetBase := filepath.Base(input.File)
-	targetNoExt := strings.TrimSuffix(targetBase, filepath.Ext(targetBase))
-	targetDir := filepath.Dir(input.File)
-
-	var importers []string
-	for _, a := range analyses {
-		// Skip files in the same directory (same package in Go)
-		if filepath.Dir(a.Path) == targetDir {
-			continue
-		}
-		for _, imp := range a.Imports {
-			impBase := filepath.Base(imp)
-			impNoExt := strings.TrimSuffix(impBase, filepath.Ext(impBase))
-			// Match by filename, name without ext, full path, or package/directory
-			if impBase == targetBase || impNoExt == targetNoExt ||
-				strings.HasSuffix(imp, input.File) ||
-				strings.HasSuffix(imp, targetDir) || imp == targetDir {
-				importers = append(importers, a.Path)
-				break
-			}
-		}
-	}
-
+	importers := fg.Importers[input.File]
 	if len(importers) == 0 {
 		return textResult("No files import '" + input.File + "'"), nil, nil
 	}
 
-	return textResult(fmt.Sprintf("%d files import '%s':\n%s", len(importers), input.File, strings.Join(importers, "\n"))), nil, nil
+	isHub := len(importers) >= 3
+	hubNote := ""
+	if isHub {
+		hubNote = " ⚠️ HUB FILE"
+	}
+
+	return textResult(fmt.Sprintf("%d files import '%s':%s\n%s", len(importers), input.File, hubNote, strings.Join(importers, "\n"))), nil, nil
 }
 
 // ANSI escape code pattern
@@ -409,4 +486,337 @@ func captureOutput(f func()) string {
 	var buf bytes.Buffer
 	buf.ReadFrom(r)
 	return stripANSI(buf.String())
+}
+
+// === WATCH HANDLERS ===
+
+func handleStartWatch(ctx context.Context, req *mcp.CallToolRequest, input WatchInput) (*mcp.CallToolResult, any, error) {
+	path := input.Path
+	if strings.HasPrefix(path, "~/") {
+		home := os.Getenv("HOME")
+		path = filepath.Join(home, path[2:])
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return errorResult("Invalid path: " + err.Error()), nil, nil
+	}
+
+	watchersMu.Lock()
+	defer watchersMu.Unlock()
+
+	// Check if already watching
+	if _, exists := watchers[absPath]; exists {
+		return textResult(fmt.Sprintf("Already watching: %s\nUse get_activity to see recent changes.", absPath)), nil, nil
+	}
+
+	// Start new watcher
+	daemon, err := watch.NewDaemon(absPath, false)
+	if err != nil {
+		return errorResult("Failed to create watcher: " + err.Error()), nil, nil
+	}
+
+	if err := daemon.Start(); err != nil {
+		return errorResult("Failed to start watcher: " + err.Error()), nil, nil
+	}
+
+	watchers[absPath] = daemon
+
+	return textResult(fmt.Sprintf(`Live watcher started for: %s
+Tracking %d files
+
+The watcher is now running in background. I can now see:
+- When you save files
+- How many lines changed (+/-)
+- Which files are "hot" (frequently edited)
+- What's uncommitted (dirty)
+
+Use get_activity to see what you've been working on.`, absPath, daemon.FileCount())), nil, nil
+}
+
+func handleStopWatch(ctx context.Context, req *mcp.CallToolRequest, input WatchInput) (*mcp.CallToolResult, any, error) {
+	path := input.Path
+	if strings.HasPrefix(path, "~/") {
+		home := os.Getenv("HOME")
+		path = filepath.Join(home, path[2:])
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return errorResult("Invalid path: " + err.Error()), nil, nil
+	}
+
+	watchersMu.Lock()
+	defer watchersMu.Unlock()
+
+	daemon, exists := watchers[absPath]
+	if !exists {
+		return textResult("No active watcher for: " + absPath), nil, nil
+	}
+
+	// Get final stats before stopping
+	events := daemon.GetEvents(0)
+	daemon.Stop()
+	delete(watchers, absPath)
+
+	return textResult(fmt.Sprintf("Watcher stopped for: %s\nTotal events captured: %d", absPath, len(events))), nil, nil
+}
+
+func handleGetActivity(ctx context.Context, req *mcp.CallToolRequest, input WatchActivityInput) (*mcp.CallToolResult, any, error) {
+	path := input.Path
+	if strings.HasPrefix(path, "~/") {
+		home := os.Getenv("HOME")
+		path = filepath.Join(home, path[2:])
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return errorResult("Invalid path: " + err.Error()), nil, nil
+	}
+
+	watchersMu.RLock()
+	daemon, exists := watchers[absPath]
+	watchersMu.RUnlock()
+
+	if !exists {
+		return errorResult(fmt.Sprintf("No active watcher for: %s\nUse start_watch first.", absPath)), nil, nil
+	}
+
+	minutes := input.Minutes
+	if minutes <= 0 {
+		minutes = 30
+	}
+
+	events := daemon.GetEvents(0)
+	cutoff := time.Now().Add(-time.Duration(minutes) * time.Minute)
+
+	// Filter to recent events
+	var recent []watch.Event
+	for _, e := range events {
+		if e.Time.After(cutoff) {
+			recent = append(recent, e)
+		}
+	}
+
+	if len(recent) == 0 {
+		return textResult(fmt.Sprintf(`No activity in the last %d minutes.
+
+Watcher is running for: %s
+Files tracked: %d
+Total events since start: %d
+
+The user may be:
+- Reading code
+- Thinking/planning
+- Working in a different project
+- Taking a break`, minutes, absPath, daemon.FileCount(), len(events))), nil, nil
+	}
+
+	// Aggregate by file
+	type fileStats struct {
+		edits     int
+		netDelta  int
+		lastEdit  time.Time
+		dirty     bool
+	}
+	byFile := make(map[string]*fileStats)
+
+	for _, e := range recent {
+		if e.Op == "WRITE" || e.Op == "CREATE" {
+			stats, exists := byFile[e.Path]
+			if !exists {
+				stats = &fileStats{}
+				byFile[e.Path] = stats
+			}
+			stats.edits++
+			stats.netDelta += e.Delta
+			if e.Time.After(stats.lastEdit) {
+				stats.lastEdit = e.Time
+			}
+			if e.Dirty {
+				stats.dirty = true
+			}
+		}
+	}
+
+	// Sort files by edit count (hot files first)
+	type fileSummary struct {
+		path     string
+		edits    int
+		delta    int
+		lastEdit time.Time
+		dirty    bool
+	}
+	var summaries []fileSummary
+	for path, stats := range byFile {
+		summaries = append(summaries, fileSummary{
+			path:     path,
+			edits:    stats.edits,
+			delta:    stats.netDelta,
+			lastEdit: stats.lastEdit,
+			dirty:    stats.dirty,
+		})
+	}
+	sort.Slice(summaries, func(i, j int) bool {
+		return summaries[i].edits > summaries[j].edits
+	})
+
+	// Build output
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("=== Activity: Last %d minutes ===\n", minutes))
+	sb.WriteString(fmt.Sprintf("Project: %s\n\n", absPath))
+
+	// Hot files
+	sb.WriteString("HOT FILES (by edit count):\n")
+	for i, s := range summaries {
+		if i >= 10 {
+			sb.WriteString(fmt.Sprintf("  ... and %d more files\n", len(summaries)-10))
+			break
+		}
+		deltaStr := ""
+		if s.delta > 0 {
+			deltaStr = fmt.Sprintf("+%d", s.delta)
+		} else if s.delta < 0 {
+			deltaStr = fmt.Sprintf("%d", s.delta)
+		}
+		dirtyStr := ""
+		if s.dirty {
+			dirtyStr = " [uncommitted]"
+		}
+		sb.WriteString(fmt.Sprintf("  %-40s %2d edits  %6s lines%s\n",
+			s.path, s.edits, deltaStr, dirtyStr))
+	}
+
+	// Session summary
+	totalEdits := 0
+	totalDelta := 0
+	dirtyCount := 0
+	for _, s := range summaries {
+		totalEdits += s.edits
+		totalDelta += s.delta
+		if s.dirty {
+			dirtyCount++
+		}
+	}
+
+	sb.WriteString("\n")
+	sb.WriteString("SESSION SUMMARY:\n")
+	sb.WriteString(fmt.Sprintf("  Files touched:  %d\n", len(summaries)))
+	sb.WriteString(fmt.Sprintf("  Total edits:    %d\n", totalEdits))
+	deltaStr := ""
+	if totalDelta >= 0 {
+		deltaStr = fmt.Sprintf("+%d", totalDelta)
+	} else {
+		deltaStr = fmt.Sprintf("%d", totalDelta)
+	}
+	sb.WriteString(fmt.Sprintf("  Net line change: %s\n", deltaStr))
+	sb.WriteString(fmt.Sprintf("  Uncommitted:    %d files\n", dirtyCount))
+
+	// Recent timeline (last 5 events)
+	sb.WriteString("\nRECENT TIMELINE:\n")
+	start := len(recent) - 5
+	if start < 0 {
+		start = 0
+	}
+	for _, e := range recent[start:] {
+		deltaStr := ""
+		if e.Delta != 0 {
+			if e.Delta > 0 {
+				deltaStr = fmt.Sprintf(" (+%d)", e.Delta)
+			} else {
+				deltaStr = fmt.Sprintf(" (%d)", e.Delta)
+			}
+		}
+		sb.WriteString(fmt.Sprintf("  %s  %-6s  %s%s\n",
+			e.Time.Format("15:04:05"), e.Op, e.Path, deltaStr))
+	}
+
+	return textResult(sb.String()), nil, nil
+}
+
+// === FILE GRAPH HANDLERS ===
+
+func handleGetHubs(ctx context.Context, req *mcp.CallToolRequest, input PathInput) (*mcp.CallToolResult, any, error) {
+	fg, err := scanner.BuildFileGraph(input.Path)
+	if err != nil {
+		return errorResult("Failed to build file graph: " + err.Error()), nil, nil
+	}
+
+	hubs := fg.HubFiles()
+	if len(hubs) == 0 {
+		return textResult("No hub files found (no files with 3+ importers)."), nil, nil
+	}
+
+	// Sort by importer count
+	sort.Slice(hubs, func(i, j int) bool {
+		return len(fg.Importers[hubs[i]]) > len(fg.Importers[hubs[j]])
+	})
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("=== Hub Files (%d total) ===\n", len(hubs)))
+	sb.WriteString("These files are imported by 3+ other files. Changes here have wide impact.\n\n")
+
+	for _, hub := range hubs {
+		importers := fg.Importers[hub]
+		sb.WriteString(fmt.Sprintf("  %s (%d importers)\n", hub, len(importers)))
+		// Show first few importers
+		for i, imp := range importers {
+			if i >= 3 {
+				sb.WriteString(fmt.Sprintf("      ... and %d more\n", len(importers)-3))
+				break
+			}
+			sb.WriteString(fmt.Sprintf("      <- %s\n", imp))
+		}
+	}
+
+	return textResult(sb.String()), nil, nil
+}
+
+func handleGetFileContext(ctx context.Context, req *mcp.CallToolRequest, input ImportersInput) (*mcp.CallToolResult, any, error) {
+	fg, err := scanner.BuildFileGraph(input.Path)
+	if err != nil {
+		return errorResult("Failed to build file graph: " + err.Error()), nil, nil
+	}
+
+	file := input.File
+	imports := fg.Imports[file]
+	importers := fg.Importers[file]
+	isHub := fg.IsHub(file)
+	connected := fg.ConnectedFiles(file)
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("=== File Context: %s ===\n\n", file))
+
+	// Hub status
+	if isHub {
+		sb.WriteString(fmt.Sprintf("⚠️  HUB FILE - %d files depend on this\n", len(importers)))
+		sb.WriteString("    Changes here affect many parts of the codebase.\n\n")
+	}
+
+	// What this file imports
+	if len(imports) > 0 {
+		sb.WriteString(fmt.Sprintf("IMPORTS (%d files):\n", len(imports)))
+		for _, imp := range imports {
+			sb.WriteString(fmt.Sprintf("  -> %s\n", imp))
+		}
+		sb.WriteString("\n")
+	} else {
+		sb.WriteString("IMPORTS: none (leaf file)\n\n")
+	}
+
+	// What imports this file
+	if len(importers) > 0 {
+		sb.WriteString(fmt.Sprintf("IMPORTED BY (%d files):\n", len(importers)))
+		for _, imp := range importers {
+			sb.WriteString(fmt.Sprintf("  <- %s\n", imp))
+		}
+		sb.WriteString("\n")
+	} else {
+		sb.WriteString("IMPORTED BY: none (entry point or unused)\n\n")
+	}
+
+	// Connected files summary
+	sb.WriteString(fmt.Sprintf("CONNECTED: %d files in dependency graph\n", len(connected)))
+
+	return textResult(sb.String()), nil, nil
 }
