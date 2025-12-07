@@ -4,3 +4,12 @@ __pycache__/
 # Built binaries
 codemap
 codemap-mcp
+codemap-test
+mcp-test
+hub-check
+
+# Runtime state
+.codemap/
+
+# Local settings
+.claude/settings.local.json
