@@ -205,7 +205,7 @@ func ScanForDeps(root string) ([]FileAnalysis, error) {
 	defer scanner.Close()
 
 	if !scanner.Available() {
-		return nil, fmt.Errorf("ast-grep (sg) not found in PATH")
+		return nil, fmt.Errorf("ast-grep not found in PATH (tried 'sg' and 'ast-grep')")
 	}
 
 	return scanner.ScanDirectory(root)

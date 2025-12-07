@@ -200,7 +200,9 @@ func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFil
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "The --deps feature requires ast-grep. Install it with:")
-		fmt.Fprintln(os.Stderr, "  brew install ast-grep")
+		fmt.Fprintln(os.Stderr, "  brew install ast-grep    # macOS/Linux (installs as 'sg')")
+		fmt.Fprintln(os.Stderr, "  cargo install ast-grep   # via Rust (installs as 'ast-grep')")
+		fmt.Fprintln(os.Stderr, "  pipx install ast-grep    # via Python (installs as 'ast-grep')")
 		fmt.Fprintln(os.Stderr, "")
 		os.Exit(1)
 	}

@@ -33,10 +33,14 @@ type ScanMatch struct {
 // AstGrepScanner uses ast-grep with YAML rules for code analysis
 type AstGrepScanner struct {
 	rulesDir string
+	binary   string // "sg" or "ast-grep", whichever is available
 }
 
 // NewAstGrepScanner creates a scanner, extracting rules to temp dir
 func NewAstGrepScanner() (*AstGrepScanner, error) {
+	// Find ast-grep binary (installed as "sg" via brew, "ast-grep" via cargo/pipx)
+	binary := findAstGrepBinary()
+
 	// Create temp directory for rules
 	rulesDir, err := os.MkdirTemp("", "codemap-sg-rules-*")
 	if err != nil {
@@ -58,7 +62,19 @@ func NewAstGrepScanner() (*AstGrepScanner, error) {
 		os.WriteFile(filepath.Join(rulesDir, entry.Name()), content, 0644)
 	}
 
-	return &AstGrepScanner{rulesDir: rulesDir}, nil
+	return &AstGrepScanner{rulesDir: rulesDir, binary: binary}, nil
+}
+
+// findAstGrepBinary checks for "ast-grep" first, then "sg"
+// Note: Linux has a system "sg" command (setgroups), so we check ast-grep first
+func findAstGrepBinary() string {
+	if _, err := exec.LookPath("ast-grep"); err == nil {
+		return "ast-grep"
+	}
+	if _, err := exec.LookPath("sg"); err == nil {
+		return "sg"
+	}
+	return ""
 }
 
 // Close cleans up temp rules directory
@@ -68,10 +84,9 @@ func (s *AstGrepScanner) Close() {
 	}
 }
 
-// Available checks if sg CLI is available
+// Available checks if ast-grep CLI is available (as "sg" or "ast-grep")
 func (s *AstGrepScanner) Available() bool {
-	_, err := exec.LookPath("sg")
-	return err == nil
+	return s.binary != ""
 }
 
 // ScanDirectory analyzes all files in a directory using sg scan
@@ -93,7 +108,7 @@ func (s *AstGrepScanner) ScanDirectory(root string) ([]FileAnalysis, error) {
 	}
 	inlineRules := strings.Join(rules, "\n---\n")
 
-	cmd := exec.Command("sg", "scan", "--inline-rules", inlineRules, "--json", root)
+	cmd := exec.Command(s.binary, "scan", "--inline-rules", inlineRules, "--json", root)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		// sg scan returns non-zero if no matches, check if output is valid JSON
