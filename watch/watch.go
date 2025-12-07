@@ -270,9 +270,20 @@ func (d *Daemon) eventLoop() {
 				return
 			}
 
-			// Skip non-source files
+			// Allow directory creates through (to add new dirs to watcher)
+			// but skip non-source files otherwise
+			isCreate := event.Op&fsnotify.Create != 0
 			if !d.isSourceFile(event.Name) {
-				continue
+				// Check if it's a directory create - let those through
+				if isCreate {
+					if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
+						// Directory create - let it through to handleEvent
+					} else {
+						continue
+					}
+				} else {
+					continue
+				}
 			}
 
 			// Debounce rapid events on same file
@@ -340,29 +351,44 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 	d.graph.mu.Lock()
 	switch op {
 	case "CREATE", "WRITE":
-		if info, err := os.Stat(fsEvent.Name); err == nil && !info.IsDir() {
-			// Count new lines
-			newLines := countLines(fsEvent.Name)
-			event.Lines = newLines
+		info, err := os.Stat(fsEvent.Name)
+		if err != nil {
+			d.graph.mu.Unlock()
+			return
+		}
 
-			// Calculate deltas from cached state
-			if prev, exists := d.graph.State[relPath]; exists {
-				event.Delta = newLines - prev.Lines
-				event.SizeDelta = info.Size() - prev.Size
-			} else {
-				event.Delta = newLines // new file, all lines are added
-				event.SizeDelta = info.Size()
+		// If a new directory was created, add it to the watcher
+		if info.IsDir() {
+			name := filepath.Base(fsEvent.Name)
+			// Skip hidden directories and common ignores
+			if !strings.HasPrefix(name, ".") && name != "node_modules" && name != "vendor" {
+				d.watcher.Add(fsEvent.Name)
 			}
+			d.graph.mu.Unlock()
+			return
+		}
 
-			// Update cached state
-			d.graph.State[relPath] = &FileState{Lines: newLines, Size: info.Size()}
+		// Count new lines
+		newLines := countLines(fsEvent.Name)
+		event.Lines = newLines
 
-			// Update file info
-			d.graph.Files[relPath] = &scanner.FileInfo{
-				Path: relPath,
-				Size: info.Size(),
-				Ext:  filepath.Ext(relPath),
-			}
+		// Calculate deltas from cached state
+		if prev, exists := d.graph.State[relPath]; exists {
+			event.Delta = newLines - prev.Lines
+			event.SizeDelta = info.Size() - prev.Size
+		} else {
+			event.Delta = newLines // new file, all lines are added
+			event.SizeDelta = info.Size()
+		}
+
+		// Update cached state
+		d.graph.State[relPath] = &FileState{Lines: newLines, Size: info.Size()}
+
+		// Update file info
+		d.graph.Files[relPath] = &scanner.FileInfo{
+			Path: relPath,
+			Size: info.Size(),
+			Ext:  filepath.Ext(relPath),
 		}
 
 	case "REMOVE", "RENAME":
