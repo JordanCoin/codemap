@@ -241,11 +241,25 @@ codemap supports **18 languages** for dependency analysis (powered by [ast-grep]
 
 ## Claude Integrations
 
-codemap provides three ways to integrate with Claude:
+codemap provides four ways to integrate with Claude:
 
-### CLAUDE.md (Recommended)
+### Claude Code Hooks (Recommended)
 
-Add the included `CLAUDE.md` to your project root. Claude Code automatically reads it and knows when to run codemap:
+The most seamless integration. Hooks run automatically at the right moments — no commands to remember.
+
+```
+Session starts  → Claude sees project structure + hub files
+Before editing  → Claude is warned if the file is high-impact
+After editing   → Claude sees what depends on the changed file
+Before compact  → Hub state is saved so Claude remembers what matters
+Session ends    → Summary of all changes and their impact
+```
+
+**Quick setup:** Tell Claude to `@HOOKS.md` and "add these hooks to my settings". Or see [HOOKS.md](HOOKS.md) for the full setup.
+
+### CLAUDE.md
+
+Add the included `CLAUDE.md` to your project root. Claude Code reads it and knows when to run codemap:
 
 ```bash
 cp /path/to/codemap/CLAUDE.md your-project/

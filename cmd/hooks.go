@@ -194,8 +194,8 @@ func hookPromptSubmit(root string) error {
 	// Look for file patterns in the prompt
 	var filesMentioned []string
 
-	// Check for common source file extensions
-	extensions := []string{"go", "ts", "js", "py", "rs", "rb", "java", "swift", "kt", "c", "cpp", "h"}
+	// Check for common source file extensions (tsx before ts so it matches first)
+	extensions := []string{"go", "tsx", "ts", "jsx", "js", "py", "rs", "rb", "java", "swift", "kt", "c", "cpp", "h"}
 	for _, ext := range extensions {
 		pattern := regexp.MustCompile(`[a-zA-Z0-9_/-]+\.` + ext)
 		matches := pattern.FindAllString(prompt, 3)
@@ -206,25 +206,31 @@ func hookPromptSubmit(root string) error {
 		return nil
 	}
 
-	fmt.Println()
-	fmt.Println("📍 Context for mentioned files:")
-
 	info := getHubInfo(root)
 	if info == nil {
 		return nil
 	}
 
+	// Build output first, only print header if we have something to say
+	var output []string
 	for _, file := range filesMentioned {
-		// Try to find the file in the graph
 		if importers := info.Importers[file]; len(importers) > 0 {
 			if len(importers) >= 3 {
-				fmt.Printf("   ⚠️  %s is a HUB (imported by %d files)\n", file, len(importers))
+				output = append(output, fmt.Sprintf("   ⚠️  %s is a HUB (imported by %d files)", file, len(importers)))
 			} else {
-				fmt.Printf("   📍 %s (imported by %d files)\n", file, len(importers))
+				output = append(output, fmt.Sprintf("   📍 %s (imported by %d files)", file, len(importers)))
 			}
 		}
 	}
-	fmt.Println()
+
+	if len(output) > 0 {
+		fmt.Println()
+		fmt.Println("📍 Context for mentioned files:")
+		for _, line := range output {
+			fmt.Println(line)
+		}
+		fmt.Println()
+	}
 
 	return nil
 }
