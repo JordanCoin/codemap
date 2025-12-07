@@ -614,10 +614,10 @@ The user may be:
 
 	// Aggregate by file
 	type fileStats struct {
-		edits     int
-		netDelta  int
-		lastEdit  time.Time
-		dirty     bool
+		edits    int
+		netDelta int
+		lastEdit time.Time
+		dirty    bool
 	}
 	byFile := make(map[string]*fileStats)
 

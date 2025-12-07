@@ -339,8 +339,8 @@ func runWatchSubcommand(subCmd, root string) {
 		cmd.Stdout = nil
 		cmd.Stderr = nil
 		cmd.Stdin = nil
-		// Detach from parent process group
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		// Detach from parent process group (Unix only)
+		setSysProcAttr(cmd)
 		if err := cmd.Start(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error starting daemon: %v\n", err)
 			os.Exit(1)

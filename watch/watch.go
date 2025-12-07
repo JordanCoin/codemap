@@ -21,18 +21,18 @@ import (
 // Event represents a file change event with timestamp and structural context
 type Event struct {
 	Time      time.Time `json:"time"`
-	Op        string    `json:"op"`               // CREATE, WRITE, REMOVE, RENAME
-	Path      string    `json:"path"`             // relative path
-	Language  string    `json:"lang,omitempty"`   // go, py, js, etc.
+	Op        string    `json:"op"`             // CREATE, WRITE, REMOVE, RENAME
+	Path      string    `json:"path"`           // relative path
+	Language  string    `json:"lang,omitempty"` // go, py, js, etc.
 	Lines     int       `json:"lines,omitempty"`
-	Delta     int       `json:"delta,omitempty"`  // line count change (+/-)
+	Delta     int       `json:"delta,omitempty"` // line count change (+/-)
 	SizeDelta int64     `json:"size_delta,omitempty"`
-	Dirty     bool      `json:"dirty,omitempty"`  // uncommitted changes
+	Dirty     bool      `json:"dirty,omitempty"` // uncommitted changes
 	// Structural context from deps
-	Importers   int      `json:"importers,omitempty"`   // how many files import this
-	Imports     int      `json:"imports,omitempty"`     // how many files this imports
-	IsHub       bool     `json:"is_hub,omitempty"`      // importers >= 3
-	RelatedHot  []string `json:"related_hot,omitempty"` // connected files also edited recently
+	Importers  int      `json:"importers,omitempty"`   // how many files import this
+	Imports    int      `json:"imports,omitempty"`     // how many files this imports
+	IsHub      bool     `json:"is_hub,omitempty"`      // importers >= 3
+	RelatedHot []string `json:"related_hot,omitempty"` // connected files also edited recently
 }
 
 // FileState tracks lightweight per-file state for delta calculations
@@ -51,10 +51,10 @@ type DepContext struct {
 type Graph struct {
 	mu        sync.RWMutex
 	Root      string
-	Files     map[string]*scanner.FileInfo   // path -> file info
-	FileGraph *scanner.FileGraph             // internal file-to-file dependencies
-	DepCtx    map[string]*DepContext         // path -> dependency context (precomputed)
-	State     map[string]*FileState          // path -> line/size cache for deltas
+	Files     map[string]*scanner.FileInfo // path -> file info
+	FileGraph *scanner.FileGraph           // internal file-to-file dependencies
+	DepCtx    map[string]*DepContext       // path -> dependency context (precomputed)
+	State     map[string]*FileState        // path -> line/size cache for deltas
 	Events    []Event
 	LastScan  time.Time
 	IsGitRepo bool
@@ -63,13 +63,13 @@ type Graph struct {
 
 // Daemon is the watch daemon that keeps the graph updated
 type Daemon struct {
-	root      string
-	graph     *Graph
-	watcher   *fsnotify.Watcher
-	gitCache  *scanner.GitIgnoreCache
-	eventLog  string // path to event log file
-	verbose   bool
-	done      chan struct{}
+	root     string
+	graph    *Graph
+	watcher  *fsnotify.Watcher
+	gitCache *scanner.GitIgnoreCache
+	eventLog string // path to event log file
+	verbose  bool
+	done     chan struct{}
 }
 
 // NewDaemon creates a new watch daemon for the given root
