@@ -69,6 +69,9 @@ func RunHook(hookName, root string) error {
 
 // hookSessionStart shows project structure, starts daemon, and shows hub warnings
 func hookSessionStart(root string) error {
+	// Check for previous session context before starting new daemon
+	lastSessionEvents := getLastSessionEvents(root)
+
 	// Start the watch daemon in background (if not already running)
 	if !watch.IsRunning(root) {
 		startDaemon(root)
@@ -77,48 +80,15 @@ func hookSessionStart(root string) error {
 	fmt.Println("📍 Project Context:")
 	fmt.Println()
 
-	// Show project structure
-	gitCache := scanner.NewGitIgnoreCache(root)
-	files, err := scanner.ScanFiles(root, gitCache)
-	if err != nil {
-		return err
+	// Run codemap to show full tree structure
+	exe, err := os.Executable()
+	if err == nil {
+		cmd := exec.Command(exe, root)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Run()
+		fmt.Println()
 	}
-
-	// Build and render a simple tree
-	project := scanner.Project{
-		Root:  root,
-		Mode:  "tree",
-		Files: files,
-	}
-
-	// Import render package would create circular dep, so just print summary
-	fmt.Printf("Files: %d\n", len(files))
-
-	// Count by extension
-	extCounts := make(map[string]int)
-	for _, f := range files {
-		ext := f.Ext
-		if ext == "" {
-			ext = "(no ext)"
-		}
-		extCounts[ext]++
-	}
-
-	// Show top extensions
-	fmt.Print("Top types: ")
-	count := 0
-	for ext, n := range extCounts {
-		if count > 0 {
-			fmt.Print(", ")
-		}
-		fmt.Printf("%s(%d)", ext, n)
-		count++
-		if count >= 5 {
-			break
-		}
-	}
-	fmt.Println()
-	fmt.Println()
 
 	// Show hub files (from daemon if running, otherwise fresh scan)
 	info := getHubInfo(root)
@@ -134,8 +104,98 @@ func hookSessionStart(root string) error {
 		}
 	}
 
-	_ = project // silence unused warning
+	// Show diff vs main if on a feature branch
+	showDiffVsMain(root)
+
+	// Show last session context if resuming work
+	if len(lastSessionEvents) > 0 {
+		showLastSessionContext(lastSessionEvents)
+	}
+
 	return nil
+}
+
+// showDiffVsMain shows files changed on this branch vs main
+func showDiffVsMain(root string) {
+	// Check if we're on a branch other than main
+	branchCmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	branchCmd.Dir = root
+	branchOut, err := branchCmd.Output()
+	if err != nil {
+		return
+	}
+	branch := strings.TrimSpace(string(branchOut))
+	if branch == "main" || branch == "master" {
+		return // No diff to show on main branch
+	}
+
+	// Run codemap --diff to show changes
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+
+	fmt.Println()
+	fmt.Printf("📝 Changes on branch '%s' vs main:\n", branch)
+	cmd := exec.Command(exe, "--diff", root)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Run()
+}
+
+// getLastSessionEvents reads events.log for previous session context
+func getLastSessionEvents(root string) []string {
+	eventsFile := filepath.Join(root, ".codemap", "events.log")
+	data, err := os.ReadFile(eventsFile)
+	if err != nil {
+		return nil
+	}
+
+	lines := strings.Split(string(data), "\n")
+	if len(lines) == 0 {
+		return nil
+	}
+
+	// Get last 20 non-empty lines
+	var recent []string
+	for i := len(lines) - 1; i >= 0 && len(recent) < 20; i-- {
+		if strings.TrimSpace(lines[i]) != "" {
+			recent = append([]string{lines[i]}, recent...)
+		}
+	}
+	return recent
+}
+
+// showLastSessionContext displays what was worked on in previous session
+func showLastSessionContext(events []string) {
+	// Extract unique files from events
+	files := make(map[string]string) // file -> last operation
+	for _, line := range events {
+		parts := strings.Split(line, "|")
+		if len(parts) >= 3 {
+			op := strings.TrimSpace(parts[1])
+			file := strings.TrimSpace(parts[2])
+			if file != "" && op != "" {
+				files[file] = op
+			}
+		}
+	}
+
+	if len(files) == 0 {
+		return
+	}
+
+	fmt.Println()
+	fmt.Println("🕐 Last session worked on:")
+	count := 0
+	for file, op := range files {
+		if count >= 5 {
+			fmt.Printf("   ... and %d more files\n", len(files)-5)
+			break
+		}
+		fmt.Printf("   • %s (%s)\n", file, strings.ToLower(op))
+		count++
+	}
 }
 
 // startDaemon launches the watch daemon in background
@@ -173,7 +233,7 @@ func hookPostEdit(root string) error {
 	return checkFileImporters(root, filePath)
 }
 
-// hookPromptSubmit detects file mentions in user prompt
+// hookPromptSubmit detects file mentions in user prompt and shows session context
 func hookPromptSubmit(root string) error {
 	input, err := io.ReadAll(os.Stdin)
 	if err != nil {
@@ -191,6 +251,8 @@ func hookPromptSubmit(root string) error {
 		return nil
 	}
 
+	info := getHubInfo(root)
+
 	// Look for file patterns in the prompt
 	var filesMentioned []string
 
@@ -202,23 +264,16 @@ func hookPromptSubmit(root string) error {
 		filesMentioned = append(filesMentioned, matches...)
 	}
 
-	if len(filesMentioned) == 0 {
-		return nil
-	}
-
-	info := getHubInfo(root)
-	if info == nil {
-		return nil
-	}
-
-	// Build output first, only print header if we have something to say
+	// Build output for mentioned files
 	var output []string
-	for _, file := range filesMentioned {
-		if importers := info.Importers[file]; len(importers) > 0 {
-			if len(importers) >= 3 {
-				output = append(output, fmt.Sprintf("   ⚠️  %s is a HUB (imported by %d files)", file, len(importers)))
-			} else {
-				output = append(output, fmt.Sprintf("   📍 %s (imported by %d files)", file, len(importers)))
+	if info != nil {
+		for _, file := range filesMentioned {
+			if importers := info.Importers[file]; len(importers) > 0 {
+				if len(importers) >= 3 {
+					output = append(output, fmt.Sprintf("   ⚠️  %s is a HUB (imported by %d files)", file, len(importers)))
+				} else {
+					output = append(output, fmt.Sprintf("   📍 %s (imported by %d files)", file, len(importers)))
+				}
 			}
 		}
 	}
@@ -229,10 +284,41 @@ func hookPromptSubmit(root string) error {
 		for _, line := range output {
 			fmt.Println(line)
 		}
-		fmt.Println()
 	}
 
+	// Show mid-session awareness: what's been edited so far
+	showSessionProgress(root)
+
 	return nil
+}
+
+// showSessionProgress shows files edited so far in this session
+func showSessionProgress(root string) {
+	state := watch.ReadState(root)
+	if state == nil || len(state.RecentEvents) == 0 {
+		return
+	}
+
+	// Count unique files and hub edits
+	filesEdited := make(map[string]bool)
+	hubEdits := 0
+	for _, e := range state.RecentEvents {
+		filesEdited[e.Path] = true
+		if e.IsHub {
+			hubEdits++
+		}
+	}
+
+	if len(filesEdited) == 0 {
+		return
+	}
+
+	fmt.Println()
+	fmt.Printf("📊 Session so far: %d files edited", len(filesEdited))
+	if hubEdits > 0 {
+		fmt.Printf(", %d hub edits", hubEdits)
+	}
+	fmt.Println()
 }
 
 // hookPreCompact saves hub state before context compaction

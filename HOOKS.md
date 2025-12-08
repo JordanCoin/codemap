@@ -6,12 +6,13 @@ Turn Claude into a codebase-aware assistant. These hooks give Claude automatic c
 
 | When | What Happens |
 |------|--------------|
-| **Session starts** | Claude sees your project structure and knows which files are high-impact |
-| **You mention a file** | Claude automatically gets context about that file |
-| **Before editing** | Claude is warned if the file is a hub (imported by many others) |
-| **After editing** | Claude sees what other files depend on what was just changed |
+| **Session starts** | Claude sees full project tree, hubs, branch diff, and last session context |
+| **After compact** | Claude sees the tree again (context restored) |
+| **You mention a file** | Claude gets hub context + mid-session awareness (files edited so far) |
+| **Before editing** | Claude sees who imports the file AND what hubs it imports |
+| **After editing** | Claude sees the impact of what was just changed |
 | **Before memory clears** | Hub state is saved so Claude remembers what's important |
-| **Session ends** | Summary of all files modified and their impact |
+| **Session ends** | Timeline of all edits with line counts and hub warnings |
 
 ---
 
@@ -76,7 +77,7 @@ Add to `.claude/settings.local.json` in your project (or `~/.claude/settings.jso
         ]
       }
     ],
-    "Stop": [
+    "SessionEnd": [
       {
         "hooks": [
           {
@@ -96,20 +97,45 @@ Restart Claude Code. You'll immediately see your project structure at session st
 
 ## What Claude Sees
 
-### At Session Start
+### At Session Start (and after compact)
 ```
 📍 Project Context:
 
-Files: 85
-Top types: .go(25), .yml(22), .md(10), .sh(8)
+╭────────────────────────────── myproject ──────────────────────────────╮
+│ Files: 85 | Size: 1.2MB                                               │
+│ Top Extensions: .go (25), .yml (22), .md (10), .sh (8)                │
+╰───────────────────────────────────────────────────────────────────────╯
+myproject
+├── cmd/
+│   └── hooks      hooks_test
+├── render/
+│   └── colors     depgraph   skyline    tree
+├── scanner/
+│   └── astgrep    deps       filegraph  types      walker
+└── main.go        go.mod     README.md
 
 ⚠️  High-impact files (hubs):
    ⚠️  HUB FILE: scanner/types.go (imported by 10 files)
    ⚠️  HUB FILE: scanner/walker.go (imported by 8 files)
-   ⚠️  HUB FILE: scanner/deps.go (imported by 5 files)
+
+📝 Changes on branch 'feature-x' vs main:
+   M scanner/types.go (+15, -3)
+   A cmd/new_feature.go
+
+🕐 Last session worked on:
+   • scanner/types.go (write)
+   • main.go (write)
+   • cmd/hooks.go (create)
 ```
 
-### Before/After Editing a Hub
+### Before/After Editing a File
+```
+📍 File: cmd/hooks.go
+   Imported by 1 file(s): main.go
+   Imports 16 hub(s): scanner/types.go, scanner/walker.go, watch/daemon.go...
+```
+
+Or if it's a hub:
 ```
 ⚠️  HUB FILE: scanner/types.go
    Imported by 10 files - changes have wide impact!
@@ -121,32 +147,39 @@ Top types: .go(25), .yml(22), .md(10), .sh(8)
    ... and 7 more
 ```
 
+### When You Mention a File
+```
+📍 Context for mentioned files:
+   ⚠️  scanner/types.go is a HUB (imported by 10 files)
+
+📊 Session so far: 5 files edited, 2 hub edits
+```
+
 ### At Session End
 ```
 📊 Session Summary
 ==================
 
-Files modified:
-  ⚠️  scanner/types.go (HUB - imported by 10 files)
-  • main.go
-  • render/tree.go
+Edit Timeline:
+  14:23:15 WRITE  scanner/types.go +15 ⚠️HUB
+  14:25:42 WRITE  main.go +3
+  14:30:11 CREATE cmd/new_feature.go +45
 
-New files created:
-  + cmd/hooks.go
+Stats: 8 events, 3 files touched, +63 lines, 1 hub edits
 ```
 
 ---
 
 ## Available Hooks
 
-| Command | When to Use |
-|---------|-------------|
-| `codemap hook session-start` | Start of session - shows project structure |
-| `codemap hook pre-edit` | Before Edit/Write - warns about hub files |
-| `codemap hook post-edit` | After Edit/Write - shows file impact |
-| `codemap hook prompt-submit` | User message - detects file mentions |
-| `codemap hook pre-compact` | Before compact - saves hub state |
-| `codemap hook session-stop` | Session end - summarizes changes |
+| Command | Claude Event | What It Shows |
+|---------|--------------|---------------|
+| `codemap hook session-start` | `SessionStart` | Full tree, hubs, branch diff, last session context |
+| `codemap hook pre-edit` | `PreToolUse` (Edit\|Write) | Who imports file + what hubs it imports |
+| `codemap hook post-edit` | `PostToolUse` (Edit\|Write) | Impact of changes (same as pre-edit) |
+| `codemap hook prompt-submit` | `UserPromptSubmit` | Hub context for mentioned files + session progress |
+| `codemap hook pre-compact` | `PreCompact` | Saves hub state to .codemap/hubs.txt |
+| `codemap hook session-stop` | `SessionEnd` | Edit timeline with line counts and stats |
 
 ---
 
