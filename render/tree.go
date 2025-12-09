@@ -108,6 +108,7 @@ func Tree(project scanner.Project) {
 	files := project.Files
 	projectName := filepath.Base(project.Root)
 	isDiffMode := project.DiffRef != ""
+	maxDepth := project.Depth // 0 = unlimited
 
 	// Calculate stats
 	totalFiles := len(files)
@@ -192,7 +193,7 @@ func Tree(project scanner.Project) {
 	// Build and render tree
 	root := buildTreeStructure(files)
 	fmt.Printf("%s%s%s\n", Bold, projectName, Reset)
-	printTreeNode(root, "", true, topLarge)
+	printTreeNode(root, "", true, topLarge, 1, maxDepth)
 
 	// Print impact footer for diff mode
 	if isDiffMode && len(project.Impact) > 0 {
@@ -208,7 +209,13 @@ func Tree(project scanner.Project) {
 }
 
 // printTreeNode recursively prints tree nodes
-func printTreeNode(node *treeNode, prefix string, isLast bool, topLarge map[string]bool) {
+// currentDepth starts at 1 for the root level, maxDepth 0 means unlimited
+func printTreeNode(node *treeNode, prefix string, isLast bool, topLarge map[string]bool, currentDepth, maxDepth int) {
+	// Check if we've exceeded depth limit
+	if maxDepth > 0 && currentDepth > maxDepth {
+		return
+	}
+
 	// Separate dirs and files
 	var dirs, fileNodes []*treeNode
 	for _, child := range node.children {
@@ -289,7 +296,40 @@ func printTreeNode(node *treeNode, prefix string, isLast bool, topLarge map[stri
 		if isLastDir {
 			newPrefix = prefix + "    "
 		}
-		printTreeNode(current, newPrefix, isLastDir, topLarge)
+
+		// Check if we're at max depth and there's more content below
+		if maxDepth > 0 && currentDepth >= maxDepth {
+			// Count hidden content
+			hiddenDirs := 0
+			hiddenFiles := 0
+			for _, c := range current.children {
+				if c.isFile {
+					hiddenFiles++
+				} else {
+					hiddenDirs++
+				}
+			}
+			if hiddenDirs > 0 || hiddenFiles > 0 {
+				var parts []string
+				if hiddenDirs > 0 {
+					if hiddenDirs == 1 {
+						parts = append(parts, "1 directory")
+					} else {
+						parts = append(parts, fmt.Sprintf("%d directories", hiddenDirs))
+					}
+				}
+				if hiddenFiles > 0 {
+					if hiddenFiles == 1 {
+						parts = append(parts, "1 file")
+					} else {
+						parts = append(parts, fmt.Sprintf("%d files", hiddenFiles))
+					}
+				}
+				fmt.Printf("%s└── %s... %s%s\n", newPrefix, Dim, strings.Join(parts, ", "), Reset)
+			}
+		} else {
+			printTreeNode(current, newPrefix, isLastDir, topLarge, currentDepth+1, maxDepth)
+		}
 	}
 
 	// Print files as a grid (multi-column layout like Python)
