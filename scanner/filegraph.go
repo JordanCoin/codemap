@@ -44,7 +44,7 @@ func BuildFileGraph(root string) (*FileGraph, error) {
 
 	// Scan all files
 	gitCache := NewGitIgnoreCache(root)
-	files, err := ScanFiles(root, gitCache)
+	files, err := ScanFiles(root, gitCache, nil, nil)
 	if err != nil {
 		return nil, err
 	}

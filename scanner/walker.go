@@ -129,6 +129,70 @@ var IgnoredDirs = map[string]bool{
 	"grammars":       true,
 }
 
+// matchesPattern does smart pattern matching:
+// - ".png" or "png" → extension match (case-insensitive)
+// - "Fonts" → directory/component match (contains /Fonts/ or ends with /Fonts)
+// - "*test*" → glob pattern (only if contains * or ?)
+func matchesPattern(relPath string, pattern string) bool {
+	// If pattern contains glob characters, use glob matching
+	if strings.ContainsAny(pattern, "*?") {
+		// Match against filename
+		if matched, _ := filepath.Match(pattern, filepath.Base(relPath)); matched {
+			return true
+		}
+		// Match against full relative path
+		if matched, _ := filepath.Match(pattern, relPath); matched {
+			return true
+		}
+		return false
+	}
+
+	// Extension match: .png, .xcassets, png, xcassets
+	ext := strings.TrimPrefix(pattern, ".")
+	if strings.HasSuffix(strings.ToLower(relPath), "."+strings.ToLower(ext)) {
+		return true
+	}
+
+	// Directory component match: Fonts → matches path/Fonts/file or path/Fonts
+	if strings.Contains(relPath, "/"+pattern+"/") ||
+		strings.HasSuffix(relPath, "/"+pattern) ||
+		strings.HasPrefix(relPath, pattern+"/") ||
+		relPath == pattern {
+		return true
+	}
+
+	return false
+}
+
+// shouldIncludeFile checks if a file passes the only/exclude filters
+func shouldIncludeFile(relPath string, ext string, only []string, exclude []string) bool {
+	// If --only specified, file extension must be in the list
+	if len(only) > 0 {
+		extNoDot := strings.TrimPrefix(ext, ".")
+		found := false
+		for _, o := range only {
+			o = strings.TrimPrefix(strings.TrimSpace(o), ".")
+			if strings.EqualFold(extNoDot, o) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+
+	// If --exclude specified, check against each pattern
+	for _, pattern := range exclude {
+		pattern = strings.TrimSpace(pattern)
+		if pattern != "" && matchesPattern(relPath, pattern) {
+			return false
+		}
+	}
+
+	return true
+}
+
 // LoadGitignore loads .gitignore from root if it exists
 // Deprecated: Use NewGitIgnoreCache for nested gitignore support
 func LoadGitignore(root string) *ignore.GitIgnore {
@@ -145,7 +209,9 @@ func LoadGitignore(root string) *ignore.GitIgnore {
 
 // ScanFiles walks the directory tree and returns all files.
 // Supports nested .gitignore files via GitIgnoreCache.
-func ScanFiles(root string, cache *GitIgnoreCache) ([]FileInfo, error) {
+// only: list of extensions to include (empty = all)
+// exclude: list of patterns to exclude
+func ScanFiles(root string, cache *GitIgnoreCache, only []string, exclude []string) ([]FileInfo, error) {
 	var files []FileInfo
 	absRoot, _ := filepath.Abs(root)
 
@@ -175,6 +241,16 @@ func ScanFiles(root string, cache *GitIgnoreCache) ([]FileInfo, error) {
 					return filepath.SkipDir
 				}
 			}
+			// Check if directory matches any exclude pattern
+			relPath, _ := filepath.Rel(absRoot, absPath)
+			if relPath != "." {
+				for _, pattern := range exclude {
+					pattern = strings.TrimSpace(pattern)
+					if pattern != "" && matchesPattern(relPath, pattern) {
+						return filepath.SkipDir
+					}
+				}
+			}
 			return nil
 		}
 
@@ -184,10 +260,17 @@ func ScanFiles(root string, cache *GitIgnoreCache) ([]FileInfo, error) {
 		}
 
 		relPath, _ := filepath.Rel(absRoot, absPath)
+		ext := filepath.Ext(path)
+
+		// Apply user filters (--only and --exclude)
+		if !shouldIncludeFile(relPath, ext, only, exclude) {
+			return nil
+		}
+
 		files = append(files, FileInfo{
 			Path: relPath,
 			Size: info.Size(),
-			Ext:  filepath.Ext(path),
+			Ext:  ext,
 		})
 
 		return nil

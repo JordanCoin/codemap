@@ -137,7 +137,7 @@ func (d *Daemon) WriteInitialState() {
 func (d *Daemon) fullScan() error {
 	start := time.Now()
 
-	files, err := scanner.ScanFiles(d.root, d.gitCache)
+	files, err := scanner.ScanFiles(d.root, d.gitCache, nil, nil)
 	if err != nil {
 		return err
 	}
