@@ -56,11 +56,14 @@ func main() {
 	depsMode := flag.Bool("deps", false, "Enable dependency graph mode (function/import analysis)")
 	diffMode := flag.Bool("diff", false, "Only show files changed vs main (or use --ref to specify branch)")
 	diffRef := flag.String("ref", "main", "Branch/ref to compare against (use with --diff)")
+	depthLimit := flag.Int("depth", 0, "Limit tree depth (0 = unlimited)")
 	jsonMode := flag.Bool("json", false, "Output JSON (for Python renderer compatibility)")
 	debugMode := flag.Bool("debug", false, "Show debug info (gitignore loading, paths, etc.)")
 	watchMode := flag.Bool("watch", false, "Live file watcher daemon (experimental)")
 	importersMode := flag.String("importers", "", "Check file impact: who imports it, is it a hub?")
 	helpMode := flag.Bool("help", false, "Show help")
+	// Short flag aliases
+	flag.IntVar(depthLimit, "d", 0, "Limit tree depth (shorthand)")
 	flag.Parse()
 
 	if *helpMode {
@@ -75,6 +78,7 @@ func main() {
 		fmt.Println("  --deps              Dependency flow map (functions & imports)")
 		fmt.Println("  --diff              Only show files changed vs main")
 		fmt.Println("  --ref <branch>      Branch to compare against (default: main)")
+		fmt.Println("  --depth, -d <n>     Limit tree depth (0 = unlimited)")
 		fmt.Println("  --importers <file>  Check file impact (who imports it, hub status)")
 		fmt.Println()
 		fmt.Println("Examples:")
@@ -84,6 +88,7 @@ func main() {
 		fmt.Println("  codemap --deps /path/to/proj    # Dependency flow map")
 		fmt.Println("  codemap --diff                  # Files changed vs main")
 		fmt.Println("  codemap --diff --ref develop    # Files changed vs develop")
+		fmt.Println("  codemap --depth 3 .             # Show only 3 levels deep")
 		fmt.Println("  codemap --importers scanner/types.go  # Check file impact")
 		fmt.Println()
 		fmt.Println("Hooks (for Claude Code integration):")
@@ -182,6 +187,7 @@ func main() {
 		Files:   files,
 		DiffRef: activeDiffRef,
 		Impact:  impact,
+		Depth:   *depthLimit,
 	}
 
 	// Render or output JSON
