@@ -57,6 +57,8 @@ func main() {
 	diffMode := flag.Bool("diff", false, "Only show files changed vs main (or use --ref to specify branch)")
 	diffRef := flag.String("ref", "main", "Branch/ref to compare against (use with --diff)")
 	depthLimit := flag.Int("depth", 0, "Limit tree depth (0 = unlimited)")
+	onlyExts := flag.String("only", "", "Only show files with these extensions (comma-separated, e.g., 'swift,go')")
+	excludePatterns := flag.String("exclude", "", "Exclude files matching patterns (comma-separated, e.g., '.xcassets,Fonts')")
 	jsonMode := flag.Bool("json", false, "Output JSON (for Python renderer compatibility)")
 	debugMode := flag.Bool("debug", false, "Show debug info (gitignore loading, paths, etc.)")
 	watchMode := flag.Bool("watch", false, "Live file watcher daemon (experimental)")
@@ -79,6 +81,8 @@ func main() {
 		fmt.Println("  --diff              Only show files changed vs main")
 		fmt.Println("  --ref <branch>      Branch to compare against (default: main)")
 		fmt.Println("  --depth, -d <n>     Limit tree depth (0 = unlimited)")
+		fmt.Println("  --only <exts>       Only show files with these extensions (e.g., 'swift,go')")
+		fmt.Println("  --exclude <patterns> Exclude paths matching patterns (e.g., '.xcassets,Fonts')")
 		fmt.Println("  --importers <file>  Check file impact (who imports it, hub status)")
 		fmt.Println()
 		fmt.Println("Examples:")
@@ -89,6 +93,8 @@ func main() {
 		fmt.Println("  codemap --diff                  # Files changed vs main")
 		fmt.Println("  codemap --diff --ref develop    # Files changed vs develop")
 		fmt.Println("  codemap --depth 3 .             # Show only 3 levels deep")
+		fmt.Println("  codemap --only swift .          # Just Swift files")
+		fmt.Println("  codemap --exclude .xcassets,Fonts,.png  # Hide assets")
 		fmt.Println("  codemap --importers scanner/types.go  # Check file impact")
 		fmt.Println()
 		fmt.Println("Hooks (for Claude Code integration):")
@@ -114,6 +120,23 @@ func main() {
 
 	// Initialize gitignore cache (supports nested .gitignore files)
 	gitCache := scanner.NewGitIgnoreCache(root)
+
+	// Parse --only and --exclude flags
+	var only, exclude []string
+	if *onlyExts != "" {
+		for _, ext := range strings.Split(*onlyExts, ",") {
+			if trimmed := strings.TrimSpace(ext); trimmed != "" {
+				only = append(only, trimmed)
+			}
+		}
+	}
+	if *excludePatterns != "" {
+		for _, pattern := range strings.Split(*excludePatterns, ",") {
+			if trimmed := strings.TrimSpace(pattern); trimmed != "" {
+				exclude = append(exclude, trimmed)
+			}
+		}
+	}
 
 	if *debugMode {
 		fmt.Fprintf(os.Stderr, "[debug] Root path: %s\n", root)
@@ -165,7 +188,7 @@ func main() {
 	}
 
 	// Scan files
-	files, err := scanner.ScanFiles(root, gitCache)
+	files, err := scanner.ScanFiles(root, gitCache, only, exclude)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error walking tree: %v\n", err)
 		os.Exit(1)
@@ -188,6 +211,8 @@ func main() {
 		DiffRef: activeDiffRef,
 		Impact:  impact,
 		Depth:   *depthLimit,
+		Only:    only,
+		Exclude: exclude,
 	}
 
 	// Render or output JSON

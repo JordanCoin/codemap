@@ -23,7 +23,9 @@ type Project struct {
 	Files   []FileInfo   `json:"files"`
 	DiffRef string       `json:"diff_ref,omitempty"`
 	Impact  []ImpactInfo `json:"impact,omitempty"`
-	Depth   int          `json:"depth,omitempty"` // Max tree depth (0 = unlimited)
+	Depth   int          `json:"depth,omitempty"`   // Max tree depth (0 = unlimited)
+	Only    []string     `json:"only,omitempty"`    // Extension filter (e.g., ["swift", "go"])
+	Exclude []string     `json:"exclude,omitempty"` // Exclusion patterns (e.g., [".xcassets", "Fonts"])
 }
 
 // FileAnalysis holds extracted info about a single file for deps mode.
