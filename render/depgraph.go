@@ -22,134 +22,6 @@ func titleCase(s string) string {
 	return strings.Join(words, " ")
 }
 
-// Language compatibility groups
-var langGroups = map[string]string{
-	"python":     "python",
-	"go":         "go",
-	"javascript": "js",
-	"typescript": "js",
-	"rust":       "rust",
-	"ruby":       "ruby",
-	"c":          "c",
-	"cpp":        "c",
-	"java":       "java",
-	"swift":      "swift",
-	"bash":       "bash",
-	"kotlin":     "kotlin",
-	"csharp":     "csharp",
-	"php":        "php",
-	"lua":        "lua",
-	"scala":      "scala",
-	"elixir":     "elixir",
-	"solidity":   "solidity",
-}
-
-// Standard library names to filter out
-var stdlibNames = map[string]bool{
-	// Go stdlib
-	"errors": true, "fmt": true, "io": true, "os": true, "path": true, "sync": true, "time": true, "context": true, "http": true,
-	"net": true, "bytes": true, "strings": true, "strconv": true, "sort": true, "flag": true, "log": true, "bufio": true,
-	"encoding": true, "testing": true, "runtime": true, "unsafe": true, "reflect": true, "regexp": true,
-	// Python stdlib
-	"logging": true, "typing": true, "collections": true, "datetime": true, "json": true, "sys": true, "re": true,
-	"pathlib": true, "hashlib": true, "base64": true, "asyncio": true, "enum": true, "functools": true, "random": true,
-	"math": true, "copy": true, "itertools": true, "contextlib": true,
-	// JS/TS common
-	"fs": true, "util": true, "events": true, "stream": true, "crypto": true, "https": true,
-	"react": true, "filepath": true, "embed": true,
-}
-
-// normalizeImport normalizes an import string
-func normalizeImport(imp, lang string) string {
-	imp = strings.Trim(imp, "\"'")
-	if strings.Contains(imp, "/") {
-		parts := strings.Split(imp, "/")
-		imp = parts[len(parts)-1]
-	}
-	if strings.Contains(imp, ".") && !strings.HasPrefix(imp, ".") {
-		parts := strings.Split(imp, ".")
-		imp = parts[len(parts)-1]
-	}
-	// Remove file extensions
-	extPattern := regexp.MustCompile(`\.(py|go|js|ts|jsx|tsx|rb|rs|c|h|cpp|hpp|java|swift)$`)
-	imp = extPattern.ReplaceAllString(imp, "")
-	return strings.ToLower(imp)
-}
-
-// findInternalDeps finds which files import which other files
-func findInternalDeps(files []scanner.FileAnalysis) map[string][]string {
-	// Build lookup: name -> list of (path, language_group)
-	type fileInfo struct {
-		path      string
-		langGroup string
-	}
-	nameToInfos := make(map[string][]fileInfo)
-
-	for _, f := range files {
-		langGroup := langGroups[f.Language]
-		if langGroup == "" {
-			langGroup = f.Language
-		}
-		basename := filepath.Base(f.Path)
-		extPattern := regexp.MustCompile(`\.[^.]+$`)
-		name := strings.ToLower(extPattern.ReplaceAllString(basename, ""))
-		nameToInfos[name] = append(nameToInfos[name], fileInfo{f.Path, langGroup})
-	}
-
-	deps := make(map[string][]string)
-
-	for _, f := range files {
-		srcLang := f.Language
-		srcGroup := langGroups[srcLang]
-		if srcGroup == "" {
-			srcGroup = srcLang
-		}
-
-		for _, imp := range f.Imports {
-			// Skip stdlib-looking imports
-			if !strings.Contains(imp, "/") && !strings.Contains(imp, ".") {
-				if stdlibNames[strings.ToLower(imp)] {
-					continue
-				}
-			}
-
-			norm := normalizeImport(imp, srcLang)
-			if stdlibNames[norm] {
-				continue
-			}
-
-			if infos, ok := nameToInfos[norm]; ok {
-				srcBasename := filepath.Base(f.Path)
-				for _, info := range infos {
-					if info.path == f.Path {
-						continue // Skip self
-					}
-					if srcGroup != info.langGroup {
-						continue // Skip cross-language
-					}
-					targetName := filepath.Base(info.path)
-					if targetName == srcBasename {
-						continue // Skip same-basename
-					}
-					// Check if already added
-					found := false
-					for _, d := range deps[f.Path] {
-						if d == targetName {
-							found = true
-							break
-						}
-					}
-					if !found {
-						deps[f.Path] = append(deps[f.Path], targetName)
-					}
-				}
-			}
-		}
-	}
-
-	return deps
-}
-
 // getSystemName infers a system/component name from directory path
 func getSystemName(dirPath string) string {
 	parts := strings.Split(strings.ReplaceAll(dirPath, "\\", "/"), "/")
@@ -195,14 +67,53 @@ func Depgraph(project scanner.DepsProject) {
 		internalNames[name] = true
 	}
 
-	internalDeps := findInternalDeps(files)
-
-	// Count dependencies on each file
-	depCounts := make(map[string]int)
-	for _, targets := range internalDeps {
-		for _, target := range targets {
-			depCounts[target]++
+	// Use BuildFileGraph for accurate file-level dependency resolution
+	fg, err := scanner.BuildFileGraph(project.Root)
+	var internalDeps map[string][]string
+	var depCounts map[string]int
+	if err == nil && fg != nil {
+		// Build set of files we're displaying (may be filtered by --diff)
+		displayedFiles := make(map[string]bool)
+		for _, f := range files {
+			displayedFiles[f.Path] = true
 		}
+
+		// Filter imports to only include displayed files
+		internalDeps = make(map[string][]string)
+		for file, imports := range fg.Imports {
+			if !displayedFiles[file] {
+				continue
+			}
+			var filtered []string
+			for _, imp := range imports {
+				if displayedFiles[imp] {
+					filtered = append(filtered, imp)
+				}
+			}
+			if len(filtered) > 0 {
+				internalDeps[file] = filtered
+			}
+		}
+
+		// Count importers only among displayed files
+		depCounts = make(map[string]int)
+		for file, importers := range fg.Importers {
+			if !displayedFiles[file] {
+				continue
+			}
+			count := 0
+			for _, imp := range importers {
+				if displayedFiles[imp] {
+					count++
+				}
+			}
+			if count > 0 {
+				depCounts[file] = count
+			}
+		}
+	} else {
+		internalDeps = make(map[string][]string)
+		depCounts = make(map[string]int)
 	}
 
 	// Group by top-level system

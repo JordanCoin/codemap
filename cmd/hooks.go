@@ -109,7 +109,7 @@ func hookSessionStart(root string) error {
 
 	// Show last session context if resuming work
 	if len(lastSessionEvents) > 0 {
-		showLastSessionContext(lastSessionEvents)
+		showLastSessionContext(root, lastSessionEvents)
 	}
 
 	return nil
@@ -167,7 +167,7 @@ func getLastSessionEvents(root string) []string {
 }
 
 // showLastSessionContext displays what was worked on in previous session
-func showLastSessionContext(events []string) {
+func showLastSessionContext(root string, events []string) {
 	// Extract unique files from events
 	files := make(map[string]string) // file -> last operation
 	for _, line := range events {
@@ -183,6 +183,16 @@ func showLastSessionContext(events []string) {
 
 	if len(files) == 0 {
 		return
+	}
+
+	// Fix atomic save artifacts: editors often do write-to-temp + rename,
+	// which fsnotify sees as REMOVE. If file still exists, it was edited.
+	for file, op := range files {
+		if strings.EqualFold(op, "REMOVE") || strings.EqualFold(op, "RENAME") {
+			if _, err := os.Stat(filepath.Join(root, file)); err == nil {
+				files[file] = "edited"
+			}
+		}
 	}
 
 	fmt.Println()

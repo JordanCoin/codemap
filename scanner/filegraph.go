@@ -65,7 +65,13 @@ func BuildFileGraph(root string) (*FileGraph, error) {
 
 		for _, imp := range a.Imports {
 			resolved := fuzzyResolve(imp, a.Path, idx, fg.Module)
-			resolvedImports = append(resolvedImports, resolved...)
+			// Only count imports that resolve to exactly one file.
+			// If an import resolves to multiple files, it's a package/module
+			// import (Go, Python, Rust, etc.) not a file-level import.
+			// This ensures hub detection works correctly across all languages.
+			if len(resolved) == 1 {
+				resolvedImports = append(resolvedImports, resolved[0])
+			}
 		}
 
 		if len(resolvedImports) > 0 {
