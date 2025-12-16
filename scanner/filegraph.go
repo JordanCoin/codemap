@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"bufio"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,11 +10,13 @@ import (
 
 // FileGraph represents internal file-to-file dependencies within a project
 type FileGraph struct {
-	Root      string              // project root
-	Module    string              // go module name (e.g., "codemap")
-	Imports   map[string][]string // file -> files it imports
-	Importers map[string][]string // file -> files that import it
-	Packages  map[string][]string // package path -> files in that package
+	Root        string              // project root
+	Module      string              // go module name (e.g., "codemap")
+	Imports     map[string][]string // file -> files it imports
+	Importers   map[string][]string // file -> files that import it
+	Packages    map[string][]string // package path -> files in that package
+	PathAliases map[string][]string // TS/JS path aliases from tsconfig.json (e.g., "@modules/*" -> ["src/modules/*"])
+	BaseURL     string              // TS/JS baseUrl from tsconfig.json
 }
 
 // fileIndex provides fast lookup of files by various import-like keys
@@ -33,14 +36,18 @@ func BuildFileGraph(root string) (*FileGraph, error) {
 	}
 
 	fg := &FileGraph{
-		Root:      absRoot,
-		Imports:   make(map[string][]string),
-		Importers: make(map[string][]string),
-		Packages:  make(map[string][]string),
+		Root:        absRoot,
+		Imports:     make(map[string][]string),
+		Importers:   make(map[string][]string),
+		Packages:    make(map[string][]string),
+		PathAliases: make(map[string][]string),
 	}
 
 	// Detect module name from go.mod (for Go import resolution)
 	fg.Module = detectModule(absRoot)
+
+	// Detect path aliases from tsconfig.json (for TS/JS import resolution)
+	fg.PathAliases, fg.BaseURL = detectPathAliases(absRoot)
 
 	// Scan all files
 	gitCache := NewGitIgnoreCache(root)
@@ -64,7 +71,7 @@ func BuildFileGraph(root string) (*FileGraph, error) {
 		var resolvedImports []string
 
 		for _, imp := range a.Imports {
-			resolved := fuzzyResolve(imp, a.Path, idx, fg.Module)
+			resolved := fuzzyResolve(imp, a.Path, idx, fg.Module, fg.PathAliases, fg.BaseURL)
 			// Only count imports that resolve to exactly one file.
 			// If an import resolves to multiple files, it's a package/module
 			// import (Go, Python, Rust, etc.) not a file-level import.
@@ -140,7 +147,7 @@ func buildFileIndex(files []FileInfo, goModule string) *fileIndex {
 
 // fuzzyResolve converts an import path to actual file paths using universal matching
 // No language-specific switch - relies on pattern matching against file index
-func fuzzyResolve(imp, fromFile string, idx *fileIndex, goModule string) []string {
+func fuzzyResolve(imp, fromFile string, idx *fileIndex, goModule string, pathAliases map[string][]string, baseURL string) []string {
 	fromDir := filepath.Dir(fromFile)
 	if fromDir == "." {
 		fromDir = ""
@@ -161,12 +168,19 @@ func fuzzyResolve(imp, fromFile string, idx *fileIndex, goModule string) []strin
 		return resolveRelative(imp, fromDir, idx)
 	}
 
-	// Strategy 3: Exact match (with common extensions)
+	// Strategy 3: TypeScript/JavaScript path alias resolution (@modules/auth, @shared/utils)
+	if len(pathAliases) > 0 {
+		if files := resolvePathAlias(imp, pathAliases, baseURL, idx); len(files) > 0 {
+			return files
+		}
+	}
+
+	// Strategy 4: Exact match (with common extensions)
 	if files := tryExactMatch(normalized, idx); len(files) > 0 {
 		return files
 	}
 
-	// Strategy 4: Suffix match (for nested packages like app.core.config -> */app/core/config.py)
+	// Strategy 5: Suffix match (for nested packages like app.core.config -> */app/core/config.py)
 	if files := trySuffixMatch(normalized, idx); len(files) > 0 {
 		return files
 	}
@@ -322,4 +336,141 @@ func (fg *FileGraph) ConnectedFiles(path string) []string {
 		}
 	}
 	return result
+}
+
+// tsConfig represents the structure of tsconfig.json we care about
+type tsConfig struct {
+	CompilerOptions struct {
+		BaseURL string              `json:"baseUrl"`
+		Paths   map[string][]string `json:"paths"`
+	} `json:"compilerOptions"`
+	Extends string `json:"extends"`
+}
+
+// detectPathAliases reads tsconfig.json (and jsconfig.json) to find path aliases
+// Returns the paths map and baseUrl
+func detectPathAliases(root string) (map[string][]string, string) {
+	// Try tsconfig.json first, then jsconfig.json
+	for _, configFile := range []string{"tsconfig.json", "jsconfig.json"} {
+		configPath := filepath.Join(root, configFile)
+		paths, baseURL := readTSConfig(configPath, root)
+		if len(paths) > 0 {
+			return paths, baseURL
+		}
+	}
+	return nil, ""
+}
+
+// readTSConfig reads a tsconfig/jsconfig file and extracts paths, following extends
+func readTSConfig(configPath, root string) (map[string][]string, string) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, ""
+	}
+
+	var config tsConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, ""
+	}
+
+	paths := config.CompilerOptions.Paths
+	baseURL := config.CompilerOptions.BaseURL
+
+	// If this config extends another, merge paths from parent
+	if config.Extends != "" {
+		parentPath := config.Extends
+		// Resolve relative extends path
+		if !filepath.IsAbs(parentPath) {
+			parentPath = filepath.Join(filepath.Dir(configPath), parentPath)
+		}
+		// Add .json if not present
+		if !strings.HasSuffix(parentPath, ".json") {
+			parentPath += ".json"
+		}
+
+		parentPaths, parentBaseURL := readTSConfig(parentPath, root)
+		if parentPaths != nil {
+			// Child paths override parent paths
+			if paths == nil {
+				paths = parentPaths
+			} else {
+				for k, v := range parentPaths {
+					if _, exists := paths[k]; !exists {
+						paths[k] = v
+					}
+				}
+			}
+		}
+		// Child baseUrl overrides parent
+		if baseURL == "" {
+			baseURL = parentBaseURL
+		}
+	}
+
+	return paths, baseURL
+}
+
+// resolvePathAlias attempts to resolve an import using TypeScript path aliases
+// e.g., "@modules/auth" with alias "@modules/*" -> ["src/modules/*"] becomes "src/modules/auth"
+func resolvePathAlias(imp string, pathAliases map[string][]string, baseURL string, idx *fileIndex) []string {
+	// Try each alias pattern
+	for pattern, targets := range pathAliases {
+		var prefix, suffix string
+		if starIdx := strings.Index(pattern, "*"); starIdx >= 0 {
+			prefix = pattern[:starIdx]
+			suffix = pattern[starIdx+1:]
+		} else {
+			// Exact match pattern (no wildcard)
+			if imp == pattern {
+				for _, target := range targets {
+					resolved := target
+					if baseURL != "" && !filepath.IsAbs(resolved) {
+						resolved = filepath.Join(baseURL, resolved)
+					}
+					if files := tryExactMatch(resolved, idx); len(files) > 0 {
+						return files
+					}
+				}
+			}
+			continue
+		}
+
+		// Check if import matches this pattern
+		if !strings.HasPrefix(imp, prefix) {
+			continue
+		}
+		if suffix != "" && !strings.HasSuffix(imp, suffix) {
+			continue
+		}
+
+		// Extract the wildcard portion
+		wildcardPart := imp[len(prefix):]
+		if suffix != "" {
+			wildcardPart = wildcardPart[:len(wildcardPart)-len(suffix)]
+		}
+
+		// Try each target mapping
+		for _, target := range targets {
+			resolved := target
+			if starIdx := strings.Index(target, "*"); starIdx >= 0 {
+				// Replace wildcard with captured portion
+				resolved = target[:starIdx] + wildcardPart + target[starIdx+1:]
+			}
+
+			// Apply baseUrl if set
+			if baseURL != "" && !filepath.IsAbs(resolved) {
+				resolved = filepath.Join(baseURL, resolved)
+			}
+
+			// Try to find matching files
+			if files := tryExactMatch(resolved, idx); len(files) > 0 {
+				return files
+			}
+			if files := trySuffixMatch(resolved, idx); len(files) > 0 {
+				return files
+			}
+		}
+	}
+
+	return nil
 }

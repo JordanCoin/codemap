@@ -312,3 +312,184 @@ func TestReadExternalDepsIgnoresNodeModules(t *testing.T) {
 		t.Errorf("Expected javascript deps, got: %v", deps)
 	}
 }
+
+func TestDetectPathAliases(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a tsconfig.json with path aliases
+	tsconfig := `{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@modules/*": ["src/modules/*"],
+      "@shared/*": ["src/shared/*"],
+      "@utils": ["src/utils/index"]
+    }
+  }
+}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "tsconfig.json"), []byte(tsconfig), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	paths, baseURL := detectPathAliases(tmpDir)
+
+	if baseURL != "." {
+		t.Errorf("Expected baseUrl '.', got %q", baseURL)
+	}
+
+	if len(paths) != 3 {
+		t.Errorf("Expected 3 path aliases, got %d: %v", len(paths), paths)
+	}
+
+	if targets, ok := paths["@modules/*"]; !ok {
+		t.Error("Expected @modules/* alias")
+	} else if len(targets) != 1 || targets[0] != "src/modules/*" {
+		t.Errorf("Expected @modules/* -> src/modules/*, got %v", targets)
+	}
+
+	if targets, ok := paths["@shared/*"]; !ok {
+		t.Error("Expected @shared/* alias")
+	} else if len(targets) != 1 || targets[0] != "src/shared/*" {
+		t.Errorf("Expected @shared/* -> src/shared/*, got %v", targets)
+	}
+}
+
+func TestDetectPathAliasesWithExtends(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create base tsconfig
+	baseConfig := `{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@base/*": ["src/base/*"]
+    }
+  }
+}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "tsconfig.base.json"), []byte(baseConfig), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create extending tsconfig
+	tsconfig := `{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "paths": {
+      "@app/*": ["src/app/*"]
+    }
+  }
+}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "tsconfig.json"), []byte(tsconfig), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	paths, baseURL := detectPathAliases(tmpDir)
+
+	if baseURL != "." {
+		t.Errorf("Expected baseUrl '.', got %q", baseURL)
+	}
+
+	// Should have both parent and child paths
+	if len(paths) != 2 {
+		t.Errorf("Expected 2 path aliases (merged), got %d: %v", len(paths), paths)
+	}
+
+	if _, ok := paths["@app/*"]; !ok {
+		t.Error("Expected @app/* alias from child config")
+	}
+
+	if _, ok := paths["@base/*"]; !ok {
+		t.Error("Expected @base/* alias from parent config")
+	}
+}
+
+func TestDetectPathAliasesJsconfig(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create jsconfig.json (used in JavaScript projects without TypeScript)
+	jsconfig := `{
+  "compilerOptions": {
+    "baseUrl": "src",
+    "paths": {
+      "@/*": ["./*"]
+    }
+  }
+}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "jsconfig.json"), []byte(jsconfig), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	paths, baseURL := detectPathAliases(tmpDir)
+
+	if baseURL != "src" {
+		t.Errorf("Expected baseUrl 'src', got %q", baseURL)
+	}
+
+	if len(paths) != 1 {
+		t.Errorf("Expected 1 path alias, got %d: %v", len(paths), paths)
+	}
+}
+
+func TestResolvePathAlias(t *testing.T) {
+	// Build a simple file index
+	files := []FileInfo{
+		{Path: "src/modules/auth/index.ts"},
+		{Path: "src/modules/auth/login.ts"},
+		{Path: "src/shared/utils/helpers.ts"},
+		{Path: "src/utils/index.ts"},
+	}
+	idx := buildFileIndex(files, "")
+
+	pathAliases := map[string][]string{
+		"@modules/*": {"src/modules/*"},
+		"@shared/*":  {"src/shared/*"},
+		"@utils":     {"src/utils/index"},
+	}
+
+	tests := []struct {
+		name     string
+		imp      string
+		expected string
+	}{
+		{"wildcard alias", "@modules/auth/login", "src/modules/auth/login.ts"},
+		{"wildcard with index", "@modules/auth", "src/modules/auth/index.ts"},
+		{"nested wildcard", "@shared/utils/helpers", "src/shared/utils/helpers.ts"},
+		{"exact alias", "@utils", "src/utils/index.ts"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := resolvePathAlias(tt.imp, pathAliases, ".", idx)
+			if len(result) == 0 {
+				t.Errorf("Expected to resolve %q, got no results", tt.imp)
+				return
+			}
+			if result[0] != tt.expected {
+				t.Errorf("Expected %q to resolve to %q, got %q", tt.imp, tt.expected, result[0])
+			}
+		})
+	}
+}
+
+func TestResolvePathAliasNoMatch(t *testing.T) {
+	files := []FileInfo{
+		{Path: "src/modules/auth/index.ts"},
+	}
+	idx := buildFileIndex(files, "")
+
+	pathAliases := map[string][]string{
+		"@modules/*": {"src/modules/*"},
+	}
+
+	// Import that doesn't match any alias
+	result := resolvePathAlias("lodash", pathAliases, ".", idx)
+	if len(result) != 0 {
+		t.Errorf("Expected no results for non-alias import, got %v", result)
+	}
+
+	// Import that matches alias but file doesn't exist
+	result = resolvePathAlias("@modules/nonexistent", pathAliases, ".", idx)
+	if len(result) != 0 {
+		t.Errorf("Expected no results for non-existent file, got %v", result)
+	}
+}
