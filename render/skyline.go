@@ -209,7 +209,10 @@ func createBuildings(sorted []extAgg, width int) []building {
 // Skyline renders the city skyline visualization
 func Skyline(project scanner.Project, animate bool) {
 	files := project.Files
-	projectName := filepath.Base(project.Root)
+	projectName := project.Name
+	if projectName == "" {
+		projectName = filepath.Base(project.Root)
+	}
 
 	width, _, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil || width <= 0 {
