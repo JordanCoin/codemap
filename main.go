@@ -112,10 +112,13 @@ func main() {
 		root = "."
 	}
 
-	// Handle GitHub URLs - clone to temp dir
+	// Handle GitHub URLs - clone to temp dir (but prefer local paths if they exist)
 	var tempDir string
 	var remoteURL, repoName string
-	if isGitHubURL(root) {
+	_, localPathErr := os.Stat(root)
+	if isGitHubURL(root) && localPathErr != nil {
+		// Only clone if it looks like a URL AND doesn't exist locally
+		// This preserves ~/go/src/github.com/user/repo style paths
 		remoteURL = root
 		repoName = extractRepoName(root)
 		var err error
