@@ -32,6 +32,16 @@ func main() {
 		return
 	}
 
+	// Handle "context" subcommand before flag parsing
+	if len(os.Args) >= 2 && os.Args[1] == "context" {
+		root, _ := os.Getwd()
+		if len(os.Args) >= 3 {
+			root = os.Args[2]
+		}
+		runContextMode(root)
+		return
+	}
+
 	// Handle "hook" subcommand before flag parsing
 	if len(os.Args) >= 2 && os.Args[1] == "hook" {
 		if len(os.Args) < 3 {
@@ -96,6 +106,7 @@ func main() {
 		fmt.Println("  codemap --only swift .          # Just Swift files")
 		fmt.Println("  codemap --exclude .xcassets,Fonts,.png  # Hide assets")
 		fmt.Println("  codemap --importers scanner/types.go  # Check file impact")
+		fmt.Println("  codemap context                 # Show recent activity & hubs")
 		fmt.Println()
 		fmt.Println("Hooks (for Claude Code integration):")
 		fmt.Println("  codemap hook session-start      # Show project context")
@@ -460,6 +471,16 @@ func runDaemon(root string) {
 
 	daemon.Stop()
 	watch.RemovePID(root)
+}
+
+func runContextMode(root string) {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	render.Context(absRoot)
 }
 
 // isGitHubURL checks if the input looks like a GitHub repo URL
