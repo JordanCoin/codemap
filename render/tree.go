@@ -106,7 +106,10 @@ func formatSize(size int64) string {
 // Tree renders the file tree to stdout
 func Tree(project scanner.Project) {
 	files := project.Files
-	projectName := filepath.Base(project.Root)
+	projectName := project.Name
+	if projectName == "" {
+		projectName = filepath.Base(project.Root)
+	}
 	isDiffMode := project.DiffRef != ""
 	maxDepth := project.Depth // 0 = unlimited
 
@@ -186,6 +189,12 @@ func Tree(project scanner.Project) {
 	// Extensions line
 	if extLine != "" {
 		fmt.Printf("│ %-*s │\n", innerWidth-2, extLine)
+	}
+
+	// Remote URL indicator
+	if project.RemoteURL != "" {
+		remoteLine := fmt.Sprintf("↳ %s", project.RemoteURL)
+		fmt.Printf("│ %-*s │\n", innerWidth-2, remoteLine)
 	}
 
 	fmt.Printf("╰%s╯\n", strings.Repeat("─", innerWidth))

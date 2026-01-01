@@ -17,15 +17,17 @@ type FileInfo struct {
 
 // Project represents the root of the codebase for tree/skyline mode.
 type Project struct {
-	Root    string       `json:"root"`
-	Mode    string       `json:"mode"`
-	Animate bool         `json:"animate"`
-	Files   []FileInfo   `json:"files"`
-	DiffRef string       `json:"diff_ref,omitempty"`
-	Impact  []ImpactInfo `json:"impact,omitempty"`
-	Depth   int          `json:"depth,omitempty"`   // Max tree depth (0 = unlimited)
-	Only    []string     `json:"only,omitempty"`    // Extension filter (e.g., ["swift", "go"])
-	Exclude []string     `json:"exclude,omitempty"` // Exclusion patterns (e.g., [".xcassets", "Fonts"])
+	Root      string       `json:"root"`
+	Name      string       `json:"name,omitempty"`       // Display name (overrides filepath.Base(Root))
+	RemoteURL string       `json:"remote_url,omitempty"` // Source URL if cloned from remote
+	Mode      string       `json:"mode"`
+	Animate   bool         `json:"animate"`
+	Files     []FileInfo   `json:"files"`
+	DiffRef   string       `json:"diff_ref,omitempty"`
+	Impact    []ImpactInfo `json:"impact,omitempty"`
+	Depth     int          `json:"depth,omitempty"`   // Max tree depth (0 = unlimited)
+	Only      []string     `json:"only,omitempty"`    // Extension filter (e.g., ["swift", "go"])
+	Exclude   []string     `json:"exclude,omitempty"` // Exclusion patterns (e.g., [".xcassets", "Fonts"])
 }
 
 // FileAnalysis holds extracted info about a single file for deps mode.
