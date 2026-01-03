@@ -1,5 +1,8 @@
 # codemap 🗺️
 
+[![Run in Smithery](https://smithery.ai/badge/skills/jordancoin)](https://smithery.ai/skills?ns=jordancoin&utm_source=github&utm_medium=badge)
+
+
 > **codemap — a project brain for your AI.**
 > Give LLMs instant architectural context without burning tokens.
 
