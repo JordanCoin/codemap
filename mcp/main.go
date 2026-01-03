@@ -184,9 +184,9 @@ func handleGetStructure(ctx context.Context, req *mcp.CallToolRequest, input Pat
 		Files: files,
 	}
 
-	output := captureOutput(func() {
-		render.Tree(project)
-	})
+	var buf bytes.Buffer
+	render.Tree(&buf, project)
+	output := stripANSI(buf.String())
 
 	// Add hub file summary
 	fg, err := scanner.BuildFileGraph(input.Path)
@@ -229,9 +229,9 @@ func handleGetDependencies(ctx context.Context, req *mcp.CallToolRequest, input 
 		ExternalDeps: scanner.ReadExternalDeps(absRoot),
 	}
 
-	output := captureOutput(func() {
-		render.Depgraph(depsProject)
-	})
+	var buf bytes.Buffer
+	render.Depgraph(&buf, depsProject)
+	output := buf.String()
 
 	return textResult(output), nil, nil
 }
@@ -273,9 +273,9 @@ func handleGetDiff(ctx context.Context, req *mcp.CallToolRequest, input DiffInpu
 		Impact:  impact,
 	}
 
-	output := captureOutput(func() {
-		render.Tree(project)
-	})
+	var buf bytes.Buffer
+	render.Tree(&buf, project)
+	output := stripANSI(buf.String())
 
 	return textResult(output), nil, nil
 }
@@ -470,22 +470,6 @@ var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 // stripANSI removes ANSI color codes from a string
 func stripANSI(s string) string {
 	return ansiRegex.ReplaceAllString(s, "")
-}
-
-// captureOutput captures stdout from a function and strips ANSI codes
-func captureOutput(f func()) string {
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	f()
-
-	w.Close()
-	os.Stdout = old
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	return stripANSI(buf.String())
 }
 
 // === WATCH HANDLERS ===

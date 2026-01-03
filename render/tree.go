@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -103,8 +104,8 @@ func formatSize(size int64) string {
 	return fmt.Sprintf("%.1f%s", fsize, units[len(units)-1])
 }
 
-// Tree renders the file tree to stdout
-func Tree(project scanner.Project) {
+// Tree renders the file tree to the given writer
+func Tree(w io.Writer, project scanner.Project) {
 	files := project.Files
 	projectName := filepath.Base(project.Root)
 	isDiffMode := project.DiffRef != ""
@@ -168,7 +169,7 @@ func Tree(project scanner.Project) {
 	padding := innerWidth - len(titleLine)
 	leftPad := padding / 2
 	rightPad := padding - leftPad
-	fmt.Printf("╭%s%s%s╮\n", strings.Repeat("─", leftPad), titleLine, strings.Repeat("─", rightPad))
+	fmt.Fprintf(w, "╭%s%s%s╮\n", strings.Repeat("─", leftPad), titleLine, strings.Repeat("─", rightPad))
 
 	// Stats line - different for diff mode
 	var statsLine string
@@ -181,36 +182,36 @@ func Tree(project scanner.Project) {
 	} else {
 		statsLine = fmt.Sprintf("Files: %d | Size: %s", totalFiles, formatSize(totalSize))
 	}
-	fmt.Printf("│ %-*s │\n", innerWidth-2, statsLine)
+	fmt.Fprintf(w, "│ %-*s │\n", innerWidth-2, statsLine)
 
 	// Extensions line
 	if extLine != "" {
-		fmt.Printf("│ %-*s │\n", innerWidth-2, extLine)
+		fmt.Fprintf(w, "│ %-*s │\n", innerWidth-2, extLine)
 	}
 
-	fmt.Printf("╰%s╯\n", strings.Repeat("─", innerWidth))
+	fmt.Fprintf(w, "╰%s╯\n", strings.Repeat("─", innerWidth))
 
 	// Build and render tree
 	root := buildTreeStructure(files)
-	fmt.Printf("%s%s%s\n", Bold, projectName, Reset)
-	printTreeNode(root, "", true, topLarge, 1, maxDepth)
+	fmt.Fprintf(w, "%s%s%s\n", Bold, projectName, Reset)
+	printTreeNode(w, root, "", true, topLarge, 1, maxDepth)
 
 	// Print impact footer for diff mode
 	if isDiffMode && len(project.Impact) > 0 {
-		fmt.Println()
+		fmt.Fprintln(w)
 		for _, imp := range project.Impact {
 			files := "files"
 			if imp.UsedBy == 1 {
 				files = "file"
 			}
-			fmt.Printf("%s⚠ %s is used by %d other %s%s\n", Yellow, imp.File, imp.UsedBy, files, Reset)
+			fmt.Fprintf(w, "%s⚠ %s is used by %d other %s%s\n", Yellow, imp.File, imp.UsedBy, files, Reset)
 		}
 	}
 }
 
 // printTreeNode recursively prints tree nodes
 // currentDepth starts at 1 for the root level, maxDepth 0 means unlimited
-func printTreeNode(node *treeNode, prefix string, isLast bool, topLarge map[string]bool, currentDepth, maxDepth int) {
+func printTreeNode(w io.Writer, node *treeNode, prefix string, isLast bool, topLarge map[string]bool, currentDepth, maxDepth int) {
 	// Check if we've exceeded depth limit
 	if maxDepth > 0 && currentDepth > maxDepth {
 		return
@@ -289,7 +290,7 @@ func printTreeNode(node *treeNode, prefix string, isLast bool, topLarge map[stri
 			connector = "└── "
 		}
 
-		fmt.Printf("%s%s%s  %s/%s %s(%s)%s\n",
+		fmt.Fprintf(w, "%s%s%s  %s/%s %s(%s)%s\n",
 			prefix, connector, BoldBlue, mergedName, Reset, Dim, strings.Join(statsParts, ", "), Reset)
 
 		newPrefix := prefix + "│   "
@@ -325,10 +326,10 @@ func printTreeNode(node *treeNode, prefix string, isLast bool, topLarge map[stri
 						parts = append(parts, fmt.Sprintf("%d files", hiddenFiles))
 					}
 				}
-				fmt.Printf("%s└── %s... %s%s\n", newPrefix, Dim, strings.Join(parts, ", "), Reset)
+				fmt.Fprintf(w, "%s└── %s... %s%s\n", newPrefix, Dim, strings.Join(parts, ", "), Reset)
 			}
 		} else {
-			printTreeNode(current, newPrefix, isLastDir, topLarge, currentDepth+1, maxDepth)
+			printTreeNode(w, current, newPrefix, isLastDir, topLarge, currentDepth+1, maxDepth)
 		}
 	}
 
@@ -435,9 +436,9 @@ func printTreeNode(node *treeNode, prefix string, isLast bool, topLarge map[stri
 		// Print in column-major order (like Python)
 		for row := 0; row < numRows; row++ {
 			if row == 0 {
-				fmt.Printf("%s%s", prefix, connector)
+				fmt.Fprintf(w, "%s%s", prefix, connector)
 			} else {
-				fmt.Printf("%s    ", prefix)
+				fmt.Fprintf(w, "%s    ", prefix)
 			}
 			for col := 0; col < numCols; col++ {
 				idx := col*numRows + row
@@ -448,10 +449,10 @@ func printTreeNode(node *treeNode, prefix string, isLast bool, topLarge map[stri
 					if padding < 0 {
 						padding = 0
 					}
-					fmt.Printf("%s%s", e.colored, strings.Repeat(" ", padding))
+					fmt.Fprintf(w, "%s%s", e.colored, strings.Repeat(" ", padding))
 				}
 			}
-			fmt.Println()
+			fmt.Fprintln(w)
 		}
 	}
 }

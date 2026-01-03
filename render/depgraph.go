@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"io"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -48,13 +49,13 @@ func getSystemName(dirPath string) string {
 }
 
 // Depgraph renders the dependency flow visualization
-func Depgraph(project scanner.DepsProject) {
+func Depgraph(w io.Writer, project scanner.DepsProject) {
 	files := project.Files
 	externalDeps := project.ExternalDeps
 	projectName := filepath.Base(project.Root)
 
 	if len(files) == 0 {
-		fmt.Println("  No source files found.")
+		fmt.Fprintln(w, "  No source files found.")
 		return
 	}
 
@@ -127,7 +128,7 @@ func Depgraph(project scanner.DepsProject) {
 		systems[system] = append(systems[system], f)
 	}
 
-	fmt.Println()
+	fmt.Fprintln(w)
 
 	// Build external deps by language
 	extByLang := make(map[string][]string)
@@ -184,12 +185,12 @@ func Depgraph(project scanner.DepsProject) {
 	innerWidth := maxWidth - 2
 
 	// Print header box
-	fmt.Printf("╭%s╮\n", strings.Repeat("─", innerWidth))
+	fmt.Fprintf(w, "╭%s╮\n", strings.Repeat("─", innerWidth))
 	titlePadded := CenterString(title, innerWidth)
-	fmt.Printf("│%s│\n", titlePadded)
+	fmt.Fprintf(w, "│%s│\n", titlePadded)
 
 	if len(depLines) > 0 {
-		fmt.Printf("├%s┤\n", strings.Repeat("─", innerWidth))
+		fmt.Fprintf(w, "├%s┤\n", strings.Repeat("─", innerWidth))
 		contentWidth := innerWidth - 2
 
 		for _, line := range depLines {
@@ -200,15 +201,15 @@ func Depgraph(project scanner.DepsProject) {
 				} else {
 					breakAt++
 				}
-				fmt.Printf("│ %-*s │\n", contentWidth, line[:breakAt])
+				fmt.Fprintf(w, "│ %-*s │\n", contentWidth, line[:breakAt])
 				line = "    " + strings.TrimLeft(line[breakAt:], " ")
 			}
-			fmt.Printf("│ %-*s │\n", contentWidth, line)
+			fmt.Fprintf(w, "│ %-*s │\n", contentWidth, line)
 		}
 	}
 
-	fmt.Printf("╰%s╯\n", strings.Repeat("─", innerWidth))
-	fmt.Println()
+	fmt.Fprintf(w, "╰%s╯\n", strings.Repeat("─", innerWidth))
+	fmt.Fprintln(w)
 
 	// Sort systems
 	var systemNames []string
@@ -239,7 +240,7 @@ func Depgraph(project scanner.DepsProject) {
 		if headerLen < 1 {
 			headerLen = 1
 		}
-		fmt.Printf("%s %s\n", systemName, strings.Repeat("═", headerLen))
+		fmt.Fprintf(w, "%s %s\n", systemName, strings.Repeat("═", headerLen))
 
 		rendered := make(map[string]bool)
 
@@ -282,9 +283,9 @@ func Depgraph(project scanner.DepsProject) {
 					if len(subTargets) > 3 {
 						chain += fmt.Sprintf(" +%d", len(subTargets)-3)
 					}
-					fmt.Printf("  %s\n", chain)
+					fmt.Fprintf(w, "  %s\n", chain)
 				} else {
-					fmt.Printf("  %s ───▶ %s\n", nameNoExt, tName)
+					fmt.Fprintf(w, "  %s ───▶ %s\n", nameNoExt, tName)
 				}
 			} else {
 				var targetStrs []string
@@ -293,13 +294,13 @@ func Depgraph(project scanner.DepsProject) {
 				}
 
 				if len(targets) <= 4 {
-					fmt.Printf("  %s ───▶ %s\n", nameNoExt, strings.Join(targetStrs, ", "))
+					fmt.Fprintf(w, "  %s ───▶ %s\n", nameNoExt, strings.Join(targetStrs, ", "))
 				} else {
-					fmt.Printf("  %s ──┬──▶ %s\n", nameNoExt, targetStrs[0])
+					fmt.Fprintf(w, "  %s ──┬──▶ %s\n", nameNoExt, targetStrs[0])
 					for _, t := range targetStrs[1 : len(targetStrs)-1] {
-						fmt.Printf("  %s   ├──▶ %s\n", strings.Repeat(" ", len(nameNoExt)), t)
+						fmt.Fprintf(w, "  %s   ├──▶ %s\n", strings.Repeat(" ", len(nameNoExt)), t)
 					}
-					fmt.Printf("  %s   └──▶ %s\n", strings.Repeat(" ", len(nameNoExt)), targetStrs[len(targetStrs)-1])
+					fmt.Fprintf(w, "  %s   └──▶ %s\n", strings.Repeat(" ", len(nameNoExt)), targetStrs[len(targetStrs)-1])
 				}
 			}
 
@@ -316,10 +317,10 @@ func Depgraph(project scanner.DepsProject) {
 		}
 
 		if standaloneCount > 0 {
-			fmt.Printf("  +%d standalone files\n", standaloneCount)
+			fmt.Fprintf(w, "  +%d standalone files\n", standaloneCount)
 		}
 
-		fmt.Println()
+		fmt.Fprintln(w)
 	}
 
 	// HUBS section
@@ -342,12 +343,12 @@ func Depgraph(project scanner.DepsProject) {
 		}
 
 		if len(hubs) > 0 {
-			fmt.Println(strings.Repeat("─", 61))
+			fmt.Fprintln(w, strings.Repeat("─", 61))
 			var hubStrs []string
 			for _, h := range hubs {
 				hubStrs = append(hubStrs, fmt.Sprintf("%s (%d←)", extPattern.ReplaceAllString(h.name, ""), h.count))
 			}
-			fmt.Printf("HUBS: %s\n", strings.Join(hubStrs, ", "))
+			fmt.Fprintf(w, "HUBS: %s\n", strings.Join(hubStrs, ", "))
 		}
 	}
 
@@ -360,6 +361,6 @@ func Depgraph(project scanner.DepsProject) {
 	for _, targets := range internalDeps {
 		internalCount += len(targets)
 	}
-	fmt.Printf("%d files · %d functions · %d deps\n", len(files), totalFuncs, internalCount)
-	fmt.Println()
+	fmt.Fprintf(w, "%d files · %d functions · %d deps\n", len(files), totalFuncs, internalCount)
+	fmt.Fprintln(w)
 }
