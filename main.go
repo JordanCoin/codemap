@@ -240,9 +240,9 @@ func main() {
 	if *jsonMode {
 		json.NewEncoder(os.Stdout).Encode(project)
 	} else if *skylineMode {
-		render.Skyline(project, *animateMode)
+		render.Skyline(os.Stdout, project, *animateMode)
 	} else {
-		render.Tree(project)
+		render.Tree(os.Stdout, project)
 	}
 }
 
@@ -276,7 +276,7 @@ func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFil
 	if jsonMode {
 		json.NewEncoder(os.Stdout).Encode(depsProject)
 	} else {
-		render.Depgraph(depsProject)
+		render.Depgraph(os.Stdout, depsProject)
 	}
 }
 

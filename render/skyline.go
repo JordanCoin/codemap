@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"io"
 	"math"
 	"math/rand/v2"
 	"os"
@@ -206,8 +207,8 @@ func createBuildings(sorted []extAgg, width int) []building {
 	return arranged
 }
 
-// Skyline renders the city skyline visualization
-func Skyline(project scanner.Project, animate bool) {
+// Skyline renders the city skyline visualization to the given writer
+func Skyline(w io.Writer, project scanner.Project, animate bool) {
 	files := project.Files
 	projectName := project.Name
 	if projectName == "" {
@@ -224,7 +225,7 @@ func Skyline(project scanner.Project, animate bool) {
 	arranged := createBuildings(sorted, width)
 
 	if len(arranged) == 0 {
-		fmt.Println(Dim + "No source files to display" + Reset)
+		fmt.Fprintln(w, Dim+"No source files to display"+Reset)
 		return
 	}
 
@@ -239,15 +240,16 @@ func Skyline(project scanner.Project, animate bool) {
 	sceneRight := min(width, leftMargin+totalWidth+scenePadding)
 	sceneWidth := sceneRight - sceneLeft
 
-	if animate {
-		renderAnimated(arranged, width, leftMargin, sceneLeft, sceneRight, sceneWidth, codeFiles, projectName, sorted)
+	// If writer is not os.Stdout, disable animation
+	if animate && w == os.Stdout {
+		renderAnimated(w, arranged, width, leftMargin, sceneLeft, sceneRight, sceneWidth, codeFiles, projectName, sorted)
 	} else {
-		renderStatic(arranged, width, leftMargin, sceneLeft, sceneRight, sceneWidth, codeFiles, projectName, sorted)
+		renderStatic(w, arranged, width, leftMargin, sceneLeft, sceneRight, sceneWidth, codeFiles, projectName, sorted)
 	}
 }
 
-// renderStatic renders static skyline
-func renderStatic(arranged []building, width, leftMargin, sceneLeft, sceneRight, sceneWidth int,
+// renderStatic renders static skyline to the given writer
+func renderStatic(w io.Writer, arranged []building, width, leftMargin, sceneLeft, sceneRight, sceneWidth int,
 	codeFiles []scanner.FileInfo, projectName string, sorted []extAgg) {
 	// Build grid
 	grid := make([][]rune, skyHeight+maxHeight+1)
@@ -313,7 +315,7 @@ func renderStatic(arranged []building, width, leftMargin, sceneLeft, sceneRight,
 		col += buildingWidth + b.gap
 	}
 
-	fmt.Println()
+	fmt.Fprintln(w)
 
 	// Print with colors
 	colPositions := make([][3]interface{}, 0) // start, end, color
@@ -329,14 +331,14 @@ func renderStatic(arranged []building, width, leftMargin, sceneLeft, sceneRight,
 			ch := grid[row][c]
 			switch ch {
 			case '◐':
-				fmt.Print(Bold + Yellow + string(ch) + Reset)
+				fmt.Fprintf(w, "%s%s%s%s", Bold, Yellow, string(ch), Reset)
 			case '·', '✦', '*':
-				fmt.Print(DimWhite + string(ch) + Reset)
+				fmt.Fprintf(w, "%s%s%s", DimWhite, string(ch), Reset)
 			default:
-				fmt.Print(" ")
+				fmt.Fprint(w, " ")
 			}
 		}
-		fmt.Println()
+		fmt.Fprintln(w)
 	}
 
 	// Building rows
@@ -344,7 +346,7 @@ func renderStatic(arranged []building, width, leftMargin, sceneLeft, sceneRight,
 		for c := 0; c < width; c++ {
 			ch := grid[row][c]
 			if ch == ' ' {
-				fmt.Print(" ")
+				fmt.Fprint(w, " ")
 			} else if ch == '▄' {
 				color := White
 				for _, pos := range colPositions {
@@ -353,11 +355,11 @@ func renderStatic(arranged []building, width, leftMargin, sceneLeft, sceneRight,
 						break
 					}
 				}
-				fmt.Print(color + string(ch) + Reset)
+				fmt.Fprintf(w, "%s%s%s", color, string(ch), Reset)
 			} else if ch == '.' || (ch >= 'a' && ch <= 'z') {
-				fmt.Print(DimWhite + string(ch) + Reset)
+				fmt.Fprintf(w, "%s%s%s", DimWhite, string(ch), Reset)
 			} else if (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' {
-				fmt.Print(BoldWhite + string(ch) + Reset)
+				fmt.Fprintf(w, "%s%s%s", BoldWhite, string(ch), Reset)
 			} else {
 				color := White
 				for _, pos := range colPositions {
@@ -366,28 +368,28 @@ func renderStatic(arranged []building, width, leftMargin, sceneLeft, sceneRight,
 						break
 					}
 				}
-				fmt.Print(color + string(ch) + Reset)
+				fmt.Fprintf(w, "%s%s%s", color, string(ch), Reset)
 			}
 		}
-		fmt.Println()
+		fmt.Fprintln(w)
 	}
 
 	// Ground
 	ground := strings.Repeat(" ", max(0, sceneLeft)) + strings.Repeat("▀", sceneWidth)
-	fmt.Println(DimWhite + ground + Reset)
+	fmt.Fprintln(w, DimWhite+ground+Reset)
 
 	// Stats
-	fmt.Println()
+	fmt.Fprintln(w)
 	title := fmt.Sprintf("─── %s ───", projectName)
-	fmt.Printf("%s%s%s\n", BoldWhite, CenterString(title, width), Reset)
+	fmt.Fprintf(w, "%s%s%s\n", BoldWhite, CenterString(title, width), Reset)
 
 	var codeSize int64
 	for _, f := range codeFiles {
 		codeSize += f.Size
 	}
 	stats := fmt.Sprintf("%d languages · %d files · %s", len(sorted), len(codeFiles), formatSize(codeSize))
-	fmt.Printf("%s%s%s\n", Cyan, CenterString(stats, width), Reset)
-	fmt.Println()
+	fmt.Fprintf(w, "%s%s%s\n", Cyan, CenterString(stats, width), Reset)
+	fmt.Fprintln(w)
 }
 
 // animationModel holds state for bubbletea animation
@@ -599,7 +601,7 @@ func (m animationModel) View() string {
 }
 
 // renderAnimated renders animated skyline using bubbletea
-func renderAnimated(arranged []building, width, leftMargin, sceneLeft, sceneRight, sceneWidth int,
+func renderAnimated(w io.Writer, arranged []building, width, leftMargin, sceneLeft, sceneRight, sceneWidth int,
 	codeFiles []scanner.FileInfo, projectName string, sorted []extAgg) {
 	// Generate star positions
 	var starPositions [][2]int
@@ -641,7 +643,7 @@ func renderAnimated(arranged []building, width, leftMargin, sceneLeft, sceneRigh
 	p.Run()
 
 	// After animation, print static final frame to main screen
-	renderStatic(arranged, width, leftMargin, sceneLeft, sceneRight, sceneWidth, codeFiles, projectName, sorted)
+	renderStatic(w, arranged, width, leftMargin, sceneLeft, sceneRight, sceneWidth, codeFiles, projectName, sorted)
 }
 
 func max(a, b int) int {
