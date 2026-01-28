@@ -48,7 +48,10 @@ codemap github.com/user/repo # Remote GitHub repo
 | `--deps` | Dependency flow mode |
 | `--importers <file>` | Check who imports a file |
 | `--skyline` | City skyline visualization |
+| `--animate` | Animate the skyline (use with --skyline) |
 | `--json` | Output JSON |
+
+> **Note:** Flags must come before the path/URL: `codemap --json github.com/user/repo`
 
 **Smart pattern matching** — no quotes needed:
 - `.png` → any `.png` file

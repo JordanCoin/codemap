@@ -103,6 +103,8 @@ func main() {
 		fmt.Println("  codemap https://github.com/user/repo")
 		fmt.Println("  codemap gitlab.com/user/repo    # GitLab repo")
 		fmt.Println()
+		fmt.Println("Note: Flags must come before the path/URL.")
+		fmt.Println()
 		fmt.Println("Hooks (for Claude Code integration):")
 		fmt.Println("  codemap hook session-start      # Show project context")
 		fmt.Println("  codemap hook pre-edit           # Check before editing (stdin)")
