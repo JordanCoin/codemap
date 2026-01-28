@@ -33,6 +33,7 @@ codemap --exclude .xcassets,Fonts,.png .  # Hide assets
 codemap --depth 2 .          # Limit depth
 codemap --diff               # What changed vs main
 codemap --deps .             # Dependency flow
+codemap github.com/user/repo # Remote GitHub repo
 ```
 
 ## Options
@@ -106,6 +107,18 @@ codemap --skyline --animate
 
 ![codemap skyline](assets/skyline-animated.gif)
 
+### Remote Repos
+
+Analyze any public GitHub or GitLab repo without cloning it yourself:
+
+```bash
+codemap github.com/anthropics/anthropic-cookbook
+codemap https://github.com/user/repo
+codemap gitlab.com/user/repo
+```
+
+Uses a shallow clone to a temp directory (fast, no history, auto-cleanup). If you already have the repo cloned locally, codemap will use your local copy instead.
+
 ## Supported Languages
 
 18 languages for dependency analysis: Go, Python, JavaScript, TypeScript, Rust, Ruby, C, C++, Java, Swift, Kotlin, C#, PHP, Bash, Lua, Scala, Elixir, Solidity
@@ -131,6 +144,7 @@ cp /path/to/codemap/CLAUDE.md your-project/
 - [x] Tree depth limiting (`--depth`)
 - [x] File filtering (`--only`, `--exclude`)
 - [x] Claude Code hooks & MCP server
+- [x] Remote repo support (GitHub, GitLab)
 - [ ] Enhanced analysis (entry points, key types)
 
 ## Contributing

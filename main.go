@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"codemap/cmd"
 	"codemap/render"
@@ -97,6 +98,11 @@ func main() {
 		fmt.Println("  codemap --exclude .xcassets,Fonts,.png  # Hide assets")
 		fmt.Println("  codemap --importers scanner/types.go  # Check file impact")
 		fmt.Println()
+		fmt.Println("Remote repos (clones temporarily):")
+		fmt.Println("  codemap github.com/user/repo    # GitHub repo")
+		fmt.Println("  codemap https://github.com/user/repo")
+		fmt.Println("  codemap gitlab.com/user/repo    # GitLab repo")
+		fmt.Println()
 		fmt.Println("Hooks (for Claude Code integration):")
 		fmt.Println("  codemap hook session-start      # Show project context")
 		fmt.Println("  codemap hook pre-edit           # Check before editing (stdin)")
@@ -122,7 +128,7 @@ func main() {
 		remoteURL = root
 		repoName = extractRepoName(root)
 		var err error
-		tempDir, err = cloneRepo(root)
+		tempDir, err = cloneRepo(root, repoName)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error cloning repo: %v\n", err)
 			os.Exit(1)
@@ -473,7 +479,7 @@ func isGitHubURL(s string) bool {
 }
 
 // cloneRepo clones a git repo to a temp directory (shallow clone)
-func cloneRepo(url string) (string, error) {
+func cloneRepo(url string, repoName string) (string, error) {
 	// Normalize URL
 	if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://") {
 		url = "https://" + url
@@ -485,14 +491,56 @@ func cloneRepo(url string) (string, error) {
 		return "", fmt.Errorf("failed to create temp dir: %w", err)
 	}
 
+	// Only animate if stderr is a real terminal
+	isTTY := isTerminal(os.Stderr)
+
+	var done chan bool
+	if isTTY {
+		anim := render.NewCloneAnimation(os.Stderr, repoName)
+		done = make(chan bool)
+		go func() {
+			progress := 0
+			for {
+				select {
+				case <-done:
+					// Clear the line completely when done
+					fmt.Fprint(os.Stderr, "\r\033[K")
+					return
+				default:
+					anim.Render(progress)
+					if progress < 95 {
+						progress++
+					}
+					time.Sleep(50 * time.Millisecond)
+				}
+			}
+		}()
+	}
+
 	// Shallow clone (quiet)
 	cmd := exec.Command("git", "clone", "--depth", "1", "--single-branch", "-q", url, tempDir)
-	if err := cmd.Run(); err != nil {
+	cloneErr := cmd.Run()
+
+	if isTTY {
+		done <- true
+		time.Sleep(50 * time.Millisecond) // Let animation finish
+	}
+
+	if cloneErr != nil {
 		os.RemoveAll(tempDir)
-		return "", fmt.Errorf("git clone failed: %w", err)
+		return "", fmt.Errorf("git clone failed: %w", cloneErr)
 	}
 
 	return tempDir, nil
+}
+
+// isTerminal checks if a file is a terminal
+func isTerminal(f *os.File) bool {
+	stat, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (stat.Mode() & os.ModeCharDevice) != 0
 }
 
 // extractRepoName extracts "owner/repo" from a GitHub URL
