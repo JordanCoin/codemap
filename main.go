@@ -112,6 +112,25 @@ func main() {
 		root = "."
 	}
 
+	// Handle GitHub URLs - clone to temp dir (but prefer local paths if they exist)
+	var tempDir string
+	var remoteURL, repoName string
+	_, localPathErr := os.Stat(root)
+	if isGitHubURL(root) && localPathErr != nil {
+		// Only clone if it looks like a URL AND doesn't exist locally
+		// This preserves ~/go/src/github.com/user/repo style paths
+		remoteURL = root
+		repoName = extractRepoName(root)
+		var err error
+		tempDir, err = cloneRepo(root)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error cloning repo: %v\n", err)
+			os.Exit(1)
+		}
+		defer os.RemoveAll(tempDir)
+		root = tempDir
+	}
+
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error getting absolute path: %v\n", err)
@@ -204,15 +223,17 @@ func main() {
 	}
 
 	project := scanner.Project{
-		Root:    absRoot,
-		Mode:    mode,
-		Animate: *animateMode,
-		Files:   files,
-		DiffRef: activeDiffRef,
-		Impact:  impact,
-		Depth:   *depthLimit,
-		Only:    only,
-		Exclude: exclude,
+		Root:      absRoot,
+		Name:      repoName,
+		RemoteURL: remoteURL,
+		Mode:      mode,
+		Animate:   *animateMode,
+		Files:     files,
+		DiffRef:   activeDiffRef,
+		Impact:    impact,
+		Depth:     *depthLimit,
+		Only:      only,
+		Exclude:   exclude,
 	}
 
 	// Render or output JSON
@@ -439,4 +460,52 @@ func runDaemon(root string) {
 
 	daemon.Stop()
 	watch.RemovePID(root)
+}
+
+// isGitHubURL checks if the input looks like a GitHub repo URL
+func isGitHubURL(s string) bool {
+	s = strings.ToLower(s)
+	return strings.HasPrefix(s, "github.com/") ||
+		strings.HasPrefix(s, "https://github.com/") ||
+		strings.HasPrefix(s, "http://github.com/") ||
+		strings.HasPrefix(s, "gitlab.com/") ||
+		strings.HasPrefix(s, "https://gitlab.com/")
+}
+
+// cloneRepo clones a git repo to a temp directory (shallow clone)
+func cloneRepo(url string) (string, error) {
+	// Normalize URL
+	if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://") {
+		url = "https://" + url
+	}
+
+	// Create temp dir
+	tempDir, err := os.MkdirTemp("", "codemap-")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp dir: %w", err)
+	}
+
+	// Shallow clone (quiet)
+	cmd := exec.Command("git", "clone", "--depth", "1", "--single-branch", "-q", url, tempDir)
+	if err := cmd.Run(); err != nil {
+		os.RemoveAll(tempDir)
+		return "", fmt.Errorf("git clone failed: %w", err)
+	}
+
+	return tempDir, nil
+}
+
+// extractRepoName extracts "owner/repo" from a GitHub URL
+func extractRepoName(url string) string {
+	// Remove protocol
+	url = strings.TrimPrefix(url, "https://")
+	url = strings.TrimPrefix(url, "http://")
+	// Remove host
+	url = strings.TrimPrefix(url, "github.com/")
+	url = strings.TrimPrefix(url, "gitlab.com/")
+	// Remove trailing .git
+	url = strings.TrimSuffix(url, ".git")
+	// Remove trailing slashes
+	url = strings.TrimSuffix(url, "/")
+	return url
 }

@@ -210,7 +210,10 @@ func createBuildings(sorted []extAgg, width int) []building {
 // Skyline renders the city skyline visualization to the given writer
 func Skyline(w io.Writer, project scanner.Project, animate bool) {
 	files := project.Files
-	projectName := filepath.Base(project.Root)
+	projectName := project.Name
+	if projectName == "" {
+		projectName = filepath.Base(project.Root)
+	}
 
 	width, _, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil || width <= 0 {
@@ -328,7 +331,7 @@ func renderStatic(w io.Writer, arranged []building, width, leftMargin, sceneLeft
 			ch := grid[row][c]
 			switch ch {
 			case '◐':
-				fmt.Fprintf(w, "%s%s%s", Bold, Yellow, string(ch), Reset)
+				fmt.Fprintf(w, "%s%s%s%s", Bold, Yellow, string(ch), Reset)
 			case '·', '✦', '*':
 				fmt.Fprintf(w, "%s%s%s", DimWhite, string(ch), Reset)
 			default:
