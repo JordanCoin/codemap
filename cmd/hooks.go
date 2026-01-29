@@ -94,13 +94,46 @@ func hookSessionStart(root string) error {
 	fmt.Println("📍 Project Context:")
 	fmt.Println()
 
-	// Run codemap to show full tree structure
+	// Run codemap with adaptive depth based on repo size
+	// Goal: Keep output under 60KB (~15k tokens, <10% of context)
 	exe, err := os.Executable()
 	if err == nil {
-		cmd := exec.Command(exe, root)
-		cmd.Stdout = os.Stdout
+		// Count files to determine appropriate depth
+		fileCount := 0
+		if state := watch.ReadState(root); state != nil {
+			fileCount = state.FileCount
+		}
+
+		// Adaptive depth: large repos get shallower trees
+		depth := "4"
+		if fileCount > 5000 {
+			depth = "2"
+		} else if fileCount > 2000 {
+			depth = "3"
+		}
+
+		cmd := exec.Command(exe, "--depth", depth, root)
+
+		// Capture output to enforce size limit
+		var buf strings.Builder
+		cmd.Stdout = &buf
 		cmd.Stderr = os.Stderr
 		cmd.Run()
+
+		output := buf.String()
+		const maxBytes = 60000 // ~15k tokens, <10% of 200k context
+
+		if len(output) > maxBytes {
+			// Truncate and add warning
+			output = output[:maxBytes]
+			// Find last newline to avoid cutting mid-line
+			if idx := strings.LastIndex(output, "\n"); idx > maxBytes-1000 {
+				output = output[:idx]
+			}
+			output += "\n\n... (truncated - repo has " + fmt.Sprintf("%d", fileCount) + " files, use `codemap .` for full tree)\n"
+		}
+
+		fmt.Print(output)
 		fmt.Println()
 	}
 

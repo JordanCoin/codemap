@@ -188,6 +188,17 @@ func handleGetStructure(ctx context.Context, req *mcp.CallToolRequest, input Pat
 	render.Tree(&buf, project)
 	output := stripANSI(buf.String())
 
+	// Enforce size limit: ~15k tokens max (60KB)
+	const maxBytes = 60000
+	if len(output) > maxBytes {
+		output = output[:maxBytes]
+		// Find last newline to avoid cutting mid-line
+		if idx := strings.LastIndex(output, "\n"); idx > maxBytes-1000 {
+			output = output[:idx]
+		}
+		output += fmt.Sprintf("\n\n... (truncated - repo has %d files, use `codemap --depth N` for full tree)\n", len(files))
+	}
+
 	// Add hub file summary
 	fg, err := scanner.BuildFileGraph(input.Path)
 	if err == nil {
