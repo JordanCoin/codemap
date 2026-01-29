@@ -94,8 +94,15 @@ func hookSessionStart(root string) error {
 	fmt.Println("📍 Project Context:")
 	fmt.Println()
 
-	// Run codemap with adaptive depth based on repo size
-	// Goal: Keep output under 60KB (~15k tokens, <10% of context)
+	// IMPORTANT: Hook output goes directly into Claude's "Messages" context, not system prompt.
+	// This means hook output competes with conversation history for the ~200k token limit.
+	// A 1.3MB output (like a full tree of a 10k file repo) = ~500k tokens = instant context overflow.
+	//
+	// We enforce two limits:
+	// 1. Adaptive depth: larger repos get shallower trees (depth 2-4 based on file count)
+	// 2. Hard cap: 60KB max output (~15k tokens, <10% of context window)
+	//
+	// Future: Consider structured output that Claude Code can format/truncate intelligently.
 	exe, err := os.Executable()
 	if err == nil {
 		// Count files to determine appropriate depth

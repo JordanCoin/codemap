@@ -188,7 +188,9 @@ func handleGetStructure(ctx context.Context, req *mcp.CallToolRequest, input Pat
 	render.Tree(&buf, project)
 	output := stripANSI(buf.String())
 
-	// Enforce size limit: ~15k tokens max (60KB)
+	// IMPORTANT: MCP tool output contributes to Claude's context window.
+	// Large repos can produce megabytes of tree output, causing instant context overflow.
+	// Cap at 60KB (~15k tokens) to stay under 10% of typical 200k context limit.
 	const maxBytes = 60000
 	if len(output) > maxBytes {
 		output = output[:maxBytes]
