@@ -188,6 +188,19 @@ func handleGetStructure(ctx context.Context, req *mcp.CallToolRequest, input Pat
 	render.Tree(&buf, project)
 	output := stripANSI(buf.String())
 
+	// IMPORTANT: MCP tool output contributes to Claude's context window.
+	// Large repos can produce megabytes of tree output, causing instant context overflow.
+	// Cap at 60KB (~15k tokens) to stay under 10% of typical 200k context limit.
+	const maxBytes = 60000
+	if len(output) > maxBytes {
+		output = output[:maxBytes]
+		// Find last newline to avoid cutting mid-line
+		if idx := strings.LastIndex(output, "\n"); idx > maxBytes-1000 {
+			output = output[:idx]
+		}
+		output += fmt.Sprintf("\n\n... (truncated - repo has %d files, use `codemap --depth N` for full tree)\n", len(files))
+	}
+
 	// Add hub file summary
 	fg, err := scanner.BuildFileGraph(input.Path)
 	if err == nil {
