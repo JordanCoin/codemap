@@ -195,7 +195,11 @@ func detectLangFromRuleID(ruleID string) string {
 			return "go"
 		case "ts":
 			return "typescript"
+		case "tsx":
+			return "typescript"
 		case "js":
+			return "javascript"
+		case "jsx":
 			return "javascript"
 		case "py":
 			return "python"
