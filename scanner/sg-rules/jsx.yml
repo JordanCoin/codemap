@@ -1,10 +1,10 @@
-id: ts-imports
-language: typescript
+id: jsx-imports
+language: jsx
 rule:
   kind: import_statement
 ---
-id: ts-functions
-language: typescript
+id: jsx-functions
+language: jsx
 rule:
   any:
     - kind: function_declaration
