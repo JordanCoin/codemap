@@ -9,8 +9,8 @@ import (
 	"time"
 )
 
-// ReadState reads the daemon state from disk (for hooks to use)
-// Returns nil if state doesn't exist or is stale (> 30 seconds old)
+// ReadState reads the daemon state from disk (for hooks to use).
+// Returns nil if state doesn't exist or if it's stale and daemon is not running.
 func ReadState(root string) *State {
 	stateFile := filepath.Join(root, ".codemap", "state.json")
 	data, err := os.ReadFile(stateFile)
@@ -23,9 +23,10 @@ func ReadState(root string) *State {
 		return nil
 	}
 
-	// Check if state is fresh (daemon still running)
-	if time.Since(state.UpdatedAt) > 30*time.Second {
-		return nil // stale, daemon probably not running
+	// If state is stale, still allow it when daemon is alive.
+	// This avoids expensive fallback scans during idle periods.
+	if time.Since(state.UpdatedAt) > 30*time.Second && !IsRunning(root) {
+		return nil
 	}
 
 	return &state

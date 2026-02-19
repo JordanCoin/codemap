@@ -288,10 +288,6 @@ func (d *Daemon) writeState() {
 	d.graph.mu.RLock()
 	defer d.graph.mu.RUnlock()
 
-	if d.graph.FileGraph == nil {
-		return
-	}
-
 	// Get last 50 events for timeline
 	events := d.graph.Events
 	if len(events) > 50 {
@@ -301,10 +297,15 @@ func (d *Daemon) writeState() {
 	state := State{
 		UpdatedAt:    time.Now(),
 		FileCount:    len(d.graph.Files),
-		Hubs:         d.graph.FileGraph.HubFiles(),
-		Importers:    d.graph.FileGraph.Importers,
-		Imports:      d.graph.FileGraph.Imports,
+		Hubs:         []string{},
+		Importers:    map[string][]string{},
+		Imports:      map[string][]string{},
 		RecentEvents: events,
+	}
+	if d.graph.FileGraph != nil {
+		state.Hubs = d.graph.FileGraph.HubFiles()
+		state.Importers = d.graph.FileGraph.Importers
+		state.Imports = d.graph.FileGraph.Imports
 	}
 
 	data, err := json.MarshalIndent(state, "", "  ")

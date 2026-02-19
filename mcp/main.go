@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"codemap/limits"
 	"codemap/render"
 	"codemap/scanner"
 	"codemap/watch"
@@ -29,7 +30,8 @@ var (
 
 // Input types for tools
 type PathInput struct {
-	Path string `json:"path" jsonschema:"Path to the project directory to analyze"`
+	Path  string `json:"path" jsonschema:"Path to the project directory to analyze"`
+	Depth int    `json:"depth,omitempty" jsonschema:"Optional tree depth (0 = adaptive default)"`
 }
 
 type DiffInput struct {
@@ -177,10 +179,16 @@ func handleGetStructure(ctx context.Context, req *mcp.CallToolRequest, input Pat
 	if err != nil {
 		return errorResult("Scan error: " + err.Error()), nil, nil
 	}
+	fileCount := len(files)
+	depth := input.Depth
+	if depth <= 0 {
+		depth = limits.AdaptiveDepth(fileCount)
+	}
 
 	project := scanner.Project{
 		Root:  absRoot,
 		Mode:  "tree",
+		Depth: depth,
 		Files: files,
 	}
 
@@ -191,33 +199,44 @@ func handleGetStructure(ctx context.Context, req *mcp.CallToolRequest, input Pat
 	// IMPORTANT: MCP tool output contributes to Claude's context window.
 	// Large repos can produce megabytes of tree output, causing instant context overflow.
 	// Cap at 60KB (~15k tokens) to stay under 10% of typical 200k context limit.
-	const maxBytes = 60000
+	const maxBytes = limits.MaxContextOutputBytes
 	if len(output) > maxBytes {
 		output = output[:maxBytes]
 		// Find last newline to avoid cutting mid-line
 		if idx := strings.LastIndex(output, "\n"); idx > maxBytes-1000 {
 			output = output[:idx]
 		}
-		output += fmt.Sprintf("\n\n... (truncated - repo has %d files, use `codemap --depth N` for full tree)\n", len(files))
+		output += fmt.Sprintf("\n\n... (truncated - repo has %d files, use `codemap --depth N` for full tree)\n", fileCount)
 	}
 
-	// Add hub file summary
-	fg, err := scanner.BuildFileGraph(input.Path)
-	if err == nil {
-		hubs := fg.HubFiles()
-		if len(hubs) > 0 {
-			output += "\n⚠️  HUB FILES (high-impact, 3+ dependents):\n"
-			// Sort by importer count
-			sort.Slice(hubs, func(i, j int) bool {
-				return len(fg.Importers[hubs[i]]) > len(fg.Importers[hubs[j]])
-			})
-			for i, hub := range hubs {
-				if i >= 5 {
-					output += fmt.Sprintf("   ... and %d more hubs\n", len(hubs)-5)
-					break
-				}
-				output += fmt.Sprintf("   %s (%d importers)\n", hub, len(fg.Importers[hub]))
+	// Add hub file summary. Prefer daemon cache; avoid expensive graph builds on
+	// very large repos.
+	var hubs []string
+	var importers map[string][]string
+	if state := watch.ReadState(absRoot); state != nil && (len(state.Importers) > 0 || len(state.Hubs) > 0) {
+		hubs = append(hubs, state.Hubs...)
+		importers = state.Importers
+	} else if fileCount <= limits.LargeRepoFileCount {
+		fg, err := scanner.BuildFileGraph(absRoot)
+		if err == nil {
+			hubs = fg.HubFiles()
+			importers = fg.Importers
+		}
+	} else {
+		output += "\nℹ️  Hub analysis skipped for large repo (request get_hubs for explicit analysis)\n"
+	}
+
+	if len(hubs) > 0 {
+		output += "\n⚠️  HUB FILES (high-impact, 3+ dependents):\n"
+		sort.Slice(hubs, func(i, j int) bool {
+			return len(importers[hubs[i]]) > len(importers[hubs[j]])
+		})
+		for i, hub := range hubs {
+			if i >= 5 {
+				output += fmt.Sprintf("   ... and %d more hubs\n", len(hubs)-5)
+				break
 			}
+			output += fmt.Sprintf("   %s (%d importers)\n", hub, len(importers[hub]))
 		}
 	}
 
