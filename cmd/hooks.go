@@ -626,13 +626,58 @@ func hookSessionStop(root string) error {
 }
 
 func writeSessionHandoff(root string, state *watch.State) error {
+	baseRef := resolveHandoffBaseRef(root)
 	artifact, err := handoff.Build(root, handoff.BuildOptions{
-		State: state,
+		State:   state,
+		BaseRef: baseRef,
 	})
 	if err != nil {
 		return err
 	}
 	return handoff.WriteLatest(root, artifact)
+}
+
+func resolveHandoffBaseRef(root string) string {
+	if remoteDefault, ok := gitSymbolicRef(root, "refs/remotes/origin/HEAD"); ok && remoteDefault != "" {
+		if gitRefExists(root, remoteDefault) {
+			return remoteDefault
+		}
+	}
+
+	for _, ref := range []string{"main", "master", "trunk", "develop"} {
+		if gitRefExists(root, ref) {
+			return ref
+		}
+	}
+
+	for _, ref := range []string{"origin/main", "origin/master", "origin/trunk", "origin/develop"} {
+		if gitRefExists(root, ref) {
+			return ref
+		}
+	}
+
+	// Last-resort fallback that always exists in committed repos.
+	return "HEAD"
+}
+
+func gitRefExists(root, ref string) bool {
+	cmd := exec.Command("git", "rev-parse", "--verify", "--quiet", ref)
+	cmd.Dir = root
+	return cmd.Run() == nil
+}
+
+func gitSymbolicRef(root, ref string) (string, bool) {
+	cmd := exec.Command("git", "symbolic-ref", "--quiet", "--short", ref)
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	value := strings.TrimSpace(string(out))
+	if value == "" {
+		return "", false
+	}
+	return value, true
 }
 
 // stopDaemon stops the watch daemon
