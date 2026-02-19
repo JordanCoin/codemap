@@ -4,6 +4,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"codemap/handoff"
 	"codemap/limits"
 	"codemap/render"
 	"codemap/scanner"
@@ -61,6 +63,14 @@ type WatchInput struct {
 type WatchActivityInput struct {
 	Path    string `json:"path" jsonschema:"Path to the project directory"`
 	Minutes int    `json:"minutes,omitempty" jsonschema:"Look back this many minutes (default: 30)"`
+}
+
+type HandoffInput struct {
+	Path   string `json:"path" jsonschema:"Path to the project directory"`
+	Since  string `json:"since,omitempty" jsonschema:"Look back window for recent events (Go duration, e.g. 2h, 30m)"`
+	Ref    string `json:"ref,omitempty" jsonschema:"Git base ref for diff (default: main)"`
+	Latest bool   `json:"latest,omitempty" jsonschema:"Read latest saved handoff artifact instead of generating a new one"`
+	JSON   bool   `json:"json,omitempty" jsonschema:"Return raw handoff JSON"`
 }
 
 func main() {
@@ -144,6 +154,12 @@ func main() {
 		Name:        "get_file_context",
 		Description: "Get complete dependency context for a specific file: what it imports, what imports it, whether it's a hub, and all connected files. Use this before editing a file to understand its role in the codebase.",
 	}, handleGetFileContext)
+
+	// Tool: get_handoff - Build/read cross-agent handoff artifact
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_handoff",
+		Description: "Build or read a handoff artifact for agent switching. Includes changed files, high-impact files, recent timeline, and suggested next steps.",
+	}, handleGetHandoff)
 
 	// Run server on stdio
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
@@ -370,6 +386,7 @@ Available tools:
   get_diff         - Changed files vs branch
   find_file        - Search by filename
   get_importers    - Find what imports a file
+  get_handoff      - Build/read cross-agent handoff summary
 
 Live watch tools:
   start_watch      - Start watching a project for changes
@@ -494,6 +511,56 @@ func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input Imp
 	}
 
 	return textResult(fmt.Sprintf("%d files import '%s':%s\n%s", len(importers), input.File, hubNote, strings.Join(importers, "\n"))), nil, nil
+}
+
+func handleGetHandoff(ctx context.Context, req *mcp.CallToolRequest, input HandoffInput) (*mcp.CallToolResult, any, error) {
+	absRoot, err := filepath.Abs(input.Path)
+	if err != nil {
+		return errorResult("Invalid path: " + err.Error()), nil, nil
+	}
+
+	var artifact *handoff.Artifact
+	if input.Latest {
+		artifact, err = handoff.ReadLatest(absRoot)
+		if err != nil {
+			return errorResult("Failed to read handoff: " + err.Error()), nil, nil
+		}
+		if artifact == nil {
+			return textResult("No saved handoff found at " + handoff.LatestPath(absRoot)), nil, nil
+		}
+	} else {
+		baseRef := input.Ref
+		if baseRef == "" {
+			baseRef = handoff.DefaultBaseRef
+		}
+		since := handoff.DefaultSince
+		if input.Since != "" {
+			since, err = time.ParseDuration(input.Since)
+			if err != nil {
+				return errorResult("Invalid since duration: " + err.Error()), nil, nil
+			}
+		}
+
+		artifact, err = handoff.Build(absRoot, handoff.BuildOptions{
+			BaseRef: baseRef,
+			Since:   since,
+		})
+		if err != nil {
+			return errorResult("Failed to build handoff: " + err.Error()), nil, nil
+		}
+		// Best effort cache for later reuse across tools/agents.
+		_ = handoff.WriteLatest(absRoot, artifact)
+	}
+
+	if input.JSON {
+		data, err := json.MarshalIndent(artifact, "", "  ")
+		if err != nil {
+			return errorResult("Failed to serialize handoff: " + err.Error()), nil, nil
+		}
+		return textResult(string(data)), nil, nil
+	}
+
+	return textResult(handoff.RenderMarkdown(artifact)), nil, nil
 }
 
 // ANSI escape code pattern

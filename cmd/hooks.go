@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"codemap/handoff"
 	"codemap/limits"
 	"codemap/scanner"
 	"codemap/watch"
@@ -192,6 +193,7 @@ func hookSessionStart(root string) error {
 	if len(lastSessionEvents) > 0 {
 		showLastSessionContext(root, lastSessionEvents)
 	}
+	showRecentHandoff(root)
 
 	return nil
 }
@@ -322,6 +324,34 @@ func showLastSessionContext(root string, events []string) {
 		fmt.Printf("   • %s (%s)\n", file, strings.ToLower(op))
 		count++
 	}
+}
+
+func showRecentHandoff(root string) {
+	artifact, err := handoff.ReadLatest(root)
+	if err != nil || artifact == nil {
+		return
+	}
+	if time.Since(artifact.GeneratedAt) > 7*24*time.Hour {
+		return
+	}
+
+	summary := handoff.RenderCompact(artifact, 5)
+	if summary == "" {
+		return
+	}
+
+	const maxBytes = 3000
+	if len(summary) > maxBytes {
+		summary = summary[:maxBytes]
+		if idx := strings.LastIndex(summary, "\n"); idx > maxBytes-200 {
+			summary = summary[:idx]
+		}
+		summary += "\n   ... (handoff summary truncated)\n"
+	}
+
+	fmt.Println()
+	fmt.Println("🤝 Recent handoff:")
+	fmt.Print(summary)
 }
 
 // startDaemon launches the watch daemon in background
@@ -587,8 +617,22 @@ func hookSessionStop(root string) error {
 		}
 	}
 
+	if err := writeSessionHandoff(root, state); err == nil {
+		fmt.Printf("🤝 Saved handoff to .codemap/handoff.latest.json\n")
+	}
+
 	fmt.Println()
 	return nil
+}
+
+func writeSessionHandoff(root string, state *watch.State) error {
+	artifact, err := handoff.Build(root, handoff.BuildOptions{
+		State: state,
+	})
+	if err != nil {
+		return err
+	}
+	return handoff.WriteLatest(root, artifact)
 }
 
 // stopDaemon stops the watch daemon

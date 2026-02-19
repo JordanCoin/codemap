@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"codemap/cmd"
+	"codemap/handoff"
 	"codemap/render"
 	"codemap/scanner"
 	"codemap/watch"
@@ -49,6 +50,12 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Hook error: %v\n", err)
 			os.Exit(1)
 		}
+		return
+	}
+
+	// Handle "handoff" subcommand before global flag parsing
+	if len(os.Args) >= 2 && os.Args[1] == "handoff" {
+		runHandoffSubcommand(os.Args[2:])
 		return
 	}
 
@@ -112,6 +119,7 @@ func main() {
 		fmt.Println("  codemap hook prompt-submit      # Parse user prompt (stdin)")
 		fmt.Println("  codemap hook pre-compact        # Save state before compact")
 		fmt.Println("  codemap hook session-stop       # Session summary")
+		fmt.Println("  codemap handoff [path]          # Build handoff artifact for agent switching")
 		os.Exit(0)
 	}
 
@@ -443,6 +451,74 @@ func runWatchSubcommand(subCmd, root string) {
 		fmt.Fprintf(os.Stderr, "Unknown watch command: %s\n", subCmd)
 		fmt.Fprintln(os.Stderr, "Usage: codemap watch [start|stop|status]")
 		os.Exit(1)
+	}
+}
+
+func runHandoffSubcommand(args []string) {
+	fs := flag.NewFlagSet("handoff", flag.ExitOnError)
+	since := fs.String("since", "6h", "Look back window for recent events (Go duration, e.g. 2h, 30m)")
+	baseRef := fs.String("ref", handoff.DefaultBaseRef, "Git base ref for diff (default: main)")
+	jsonMode := fs.Bool("json", false, "Output raw handoff JSON")
+	latest := fs.Bool("latest", false, "Read the latest saved handoff instead of generating a new one")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	root := "."
+	if fs.NArg() > 0 {
+		root = fs.Arg(0)
+	}
+
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	var artifact *handoff.Artifact
+	if *latest {
+		artifact, err = handoff.ReadLatest(absRoot)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading handoff: %v\n", err)
+			os.Exit(1)
+		}
+		if artifact == nil {
+			fmt.Printf("No handoff artifact found at %s\n", handoff.LatestPath(absRoot))
+			return
+		}
+	} else {
+		sinceDuration, err := time.ParseDuration(*since)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Invalid --since duration: %v\n", err)
+			os.Exit(1)
+		}
+		artifact, err = handoff.Build(absRoot, handoff.BuildOptions{
+			BaseRef: *baseRef,
+			Since:   sinceDuration,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error building handoff: %v\n", err)
+			os.Exit(1)
+		}
+		if err := handoff.WriteLatest(absRoot, artifact); err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving handoff: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	if *jsonMode {
+		if err := json.NewEncoder(os.Stdout).Encode(artifact); err != nil {
+			fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	fmt.Print(handoff.RenderMarkdown(artifact))
+	if !*latest {
+		fmt.Println()
+		fmt.Printf("Saved: %s\n", handoff.LatestPath(absRoot))
 	}
 }
 
