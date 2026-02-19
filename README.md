@@ -33,6 +33,7 @@ codemap --exclude .xcassets,Fonts,.png .  # Hide assets
 codemap --depth 2 .          # Limit depth
 codemap --diff               # What changed vs main
 codemap --deps .             # Dependency flow
+codemap handoff .            # Save cross-agent handoff summary
 codemap github.com/user/repo # Remote GitHub repo
 ```
 
@@ -133,8 +134,29 @@ Uses a shallow clone to a temp directory (fast, no history, auto-cleanup). If yo
 **Hooks (Recommended)** — Automatic context at session start, before/after edits, and more.
 → See [docs/HOOKS.md](docs/HOOKS.md)
 
-**MCP Server** — Deep integration with 7 tools for codebase analysis.
+**MCP Server** — Deep integration with project analysis + handoff tools.
 → See [docs/MCP.md](docs/MCP.md)
+
+## Multi-Agent Handoff
+
+codemap now supports a shared handoff artifact so you can switch between agents (Claude, Codex, MCP clients) without re-briefing.
+
+```bash
+codemap handoff .                 # Build + save .codemap/handoff.latest.json
+codemap handoff --latest .        # Read latest saved artifact
+codemap handoff --json .          # Machine-readable handoff payload
+codemap handoff --since 2h .      # Limit timeline lookback window
+```
+
+What it captures:
+- changed files (branch + working tree + staged + untracked text files)
+- high-impact changed files (`risk_files`) when dependency context is available
+- recent edit timeline from daemon state (when available)
+- next steps and open questions
+
+Hook integration:
+- `session-stop` writes `.codemap/handoff.latest.json`
+- `session-start` shows a compact recent handoff summary (24h freshness window)
 
 **CLAUDE.md** — Add to your project root to teach Claude when to run codemap:
 ```bash
@@ -147,6 +169,7 @@ cp /path/to/codemap/CLAUDE.md your-project/
 - [x] Tree depth limiting (`--depth`)
 - [x] File filtering (`--only`, `--exclude`)
 - [x] Claude Code hooks & MCP server
+- [x] Cross-agent handoff artifact (`.codemap/handoff.latest.json`)
 - [x] Remote repo support (GitHub, GitLab)
 - [ ] Enhanced analysis (entry points, key types)
 

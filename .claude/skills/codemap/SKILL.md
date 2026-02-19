@@ -1,6 +1,6 @@
 ---
 name: codemap
-description: Analyze codebase structure, dependencies, and changes. Use when user asks about project structure, where code is located, how files connect, what changed, or before starting any coding task. Provides instant architectural context.
+description: Analyze codebase structure, dependencies, changes, and cross-agent handoffs. Use when user asks about project structure, where code is located, how files connect, what changed, how to resume work, or before starting any coding task.
 ---
 
 # Codemap
@@ -14,6 +14,10 @@ codemap .                     # Project structure and top files
 codemap --deps                # Dependency flow (imports/functions)
 codemap --diff                # Changes vs main branch
 codemap --diff --ref <branch> # Changes vs specific branch
+codemap handoff .             # Build + save handoff artifact
+codemap handoff --latest .    # Read latest saved handoff
+codemap handoff --json .      # Machine-readable handoff payload
+codemap handoff --since 2h .  # Limit timeline lookback when building
 ```
 
 ## When to Use
@@ -39,6 +43,12 @@ codemap --diff --ref <branch> # Changes vs specific branch
 - Assessing what might break
 - Use `--ref <branch>` when comparing against something other than main
 
+### ALWAYS run `codemap handoff` when:
+- Handing work from one agent to another (Claude, Codex, MCP client)
+- Resuming work after a break and you want a compact recap
+- User asks "what should the next agent know?"
+- You want a durable summary in `.codemap/handoff.latest.json`
+
 ## Output Interpretation
 
 ### Tree View (`codemap .`)
@@ -58,6 +68,22 @@ codemap --diff --ref <branch> # Changes vs specific branch
 - `(+N -M)` = lines added/removed
 - Warning icons show files imported by others (impact analysis)
 
+### Handoff (`codemap handoff`)
+- `changed_files` includes branch diff + working tree + staged + untracked text files
+- `risk_files` highlights high-impact changed files when dependency context is available
+- `recent_events` uses daemon timeline if present
+- `next_steps` and `open_questions` provide a compact handoff checklist
+- `--latest` reads saved artifact without rebuilding
+
+## Daemon and Hooks
+
+- With daemon state: handoff includes richer timeline and better risk context.
+- Without daemon state: handoff still works using git-based changed files.
+- Hook behavior:
+  - `session-stop` writes `.codemap/handoff.latest.json`
+  - `session-start` may show recent handoff summary (24h freshness window)
+  - session-start structure output is capped/adaptive for large repos
+
 ## Examples
 
 **User asks:** "Where is the authentication handled?"
@@ -71,3 +97,9 @@ codemap --diff --ref <branch> # Changes vs specific branch
 
 **User asks:** "I want to refactor the utils module"
 **Action:** Run `codemap --deps` first to see what depends on utils before making changes.
+
+**User asks:** "I'm switching to another agent, what should I pass along?"
+**Action:** Run `codemap handoff .` and share the summary (or `--json` for tools).
+
+**User asks:** "I just came back, what was in progress?"
+**Action:** Run `codemap handoff --latest .` and continue from that state.

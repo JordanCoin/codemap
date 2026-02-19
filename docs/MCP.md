@@ -56,6 +56,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 | `get_diff` | Changed files with line counts and impact analysis |
 | `find_file` | Find files by name pattern |
 | `get_importers` | Find all files that import a specific file |
+| `get_handoff` | Build/read cross-agent handoff artifact (optionally save to `.codemap/handoff.latest.json`) |
 
 ## Usage
 
@@ -65,3 +66,14 @@ Once configured, Claude can use these tools automatically. Try asking:
 - "Show me the dependency flow"
 - "What files import utils.go?"
 - "What changed since the last commit?"
+- "Build a handoff summary I can continue in another agent"
+
+## Handoff Tool Notes
+
+`get_handoff` supports:
+- `latest=true` to read previously saved handoff artifact
+- `since="2h"` and `ref="main"` to tune generation
+- `json=true` for machine-readable output
+- `save=true` to persist generated artifact to `.codemap/handoff.latest.json`
+
+By default, `get_handoff` does **not** write to disk unless `save=true` is set.
