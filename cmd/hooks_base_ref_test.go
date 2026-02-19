@@ -61,4 +61,3 @@ func TestResolveHandoffBaseRef(t *testing.T) {
 		}
 	})
 }
-
