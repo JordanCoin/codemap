@@ -9,9 +9,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
+	"codemap/limits"
 	"codemap/scanner"
 	"codemap/watch"
 )
@@ -23,10 +25,15 @@ type hubInfo struct {
 	Imports   map[string][]string
 }
 
-// getHubInfo returns hub info from daemon state (fast) or fresh scan (slow)
+// getHubInfo returns hub info from daemon state.
+// If daemon isn't running, falls back to a fresh scan.
 func getHubInfo(root string) *hubInfo {
-	// Try daemon state first (instant)
 	if state := watch.ReadState(root); state != nil {
+		// State may contain file/event info only (no dependency graph) on very
+		// large repos. Avoid expensive fallback scans in that case.
+		if len(state.Importers) == 0 && len(state.Imports) == 0 && len(state.Hubs) == 0 {
+			return nil
+		}
 		return &hubInfo{
 			Hubs:      state.Hubs,
 			Importers: state.Importers,
@@ -34,7 +41,12 @@ func getHubInfo(root string) *hubInfo {
 		}
 	}
 
-	// Fall back to fresh scan (slower)
+	// If daemon is running but state is unavailable, skip expensive fallback.
+	if watch.IsRunning(root) {
+		return nil
+	}
+
+	// Fall back to fresh scan only when daemon is not running.
 	fg, err := scanner.BuildFileGraph(root)
 	if err != nil {
 		return nil
@@ -45,6 +57,17 @@ func getHubInfo(root string) *hubInfo {
 		Importers: fg.Importers,
 		Imports:   fg.Imports,
 	}
+}
+
+func waitForDaemonState(root string, timeout time.Duration) *watch.State {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if state := watch.ReadState(root); state != nil {
+			return state
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return nil
 }
 
 // RunHook executes the named hook with the given project root
@@ -94,13 +117,55 @@ func hookSessionStart(root string) error {
 	fmt.Println("📍 Project Context:")
 	fmt.Println()
 
-	// Run codemap to show full tree structure
+	// IMPORTANT: Hook output goes directly into Claude's "Messages" context, not system prompt.
+	// This means hook output competes with conversation history for the ~200k token limit.
+	// A 1.3MB output (like a full tree of a 10k file repo) = ~500k tokens = instant context overflow.
+	//
+	// We enforce two limits:
+	// 1. Adaptive depth: larger repos get shallower trees (depth 2-4 based on file count)
+	// 2. Hard cap: 60KB max output (~15k tokens, <10% of context window)
+	//
+	// Future: Consider structured output that Claude Code can format/truncate intelligently.
+	fileCount := 0
+	fileCountKnown := false
+	state := watch.ReadState(root)
+	if state == nil && watch.IsRunning(root) {
+		state = waitForDaemonState(root, 2*time.Second)
+	}
+	if state != nil {
+		fileCount = state.FileCount
+		fileCountKnown = true
+	}
+
 	exe, err := os.Executable()
 	if err == nil {
-		cmd := exec.Command(exe, root)
-		cmd.Stdout = os.Stdout
+		depth := limits.AdaptiveDepth(fileCount)
+		cmd := exec.Command(exe, "--depth", strconv.Itoa(depth), root)
+
+		// Capture output to enforce size limit
+		var buf strings.Builder
+		cmd.Stdout = &buf
 		cmd.Stderr = os.Stderr
 		cmd.Run()
+
+		output := buf.String()
+		const maxBytes = limits.MaxContextOutputBytes
+
+		if len(output) > maxBytes {
+			// Truncate and add warning
+			output = output[:maxBytes]
+			// Find last newline to avoid cutting mid-line
+			if idx := strings.LastIndex(output, "\n"); idx > maxBytes-1000 {
+				output = output[:idx]
+			}
+			repoSummary := "repo size unknown"
+			if fileCountKnown {
+				repoSummary = fmt.Sprintf("repo has %d files", fileCount)
+			}
+			output += "\n\n... (truncated - " + repoSummary + ", use `codemap .` for full tree)\n"
+		}
+
+		fmt.Print(output)
 		fmt.Println()
 	}
 
@@ -116,10 +181,12 @@ func hookSessionStart(root string) error {
 			importers := len(info.Importers[hub])
 			fmt.Printf("   ⚠️  HUB FILE: %s (imported by %d files)\n", hub, importers)
 		}
+	} else if fileCountKnown && fileCount > limits.LargeRepoFileCount {
+		fmt.Printf("ℹ️  Hub analysis skipped for large repo (%d files)\n", fileCount)
 	}
 
 	// Show diff vs main if on a feature branch
-	showDiffVsMain(root)
+	showDiffVsMain(root, fileCount, fileCountKnown)
 
 	// Show last session context if resuming work
 	if len(lastSessionEvents) > 0 {
@@ -129,8 +196,9 @@ func hookSessionStart(root string) error {
 	return nil
 }
 
-// showDiffVsMain shows files changed on this branch vs main
-func showDiffVsMain(root string) {
+// showDiffVsMain shows files changed on this branch vs main.
+// For large/unknown repos, uses lightweight git output to avoid expensive scans.
+func showDiffVsMain(root string, fileCount int, fileCountKnown bool) {
 	// Check if we're on a branch other than main
 	branchCmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
 	branchCmd.Dir = root
@@ -151,10 +219,44 @@ func showDiffVsMain(root string) {
 
 	fmt.Println()
 	fmt.Printf("📝 Changes on branch '%s' vs main:\n", branch)
+
+	// Unknown file count typically means daemon state is not ready.
+	// Use cheap git-based output in that case to avoid startup blowups.
+	if !fileCountKnown || fileCount > limits.LargeRepoFileCount {
+		showLightweightDiffVsMain(root)
+		return
+	}
+
+	// Run codemap --diff to show richer impact analysis on manageable repos.
 	cmd := exec.Command(exe, "--diff", root)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Run()
+}
+
+func showLightweightDiffVsMain(root string) {
+	cmd := exec.Command("git", "diff", "--name-only", "main...HEAD")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		fmt.Println("   (unable to read git diff)")
+		return
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		fmt.Println("   No files changed")
+		return
+	}
+
+	const maxShown = 20
+	for i, line := range lines {
+		if i >= maxShown {
+			fmt.Printf("   ... and %d more files\n", len(lines)-maxShown)
+			break
+		}
+		fmt.Printf("   • %s\n", line)
+	}
 }
 
 // getLastSessionEvents reads events.log for previous session context

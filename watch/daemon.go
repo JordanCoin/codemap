@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"codemap/limits"
 	"codemap/scanner"
 
 	"github.com/fsnotify/fsnotify"
@@ -77,8 +78,14 @@ func (d *Daemon) Start() error {
 		return fmt.Errorf("initial scan failed: %w", err)
 	}
 
-	// Compute dependency graph (best effort - don't fail if deps unavailable)
-	d.computeDeps()
+	// Compute dependency graph (best effort). Skip on very large repos to avoid
+	// expensive startup memory/CPU spikes in background hook flows.
+	fileCount := d.FileCount()
+	if fileCount <= limits.LargeRepoFileCount {
+		d.computeDeps()
+	} else if d.verbose {
+		fmt.Printf("[watch] Skipping dependency graph for large repo (%d files)\n", fileCount)
+	}
 
 	// Add directories to watcher
 	if err := d.addWatchDirs(); err != nil {
