@@ -493,6 +493,10 @@ func runHandoffSubcommand(args []string) {
 			fmt.Fprintf(os.Stderr, "Invalid --since duration: %v\n", err)
 			os.Exit(1)
 		}
+		if sinceDuration <= 0 {
+			fmt.Fprintf(os.Stderr, "Invalid --since duration: must be > 0\n")
+			os.Exit(1)
+		}
 		artifact, err = handoff.Build(absRoot, handoff.BuildOptions{
 			BaseRef: *baseRef,
 			Since:   sinceDuration,

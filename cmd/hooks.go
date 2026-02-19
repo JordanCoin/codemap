@@ -331,7 +331,7 @@ func showRecentHandoff(root string) {
 	if err != nil || artifact == nil {
 		return
 	}
-	if time.Since(artifact.GeneratedAt) > 7*24*time.Hour {
+	if time.Since(artifact.GeneratedAt) > 24*time.Hour {
 		return
 	}
 

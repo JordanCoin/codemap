@@ -70,6 +70,7 @@ type HandoffInput struct {
 	Since  string `json:"since,omitempty" jsonschema:"Look back window for recent events (Go duration, e.g. 2h, 30m)"`
 	Ref    string `json:"ref,omitempty" jsonschema:"Git base ref for diff (default: main)"`
 	Latest bool   `json:"latest,omitempty" jsonschema:"Read latest saved handoff artifact instead of generating a new one"`
+	Save   bool   `json:"save,omitempty" jsonschema:"When true, persist generated handoff to .codemap/handoff.latest.json"`
 	JSON   bool   `json:"json,omitempty" jsonschema:"Return raw handoff JSON"`
 }
 
@@ -158,7 +159,7 @@ func main() {
 	// Tool: get_handoff - Build/read cross-agent handoff artifact
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_handoff",
-		Description: "Build or read a handoff artifact for agent switching. Includes changed files, high-impact files, recent timeline, and suggested next steps.",
+		Description: "Build or read a handoff artifact for agent switching. Includes changed files, high-impact files, recent timeline, and suggested next steps. Set save=true to persist the generated artifact.",
 	}, handleGetHandoff)
 
 	// Run server on stdio
@@ -539,6 +540,9 @@ func handleGetHandoff(ctx context.Context, req *mcp.CallToolRequest, input Hando
 			if err != nil {
 				return errorResult("Invalid since duration: " + err.Error()), nil, nil
 			}
+			if since <= 0 {
+				return errorResult("Invalid since duration: must be > 0"), nil, nil
+			}
 		}
 
 		artifact, err = handoff.Build(absRoot, handoff.BuildOptions{
@@ -548,8 +552,11 @@ func handleGetHandoff(ctx context.Context, req *mcp.CallToolRequest, input Hando
 		if err != nil {
 			return errorResult("Failed to build handoff: " + err.Error()), nil, nil
 		}
-		// Best effort cache for later reuse across tools/agents.
-		_ = handoff.WriteLatest(absRoot, artifact)
+		if input.Save {
+			if err := handoff.WriteLatest(absRoot, artifact); err != nil {
+				return errorResult("Failed to save handoff: " + err.Error()), nil, nil
+			}
+		}
 	}
 
 	if input.JSON {
