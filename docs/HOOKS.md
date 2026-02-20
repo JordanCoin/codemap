@@ -170,7 +170,7 @@ Stats: 8 events, 3 files touched, +63 lines, 1 hub edits
 ```
 
 ### Next Session Start (Handoff Resume)
-If a recent handoff exists, session start includes a compact resume block:
+If a recent handoff exists **for the current branch**, session start includes a compact resume block:
 ```
 🤝 Recent handoff:
    Branch: feature-x

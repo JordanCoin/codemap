@@ -183,8 +183,10 @@ func hookSessionStart(root string) error {
 		fmt.Printf("ℹ️  Hub analysis skipped for large repo (%d files)\n", fileCount)
 	}
 
+	currentBranch, branchKnown := gitCurrentBranch(root)
 	recentHandoff := getRecentHandoff(root)
-	hasRecentHandoffChanges := handoffHasChangedFiles(recentHandoff)
+	recentHandoffMatchesBranch := handoffMatchesBranch(recentHandoff, currentBranch, branchKnown)
+	hasRecentHandoffChanges := recentHandoffMatchesBranch && handoffHasChangedFiles(recentHandoff)
 
 	// Show diff vs main only when we do not already have a recent structured handoff.
 	if !hasRecentHandoffChanges {
@@ -195,7 +197,9 @@ func hookSessionStart(root string) error {
 	if len(lastSessionEvents) > 0 && !hasRecentHandoffChanges {
 		showLastSessionContext(root, lastSessionEvents)
 	}
-	showRecentHandoffSummary(recentHandoff)
+	if recentHandoffMatchesBranch {
+		showRecentHandoffSummary(recentHandoff)
+	}
 
 	return nil
 }
@@ -349,6 +353,27 @@ func handoffHasChangedFiles(artifact *handoff.Artifact) bool {
 		return false
 	}
 	return len(artifact.Delta.Changed) > 0 || len(artifact.ChangedFiles) > 0
+}
+
+func handoffMatchesBranch(artifact *handoff.Artifact, currentBranch string, branchKnown bool) bool {
+	if artifact == nil || !branchKnown {
+		return false
+	}
+	return strings.TrimSpace(artifact.Branch) == strings.TrimSpace(currentBranch)
+}
+
+func gitCurrentBranch(root string) (string, bool) {
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	branch := strings.TrimSpace(string(out))
+	if branch == "" {
+		return "", false
+	}
+	return branch, true
 }
 
 func showRecentHandoffSummary(artifact *handoff.Artifact) {

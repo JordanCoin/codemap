@@ -496,6 +496,69 @@ func TestHandoffHasChangedFiles(t *testing.T) {
 	}
 }
 
+func TestHandoffMatchesBranch(t *testing.T) {
+	tests := []struct {
+		name          string
+		artifact      *handoff.Artifact
+		currentBranch string
+		branchKnown   bool
+		want          bool
+	}{
+		{
+			name:          "nil artifact",
+			artifact:      nil,
+			currentBranch: "feature/a",
+			branchKnown:   true,
+			want:          false,
+		},
+		{
+			name: "matching branch",
+			artifact: &handoff.Artifact{
+				Branch: "feature/a",
+			},
+			currentBranch: "feature/a",
+			branchKnown:   true,
+			want:          true,
+		},
+		{
+			name: "different branch",
+			artifact: &handoff.Artifact{
+				Branch: "feature/old",
+			},
+			currentBranch: "feature/new",
+			branchKnown:   true,
+			want:          false,
+		},
+		{
+			name: "unknown current branch",
+			artifact: &handoff.Artifact{
+				Branch: "feature/a",
+			},
+			currentBranch: "",
+			branchKnown:   false,
+			want:          false,
+		},
+		{
+			name: "trimmed whitespace matches",
+			artifact: &handoff.Artifact{
+				Branch: " feature/a ",
+			},
+			currentBranch: "feature/a",
+			branchKnown:   true,
+			want:          true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := handoffMatchesBranch(tt.artifact, tt.currentBranch, tt.branchKnown)
+			if got != tt.want {
+				t.Fatalf("handoffMatchesBranch() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // captureOutput captures stdout during function execution
 func captureOutput(f func()) string {
 	old := os.Stdout
