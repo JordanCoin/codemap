@@ -9,10 +9,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"codemap/handoff"
 	"codemap/limits"
 	"codemap/scanner"
 	"codemap/watch"
@@ -149,20 +151,16 @@ func hookSessionStart(root string) error {
 		cmd.Run()
 
 		output := buf.String()
-		const maxBytes = limits.MaxContextOutputBytes
-
-		if len(output) > maxBytes {
-			// Truncate and add warning
-			output = output[:maxBytes]
-			// Find last newline to avoid cutting mid-line
-			if idx := strings.LastIndex(output, "\n"); idx > maxBytes-1000 {
-				output = output[:idx]
-			}
+		if len(output) > limits.MaxStructureOutputBytes {
 			repoSummary := "repo size unknown"
 			if fileCountKnown {
 				repoSummary = fmt.Sprintf("repo has %d files", fileCount)
 			}
-			output += "\n\n... (truncated - " + repoSummary + ", use `codemap .` for full tree)\n"
+			output = limits.TruncateAtLineBoundary(
+				output,
+				limits.MaxStructureOutputBytes,
+				"\n\n... (truncated - "+repoSummary+", use `codemap .` for full tree)\n",
+			)
 		}
 
 		fmt.Print(output)
@@ -185,12 +183,22 @@ func hookSessionStart(root string) error {
 		fmt.Printf("ℹ️  Hub analysis skipped for large repo (%d files)\n", fileCount)
 	}
 
-	// Show diff vs main if on a feature branch
-	showDiffVsMain(root, fileCount, fileCountKnown)
+	currentBranch, branchKnown := gitCurrentBranch(root)
+	recentHandoff := getRecentHandoff(root)
+	recentHandoffMatchesBranch := handoffMatchesBranch(recentHandoff, currentBranch, branchKnown)
+	hasRecentHandoffChanges := recentHandoffMatchesBranch && handoffHasChangedFiles(recentHandoff)
 
-	// Show last session context if resuming work
-	if len(lastSessionEvents) > 0 {
+	// Show diff vs main only when we do not already have a recent structured handoff.
+	if !hasRecentHandoffChanges {
+		showDiffVsMain(root, fileCount, fileCountKnown)
+	}
+
+	// Show last session context only when recent handoff is unavailable/incomplete.
+	if len(lastSessionEvents) > 0 && !hasRecentHandoffChanges {
 		showLastSessionContext(root, lastSessionEvents)
+	}
+	if recentHandoffMatchesBranch {
+		showRecentHandoffSummary(recentHandoff)
 	}
 
 	return nil
@@ -313,15 +321,81 @@ func showLastSessionContext(root string, events []string) {
 
 	fmt.Println()
 	fmt.Println("🕐 Last session worked on:")
-	count := 0
-	for file, op := range files {
-		if count >= 5 {
+	orderedFiles := make([]string, 0, len(files))
+	for file := range files {
+		orderedFiles = append(orderedFiles, file)
+	}
+	sort.Strings(orderedFiles)
+
+	for i, file := range orderedFiles {
+		op := files[file]
+		if i >= 5 {
 			fmt.Printf("   ... and %d more files\n", len(files)-5)
 			break
 		}
 		fmt.Printf("   • %s (%s)\n", file, strings.ToLower(op))
-		count++
 	}
+}
+
+func getRecentHandoff(root string) *handoff.Artifact {
+	artifact, err := handoff.ReadLatest(root)
+	if err != nil || artifact == nil {
+		return nil
+	}
+	if time.Since(artifact.GeneratedAt) > 24*time.Hour {
+		return nil
+	}
+	return artifact
+}
+
+func handoffHasChangedFiles(artifact *handoff.Artifact) bool {
+	if artifact == nil {
+		return false
+	}
+	return len(artifact.Delta.Changed) > 0 || len(artifact.ChangedFiles) > 0
+}
+
+func handoffMatchesBranch(artifact *handoff.Artifact, currentBranch string, branchKnown bool) bool {
+	if artifact == nil || !branchKnown {
+		return false
+	}
+	return strings.TrimSpace(artifact.Branch) == strings.TrimSpace(currentBranch)
+}
+
+func gitCurrentBranch(root string) (string, bool) {
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	branch := strings.TrimSpace(string(out))
+	if branch == "" {
+		return "", false
+	}
+	return branch, true
+}
+
+func showRecentHandoffSummary(artifact *handoff.Artifact) {
+	if artifact == nil {
+		return
+	}
+	summary := handoff.RenderCompact(artifact, 5)
+	if summary == "" {
+		return
+	}
+
+	if len(summary) > limits.MaxHandoffCompactBytes {
+		summary = limits.TruncateAtLineBoundary(
+			summary,
+			limits.MaxHandoffCompactBytes,
+			"\n   ... (handoff summary truncated)\n",
+		)
+	}
+
+	fmt.Println()
+	fmt.Println("🤝 Recent handoff:")
+	fmt.Print(summary)
 }
 
 // startDaemon launches the watch daemon in background
@@ -587,8 +661,67 @@ func hookSessionStop(root string) error {
 		}
 	}
 
+	if err := writeSessionHandoff(root, state); err == nil {
+		fmt.Printf("🤝 Saved handoff to .codemap/handoff.latest.json\n")
+	}
+
 	fmt.Println()
 	return nil
+}
+
+func writeSessionHandoff(root string, state *watch.State) error {
+	baseRef := resolveHandoffBaseRef(root)
+	artifact, err := handoff.Build(root, handoff.BuildOptions{
+		State:   state,
+		BaseRef: baseRef,
+	})
+	if err != nil {
+		return err
+	}
+	return handoff.WriteLatest(root, artifact)
+}
+
+func resolveHandoffBaseRef(root string) string {
+	if remoteDefault, ok := gitSymbolicRef(root, "refs/remotes/origin/HEAD"); ok && remoteDefault != "" {
+		if gitRefExists(root, remoteDefault) {
+			return remoteDefault
+		}
+	}
+
+	for _, ref := range []string{"main", "master", "trunk", "develop"} {
+		if gitRefExists(root, ref) {
+			return ref
+		}
+	}
+
+	for _, ref := range []string{"origin/main", "origin/master", "origin/trunk", "origin/develop"} {
+		if gitRefExists(root, ref) {
+			return ref
+		}
+	}
+
+	// Last-resort fallback that always exists in committed repos.
+	return "HEAD"
+}
+
+func gitRefExists(root, ref string) bool {
+	cmd := exec.Command("git", "rev-parse", "--verify", "--quiet", ref)
+	cmd.Dir = root
+	return cmd.Run() == nil
+}
+
+func gitSymbolicRef(root, ref string) (string, bool) {
+	cmd := exec.Command("git", "symbolic-ref", "--quiet", "--short", ref)
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	value := strings.TrimSpace(string(out))
+	if value == "" {
+		return "", false
+	}
+	return value, true
 }
 
 // stopDaemon stops the watch daemon

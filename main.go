@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"codemap/cmd"
+	"codemap/handoff"
+	"codemap/limits"
 	"codemap/render"
 	"codemap/scanner"
 	"codemap/watch"
@@ -49,6 +51,12 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Hook error: %v\n", err)
 			os.Exit(1)
 		}
+		return
+	}
+
+	// Handle "handoff" subcommand before global flag parsing
+	if len(os.Args) >= 2 && os.Args[1] == "handoff" {
+		runHandoffSubcommand(os.Args[2:])
 		return
 	}
 
@@ -112,6 +120,7 @@ func main() {
 		fmt.Println("  codemap hook prompt-submit      # Parse user prompt (stdin)")
 		fmt.Println("  codemap hook pre-compact        # Save state before compact")
 		fmt.Println("  codemap hook session-stop       # Session summary")
+		fmt.Println("  codemap handoff [path]          # Build handoff artifact for agent switching")
 		os.Exit(0)
 	}
 
@@ -443,6 +452,137 @@ func runWatchSubcommand(subCmd, root string) {
 		fmt.Fprintf(os.Stderr, "Unknown watch command: %s\n", subCmd)
 		fmt.Fprintln(os.Stderr, "Usage: codemap watch [start|stop|status]")
 		os.Exit(1)
+	}
+}
+
+func runHandoffSubcommand(args []string) {
+	fs := flag.NewFlagSet("handoff", flag.ExitOnError)
+	since := fs.String("since", "6h", "Look back window for recent events (Go duration, e.g. 2h, 30m)")
+	baseRef := fs.String("ref", handoff.DefaultBaseRef, "Git base ref for diff (default: main)")
+	jsonMode := fs.Bool("json", false, "Output raw handoff JSON")
+	latest := fs.Bool("latest", false, "Read the latest saved handoff instead of generating a new one")
+	prefixOnly := fs.Bool("prefix", false, "Render only the stable prefix layer")
+	deltaOnly := fs.Bool("delta", false, "Render only the recent delta layer")
+	detailPath := fs.String("detail", "", "Load full detail for a changed file path from handoff delta")
+	noSave := fs.Bool("no-save", false, "Do not persist generated handoff artifact")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if *prefixOnly && *deltaOnly {
+		fmt.Fprintln(os.Stderr, "Error: --prefix and --delta are mutually exclusive")
+		os.Exit(1)
+	}
+
+	root := "."
+	if fs.NArg() > 0 {
+		root = fs.Arg(0)
+	}
+
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	var artifact *handoff.Artifact
+	if *latest {
+		artifact, err = handoff.ReadLatest(absRoot)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading handoff: %v\n", err)
+			os.Exit(1)
+		}
+		if artifact == nil {
+			fmt.Printf("No handoff artifact found at %s\n", handoff.LatestPath(absRoot))
+			return
+		}
+	} else {
+		sinceDuration, err := time.ParseDuration(*since)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Invalid --since duration: %v\n", err)
+			os.Exit(1)
+		}
+		if sinceDuration <= 0 {
+			fmt.Fprintf(os.Stderr, "Invalid --since duration: must be > 0\n")
+			os.Exit(1)
+		}
+		artifact, err = handoff.Build(absRoot, handoff.BuildOptions{
+			BaseRef: *baseRef,
+			Since:   sinceDuration,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error building handoff: %v\n", err)
+			os.Exit(1)
+		}
+		if !*noSave {
+			if err := handoff.WriteLatest(absRoot, artifact); err != nil {
+				fmt.Fprintf(os.Stderr, "Error saving handoff: %v\n", err)
+				os.Exit(1)
+			}
+		}
+	}
+
+	if *detailPath != "" {
+		detail, err := handoff.BuildFileDetail(absRoot, artifact, *detailPath, nil)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading handoff detail: %v\n", err)
+			os.Exit(1)
+		}
+		if *jsonMode {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(detail); err != nil {
+				fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+		out := handoff.RenderFileDetailMarkdown(detail)
+		out = limits.TruncateAtLineBoundary(out, limits.MaxHandoffDetailBytes, "\n\n... (handoff detail truncated)\n")
+		fmt.Print(out)
+		return
+	}
+
+	if *jsonMode {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		switch {
+		case *prefixOnly:
+			if err := enc.Encode(artifact.Prefix); err != nil {
+				fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
+				os.Exit(1)
+			}
+		case *deltaOnly:
+			if err := enc.Encode(artifact.Delta); err != nil {
+				fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
+				os.Exit(1)
+			}
+		default:
+			if err := enc.Encode(artifact); err != nil {
+				fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
+				os.Exit(1)
+			}
+		}
+		return
+	}
+
+	var out string
+	switch {
+	case *prefixOnly:
+		out = handoff.RenderPrefixMarkdown(artifact.Prefix)
+	case *deltaOnly:
+		out = handoff.RenderDeltaMarkdown(artifact.Delta)
+	default:
+		out = handoff.RenderMarkdown(artifact)
+	}
+	out = limits.TruncateAtLineBoundary(out, limits.MaxHandoffMarkdownBytes, "\n\n... (handoff output truncated)\n")
+	fmt.Print(out)
+	if !*latest && !*noSave {
+		fmt.Println()
+		fmt.Printf("Saved: %s\n", handoff.LatestPath(absRoot))
+		fmt.Printf("Prefix: %s\n", handoff.PrefixPath(absRoot))
+		fmt.Printf("Delta: %s\n", handoff.DeltaPath(absRoot))
+		fmt.Printf("Metrics: %s\n", handoff.MetricsPath(absRoot))
 	}
 }
 

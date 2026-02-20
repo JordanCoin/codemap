@@ -10,6 +10,10 @@ hub-check
 
 # Runtime state
 .codemap/
+codemap-dev
+dev_codemap
+firebase-debug.log
+firebalse-debug.log
 
 # Local settings
 .claude/settings.local.json

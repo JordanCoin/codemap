@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"codemap/handoff"
 )
 
 // TestHubInfoIsHub tests the hub detection threshold (3+ importers)
@@ -442,6 +444,118 @@ func TestHubInfoWithMultipleHubs(t *testing.T) {
 
 	if len(hubImports) != 3 {
 		t.Errorf("main.go should import 3 hubs, got %d: %v", len(hubImports), hubImports)
+	}
+}
+
+func TestHandoffHasChangedFiles(t *testing.T) {
+	tests := []struct {
+		name     string
+		artifact *handoff.Artifact
+		want     bool
+	}{
+		{
+			name:     "nil artifact",
+			artifact: nil,
+			want:     false,
+		},
+		{
+			name: "legacy changed files",
+			artifact: &handoff.Artifact{
+				ChangedFiles: []string{"main.go"},
+			},
+			want: true,
+		},
+		{
+			name: "delta changed stubs",
+			artifact: &handoff.Artifact{
+				Delta: handoff.DeltaSnapshot{
+					Changed: []handoff.FileStub{{Path: "main.go"}},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "no changed files",
+			artifact: &handoff.Artifact{
+				Delta: handoff.DeltaSnapshot{
+					Changed: []handoff.FileStub{},
+				},
+				ChangedFiles: []string{},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := handoffHasChangedFiles(tt.artifact)
+			if got != tt.want {
+				t.Fatalf("handoffHasChangedFiles() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHandoffMatchesBranch(t *testing.T) {
+	tests := []struct {
+		name          string
+		artifact      *handoff.Artifact
+		currentBranch string
+		branchKnown   bool
+		want          bool
+	}{
+		{
+			name:          "nil artifact",
+			artifact:      nil,
+			currentBranch: "feature/a",
+			branchKnown:   true,
+			want:          false,
+		},
+		{
+			name: "matching branch",
+			artifact: &handoff.Artifact{
+				Branch: "feature/a",
+			},
+			currentBranch: "feature/a",
+			branchKnown:   true,
+			want:          true,
+		},
+		{
+			name: "different branch",
+			artifact: &handoff.Artifact{
+				Branch: "feature/old",
+			},
+			currentBranch: "feature/new",
+			branchKnown:   true,
+			want:          false,
+		},
+		{
+			name: "unknown current branch",
+			artifact: &handoff.Artifact{
+				Branch: "feature/a",
+			},
+			currentBranch: "",
+			branchKnown:   false,
+			want:          false,
+		},
+		{
+			name: "trimmed whitespace matches",
+			artifact: &handoff.Artifact{
+				Branch: " feature/a ",
+			},
+			currentBranch: "feature/a",
+			branchKnown:   true,
+			want:          true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := handoffMatchesBranch(tt.artifact, tt.currentBranch, tt.branchKnown)
+			if got != tt.want {
+				t.Fatalf("handoffMatchesBranch() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

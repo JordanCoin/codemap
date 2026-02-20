@@ -12,7 +12,7 @@ Turn Claude into a codebase-aware assistant. These hooks give Claude automatic c
 | **Before editing** | Claude sees who imports the file AND what hubs it imports |
 | **After editing** | Claude sees the impact of what was just changed |
 | **Before memory clears** | Hub state is saved so Claude remembers what's important |
-| **Session ends** | Timeline of all edits with line counts and hub warnings |
+| **Session ends** | Timeline of all edits + saves layered handoff artifacts for next agent/session |
 
 ---
 
@@ -166,6 +166,21 @@ Edit Timeline:
   14:30:11 CREATE cmd/new_feature.go +45
 
 Stats: 8 events, 3 files touched, +63 lines, 1 hub edits
+🤝 Saved handoff to .codemap/handoff.latest.json
+```
+
+### Next Session Start (Handoff Resume)
+If a recent handoff exists **for the current branch**, session start includes a compact resume block:
+```
+🤝 Recent handoff:
+   Branch: feature-x
+   Base ref: main
+   Changed files: 6
+   Top changes:
+   • cmd/hooks.go
+   • mcp/main.go
+   Risk files:
+   ⚠️  scanner/types.go (10 importers)
 ```
 
 ---
@@ -179,7 +194,22 @@ Stats: 8 events, 3 files touched, +63 lines, 1 hub edits
 | `codemap hook post-edit` | `PostToolUse` (Edit\|Write) | Impact of changes (same as pre-edit) |
 | `codemap hook prompt-submit` | `UserPromptSubmit` | Hub context for mentioned files + session progress |
 | `codemap hook pre-compact` | `PreCompact` | Saves hub state to .codemap/hubs.txt |
-| `codemap hook session-stop` | `SessionEnd` | Edit timeline with line counts and stats |
+| `codemap hook session-stop` | `SessionEnd` | Edit timeline + writes `.codemap/handoff.latest.json`, `.codemap/handoff.prefix.json`, `.codemap/handoff.delta.json` |
+
+---
+
+## Handoff Command
+
+Use handoff directly when switching between agents:
+
+```bash
+codemap handoff .             # build + save handoff
+codemap handoff --latest .    # read latest saved handoff
+codemap handoff --json .      # JSON payload for tooling
+codemap handoff --prefix .    # stable prefix layer only
+codemap handoff --delta .     # dynamic delta layer only
+codemap handoff --detail a.go . # lazy-load full detail for one changed file
+```
 
 ---
 

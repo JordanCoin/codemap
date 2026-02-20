@@ -4,6 +4,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"codemap/handoff"
 	"codemap/limits"
 	"codemap/render"
 	"codemap/scanner"
@@ -61,6 +63,18 @@ type WatchInput struct {
 type WatchActivityInput struct {
 	Path    string `json:"path" jsonschema:"Path to the project directory"`
 	Minutes int    `json:"minutes,omitempty" jsonschema:"Look back this many minutes (default: 30)"`
+}
+
+type HandoffInput struct {
+	Path   string `json:"path" jsonschema:"Path to the project directory"`
+	Since  string `json:"since,omitempty" jsonschema:"Look back window for recent events (Go duration, e.g. 2h, 30m)"`
+	Ref    string `json:"ref,omitempty" jsonschema:"Git base ref for diff (default: main)"`
+	Latest bool   `json:"latest,omitempty" jsonschema:"Read latest saved handoff artifact instead of generating a new one"`
+	Save   bool   `json:"save,omitempty" jsonschema:"When true, persist generated artifact to .codemap/handoff.latest.json"`
+	JSON   bool   `json:"json,omitempty" jsonschema:"Return raw JSON output"`
+	Prefix bool   `json:"prefix,omitempty" jsonschema:"Return only the stable prefix snapshot"`
+	Delta  bool   `json:"delta,omitempty" jsonschema:"Return only the recent delta snapshot"`
+	File   string `json:"file,omitempty" jsonschema:"Load detailed context for one changed file path from handoff delta"`
 }
 
 func main() {
@@ -145,6 +159,12 @@ func main() {
 		Description: "Get complete dependency context for a specific file: what it imports, what imports it, whether it's a hub, and all connected files. Use this before editing a file to understand its role in the codebase.",
 	}, handleGetFileContext)
 
+	// Tool: get_handoff - Build/read cross-agent handoff artifact
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_handoff",
+		Description: "Build or read a layered handoff artifact for agent switching. Prefix = stable project context, delta = recent work. Supports lazy per-file detail via file=<path>. Set save=true to persist generated artifacts.",
+	}, handleGetHandoff)
+
 	// Run server on stdio
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Printf("Server error: %v", err)
@@ -196,17 +216,13 @@ func handleGetStructure(ctx context.Context, req *mcp.CallToolRequest, input Pat
 	render.Tree(&buf, project)
 	output := stripANSI(buf.String())
 
-	// IMPORTANT: MCP tool output contributes to Claude's context window.
-	// Large repos can produce megabytes of tree output, causing instant context overflow.
-	// Cap at 60KB (~15k tokens) to stay under 10% of typical 200k context limit.
-	const maxBytes = limits.MaxContextOutputBytes
-	if len(output) > maxBytes {
-		output = output[:maxBytes]
-		// Find last newline to avoid cutting mid-line
-		if idx := strings.LastIndex(output, "\n"); idx > maxBytes-1000 {
-			output = output[:idx]
-		}
-		output += fmt.Sprintf("\n\n... (truncated - repo has %d files, use `codemap --depth N` for full tree)\n", fileCount)
+	// IMPORTANT: MCP tool output contributes directly to context window usage.
+	if len(output) > limits.MaxStructureOutputBytes {
+		output = limits.TruncateAtLineBoundary(
+			output,
+			limits.MaxStructureOutputBytes,
+			fmt.Sprintf("\n\n... (truncated - repo has %d files, use `codemap --depth N` for full tree)\n", fileCount),
+		)
 	}
 
 	// Add hub file summary. Prefer daemon cache; avoid expensive graph builds on
@@ -370,6 +386,7 @@ Available tools:
   get_diff         - Changed files vs branch
   find_file        - Search by filename
   get_importers    - Find what imports a file
+  get_handoff      - Build/read cross-agent handoff summary
 
 Live watch tools:
   start_watch      - Start watching a project for changes
@@ -494,6 +511,100 @@ func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input Imp
 	}
 
 	return textResult(fmt.Sprintf("%d files import '%s':%s\n%s", len(importers), input.File, hubNote, strings.Join(importers, "\n"))), nil, nil
+}
+
+func handleGetHandoff(ctx context.Context, req *mcp.CallToolRequest, input HandoffInput) (*mcp.CallToolResult, any, error) {
+	if input.Prefix && input.Delta {
+		return errorResult("prefix and delta options are mutually exclusive"), nil, nil
+	}
+
+	absRoot, err := filepath.Abs(input.Path)
+	if err != nil {
+		return errorResult("Invalid path: " + err.Error()), nil, nil
+	}
+
+	var artifact *handoff.Artifact
+	if input.Latest {
+		artifact, err = handoff.ReadLatest(absRoot)
+		if err != nil {
+			return errorResult("Failed to read handoff: " + err.Error()), nil, nil
+		}
+		if artifact == nil {
+			return textResult("No saved handoff found at " + handoff.LatestPath(absRoot)), nil, nil
+		}
+	} else {
+		baseRef := input.Ref
+		if baseRef == "" {
+			baseRef = handoff.DefaultBaseRef
+		}
+		since := handoff.DefaultSince
+		if input.Since != "" {
+			since, err = time.ParseDuration(input.Since)
+			if err != nil {
+				return errorResult("Invalid since duration: " + err.Error()), nil, nil
+			}
+			if since <= 0 {
+				return errorResult("Invalid since duration: must be > 0"), nil, nil
+			}
+		}
+
+		artifact, err = handoff.Build(absRoot, handoff.BuildOptions{
+			BaseRef: baseRef,
+			Since:   since,
+		})
+		if err != nil {
+			return errorResult("Failed to build handoff: " + err.Error()), nil, nil
+		}
+		if input.Save {
+			if err := handoff.WriteLatest(absRoot, artifact); err != nil {
+				return errorResult("Failed to save handoff: " + err.Error()), nil, nil
+			}
+		}
+	}
+
+	if input.File != "" {
+		detail, err := handoff.BuildFileDetail(absRoot, artifact, input.File, nil)
+		if err != nil {
+			return errorResult("Failed to load handoff detail: " + err.Error()), nil, nil
+		}
+		if input.JSON {
+			data, err := json.MarshalIndent(detail, "", "  ")
+			if err != nil {
+				return errorResult("Failed to serialize handoff detail: " + err.Error()), nil, nil
+			}
+			return textResult(string(data)), nil, nil
+		}
+		out := handoff.RenderFileDetailMarkdown(detail)
+		out = limits.TruncateAtLineBoundary(out, limits.MaxHandoffDetailBytes, "\n\n... (handoff detail truncated)\n")
+		return textResult(out), nil, nil
+	}
+
+	if input.JSON {
+		var payload any = artifact
+		switch {
+		case input.Prefix:
+			payload = artifact.Prefix
+		case input.Delta:
+			payload = artifact.Delta
+		}
+		data, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			return errorResult("Failed to serialize handoff: " + err.Error()), nil, nil
+		}
+		return textResult(string(data)), nil, nil
+	}
+
+	var out string
+	switch {
+	case input.Prefix:
+		out = handoff.RenderPrefixMarkdown(artifact.Prefix)
+	case input.Delta:
+		out = handoff.RenderDeltaMarkdown(artifact.Delta)
+	default:
+		out = handoff.RenderMarkdown(artifact)
+	}
+	out = limits.TruncateAtLineBoundary(out, limits.MaxHandoffMarkdownBytes, "\n\n... (handoff output truncated)\n")
+	return textResult(out), nil, nil
 }
 
 // ANSI escape code pattern

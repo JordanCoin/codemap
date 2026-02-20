@@ -33,6 +33,7 @@ codemap --exclude .xcassets,Fonts,.png .  # Hide assets
 codemap --depth 2 .          # Limit depth
 codemap --diff               # What changed vs main
 codemap --deps .             # Dependency flow
+codemap handoff .            # Save cross-agent handoff summary
 codemap github.com/user/repo # Remote GitHub repo
 ```
 
@@ -133,8 +134,51 @@ Uses a shallow clone to a temp directory (fast, no history, auto-cleanup). If yo
 **Hooks (Recommended)** — Automatic context at session start, before/after edits, and more.
 → See [docs/HOOKS.md](docs/HOOKS.md)
 
-**MCP Server** — Deep integration with 7 tools for codebase analysis.
+**MCP Server** — Deep integration with project analysis + handoff tools.
 → See [docs/MCP.md](docs/MCP.md)
+
+## Multi-Agent Handoff
+
+codemap now supports a shared handoff artifact so you can switch between agents (Claude, Codex, MCP clients) without re-briefing.
+
+```bash
+codemap handoff .                 # Build + save layered handoff artifacts
+codemap handoff --latest .        # Read latest saved artifact
+codemap handoff --json .          # Machine-readable handoff payload
+codemap handoff --since 2h .      # Limit timeline lookback window
+codemap handoff --prefix .        # Stable prefix layer only
+codemap handoff --delta .         # Recent delta layer only
+codemap handoff --detail a.go .   # Lazy-load full detail for one changed file
+codemap handoff --no-save .       # Build/read without writing artifacts
+```
+
+What it captures (layered for cache reuse):
+- `prefix` (stable): hub summaries + repo file-count context
+- `delta` (dynamic): changed file stubs (`path`, `hash`, `status`, `size`), risk files, recent events, next steps
+- deterministic hashes: `prefix_hash`, `delta_hash`, `combined_hash`
+- cache metrics: reuse ratio + unchanged bytes vs previous handoff
+
+Artifacts written:
+- `.codemap/handoff.latest.json` (full artifact)
+- `.codemap/handoff.prefix.json` (stable prefix snapshot)
+- `.codemap/handoff.delta.json` (dynamic delta snapshot)
+- `.codemap/handoff.metrics.log` (append-only metrics stream, one JSON line per save)
+
+Save defaults:
+- CLI saves by default; use `--no-save` to make generation read-only.
+- MCP does not save by default; set `save=true` to persist artifacts.
+
+Compatibility note:
+- legacy top-level fields (`changed_files`, `risk_files`, etc.) are still included for compatibility and will be removed in a future schema version after migration.
+
+Why this matters:
+- default transport is compact stubs (low context cost)
+- full per-file context is lazy-loaded only when needed (`--detail` / `file=...`)
+- output is deterministic and budgeted to reduce context churn across agent turns
+
+Hook integration:
+- `session-stop` writes `.codemap/handoff.latest.json`
+- `session-start` shows a compact recent handoff summary (24h freshness window)
 
 **CLAUDE.md** — Add to your project root to teach Claude when to run codemap:
 ```bash
@@ -147,6 +191,7 @@ cp /path/to/codemap/CLAUDE.md your-project/
 - [x] Tree depth limiting (`--depth`)
 - [x] File filtering (`--only`, `--exclude`)
 - [x] Claude Code hooks & MCP server
+- [x] Cross-agent handoff artifact (`.codemap/handoff.latest.json`)
 - [x] Remote repo support (GitHub, GitLab)
 - [ ] Enhanced analysis (entry points, key types)
 
