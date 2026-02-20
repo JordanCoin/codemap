@@ -175,7 +175,6 @@ If a recent handoff exists, session start includes a compact resume block:
 🤝 Recent handoff:
    Branch: feature-x
    Base ref: main
-   Prefix/Delta: e7a1f2d0c98a / 31f7ac2d1403
    Changed files: 6
    Top changes:
    • cmd/hooks.go

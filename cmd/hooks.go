@@ -183,14 +183,19 @@ func hookSessionStart(root string) error {
 		fmt.Printf("ℹ️  Hub analysis skipped for large repo (%d files)\n", fileCount)
 	}
 
-	// Show diff vs main if on a feature branch
-	showDiffVsMain(root, fileCount, fileCountKnown)
+	recentHandoff := getRecentHandoff(root)
+	hasRecentHandoffChanges := handoffHasChangedFiles(recentHandoff)
 
-	// Show last session context if resuming work
-	if len(lastSessionEvents) > 0 {
+	// Show diff vs main only when we do not already have a recent structured handoff.
+	if !hasRecentHandoffChanges {
+		showDiffVsMain(root, fileCount, fileCountKnown)
+	}
+
+	// Show last session context only when recent handoff is unavailable/incomplete.
+	if len(lastSessionEvents) > 0 && !hasRecentHandoffChanges {
 		showLastSessionContext(root, lastSessionEvents)
 	}
-	showRecentHandoff(root)
+	showRecentHandoffSummary(recentHandoff)
 
 	return nil
 }
@@ -328,15 +333,28 @@ func showLastSessionContext(root string, events []string) {
 	}
 }
 
-func showRecentHandoff(root string) {
+func getRecentHandoff(root string) *handoff.Artifact {
 	artifact, err := handoff.ReadLatest(root)
 	if err != nil || artifact == nil {
-		return
+		return nil
 	}
 	if time.Since(artifact.GeneratedAt) > 24*time.Hour {
+		return nil
+	}
+	return artifact
+}
+
+func handoffHasChangedFiles(artifact *handoff.Artifact) bool {
+	if artifact == nil {
+		return false
+	}
+	return len(artifact.Delta.Changed) > 0 || len(artifact.ChangedFiles) > 0
+}
+
+func showRecentHandoffSummary(artifact *handoff.Artifact) {
+	if artifact == nil {
 		return
 	}
-
 	summary := handoff.RenderCompact(artifact, 5)
 	if summary == "" {
 		return

@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"codemap/handoff"
 )
 
 // TestHubInfoIsHub tests the hub detection threshold (3+ importers)
@@ -442,6 +444,55 @@ func TestHubInfoWithMultipleHubs(t *testing.T) {
 
 	if len(hubImports) != 3 {
 		t.Errorf("main.go should import 3 hubs, got %d: %v", len(hubImports), hubImports)
+	}
+}
+
+func TestHandoffHasChangedFiles(t *testing.T) {
+	tests := []struct {
+		name     string
+		artifact *handoff.Artifact
+		want     bool
+	}{
+		{
+			name:     "nil artifact",
+			artifact: nil,
+			want:     false,
+		},
+		{
+			name: "legacy changed files",
+			artifact: &handoff.Artifact{
+				ChangedFiles: []string{"main.go"},
+			},
+			want: true,
+		},
+		{
+			name: "delta changed stubs",
+			artifact: &handoff.Artifact{
+				Delta: handoff.DeltaSnapshot{
+					Changed: []handoff.FileStub{{Path: "main.go"}},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "no changed files",
+			artifact: &handoff.Artifact{
+				Delta: handoff.DeltaSnapshot{
+					Changed: []handoff.FileStub{},
+				},
+				ChangedFiles: []string{},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := handoffHasChangedFiles(tt.artifact)
+			if got != tt.want {
+				t.Fatalf("handoffHasChangedFiles() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

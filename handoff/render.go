@@ -16,11 +16,6 @@ func RenderMarkdown(a *Artifact) string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("## Handoff (%s)\n", a.Branch))
 	b.WriteString(fmt.Sprintf("Base ref: `%s`\n", a.BaseRef))
-	if a.PrefixHash != "" || a.DeltaHash != "" {
-		b.WriteString(fmt.Sprintf("Prefix hash: `%s`\n", shortHash(a.PrefixHash)))
-		b.WriteString(fmt.Sprintf("Delta hash: `%s`\n", shortHash(a.DeltaHash)))
-	}
-	b.WriteString(fmt.Sprintf("Cache reuse: %.0f%% (%d/%d bytes)\n", a.Metrics.ReuseRatio*100, a.Metrics.UnchangedBytes, a.Metrics.TotalBytes))
 
 	b.WriteString("\n### Prefix (Stable Context)\n")
 	if a.Prefix.FileCount > 0 {
@@ -53,11 +48,7 @@ func RenderMarkdown(a *Artifact) string {
 			if status == "" {
 				status = "changed"
 			}
-			hashNote := ""
-			if stub.Hash != "" {
-				hashNote = fmt.Sprintf(" #%s", shortHash(stub.Hash))
-			}
-			b.WriteString(fmt.Sprintf("- `%s` (%s%s)\n", stub.Path, status, hashNote))
+			b.WriteString(fmt.Sprintf("- `%s` (%s)\n", stub.Path, status))
 		}
 	}
 
@@ -140,11 +131,7 @@ func RenderDeltaMarkdown(d DeltaSnapshot) string {
 			if status == "" {
 				status = "changed"
 			}
-			hashNote := ""
-			if stub.Hash != "" {
-				hashNote = fmt.Sprintf(" #%s", shortHash(stub.Hash))
-			}
-			b.WriteString(fmt.Sprintf("- `%s` (%s%s)\n", stub.Path, status, hashNote))
+			b.WriteString(fmt.Sprintf("- `%s` (%s)\n", stub.Path, status))
 		}
 	}
 
@@ -218,9 +205,6 @@ func RenderCompact(a *Artifact, maxItems int) string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("   Branch: %s\n", a.Branch))
 	b.WriteString(fmt.Sprintf("   Base ref: %s\n", a.BaseRef))
-	if a.PrefixHash != "" || a.DeltaHash != "" {
-		b.WriteString(fmt.Sprintf("   Prefix/Delta: %s / %s\n", shortHash(a.PrefixHash), shortHash(a.DeltaHash)))
-	}
 	b.WriteString(fmt.Sprintf("   Changed files: %d\n", len(a.Delta.Changed)))
 
 	if len(a.Delta.Changed) > 0 {
@@ -250,14 +234,4 @@ func RenderCompact(a *Artifact, maxItems int) string {
 	}
 
 	return b.String()
-}
-
-func shortHash(hash string) string {
-	if hash == "" {
-		return "-"
-	}
-	if len(hash) <= 12 {
-		return hash
-	}
-	return hash[:12]
 }

@@ -234,6 +234,9 @@ func TestRenderMarkdown(t *testing.T) {
 	if !strings.Contains(md, "Handoff") || !strings.Contains(md, "a.go") || !strings.Contains(md, "Prefix (Stable Context)") {
 		t.Fatalf("markdown render missing expected content: %s", md)
 	}
+	if strings.Contains(md, "Prefix hash:") || strings.Contains(md, "Cache reuse:") {
+		t.Fatalf("markdown output should hide cache telemetry details: %s", md)
+	}
 }
 
 func TestRenderCompactDeterministic(t *testing.T) {
