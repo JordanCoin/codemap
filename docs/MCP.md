@@ -81,6 +81,10 @@ Once configured, Claude can use these tools automatically. Try asking:
 
 By default, `get_handoff` does **not** write to disk unless `save=true` is set.
 
+Surface behavior note:
+- MCP: read-only by default (`save=false`)
+- CLI `codemap handoff`: save by default (`--no-save` to disable)
+
 Output and budget notes:
 - text responses are byte-budgeted and line-truncated to protect context
 - handoff payload includes deterministic hashes (`prefix_hash`, `delta_hash`, `combined_hash`)

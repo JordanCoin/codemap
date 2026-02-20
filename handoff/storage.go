@@ -1,6 +1,7 @@
 package handoff
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ const (
 	prefixFilename  = "handoff.prefix.json"
 	deltaFilename   = "handoff.delta.json"
 	metricsFilename = "handoff.metrics.log"
+	maxMetricsLines = 500
 )
 
 // LatestPath returns the absolute location of the latest handoff artifact.
@@ -136,18 +138,24 @@ func appendMetrics(root string, artifact *Artifact) error {
 	if _, err := f.Write(append(data, '\n')); err != nil {
 		return err
 	}
-	return nil
+	return capMetricsLog(root, maxMetricsLines)
 }
 
 func normalizeArtifact(artifact *Artifact) {
+	ensureSchemaVersion(artifact)
+	promoteLegacyFieldsIntoDelta(artifact)
+	ensureNonNilSnapshotFields(artifact)
+	mirrorDeltaToLegacy(artifact)
+	backfillHashes(artifact)
+}
+
+func ensureSchemaVersion(artifact *Artifact) {
 	if artifact.SchemaVersion == 0 {
 		artifact.SchemaVersion = SchemaVersion
 	}
+}
 
-	if artifact.Prefix.Hubs == nil {
-		artifact.Prefix.Hubs = []HubSummary{}
-	}
-
+func promoteLegacyFieldsIntoDelta(artifact *Artifact) {
 	if artifact.Delta.Changed == nil && len(artifact.ChangedFiles) > 0 {
 		artifact.Delta.Changed = make([]FileStub, 0, len(artifact.ChangedFiles))
 		for _, path := range artifact.ChangedFiles {
@@ -166,13 +174,18 @@ func normalizeArtifact(artifact *Artifact) {
 	if artifact.Delta.OpenQuestions == nil {
 		artifact.Delta.OpenQuestions = append([]string{}, artifact.OpenQuestions...)
 	}
+}
 
+func ensureNonNilSnapshotFields(artifact *Artifact) {
+	artifact.Prefix.Hubs = nonNilHubs(artifact.Prefix.Hubs)
 	artifact.Delta.Changed = nonNilStubs(artifact.Delta.Changed)
 	artifact.Delta.RiskFiles = nonNilRiskFiles(artifact.Delta.RiskFiles)
 	artifact.Delta.RecentEvents = nonNilEvents(artifact.Delta.RecentEvents)
 	artifact.Delta.NextSteps = nonNilStrings(artifact.Delta.NextSteps)
 	artifact.Delta.OpenQuestions = nonNilStrings(artifact.Delta.OpenQuestions)
+}
 
+func mirrorDeltaToLegacy(artifact *Artifact) {
 	if artifact.ChangedFiles == nil {
 		artifact.ChangedFiles = stubPaths(artifact.Delta.Changed)
 	}
@@ -188,7 +201,9 @@ func normalizeArtifact(artifact *Artifact) {
 	if artifact.OpenQuestions == nil {
 		artifact.OpenQuestions = append([]string{}, artifact.Delta.OpenQuestions...)
 	}
+}
 
+func backfillHashes(artifact *Artifact) {
 	if artifact.PrefixHash == "" {
 		if hash, _, err := hashCanonical(artifact.Prefix); err == nil {
 			artifact.PrefixHash = hash
@@ -202,4 +217,36 @@ func normalizeArtifact(artifact *Artifact) {
 	if artifact.CombinedHash == "" {
 		artifact.CombinedHash = hashFromStrings(artifact.PrefixHash, artifact.DeltaHash)
 	}
+}
+
+func capMetricsLog(root string, maxLines int) error {
+	if maxLines <= 0 {
+		return nil
+	}
+
+	path := MetricsPath(root)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 {
+		return nil
+	}
+
+	lines := bytes.Split(data, []byte("\n"))
+	if len(lines) <= maxLines {
+		return nil
+	}
+
+	trimmed := bytes.Join(lines[len(lines)-maxLines:], []byte("\n"))
+	trimmed = append(trimmed, '\n')
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, trimmed, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }

@@ -149,6 +149,7 @@ codemap handoff --since 2h .      # Limit timeline lookback window
 codemap handoff --prefix .        # Stable prefix layer only
 codemap handoff --delta .         # Recent delta layer only
 codemap handoff --detail a.go .   # Lazy-load full detail for one changed file
+codemap handoff --no-save .       # Build/read without writing artifacts
 ```
 
 What it captures (layered for cache reuse):
@@ -162,6 +163,13 @@ Artifacts written:
 - `.codemap/handoff.prefix.json` (stable prefix snapshot)
 - `.codemap/handoff.delta.json` (dynamic delta snapshot)
 - `.codemap/handoff.metrics.log` (append-only metrics stream, one JSON line per save)
+
+Save defaults:
+- CLI saves by default; use `--no-save` to make generation read-only.
+- MCP does not save by default; set `save=true` to persist artifacts.
+
+Compatibility note:
+- legacy top-level fields (`changed_files`, `risk_files`, etc.) are still included for compatibility and will be removed in a future schema version after migration.
 
 Why this matters:
 - default transport is compact stubs (low context cost)

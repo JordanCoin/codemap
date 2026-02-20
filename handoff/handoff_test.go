@@ -194,6 +194,9 @@ func TestBuildReturnsNonNilSlicesWithoutState(t *testing.T) {
 	if artifact.OpenQuestions == nil {
 		t.Fatal("OpenQuestions should be non-nil")
 	}
+	if artifact.Prefix.FileCount == 0 {
+		t.Fatal("Prefix.FileCount should be populated when daemon state is unavailable")
+	}
 }
 
 func TestReadLatestMissing(t *testing.T) {
@@ -292,5 +295,36 @@ func TestBuildFileDetail(t *testing.T) {
 	}
 	if len(detail.Importers) != 3 {
 		t.Fatalf("expected 3 importers, got %d", len(detail.Importers))
+	}
+}
+
+func TestMetricsLogCapped(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Dir(MetricsPath(root)), 0755); err != nil {
+		t.Fatalf("mkdir .codemap failed: %v", err)
+	}
+
+	artifact := &Artifact{
+		GeneratedAt:  time.Now(),
+		Branch:       "feature/test",
+		BaseRef:      "main",
+		PrefixHash:   "p",
+		DeltaHash:    "d",
+		CombinedHash: "c",
+	}
+
+	for i := 0; i < maxMetricsLines+50; i++ {
+		if err := appendMetrics(root, artifact); err != nil {
+			t.Fatalf("appendMetrics failed: %v", err)
+		}
+	}
+
+	data, err := os.ReadFile(MetricsPath(root))
+	if err != nil {
+		t.Fatalf("read metrics failed: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != maxMetricsLines {
+		t.Fatalf("expected %d metrics lines after cap, got %d", maxMetricsLines, len(lines))
 	}
 }

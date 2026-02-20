@@ -85,6 +85,7 @@ type Artifact struct {
 	Metrics       CacheMetrics   `json:"metrics"`
 
 	// Legacy top-level fields preserved for backward compatibility.
+	// Deprecated: these mirrors will be removed in schema v2 after clients migrate to Prefix/Delta.
 	ChangedFiles  []string       `json:"changed_files"`
 	RiskFiles     []RiskFile     `json:"risk_files"`
 	RecentEvents  []EventSummary `json:"recent_events"`

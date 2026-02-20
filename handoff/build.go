@@ -68,10 +68,7 @@ func Build(root string, opts BuildOptions) (*Artifact, error) {
 		state = watch.ReadState(absRoot)
 	}
 
-	fileCount := 0
-	if state != nil {
-		fileCount = state.FileCount
-	}
+	fileCount := resolveRepoFileCount(absRoot, state)
 	opts = normalizeOptions(opts, fileCount)
 
 	branch, err := gitCurrentBranch(absRoot)
@@ -95,7 +92,7 @@ func Build(root string, opts BuildOptions) (*Artifact, error) {
 		}
 	}
 
-	importers := dependencyImportersForHandoff(absRoot, state)
+	importers := dependencyImportersForHandoff(absRoot, state, fileCount)
 	riskFiles := summarizeRiskFiles(changedAll, importers, opts.MaxRisk)
 	selectedPaths := prioritizeChangedPaths(changedAll, riskFiles, opts.MaxChanged)
 	entries = selectEntries(entries, selectedPaths)
@@ -598,28 +595,25 @@ func gitCurrentBranch(root string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-func dependencyImportersForHandoff(root string, state *watch.State) map[string][]string {
+func resolveRepoFileCount(root string, state *watch.State) int {
+	if state != nil && state.FileCount > 0 {
+		return state.FileCount
+	}
+
+	gitCache := scanner.NewGitIgnoreCache(root)
+	files, err := scanner.ScanFiles(root, gitCache, nil, nil)
+	if err != nil {
+		return 0
+	}
+	return len(files)
+}
+
+func dependencyImportersForHandoff(root string, state *watch.State, fileCount int) map[string][]string {
 	if state != nil && len(state.Importers) > 0 {
 		return state.Importers
 	}
 
 	// Reuse daemon file count when available to avoid an extra scan.
-	if state != nil && state.FileCount > limits.LargeRepoFileCount {
-		return nil
-	}
-
-	fileCount := 0
-	if state != nil {
-		fileCount = state.FileCount
-	}
-	if fileCount == 0 {
-		gitCache := scanner.NewGitIgnoreCache(root)
-		files, err := scanner.ScanFiles(root, gitCache, nil, nil)
-		if err != nil {
-			return nil
-		}
-		fileCount = len(files)
-	}
 	if fileCount > limits.LargeRepoFileCount {
 		return nil
 	}
