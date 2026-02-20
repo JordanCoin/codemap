@@ -2,7 +2,11 @@ package handoff
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,29 +19,45 @@ import (
 	"codemap/watch"
 )
 
-func normalizeOptions(opts BuildOptions) BuildOptions {
+type changedEntry struct {
+	Path   string
+	Status string
+}
+
+var changedStatusRank = map[string]int{
+	"branch":    1,
+	"modified":  2,
+	"staged":    3,
+	"untracked": 4,
+	"event":     5,
+}
+
+func normalizeOptions(opts BuildOptions, fileCount int) BuildOptions {
 	if opts.BaseRef == "" {
 		opts.BaseRef = DefaultBaseRef
 	}
 	if opts.Since <= 0 {
 		opts.Since = DefaultSince
 	}
+
+	budget := limits.HandoffBudgetForRepo(fileCount)
 	if opts.MaxChanged <= 0 {
-		opts.MaxChanged = 50
+		opts.MaxChanged = budget.MaxChanged
 	}
 	if opts.MaxRisk <= 0 {
-		opts.MaxRisk = 10
+		opts.MaxRisk = budget.MaxRisk
 	}
 	if opts.MaxEvents <= 0 {
-		opts.MaxEvents = 20
+		opts.MaxEvents = budget.MaxEvents
+	}
+	if opts.MaxHubs <= 0 {
+		opts.MaxHubs = max(budget.MaxRisk, 8)
 	}
 	return opts
 }
 
 // Build creates a multi-agent handoff artifact from git + daemon state.
 func Build(root string, opts BuildOptions) (*Artifact, error) {
-	opts = normalizeOptions(opts)
-
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -48,36 +68,91 @@ func Build(root string, opts BuildOptions) (*Artifact, error) {
 		state = watch.ReadState(absRoot)
 	}
 
+	fileCount := 0
+	if state != nil {
+		fileCount = state.FileCount
+	}
+	opts = normalizeOptions(opts, fileCount)
+
 	branch, err := gitCurrentBranch(absRoot)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read git branch: %w", err)
 	}
 
-	changedFiles, diffErr := collectChangedFiles(absRoot, opts.BaseRef)
+	entries, diffErr := collectChangedEntries(absRoot, opts.BaseRef)
 	if diffErr != nil {
 		return nil, diffErr
 	}
-	sort.Strings(changedFiles)
+	changedAll := entryPaths(entries)
 
 	recentEvents := summarizeEvents(state, opts.Since, opts.MaxEvents)
-	if len(changedFiles) == 0 && len(recentEvents) > 0 {
-		changedFiles = changedFromEvents(recentEvents)
-		sort.Strings(changedFiles)
+	if len(changedAll) == 0 && len(recentEvents) > 0 {
+		changedAll = changedFromEvents(recentEvents)
+		sort.Strings(changedAll)
+		entries = make([]changedEntry, 0, len(changedAll))
+		for _, path := range changedAll {
+			entries = append(entries, changedEntry{Path: path, Status: "event"})
+		}
 	}
 
 	importers := dependencyImportersForHandoff(absRoot, state)
-	riskFiles := summarizeRiskFiles(changedFiles, importers, opts.MaxRisk)
-	changedFiles = capStrings(changedFiles, opts.MaxChanged)
+	riskFiles := summarizeRiskFiles(changedAll, importers, opts.MaxRisk)
+	selectedPaths := prioritizeChangedPaths(changedAll, riskFiles, opts.MaxChanged)
+	entries = selectEntries(entries, selectedPaths)
 
-	nextSteps, openQuestions := deriveGuidance(changedFiles, riskFiles, recentEvents, opts.BaseRef, state != nil, len(importers) > 0)
+	changedStubs := buildFileStubs(absRoot, entries)
+	hubs := summarizeHubs(importers, opts.MaxHubs)
+
+	nextSteps, openQuestions := deriveGuidance(selectedPaths, riskFiles, recentEvents, opts.BaseRef, state != nil, len(importers) > 0)
+
+	prefix := PrefixSnapshot{
+		FileCount: fileCount,
+		Hubs:      nonNilHubs(hubs),
+	}
+	delta := DeltaSnapshot{
+		Changed:       nonNilStubs(changedStubs),
+		RiskFiles:     nonNilRiskFiles(riskFiles),
+		RecentEvents:  nonNilEvents(recentEvents),
+		NextSteps:     nonNilStrings(nextSteps),
+		OpenQuestions: nonNilStrings(openQuestions),
+	}
+
+	prefixHash, prefixBytes, err := hashCanonical(prefix)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash prefix snapshot: %w", err)
+	}
+	deltaHash, deltaBytes, err := hashCanonical(delta)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash delta snapshot: %w", err)
+	}
+	combinedHash := hashFromStrings(prefixHash, deltaHash)
+
+	previous := opts.Previous
+	if previous == nil {
+		previous, _ = ReadLatest(absRoot)
+	}
+	metrics := buildCacheMetrics(previous, prefixHash, deltaHash, prefixBytes, deltaBytes)
+	generatedAt := time.Now()
+	if previous != nil && previous.PrefixHash == prefixHash && previous.DeltaHash == deltaHash && !previous.GeneratedAt.IsZero() {
+		// Preserve timestamp across identical artifacts to keep output deterministic.
+		generatedAt = previous.GeneratedAt
+	}
 
 	return &Artifact{
 		SchemaVersion: SchemaVersion,
-		GeneratedAt:   time.Now(),
+		GeneratedAt:   generatedAt,
 		Root:          absRoot,
 		Branch:        branch,
 		BaseRef:       opts.BaseRef,
-		ChangedFiles:  nonNilStrings(changedFiles),
+		Prefix:        prefix,
+		Delta:         delta,
+		PrefixHash:    prefixHash,
+		DeltaHash:     deltaHash,
+		CombinedHash:  combinedHash,
+		Metrics:       metrics,
+
+		// Legacy top-level mirrors.
+		ChangedFiles:  stubPaths(changedStubs),
 		RiskFiles:     nonNilRiskFiles(riskFiles),
 		RecentEvents:  nonNilEvents(recentEvents),
 		NextSteps:     nonNilStrings(nextSteps),
@@ -85,60 +160,53 @@ func Build(root string, opts BuildOptions) (*Artifact, error) {
 	}, nil
 }
 
-func capStrings(values []string, max int) []string {
-	if len(values) == 0 {
-		return []string{}
-	}
-	if len(values) <= max {
-		return values
-	}
-	return values[:max]
-}
-
-func collectChangedFiles(root, baseRef string) ([]string, error) {
-	changed := make(map[string]struct{})
+func collectChangedEntries(root, baseRef string) ([]changedEntry, error) {
+	changed := make(map[string]changedEntry)
 
 	branchLines, branchErr := runGitLines(root, "diff", "--name-only", baseRef+"...HEAD")
 	for _, line := range branchLines {
-		if !includeChangedPath(root, line) {
-			continue
-		}
-		changed[line] = struct{}{}
+		addChangedEntry(changed, root, line, "branch")
 	}
 
 	workingLines, _ := runGitLines(root, "diff", "--name-only")
 	for _, line := range workingLines {
-		if !includeChangedPath(root, line) {
-			continue
-		}
-		changed[line] = struct{}{}
+		addChangedEntry(changed, root, line, "modified")
 	}
 
 	stagedLines, _ := runGitLines(root, "diff", "--name-only", "--cached")
 	for _, line := range stagedLines {
-		if !includeChangedPath(root, line) {
-			continue
-		}
-		changed[line] = struct{}{}
+		addChangedEntry(changed, root, line, "staged")
 	}
 
 	untrackedLines, _ := runGitLines(root, "ls-files", "--others", "--exclude-standard")
 	for _, line := range untrackedLines {
-		if !includeChangedPath(root, line) {
-			continue
-		}
-		changed[line] = struct{}{}
+		addChangedEntry(changed, root, line, "untracked")
 	}
 
 	if len(changed) == 0 && branchErr != nil {
 		return nil, fmt.Errorf("failed to compute changed files: %w", branchErr)
 	}
 
-	result := make([]string, 0, len(changed))
-	for path := range changed {
-		result = append(result, path)
+	result := make([]changedEntry, 0, len(changed))
+	for _, entry := range changed {
+		result = append(result, entry)
 	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Path < result[j].Path
+	})
 	return result, nil
+}
+
+func addChangedEntry(changed map[string]changedEntry, root, path, status string) {
+	normalized := filepath.ToSlash(strings.TrimSpace(path))
+	if normalized == "" || !includeChangedPath(root, normalized) {
+		return
+	}
+
+	previous, ok := changed[normalized]
+	if !ok || changedStatusRank[status] > changedStatusRank[previous.Status] {
+		changed[normalized] = changedEntry{Path: normalized, Status: status}
+	}
 }
 
 func includeChangedPath(root, path string) bool {
@@ -189,37 +257,70 @@ func isLikelyBinary(root, relPath string) bool {
 	return bytes.IndexByte(buf[:n], 0) >= 0
 }
 
-func runGitLines(root string, args ...string) ([]string, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = root
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, err
+func buildFileStubs(root string, changed []changedEntry) []FileStub {
+	if len(changed) == 0 {
+		return []FileStub{}
 	}
 
-	raw := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(raw) == 1 && raw[0] == "" {
-		return nil, nil
-	}
-
-	lines := make([]string, 0, len(raw))
-	for _, line := range raw {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			lines = append(lines, line)
+	stubs := make([]FileStub, 0, len(changed))
+	for _, entry := range changed {
+		stub := FileStub{
+			Path:   entry.Path,
+			Status: entry.Status,
 		}
+
+		absPath := filepath.Join(root, filepath.FromSlash(entry.Path))
+		info, err := os.Stat(absPath)
+		if err == nil && !info.IsDir() {
+			stub.Size = info.Size()
+			stub.Hash = fileSHA256(absPath)
+		}
+		stubs = append(stubs, stub)
 	}
-	return lines, nil
+	return stubs
 }
 
-func gitCurrentBranch(root string) (string, error) {
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
-	cmd.Dir = root
-	out, err := cmd.Output()
+func fileSHA256(path string) string {
+	f, err := os.Open(path)
 	if err != nil {
-		return "", err
+		return ""
 	}
-	return strings.TrimSpace(string(out)), nil
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func summarizeHubs(importersByFile map[string][]string, maxHubs int) []HubSummary {
+	if len(importersByFile) == 0 {
+		return []HubSummary{}
+	}
+
+	hubs := make([]HubSummary, 0, len(importersByFile))
+	for path, importers := range importersByFile {
+		if len(importers) < 3 {
+			continue
+		}
+		hubs = append(hubs, HubSummary{
+			Path:      path,
+			Importers: len(importers),
+		})
+	}
+
+	sort.Slice(hubs, func(i, j int) bool {
+		if hubs[i].Importers != hubs[j].Importers {
+			return hubs[i].Importers > hubs[j].Importers
+		}
+		return hubs[i].Path < hubs[j].Path
+	})
+
+	if maxHubs > 0 && len(hubs) > maxHubs {
+		hubs = hubs[:maxHubs]
+	}
+	return hubs
 }
 
 func summarizeRiskFiles(changed []string, importersByFile map[string][]string, maxRisk int) []RiskFile {
@@ -280,6 +381,16 @@ func summarizeEvents(state *watch.State, since time.Duration, maxEvents int) []E
 		})
 	}
 
+	sort.Slice(result, func(i, j int) bool {
+		if !result[i].Time.Equal(result[j].Time) {
+			return result[i].Time.Before(result[j].Time)
+		}
+		if result[i].Path != result[j].Path {
+			return result[i].Path < result[j].Path
+		}
+		return result[i].Op < result[j].Op
+	})
+
 	if len(result) > maxEvents {
 		result = result[len(result)-maxEvents:]
 	}
@@ -298,6 +409,7 @@ func changedFromEvents(events []EventSummary) []string {
 	for path := range seen {
 		changed = append(changed, path)
 	}
+	sort.Strings(changed)
 	return changed
 }
 
@@ -312,6 +424,9 @@ func deriveGuidance(changed []string, risk []RiskFile, events []EventSummary, ba
 	if len(risk) > 0 {
 		nextSteps = append(nextSteps, "Review downstream dependents for high-impact files before merge.")
 	}
+	if len(changed) > 0 {
+		nextSteps = append(nextSteps, "Run tests covering changed files before handoff.")
+	}
 
 	if !hasState {
 		openQuestions = append(openQuestions, "Live watch state was unavailable; timeline may be incomplete.")
@@ -324,6 +439,163 @@ func deriveGuidance(changed []string, risk []RiskFile, events []EventSummary, ba
 	}
 
 	return nextSteps, openQuestions
+}
+
+func prioritizeChangedPaths(changed []string, risk []RiskFile, maxChanged int) []string {
+	if len(changed) <= maxChanged {
+		return nonNilStrings(changed)
+	}
+
+	available := make(map[string]struct{}, len(changed))
+	for _, path := range changed {
+		available[path] = struct{}{}
+	}
+
+	out := make([]string, 0, maxChanged)
+	seen := make(map[string]struct{}, maxChanged)
+	for _, r := range risk {
+		if _, ok := available[r.Path]; !ok {
+			continue
+		}
+		if _, ok := seen[r.Path]; ok {
+			continue
+		}
+		out = append(out, r.Path)
+		seen[r.Path] = struct{}{}
+		if len(out) >= maxChanged {
+			return out
+		}
+	}
+
+	for _, path := range changed {
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		out = append(out, path)
+		if len(out) >= maxChanged {
+			break
+		}
+	}
+	return out
+}
+
+func selectEntries(entries []changedEntry, selectedPaths []string) []changedEntry {
+	if len(selectedPaths) == 0 {
+		return []changedEntry{}
+	}
+	byPath := make(map[string]changedEntry, len(entries))
+	for _, entry := range entries {
+		byPath[entry.Path] = entry
+	}
+
+	selected := make([]changedEntry, 0, len(selectedPaths))
+	for _, path := range selectedPaths {
+		if entry, ok := byPath[path]; ok {
+			selected = append(selected, entry)
+		} else {
+			selected = append(selected, changedEntry{Path: path, Status: "event"})
+		}
+	}
+	return selected
+}
+
+func entryPaths(entries []changedEntry) []string {
+	if len(entries) == 0 {
+		return []string{}
+	}
+	paths := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		paths = append(paths, entry.Path)
+	}
+	return paths
+}
+
+func stubPaths(stubs []FileStub) []string {
+	if len(stubs) == 0 {
+		return []string{}
+	}
+	paths := make([]string, 0, len(stubs))
+	for _, stub := range stubs {
+		paths = append(paths, stub.Path)
+	}
+	return paths
+}
+
+func hashCanonical(v any) (string, int, error) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return "", 0, err
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), len(data), nil
+}
+
+func hashFromStrings(parts ...string) string {
+	h := sha256.New()
+	for _, part := range parts {
+		_, _ = h.Write([]byte(part))
+		_, _ = h.Write([]byte{':'})
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func buildCacheMetrics(previous *Artifact, prefixHash, deltaHash string, prefixBytes, deltaBytes int) CacheMetrics {
+	totalBytes := prefixBytes + deltaBytes
+	metrics := CacheMetrics{
+		PrefixBytes: prefixBytes,
+		DeltaBytes:  deltaBytes,
+		TotalBytes:  totalBytes,
+	}
+	if previous == nil {
+		return metrics
+	}
+
+	metrics.PreviousCombinedHash = previous.CombinedHash
+	if previous.PrefixHash == prefixHash && prefixHash != "" {
+		metrics.PrefixReused = true
+		metrics.UnchangedBytes += prefixBytes
+	}
+	if previous.DeltaHash == deltaHash && deltaHash != "" {
+		metrics.DeltaReused = true
+		metrics.UnchangedBytes += deltaBytes
+	}
+	if totalBytes > 0 {
+		metrics.ReuseRatio = float64(metrics.UnchangedBytes) / float64(totalBytes)
+	}
+	return metrics
+}
+
+func runGitLines(root string, args ...string) ([]string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	raw := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(raw) == 1 && raw[0] == "" {
+		return nil, nil
+	}
+
+	lines := make([]string, 0, len(raw))
+	for _, line := range raw {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines, nil
+}
+
+func gitCurrentBranch(root string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func dependencyImportersForHandoff(root string, state *watch.State) map[string][]string {
@@ -376,6 +648,20 @@ func nonNilRiskFiles(items []RiskFile) []RiskFile {
 func nonNilEvents(items []EventSummary) []EventSummary {
 	if items == nil {
 		return []EventSummary{}
+	}
+	return items
+}
+
+func nonNilStubs(items []FileStub) []FileStub {
+	if items == nil {
+		return []FileStub{}
+	}
+	return items
+}
+
+func nonNilHubs(items []HubSummary) []HubSummary {
+	if items == nil {
+		return []HubSummary{}
 	}
 	return items
 }

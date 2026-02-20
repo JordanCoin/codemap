@@ -18,6 +18,9 @@ codemap handoff .             # Build + save handoff artifact
 codemap handoff --latest .    # Read latest saved handoff
 codemap handoff --json .      # Machine-readable handoff payload
 codemap handoff --since 2h .  # Limit timeline lookback when building
+codemap handoff --prefix .    # Stable prefix snapshot only
+codemap handoff --delta .     # Recent delta snapshot only
+codemap handoff --detail a.go . # Lazy-load full detail for one changed file
 ```
 
 ## When to Use
@@ -69,10 +72,10 @@ codemap handoff --since 2h .  # Limit timeline lookback when building
 - Warning icons show files imported by others (impact analysis)
 
 ### Handoff (`codemap handoff`)
-- `changed_files` includes branch diff + working tree + staged + untracked text files
+- layered output: `prefix` (stable hubs/context) + `delta` (recent changed-file stubs + timeline)
+- changed file transport uses stubs (`path`, `hash`, `status`, `size`) for lower context cost
 - `risk_files` highlights high-impact changed files when dependency context is available
-- `recent_events` uses daemon timeline if present
-- `next_steps` and `open_questions` provide a compact handoff checklist
+- includes deterministic hashes (`prefix_hash`, `delta_hash`, `combined_hash`) and cache metrics
 - `--latest` reads saved artifact without rebuilding
 
 ## Daemon and Hooks

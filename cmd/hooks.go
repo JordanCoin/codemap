@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -150,20 +151,16 @@ func hookSessionStart(root string) error {
 		cmd.Run()
 
 		output := buf.String()
-		const maxBytes = limits.MaxContextOutputBytes
-
-		if len(output) > maxBytes {
-			// Truncate and add warning
-			output = output[:maxBytes]
-			// Find last newline to avoid cutting mid-line
-			if idx := strings.LastIndex(output, "\n"); idx > maxBytes-1000 {
-				output = output[:idx]
-			}
+		if len(output) > limits.MaxStructureOutputBytes {
 			repoSummary := "repo size unknown"
 			if fileCountKnown {
 				repoSummary = fmt.Sprintf("repo has %d files", fileCount)
 			}
-			output += "\n\n... (truncated - " + repoSummary + ", use `codemap .` for full tree)\n"
+			output = limits.TruncateAtLineBoundary(
+				output,
+				limits.MaxStructureOutputBytes,
+				"\n\n... (truncated - "+repoSummary+", use `codemap .` for full tree)\n",
+			)
 		}
 
 		fmt.Print(output)
@@ -315,14 +312,19 @@ func showLastSessionContext(root string, events []string) {
 
 	fmt.Println()
 	fmt.Println("🕐 Last session worked on:")
-	count := 0
-	for file, op := range files {
-		if count >= 5 {
+	orderedFiles := make([]string, 0, len(files))
+	for file := range files {
+		orderedFiles = append(orderedFiles, file)
+	}
+	sort.Strings(orderedFiles)
+
+	for i, file := range orderedFiles {
+		op := files[file]
+		if i >= 5 {
 			fmt.Printf("   ... and %d more files\n", len(files)-5)
 			break
 		}
 		fmt.Printf("   • %s (%s)\n", file, strings.ToLower(op))
-		count++
 	}
 }
 
@@ -340,13 +342,12 @@ func showRecentHandoff(root string) {
 		return
 	}
 
-	const maxBytes = 3000
-	if len(summary) > maxBytes {
-		summary = summary[:maxBytes]
-		if idx := strings.LastIndex(summary, "\n"); idx > maxBytes-200 {
-			summary = summary[:idx]
-		}
-		summary += "\n   ... (handoff summary truncated)\n"
+	if len(summary) > limits.MaxHandoffCompactBytes {
+		summary = limits.TruncateAtLineBoundary(
+			summary,
+			limits.MaxHandoffCompactBytes,
+			"\n   ... (handoff summary truncated)\n",
+		)
 	}
 
 	fmt.Println()

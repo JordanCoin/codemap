@@ -142,17 +142,31 @@ Uses a shallow clone to a temp directory (fast, no history, auto-cleanup). If yo
 codemap now supports a shared handoff artifact so you can switch between agents (Claude, Codex, MCP clients) without re-briefing.
 
 ```bash
-codemap handoff .                 # Build + save .codemap/handoff.latest.json
+codemap handoff .                 # Build + save layered handoff artifacts
 codemap handoff --latest .        # Read latest saved artifact
 codemap handoff --json .          # Machine-readable handoff payload
 codemap handoff --since 2h .      # Limit timeline lookback window
+codemap handoff --prefix .        # Stable prefix layer only
+codemap handoff --delta .         # Recent delta layer only
+codemap handoff --detail a.go .   # Lazy-load full detail for one changed file
 ```
 
-What it captures:
-- changed files (branch + working tree + staged + untracked text files)
-- high-impact changed files (`risk_files`) when dependency context is available
-- recent edit timeline from daemon state (when available)
-- next steps and open questions
+What it captures (layered for cache reuse):
+- `prefix` (stable): hub summaries + repo file-count context
+- `delta` (dynamic): changed file stubs (`path`, `hash`, `status`, `size`), risk files, recent events, next steps
+- deterministic hashes: `prefix_hash`, `delta_hash`, `combined_hash`
+- cache metrics: reuse ratio + unchanged bytes vs previous handoff
+
+Artifacts written:
+- `.codemap/handoff.latest.json` (full artifact)
+- `.codemap/handoff.prefix.json` (stable prefix snapshot)
+- `.codemap/handoff.delta.json` (dynamic delta snapshot)
+- `.codemap/handoff.metrics.log` (append-only metrics stream, one JSON line per save)
+
+Why this matters:
+- default transport is compact stubs (low context cost)
+- full per-file context is lazy-loaded only when needed (`--detail` / `file=...`)
+- output is deterministic and budgeted to reduce context churn across agent turns
 
 Hook integration:
 - `session-stop` writes `.codemap/handoff.latest.json`

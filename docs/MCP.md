@@ -56,7 +56,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 | `get_diff` | Changed files with line counts and impact analysis |
 | `find_file` | Find files by name pattern |
 | `get_importers` | Find all files that import a specific file |
-| `get_handoff` | Build/read cross-agent handoff artifact (optionally save to `.codemap/handoff.latest.json`) |
+| `get_handoff` | Build/read layered handoff artifact (`prefix` + `delta`) with lazy file detail loading |
 
 ## Usage
 
@@ -74,6 +74,14 @@ Once configured, Claude can use these tools automatically. Try asking:
 - `latest=true` to read previously saved handoff artifact
 - `since="2h"` and `ref="main"` to tune generation
 - `json=true` for machine-readable output
-- `save=true` to persist generated artifact to `.codemap/handoff.latest.json`
+- `save=true` to persist generated artifacts (`handoff.latest.json`, `handoff.prefix.json`, `handoff.delta.json`)
+- `prefix=true` to return only the stable prefix snapshot
+- `delta=true` to return only the recent delta snapshot
+- `file="path/to/file"` to lazy-load full detail for one changed file stub
 
 By default, `get_handoff` does **not** write to disk unless `save=true` is set.
+
+Output and budget notes:
+- text responses are byte-budgeted and line-truncated to protect context
+- handoff payload includes deterministic hashes (`prefix_hash`, `delta_hash`, `combined_hash`)
+- handoff payload includes cache metrics (`reuse_ratio`, `unchanged_bytes`, etc.)

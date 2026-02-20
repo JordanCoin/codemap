@@ -1,6 +1,7 @@
 package handoff
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -108,9 +109,38 @@ func TestBuildWriteRead(t *testing.T) {
 	if artifact.RiskFiles[0].Path != "a.go" {
 		t.Fatalf("expected first risk file to be a.go, got %s", artifact.RiskFiles[0].Path)
 	}
+	if artifact.PrefixHash == "" || artifact.DeltaHash == "" || artifact.CombinedHash == "" {
+		t.Fatalf("expected non-empty hashes, got prefix=%q delta=%q combined=%q", artifact.PrefixHash, artifact.DeltaHash, artifact.CombinedHash)
+	}
+	if len(artifact.Prefix.Hubs) == 0 {
+		t.Fatalf("expected prefix hubs to be populated")
+	}
+	if len(artifact.Delta.Changed) == 0 {
+		t.Fatalf("expected delta changed stubs")
+	}
 
 	if err := WriteLatest(root, artifact); err != nil {
 		t.Fatalf("WriteLatest failed: %v", err)
+	}
+	if _, err := os.Stat(PrefixPath(root)); err != nil {
+		t.Fatalf("expected prefix snapshot file: %v", err)
+	}
+	if _, err := os.Stat(DeltaPath(root)); err != nil {
+		t.Fatalf("expected delta snapshot file: %v", err)
+	}
+	if _, err := os.Stat(MetricsPath(root)); err != nil {
+		t.Fatalf("expected metrics log file: %v", err)
+	}
+
+	// Validate split snapshots are parseable JSON.
+	var prefix PrefixSnapshot
+	if data, err := os.ReadFile(PrefixPath(root)); err != nil {
+		t.Fatalf("read prefix snapshot failed: %v", err)
+	} else if err := json.Unmarshal(data, &prefix); err != nil {
+		t.Fatalf("parse prefix snapshot failed: %v", err)
+	}
+	if len(prefix.Hubs) == 0 {
+		t.Fatalf("expected hubs in persisted prefix snapshot")
 	}
 
 	readBack, err := ReadLatest(root)
@@ -122,6 +152,12 @@ func TestBuildWriteRead(t *testing.T) {
 	}
 	if !contains(readBack.ChangedFiles, "a.go") {
 		t.Fatalf("expected read-back changed file a.go in %+v", readBack.ChangedFiles)
+	}
+	if len(readBack.Delta.Changed) == 0 {
+		t.Fatalf("expected read-back delta stubs")
+	}
+	if readBack.Metrics.TotalBytes == 0 {
+		t.Fatalf("expected cache metrics to be populated")
 	}
 }
 
@@ -173,21 +209,88 @@ func TestReadLatestMissing(t *testing.T) {
 
 func TestRenderMarkdown(t *testing.T) {
 	a := &Artifact{
-		Branch:       "feature/test",
-		BaseRef:      "main",
-		GeneratedAt:  time.Now(),
-		ChangedFiles: []string{"a.go"},
-		RiskFiles: []RiskFile{
-			{Path: "a.go", Importers: 3, IsHub: true},
+		Branch:      "feature/test",
+		BaseRef:     "main",
+		GeneratedAt: time.Now(),
+		PrefixHash:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		DeltaHash:   "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		Metrics:     CacheMetrics{ReuseRatio: 0.5, UnchangedBytes: 50, TotalBytes: 100},
+		Delta: DeltaSnapshot{
+			Changed: []FileStub{{Path: "a.go", Status: "modified"}},
+			RiskFiles: []RiskFile{
+				{Path: "a.go", Importers: 3, IsHub: true},
+			},
+			RecentEvents: []EventSummary{
+				{Time: time.Now(), Op: "WRITE", Path: "a.go", Delta: 2},
+			},
+			NextSteps: []string{"Run tests"},
 		},
-		RecentEvents: []EventSummary{
-			{Time: time.Now(), Op: "WRITE", Path: "a.go", Delta: 2},
-		},
-		NextSteps: []string{"Run tests"},
 	}
 
 	md := RenderMarkdown(a)
-	if !strings.Contains(md, "Handoff") || !strings.Contains(md, "a.go") {
+	if !strings.Contains(md, "Handoff") || !strings.Contains(md, "a.go") || !strings.Contains(md, "Prefix (Stable Context)") {
 		t.Fatalf("markdown render missing expected content: %s", md)
+	}
+}
+
+func TestRenderCompactDeterministic(t *testing.T) {
+	base := &Artifact{
+		Branch:      "feature/test",
+		BaseRef:     "main",
+		GeneratedAt: time.Now(),
+		Delta: DeltaSnapshot{
+			Changed: []FileStub{{Path: "a.go", Status: "modified"}},
+		},
+	}
+	other := *base
+	other.GeneratedAt = base.GeneratedAt.Add(45 * time.Minute)
+
+	out1 := RenderCompact(base, 5)
+	out2 := RenderCompact(&other, 5)
+	if out1 != out2 {
+		t.Fatalf("compact output should be deterministic across generated_at changes:\n%s\n---\n%s", out1, out2)
+	}
+}
+
+func TestBuildFileDetail(t *testing.T) {
+	root := t.TempDir()
+	runCmd(t, root, "git", "init")
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runCmd(t, root, "git", "add", ".")
+	runCmd(t, root, "git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "init")
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package main\n\n// changed\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	state := &watch.State{
+		Importers: map[string][]string{
+			"a.go": {"x.go", "y.go", "z.go"},
+		},
+		Imports: map[string][]string{
+			"a.go": {"dep.go"},
+		},
+		RecentEvents: []watch.Event{
+			{Time: time.Now(), Op: "WRITE", Path: "a.go", Delta: 2, IsHub: true},
+		},
+	}
+
+	artifact, err := Build(root, BuildOptions{BaseRef: "HEAD", State: state})
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+	detail, err := BuildFileDetail(root, artifact, "a.go", state)
+	if err != nil {
+		t.Fatalf("BuildFileDetail failed: %v", err)
+	}
+	if detail.Path != "a.go" {
+		t.Fatalf("expected path a.go, got %s", detail.Path)
+	}
+	if !detail.IsHub {
+		t.Fatalf("expected a.go to be marked as hub detail")
+	}
+	if len(detail.Importers) != 3 {
+		t.Fatalf("expected 3 importers, got %d", len(detail.Importers))
 	}
 }

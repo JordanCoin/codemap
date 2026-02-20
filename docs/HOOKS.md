@@ -12,7 +12,7 @@ Turn Claude into a codebase-aware assistant. These hooks give Claude automatic c
 | **Before editing** | Claude sees who imports the file AND what hubs it imports |
 | **After editing** | Claude sees the impact of what was just changed |
 | **Before memory clears** | Hub state is saved so Claude remembers what's important |
-| **Session ends** | Timeline of all edits + saves handoff artifact for next agent/session |
+| **Session ends** | Timeline of all edits + saves layered handoff artifacts for next agent/session |
 
 ---
 
@@ -173,7 +173,9 @@ Stats: 8 events, 3 files touched, +63 lines, 1 hub edits
 If a recent handoff exists, session start includes a compact resume block:
 ```
 🤝 Recent handoff:
-   Branch: feature-x (3m ago)
+   Branch: feature-x
+   Base ref: main
+   Prefix/Delta: e7a1f2d0c98a / 31f7ac2d1403
    Changed files: 6
    Top changes:
    • cmd/hooks.go
@@ -193,7 +195,7 @@ If a recent handoff exists, session start includes a compact resume block:
 | `codemap hook post-edit` | `PostToolUse` (Edit\|Write) | Impact of changes (same as pre-edit) |
 | `codemap hook prompt-submit` | `UserPromptSubmit` | Hub context for mentioned files + session progress |
 | `codemap hook pre-compact` | `PreCompact` | Saves hub state to .codemap/hubs.txt |
-| `codemap hook session-stop` | `SessionEnd` | Edit timeline + writes `.codemap/handoff.latest.json` |
+| `codemap hook session-stop` | `SessionEnd` | Edit timeline + writes `.codemap/handoff.latest.json`, `.codemap/handoff.prefix.json`, `.codemap/handoff.delta.json` |
 
 ---
 
@@ -205,6 +207,9 @@ Use handoff directly when switching between agents:
 codemap handoff .             # build + save handoff
 codemap handoff --latest .    # read latest saved handoff
 codemap handoff --json .      # JSON payload for tooling
+codemap handoff --prefix .    # stable prefix layer only
+codemap handoff --delta .     # dynamic delta layer only
+codemap handoff --detail a.go . # lazy-load full detail for one changed file
 ```
 
 ---
