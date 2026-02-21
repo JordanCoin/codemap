@@ -100,6 +100,28 @@ func (s *AstGrepScanner) Available() bool {
 	return s.binary != ""
 }
 
+// findNestedGitRepos returns subdirectory names that contain their own .git
+// These are separate repositories (not submodules) that should be excluded
+// from scanning to avoid hanging on large nested repos.
+func findNestedGitRepos(root string) []string {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+
+	var repos []string
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		gitPath := filepath.Join(root, e.Name(), ".git")
+		if info, err := os.Stat(gitPath); err == nil && info.IsDir() {
+			repos = append(repos, e.Name())
+		}
+	}
+	return repos
+}
+
 // ScanDirectory analyzes all files in a directory using sg scan
 func (s *AstGrepScanner) ScanDirectory(root string) ([]FileAnalysis, error) {
 	if !s.Available() {
@@ -119,7 +141,15 @@ func (s *AstGrepScanner) ScanDirectory(root string) ([]FileAnalysis, error) {
 	}
 	inlineRules := strings.Join(rules, "\n---\n")
 
-	cmd := exec.Command(s.binary, "scan", "--inline-rules", inlineRules, "--json", root)
+	// Build command args, excluding nested git repos that ast-grep would
+	// treat as separate repo boundaries (ignoring parent .gitignore)
+	args := []string{"scan", "--inline-rules", inlineRules, "--json"}
+	for _, repo := range findNestedGitRepos(root) {
+		args = append(args, "--globs", "!"+repo+"/**")
+	}
+	args = append(args, root)
+
+	cmd := exec.Command(s.binary, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		// sg scan returns non-zero if no matches, check if output contains JSON

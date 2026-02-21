@@ -820,21 +820,47 @@ func (h *hubInfo) isHub(path string) bool {
 	return len(h.Importers[path]) >= 3
 }
 
-// findChildRepos returns subdirectories that are git repositories
+// findChildRepos returns subdirectories that are git repositories,
+// excluding any that are listed in the parent's .gitignore.
 func findChildRepos(root string) []string {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil
 	}
 
-	var repos []string
+	// Check which directories are git-ignored using git check-ignore
+	// This is more reliable than parsing .gitignore ourselves since it
+	// handles all gitignore semantics (negation, nested, global, etc.)
+	var candidates []string
 	for _, e := range entries {
 		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
-		// Check if this subdirectory is a git repo
 		if _, err := os.Stat(filepath.Join(root, e.Name(), ".git")); err == nil {
-			repos = append(repos, e.Name())
+			candidates = append(candidates, e.Name())
+		}
+	}
+
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	// Use git check-ignore to filter out ignored directories
+	args := append([]string{"check-ignore", "--"}, candidates...)
+	cmd := exec.Command("git", args...)
+	cmd.Dir = root
+	out, _ := cmd.Output()
+	ignored := make(map[string]bool)
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line != "" {
+			ignored[line] = true
+		}
+	}
+
+	var repos []string
+	for _, name := range candidates {
+		if !ignored[name] {
+			repos = append(repos, name)
 		}
 	}
 	return repos
