@@ -110,6 +110,67 @@ def greet():
 	}
 }
 
+func TestAstGrepCSharp(t *testing.T) {
+	analyzer := NewAstGrepAnalyzer()
+	if !analyzer.Available() {
+		t.Skip("ast-grep (sg) not installed")
+	}
+
+	tmpDir := t.TempDir()
+	csFile := filepath.Join(tmpDir, "Program.cs")
+	os.WriteFile(csFile, []byte(`using System;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace TestApp
+{
+    public class Program
+    {
+        public static void Main(string[] args)
+        {
+            Console.WriteLine("Hello");
+        }
+        
+        public int Calculate(int x)
+        {
+            return x * 2;
+        }
+    }
+}
+`), 0644)
+
+	analysis, err := analyzer.AnalyzeFile(csFile)
+	if err != nil {
+		t.Fatalf("AnalyzeFile failed: %v", err)
+	}
+
+	if analysis == nil {
+		t.Fatal("Expected analysis, got nil")
+	}
+
+	funcs := make(map[string]bool)
+	for _, f := range analysis.Functions {
+		funcs[f] = true
+	}
+	if !funcs["Main"] {
+		t.Errorf("Expected Main function, got: %v", analysis.Functions)
+	}
+	if !funcs["Calculate"] {
+		t.Errorf("Expected Calculate function, got: %v", analysis.Functions)
+	}
+
+	imports := make(map[string]bool)
+	for _, i := range analysis.Imports {
+		imports[i] = true
+	}
+	if !imports["System"] {
+		t.Errorf("Expected System import, got: %v", analysis.Imports)
+	}
+	if !imports["System.Collections"] {
+		t.Errorf("Expected System.Collections import, got: %v", analysis.Imports)
+	}
+}
+
 func TestAstGrepScanDirectoryTimeout(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires shell script execution")

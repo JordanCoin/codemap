@@ -272,6 +272,8 @@ func detectLangFromRuleID(ruleID string) string {
 			return "cpp"
 		case "bash":
 			return "bash"
+		case "csharp":
+			return "csharp"
 		}
 	}
 	return ""
@@ -307,6 +309,27 @@ func extractImportPath(text string) string {
 				return text[idx+1 : idx+1+end]
 			}
 		}
+	}
+
+	// C#: using Foo.Bar.Baz; / using static Foo.Bar; / using Alias = Foo.Bar.Baz;
+	if strings.HasPrefix(text, "using ") {
+		text = strings.TrimPrefix(text, "using ")
+		text = strings.TrimSuffix(text, ";")
+		text = strings.TrimSpace(text)
+
+		if strings.HasPrefix(text, "static ") {
+			text = strings.TrimPrefix(text, "static ")
+		}
+
+		if idx := strings.Index(text, "="); idx >= 0 {
+			text = text[idx+1:]
+		}
+
+		text = strings.TrimSpace(text)
+		if idx := strings.LastIndex(text, "."); idx > 0 {
+			return strings.TrimSpace(text[:idx])
+		}
+		return text
 	}
 
 	// Python: import foo
@@ -419,7 +442,7 @@ func extractFunctionName(text string, lang string) string {
 			}
 		}
 
-	case "java":
+	case "java", "csharp":
 		// public void name(...) - method declaration
 		// Find last word before (
 		if paren := strings.Index(text, "("); paren > 0 {
