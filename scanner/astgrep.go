@@ -317,9 +317,7 @@ func extractImportPath(text string) string {
 		text = strings.TrimSuffix(text, ";")
 		text = strings.TrimSpace(text)
 
-		if strings.HasPrefix(text, "static ") {
-			text = strings.TrimPrefix(text, "static ")
-		}
+		text = strings.TrimPrefix(text, "static ")
 
 		if idx := strings.Index(text, "="); idx >= 0 {
 			text = text[idx+1:]
