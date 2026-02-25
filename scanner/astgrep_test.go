@@ -3,7 +3,9 @@ package scanner
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 )
 
 func TestAstGrepAnalyzer(t *testing.T) {
@@ -105,5 +107,36 @@ def greet():
 	}
 	if !imports["os"] {
 		t.Errorf("Expected os import, got: %v", analysis.Imports)
+	}
+}
+
+func TestAstGrepScanDirectoryTimeout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires shell script execution")
+	}
+
+	tmpDir := t.TempDir()
+	fakeBinary := filepath.Join(tmpDir, "fake-sg.sh")
+	if err := os.WriteFile(fakeBinary, []byte("#!/bin/sh\nsleep 5\n"), 0755); err != nil {
+		t.Fatalf("failed to create fake ast-grep binary: %v", err)
+	}
+
+	scanner := &AstGrepScanner{
+		rulesDir: tmpDir,
+		binary:   fakeBinary,
+	}
+
+	prevTimeout := astGrepScanTimeout
+	astGrepScanTimeout = 20 * time.Millisecond
+	t.Cleanup(func() {
+		astGrepScanTimeout = prevTimeout
+	})
+
+	results, err := scanner.ScanDirectory(tmpDir)
+	if err != nil {
+		t.Fatalf("expected graceful timeout handling, got error: %v", err)
+	}
+	if results != nil {
+		t.Fatalf("expected nil results on timeout, got: %v", results)
 	}
 }

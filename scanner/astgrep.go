@@ -1,16 +1,23 @@
 package scanner
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 )
 
 //go:embed sg-rules/*.yml
 var sgRules embed.FS
+
+var astGrepScanTimeout = 30 * time.Second
 
 // ScanMatch represents a match from sg scan JSON output
 type ScanMatch struct {
@@ -149,9 +156,25 @@ func (s *AstGrepScanner) ScanDirectory(root string) ([]FileAnalysis, error) {
 	}
 	args = append(args, root)
 
-	cmd := exec.Command(s.binary, args...)
-	out, err := cmd.CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), astGrepScanTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, s.binary, args...)
+	out, err := cmd.Output()
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+			fmt.Fprintf(os.Stderr, "warning: ast-grep timed out after %s in %s; skipping ast-grep results\n", astGrepScanTimeout, root)
+			return nil, nil
+		}
+
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+				fmt.Fprintf(os.Stderr, "warning: ast-grep exited with signal %d in %s; skipping ast-grep results\n", status.Signal(), root)
+				return nil, nil
+			}
+		}
+
 		// sg scan returns non-zero if no matches, check if output contains JSON
 		if len(out) == 0 {
 			return nil, nil
