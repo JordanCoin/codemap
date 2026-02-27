@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -107,6 +108,106 @@ func TestRunHookRouting(t *testing.T) {
 			t.Errorf("error should list %q as available hook", hook)
 		}
 	}
+}
+
+func TestRunWithTimeout(t *testing.T) {
+	t.Run("returns function result before timeout", func(t *testing.T) {
+		errExpected := errors.New("boom")
+		err := runWithTimeout("test-hook", 50*time.Millisecond, func() error {
+			return errExpected
+		})
+		if !errors.Is(err, errExpected) {
+			t.Fatalf("expected %v, got %v", errExpected, err)
+		}
+	})
+
+	t.Run("returns timeout error when function blocks too long", func(t *testing.T) {
+		err := runWithTimeout("slow-hook", 20*time.Millisecond, func() error {
+			time.Sleep(80 * time.Millisecond)
+			return nil
+		})
+		var timeoutErr *HookTimeoutError
+		if !errors.As(err, &timeoutErr) {
+			t.Fatalf("expected HookTimeoutError, got %v", err)
+		}
+		if timeoutErr.Hook != "slow-hook" {
+			t.Fatalf("expected hook name slow-hook, got %q", timeoutErr.Hook)
+		}
+	})
+}
+
+func TestHookTimeoutFromEnv(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want time.Duration
+	}{
+		{name: "empty uses default", env: "", want: DefaultHookTimeout},
+		{name: "valid duration parses", env: "150ms", want: 150 * time.Millisecond},
+		{name: "zero disables timeout", env: "0", want: 0},
+		{name: "negative falls back to default", env: "-1s", want: DefaultHookTimeout},
+		{name: "invalid falls back to default", env: "not-a-duration", want: DefaultHookTimeout},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := HookTimeoutFromEnv(func(key string) string {
+				if key != "CODEMAP_HOOK_TIMEOUT" {
+					return ""
+				}
+				return tt.env
+			})
+			if got != tt.want {
+				t.Fatalf("HookTimeoutFromEnv(%q) = %s, want %s", tt.env, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestShouldRestartDaemon(t *testing.T) {
+	t.Run("not running returns false", func(t *testing.T) {
+		if shouldRestartDaemon(t.TempDir(), time.Now()) {
+			t.Fatal("expected false when daemon is not running")
+		}
+	})
+
+	t.Run("running with fresh state returns false", func(t *testing.T) {
+		root := t.TempDir()
+		writeWatchState(t, root, watch.State{
+			UpdatedAt: time.Now().Add(-5 * time.Minute),
+			FileCount: 10,
+		})
+		if shouldRestartDaemon(root, time.Now()) {
+			t.Fatal("expected false for fresh daemon state")
+		}
+	})
+
+	t.Run("running with stale state returns true", func(t *testing.T) {
+		root := t.TempDir()
+		writeWatchState(t, root, watch.State{
+			UpdatedAt: time.Now().Add(-3 * time.Hour),
+			FileCount: 10,
+		})
+		if !shouldRestartDaemon(root, time.Now()) {
+			t.Fatal("expected true for stale daemon state")
+		}
+	})
+
+	t.Run("running without state returns true", func(t *testing.T) {
+		root := t.TempDir()
+		codemapDir := filepath.Join(root, ".codemap")
+		if err := os.MkdirAll(codemapDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := watch.WritePID(root); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { watch.RemovePID(root) })
+
+		if !shouldRestartDaemon(root, time.Now()) {
+			t.Fatal("expected true when daemon pid exists but state is missing")
+		}
+	})
 }
 
 // TestExtractFilePath tests JSON parsing for file_path extraction
@@ -660,6 +761,29 @@ func TestGetLastSessionEvents(t *testing.T) {
 		}
 	})
 
+	t.Run("reads only tail of huge event log and still returns latest 20", func(t *testing.T) {
+		root := t.TempDir()
+		codemapDir := filepath.Join(root, ".codemap")
+		os.MkdirAll(codemapDir, 0755)
+
+		var sb strings.Builder
+		for i := 1; i <= 15000; i++ {
+			fmt.Fprintf(&sb, "ts|WRITE|file%05d.go\n", i)
+		}
+		os.WriteFile(filepath.Join(codemapDir, "events.log"), []byte(sb.String()), 0644)
+
+		got := getLastSessionEvents(root)
+		if len(got) != 20 {
+			t.Fatalf("expected 20 events from huge log tail, got %d", len(got))
+		}
+		if !strings.Contains(got[0], "file14981.go") {
+			t.Errorf("expected first retained event to be file14981.go, got %q", got[0])
+		}
+		if !strings.Contains(got[19], "file15000.go") {
+			t.Errorf("expected last retained event to be file15000.go, got %q", got[19])
+		}
+	})
+
 	t.Run("skips blank lines when counting", func(t *testing.T) {
 		root := t.TempDir()
 		codemapDir := filepath.Join(root, ".codemap")
@@ -861,6 +985,13 @@ func TestGetHubInfoNoDeps(t *testing.T) {
 		})
 		if info := getHubInfo(root); info == nil {
 			t.Error("expected hubInfo when state has at least one imports entry")
+		}
+	})
+
+	t.Run("no fallback path skips expensive fresh scan", func(t *testing.T) {
+		root := t.TempDir()
+		if info := getHubInfoNoFallback(root); info != nil {
+			t.Errorf("expected nil when no daemon state and fallback disabled, got %+v", info)
 		}
 	})
 }

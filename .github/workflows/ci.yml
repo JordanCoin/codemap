@@ -45,6 +45,19 @@ jobs:
       - name: Run tests
         run: go test -v -race -coverprofile=coverage.out ./...
 
+      - name: Enforce coverage floor
+        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23'
+        run: |
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {gsub("%","",$3); print $3}')
+          min=30.0
+          awk -v t="$total" -v m="$min" 'BEGIN {
+            if (t+0 < m+0) {
+              printf "Coverage %.1f%% is below floor %.1f%%\n", t, m
+              exit 1
+            }
+            printf "Coverage %.1f%% meets floor %.1f%%\n", t, m
+          }'
+
       - name: Upload coverage
         if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23'
         uses: codecov/codecov-action@v4

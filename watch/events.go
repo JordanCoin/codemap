@@ -2,14 +2,17 @@ package watch
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"codemap/limits"
 	"codemap/scanner"
 
 	"github.com/fsnotify/fsnotify"
@@ -81,6 +84,14 @@ func (d *Daemon) isSourceFile(path string) bool {
 
 // handleEvent processes a single file event
 func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
+	absPath, absErr := filepath.Abs(fsEvent.Name)
+	if absErr == nil && d.gitCache != nil {
+		// Ignore gitignored paths entirely so watcher churn cannot come from excluded trees.
+		if d.gitCache.ShouldIgnore(absPath) {
+			return
+		}
+	}
+
 	relPath, err := filepath.Rel(d.root, fsEvent.Name)
 	if err != nil {
 		relPath = fsEvent.Name
@@ -121,6 +132,17 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 		// If a new directory was created, add it to the watcher
 		if info.IsDir() {
 			name := filepath.Base(fsEvent.Name)
+			if d.gitCache != nil {
+				dirPath := fsEvent.Name
+				if absErr == nil {
+					dirPath = absPath
+				}
+				d.gitCache.EnsureDir(dirPath)
+				if d.gitCache.ShouldIgnore(dirPath) {
+					d.graph.mu.Unlock()
+					return
+				}
+			}
 			// Skip hidden directories and common ignores
 			if !strings.HasPrefix(name, ".") && name != "node_modules" && name != "vendor" {
 				d.watcher.Add(fsEvent.Name)
@@ -179,7 +201,7 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 		event.RelatedHot = d.findRelatedHot(relPath, 5*time.Minute)
 	}
 
-	d.graph.Events = append(d.graph.Events, event)
+	d.graph.Events = appendBoundedEvents(d.graph.Events, event)
 	d.graph.mu.Unlock()
 
 	// Log event
@@ -254,7 +276,6 @@ func (d *Daemon) logEvent(e Event) {
 	if err != nil {
 		return
 	}
-	defer f.Close()
 
 	// Format: timestamp | OP | path | lines | delta | dirty
 	deltaStr := ""
@@ -277,7 +298,15 @@ func (d *Daemon) logEvent(e Event) {
 		deltaStr,
 		dirtyStr,
 	)
-	f.WriteString(line)
+	if _, err := f.WriteString(line); err != nil {
+		_ = f.Close()
+		return
+	}
+	if err := f.Close(); err != nil {
+		return
+	}
+
+	_ = trimEventLogToBytes(d.eventLog, int64(limits.MaxEventLogBytes), int64(limits.EventLogTrimToBytes))
 
 	// Update state file for hooks to read
 	d.writeState()
@@ -288,11 +317,12 @@ func (d *Daemon) writeState() {
 	d.graph.mu.RLock()
 	defer d.graph.mu.RUnlock()
 
-	// Get last 50 events for timeline
+	// Keep state snapshots small and deterministic for hook reads.
 	events := d.graph.Events
-	if len(events) > 50 {
-		events = events[len(events)-50:]
+	if len(events) > limits.MaxStateRecentEvents {
+		events = events[len(events)-limits.MaxStateRecentEvents:]
 	}
+	eventsCopy := append([]Event(nil), events...)
 
 	state := State{
 		UpdatedAt:    time.Now(),
@@ -300,7 +330,7 @@ func (d *Daemon) writeState() {
 		Hubs:         []string{},
 		Importers:    map[string][]string{},
 		Imports:      map[string][]string{},
-		RecentEvents: events,
+		RecentEvents: eventsCopy,
 	}
 	if d.graph.FileGraph != nil {
 		state.Hubs = d.graph.FileGraph.HubFiles()
@@ -315,6 +345,54 @@ func (d *Daemon) writeState() {
 
 	stateFile := filepath.Join(d.root, ".codemap", "state.json")
 	os.WriteFile(stateFile, data, 0644)
+}
+
+func appendBoundedEvents(events []Event, event Event) []Event {
+	events = append(events, event)
+	if len(events) <= limits.MaxDaemonEvents {
+		return events
+	}
+
+	// Reallocate to release references to the old backing array.
+	trimmed := append([]Event(nil), events[len(events)-limits.MaxDaemonEvents:]...)
+	return trimmed
+}
+
+func trimEventLogToBytes(path string, maxBytes, keepBytes int64) error {
+	if maxBytes <= 0 || keepBytes <= 0 || keepBytes > maxBytes {
+		return nil
+	}
+
+	info, err := os.Stat(path)
+	if err != nil || info.Size() <= maxBytes {
+		return nil
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if keepBytes > info.Size() {
+		keepBytes = info.Size()
+	}
+	start := info.Size() - keepBytes
+	tail := make([]byte, keepBytes)
+	n, err := f.ReadAt(tail, start)
+	if err != nil && err != io.EOF {
+		return err
+	}
+	tail = tail[:n]
+	if len(tail) == 0 {
+		return nil
+	}
+
+	if idx := bytes.IndexByte(tail, '\n'); start > 0 && idx >= 0 && idx+1 < len(tail) {
+		tail = tail[idx+1:]
+	}
+
+	return os.WriteFile(path, tail, 0644)
 }
 
 // countLines counts lines in a file efficiently (no full read into memory)

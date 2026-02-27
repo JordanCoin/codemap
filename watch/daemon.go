@@ -213,9 +213,18 @@ func (d *Daemon) addWatchDirs() error {
 			return nil // skip errors
 		}
 
+		absPath, _ := filepath.Abs(path)
+
 		// Skip hidden directories and common ignores
 		name := info.Name()
 		if info.IsDir() {
+			if d.gitCache != nil {
+				d.gitCache.EnsureDir(absPath)
+				// Honor nested .gitignore rules so ignored subtrees are never watched.
+				if path != d.root && d.gitCache.ShouldIgnore(absPath) {
+					return filepath.SkipDir
+				}
+			}
 			if strings.HasPrefix(name, ".") || name == "node_modules" || name == "vendor" {
 				return filepath.SkipDir
 			}

@@ -9,13 +9,13 @@ import (
 // the hook system. It must never let hook output exceed the budget.
 func TestTruncateAtLineBoundary(t *testing.T) {
 	tests := []struct {
-		name        string
-		input       string
-		maxBytes    int
-		msg         string
-		wantLen     int    // exact expected length (0 = skip check)
-		wantSuffix  string // expected suffix after truncation
-		wantUnchanged bool  // expect identical output (no truncation)
+		name          string
+		input         string
+		maxBytes      int
+		msg           string
+		wantLen       int    // exact expected length (0 = skip check)
+		wantSuffix    string // expected suffix after truncation
+		wantUnchanged bool   // expect identical output (no truncation)
 	}{
 		{
 			name:          "content within budget is unchanged",
@@ -164,6 +164,21 @@ func TestHandoffBudgetForRepo(t *testing.T) {
 		if b.MaxDetailBytes == 0 {
 			t.Error("MaxDetailBytes must be nonzero")
 		}
+	}
+}
+
+func TestDaemonRetentionLimitsAreSane(t *testing.T) {
+	if MaxDaemonEvents <= MaxStateRecentEvents {
+		t.Fatalf("MaxDaemonEvents (%d) should exceed MaxStateRecentEvents (%d)", MaxDaemonEvents, MaxStateRecentEvents)
+	}
+	if MaxEventLogBytes <= EventLogTrimToBytes {
+		t.Fatalf("MaxEventLogBytes (%d) should exceed EventLogTrimToBytes (%d)", MaxEventLogBytes, EventLogTrimToBytes)
+	}
+	if MaxEventLogReadBytes <= 0 {
+		t.Fatalf("MaxEventLogReadBytes must be > 0, got %d", MaxEventLogReadBytes)
+	}
+	if MaxDiffOutputBytes <= 0 {
+		t.Fatalf("MaxDiffOutputBytes must be > 0, got %d", MaxDiffOutputBytes)
 	}
 }
 

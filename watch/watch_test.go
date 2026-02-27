@@ -3,6 +3,7 @@ package watch
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -341,6 +342,66 @@ func TestNonSourceFileIgnored(t *testing.T) {
 		if e.Path == "readme.txt" || e.Path == "config.json" {
 			t.Errorf("Non-source file should be ignored: %s", e.Path)
 		}
+	}
+}
+
+func TestWatchIgnoresGitignoredDirectories(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "codemap-watch-gitignore-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	if err := os.WriteFile(filepath.Join(tmpDir, ".gitignore"), []byte("third_party/\n"), 0644); err != nil {
+		t.Fatalf("Failed to create .gitignore: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "tracked.go"), []byte("package main\n"), 0644); err != nil {
+		t.Fatalf("Failed to create tracked file: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, "third_party", "freerdp"), 0755); err != nil {
+		t.Fatalf("Failed to create ignored dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "third_party", "freerdp", "ignored.go"), []byte("package ignored\n"), 0644); err != nil {
+		t.Fatalf("Failed to create ignored file: %v", err)
+	}
+
+	daemon, err := NewDaemon(tmpDir, false)
+	if err != nil {
+		t.Fatalf("NewDaemon failed: %v", err)
+	}
+	if err := daemon.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer daemon.Stop()
+
+	time.Sleep(500 * time.Millisecond)
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "tracked.go"), []byte("package main\n// touched\n"), 0644); err != nil {
+		t.Fatalf("Failed to modify tracked file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "third_party", "freerdp", "ignored.go"), []byte("package ignored\n// touched\n"), 0644); err != nil {
+		t.Fatalf("Failed to modify ignored file: %v", err)
+	}
+
+	time.Sleep(700 * time.Millisecond)
+
+	events := daemon.GetEvents(200)
+	if len(events) == 0 {
+		t.Skip("fsnotify may not work reliably in temp directories on this platform")
+	}
+
+	foundTrackedWrite := false
+	for _, e := range events {
+		if e.Op == "WRITE" && e.Path == "tracked.go" {
+			foundTrackedWrite = true
+		}
+		if strings.HasPrefix(filepath.ToSlash(e.Path), "third_party/") {
+			t.Fatalf("expected gitignored path to be excluded from watcher events, got: %s %s", e.Op, e.Path)
+		}
+	}
+
+	if !foundTrackedWrite {
+		t.Fatalf("expected a WRITE event for tracked.go, got events: %+v", events)
 	}
 }
 
