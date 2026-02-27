@@ -33,6 +33,7 @@ codemap --exclude .xcassets,Fonts,.png .  # Hide assets
 codemap --depth 2 .          # Limit depth
 codemap --diff               # What changed vs main
 codemap --deps .             # Dependency flow
+codemap config init          # Create .codemap/config.json
 codemap handoff .            # Save cross-agent handoff summary
 codemap github.com/user/repo # Remote GitHub repo
 ```
@@ -185,11 +186,32 @@ Hook integration:
 cp /path/to/codemap/CLAUDE.md your-project/
 ```
 
+## Project Config
+
+Set per-project defaults in `.codemap/config.json` so you don't need to pass `--only`/`--exclude`/`--depth` every time. Hooks also respect this config.
+
+```bash
+codemap config init          # Auto-detect top extensions, write config
+codemap config show          # Display current config
+```
+
+Example `.codemap/config.json`:
+```json
+{
+  "only": ["rs", "sh", "sql", "toml", "yml"],
+  "exclude": ["docs/reference", "docs/research"],
+  "depth": 4
+}
+```
+
+All fields are optional. CLI flags always override config values.
+
 ## Roadmap
 
 - [x] Diff mode, Skyline mode, Dependency flow
 - [x] Tree depth limiting (`--depth`)
 - [x] File filtering (`--only`, `--exclude`)
+- [x] Project config (`.codemap/config.json`)
 - [x] Claude Code hooks & MCP server
 - [x] Cross-agent handoff artifact (`.codemap/handoff.latest.json`)
 - [x] Remote repo support (GitHub, GitLab)

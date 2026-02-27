@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"codemap/config"
 	"codemap/handoff"
 	"codemap/limits"
 	"codemap/scanner"
@@ -141,8 +142,21 @@ func hookSessionStart(root string) error {
 
 	exe, err := os.Executable()
 	if err == nil {
+		projCfg := config.Load(root)
 		depth := limits.AdaptiveDepth(fileCount)
-		cmd := exec.Command(exe, "--depth", strconv.Itoa(depth), root)
+		if projCfg.Depth > 0 {
+			depth = projCfg.Depth
+		}
+
+		args := []string{"--depth", strconv.Itoa(depth)}
+		if len(projCfg.Only) > 0 {
+			args = append(args, "--only", strings.Join(projCfg.Only, ","))
+		}
+		if len(projCfg.Exclude) > 0 {
+			args = append(args, "--exclude", strings.Join(projCfg.Exclude, ","))
+		}
+		args = append(args, root)
+		cmd := exec.Command(exe, args...)
 
 		// Capture output to enforce size limit
 		var buf strings.Builder
@@ -236,7 +250,16 @@ func showDiffVsMain(root string, fileCount int, fileCountKnown bool) {
 	}
 
 	// Run codemap --diff to show richer impact analysis on manageable repos.
-	cmd := exec.Command(exe, "--diff", root)
+	projCfg := config.Load(root)
+	args := []string{"--diff"}
+	if len(projCfg.Only) > 0 {
+		args = append(args, "--only", strings.Join(projCfg.Only, ","))
+	}
+	if len(projCfg.Exclude) > 0 {
+		args = append(args, "--exclude", strings.Join(projCfg.Exclude, ","))
+	}
+	args = append(args, root)
+	cmd := exec.Command(exe, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Run()
@@ -880,7 +903,22 @@ func hookSessionStartMultiRepo(root string, childRepos []string) error {
 	// Run codemap on each child repo (with depth limit for compactness)
 	for _, repo := range childRepos {
 		repoPath := filepath.Join(root, repo)
-		cmd := exec.Command(exe, "--depth", "2", repoPath)
+		projCfg := config.Load(repoPath)
+
+		depth := 2
+		if projCfg.Depth > 0 {
+			depth = projCfg.Depth
+		}
+
+		args := []string{"--depth", strconv.Itoa(depth)}
+		if len(projCfg.Only) > 0 {
+			args = append(args, "--only", strings.Join(projCfg.Only, ","))
+		}
+		if len(projCfg.Exclude) > 0 {
+			args = append(args, "--exclude", strings.Join(projCfg.Exclude, ","))
+		}
+		args = append(args, repoPath)
+		cmd := exec.Command(exe, args...)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		cmd.Run()

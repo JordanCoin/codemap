@@ -95,6 +95,33 @@ Restart Claude Code. You'll immediately see your project structure at session st
 
 ---
 
+## Project Config
+
+Hooks automatically respect `.codemap/config.json` when present. This lets you filter what Claude sees at session start without replacing the hook command.
+
+```bash
+codemap config init    # Auto-detect top extensions and create config
+codemap config show    # View current config
+```
+
+Example `.codemap/config.json`:
+```json
+{
+  "only": ["rs", "sh", "sql", "toml", "yml"],
+  "exclude": ["docs/reference", "docs/research"],
+  "depth": 4
+}
+```
+
+All fields are optional. When set:
+- `only` — session-start tree shows only files with these extensions
+- `exclude` — hides matching paths from the tree
+- `depth` — overrides the adaptive depth calculation
+
+CLI flags (`--only`, `--exclude`, `--depth`) always override config values. The bare `codemap` command also respects this config.
+
+---
+
 ## What Claude Sees
 
 ### At Session Start (and after compact)

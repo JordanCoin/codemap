@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"codemap/cmd"
+	"codemap/config"
 	"codemap/handoff"
 	"codemap/limits"
 	"codemap/render"
@@ -51,6 +52,20 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Hook error: %v\n", err)
 			os.Exit(1)
 		}
+		return
+	}
+
+	// Handle "config" subcommand before global flag parsing
+	if len(os.Args) >= 2 && os.Args[1] == "config" {
+		subCmd := ""
+		if len(os.Args) >= 3 {
+			subCmd = os.Args[2]
+		}
+		root, _ := os.Getwd()
+		if len(os.Args) >= 4 {
+			root = os.Args[3]
+		}
+		cmd.RunConfig(subCmd, root)
 		return
 	}
 
@@ -121,6 +136,10 @@ func main() {
 		fmt.Println("  codemap hook pre-compact        # Save state before compact")
 		fmt.Println("  codemap hook session-stop       # Session summary")
 		fmt.Println("  codemap handoff [path]          # Build handoff artifact for agent switching")
+		fmt.Println()
+		fmt.Println("Project config:")
+		fmt.Println("  codemap config init             # Create .codemap/config.json (auto-detects extensions)")
+		fmt.Println("  codemap config show             # Show current project config")
 		os.Exit(0)
 	}
 
@@ -172,6 +191,18 @@ func main() {
 				exclude = append(exclude, trimmed)
 			}
 		}
+	}
+
+	// Load project config (CLI flags take precedence)
+	projCfg := config.Load(absRoot)
+	if len(only) == 0 && len(projCfg.Only) > 0 {
+		only = projCfg.Only
+	}
+	if len(exclude) == 0 && len(projCfg.Exclude) > 0 {
+		exclude = projCfg.Exclude
+	}
+	if *depthLimit == 0 && projCfg.Depth > 0 {
+		*depthLimit = projCfg.Depth
 	}
 
 	if *debugMode {
