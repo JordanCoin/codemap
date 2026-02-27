@@ -6,11 +6,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"codemap/handoff"
+	"codemap/limits"
+	"codemap/watch"
 )
 
 // TestHubInfoIsHub tests the hub detection threshold (3+ importers)
@@ -573,4 +577,428 @@ func captureOutput(f func()) string {
 	var buf bytes.Buffer
 	io.Copy(&buf, r)
 	return buf.String()
+}
+
+// writeWatchState writes a watch.State JSON file to <root>/.codemap/state.json
+// and a PID file pointing to the current process so IsRunning returns true.
+func writeWatchState(t *testing.T, root string, state watch.State) {
+	t.Helper()
+	codemapDir := filepath.Join(root, ".codemap")
+	if err := os.MkdirAll(codemapDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(codemapDir, "state.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := watch.WritePID(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { watch.RemovePID(root) })
+}
+
+// TestGetLastSessionEvents verifies that the 20-line budget is enforced when
+// reading the events log, protecting hook startup output from bloating context.
+func TestGetLastSessionEvents(t *testing.T) {
+	t.Run("missing file returns nil", func(t *testing.T) {
+		if got := getLastSessionEvents(t.TempDir()); got != nil {
+			t.Errorf("expected nil for missing file, got %v", got)
+		}
+	})
+
+	t.Run("empty file returns nil", func(t *testing.T) {
+		root := t.TempDir()
+		codemapDir := filepath.Join(root, ".codemap")
+		if err := os.MkdirAll(codemapDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(codemapDir, "events.log"), []byte(""), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if got := getLastSessionEvents(root); got != nil {
+			t.Errorf("expected nil for empty file, got %v", got)
+		}
+	})
+
+	t.Run("returns all lines when fewer than 20", func(t *testing.T) {
+		root := t.TempDir()
+		codemapDir := filepath.Join(root, ".codemap")
+		os.MkdirAll(codemapDir, 0755)
+		lines := "ts|WRITE|a.go\nts|WRITE|b.go\nts|WRITE|c.go"
+		os.WriteFile(filepath.Join(codemapDir, "events.log"), []byte(lines), 0644)
+
+		got := getLastSessionEvents(root)
+		if len(got) != 3 {
+			t.Errorf("expected 3 events, got %d: %v", len(got), got)
+		}
+	})
+
+	t.Run("caps at 20 lines for large log (context bloat protection)", func(t *testing.T) {
+		root := t.TempDir()
+		codemapDir := filepath.Join(root, ".codemap")
+		os.MkdirAll(codemapDir, 0755)
+
+		var sb strings.Builder
+		for i := 1; i <= 35; i++ {
+			fmt.Fprintf(&sb, "ts|WRITE|file%02d.go\n", i)
+		}
+		os.WriteFile(filepath.Join(codemapDir, "events.log"), []byte(sb.String()), 0644)
+
+		got := getLastSessionEvents(root)
+		if len(got) != 20 {
+			t.Errorf("expected 20 events (cap), got %d", len(got))
+		}
+		// Should be the *last* 20 (file16.go through file35.go).
+		if !strings.Contains(got[0], "file16.go") {
+			t.Errorf("expected first retained event to be file16.go, got %q", got[0])
+		}
+		if !strings.Contains(got[19], "file35.go") {
+			t.Errorf("expected last retained event to be file35.go, got %q", got[19])
+		}
+	})
+
+	t.Run("skips blank lines when counting", func(t *testing.T) {
+		root := t.TempDir()
+		codemapDir := filepath.Join(root, ".codemap")
+		os.MkdirAll(codemapDir, 0755)
+		// 5 real entries surrounded by blank lines
+		content := "\nts|WRITE|a.go\n\nts|WRITE|b.go\n\n\nts|WRITE|c.go\n\nts|WRITE|d.go\nts|WRITE|e.go\n"
+		os.WriteFile(filepath.Join(codemapDir, "events.log"), []byte(content), 0644)
+
+		got := getLastSessionEvents(root)
+		if len(got) != 5 {
+			t.Errorf("expected 5 non-blank lines, got %d: %v", len(got), got)
+		}
+	})
+}
+
+// TestShowLastSessionContext verifies the 5-file truncation that prevents
+// large working-set context from bloating the session start output.
+func TestShowLastSessionContext(t *testing.T) {
+	t.Run("empty events list produces no output", func(t *testing.T) {
+		out := captureOutput(func() { showLastSessionContext("", []string{}) })
+		if out != "" {
+			t.Errorf("expected no output for empty events, got %q", out)
+		}
+	})
+
+	t.Run("malformed lines are skipped gracefully", func(t *testing.T) {
+		events := []string{"just one part", "two|parts", ""}
+		out := captureOutput(func() { showLastSessionContext("", events) })
+		if out != "" {
+			t.Errorf("expected no output for malformed events, got %q", out)
+		}
+	})
+
+	t.Run("shows header and file list for valid events", func(t *testing.T) {
+		events := []string{
+			"ts|WRITE|alpha.go",
+			"ts|WRITE|beta.go",
+			"ts|WRITE|gamma.go",
+		}
+		out := captureOutput(func() { showLastSessionContext("", events) })
+		if !strings.Contains(out, "Last session worked on") {
+			t.Errorf("expected header, got %q", out)
+		}
+		if strings.Contains(out, "more files") {
+			t.Errorf("should not show truncation indicator for <=5 files, got %q", out)
+		}
+		if !strings.Contains(out, "alpha.go") {
+			t.Errorf("expected alpha.go in output, got %q", out)
+		}
+	})
+
+	t.Run("truncates at 5 files with 'more files' indicator (context bloat protection)", func(t *testing.T) {
+		var events []string
+		for i := 1; i <= 8; i++ {
+			events = append(events, fmt.Sprintf("ts|WRITE|file%d.go", i))
+		}
+		out := captureOutput(func() { showLastSessionContext("", events) })
+		if !strings.Contains(out, "and 3 more files") {
+			t.Errorf("expected '3 more files' truncation, got %q", out)
+		}
+	})
+
+	t.Run("REMOVE for still-existing file is reported as 'edited'", func(t *testing.T) {
+		root := t.TempDir()
+		fileName := "survivor.go"
+		os.WriteFile(filepath.Join(root, fileName), []byte("package main\n"), 0644)
+
+		events := []string{fmt.Sprintf("ts|REMOVE|%s", fileName)}
+		out := captureOutput(func() { showLastSessionContext(root, events) })
+		if !strings.Contains(out, "edited") {
+			t.Errorf("expected 'edited' for extant file after REMOVE event, got %q", out)
+		}
+	})
+}
+
+// TestShowSessionProgress verifies that in-session hub-edit statistics are
+// reported accurately, exposing hub churn as a context-bloat signal.
+func TestShowSessionProgress(t *testing.T) {
+	t.Run("no daemon state produces no output", func(t *testing.T) {
+		out := captureOutput(func() { showSessionProgress(t.TempDir()) })
+		if out != "" {
+			t.Errorf("expected no output with no state, got %q", out)
+		}
+	})
+
+	t.Run("state with no events produces no output", func(t *testing.T) {
+		root := t.TempDir()
+		writeWatchState(t, root, watch.State{
+			UpdatedAt: time.Now(),
+			FileCount: 5,
+		})
+		out := captureOutput(func() { showSessionProgress(root) })
+		if out != "" {
+			t.Errorf("expected no output for state with no events, got %q", out)
+		}
+	})
+
+	t.Run("shows files-edited count", func(t *testing.T) {
+		root := t.TempDir()
+		writeWatchState(t, root, watch.State{
+			UpdatedAt: time.Now(),
+			FileCount: 10,
+			RecentEvents: []watch.Event{
+				{Path: "main.go", Op: "WRITE"},
+				{Path: "utils.go", Op: "WRITE"},
+				{Path: "main.go", Op: "WRITE"}, // duplicate — same file
+			},
+		})
+		out := captureOutput(func() { showSessionProgress(root) })
+		if !strings.Contains(out, "2 files edited") {
+			t.Errorf("expected '2 files edited', got %q", out)
+		}
+	})
+
+	t.Run("reports hub-edit count to surface risky churn", func(t *testing.T) {
+		root := t.TempDir()
+		writeWatchState(t, root, watch.State{
+			UpdatedAt: time.Now(),
+			FileCount: 10,
+			RecentEvents: []watch.Event{
+				{Path: "types.go", Op: "WRITE", IsHub: true},
+				{Path: "utils.go", Op: "WRITE", IsHub: false},
+				{Path: "types.go", Op: "WRITE", IsHub: true},
+			},
+		})
+		out := captureOutput(func() { showSessionProgress(root) })
+		if !strings.Contains(out, "2 hub edits") {
+			t.Errorf("expected '2 hub edits', got %q", out)
+		}
+		if !strings.Contains(out, "2 files edited") {
+			t.Errorf("expected '2 files edited', got %q", out)
+		}
+	})
+
+	t.Run("omits hub-edit label when there are none", func(t *testing.T) {
+		root := t.TempDir()
+		writeWatchState(t, root, watch.State{
+			UpdatedAt: time.Now(),
+			FileCount: 5,
+			RecentEvents: []watch.Event{
+				{Path: "main.go", Op: "WRITE", IsHub: false},
+			},
+		})
+		out := captureOutput(func() { showSessionProgress(root) })
+		if strings.Contains(out, "hub edits") {
+			t.Errorf("should not mention hub edits when count is 0, got %q", out)
+		}
+		if !strings.Contains(out, "1 files edited") {
+			t.Errorf("expected '1 files edited', got %q", out)
+		}
+	})
+}
+
+// TestGetHubInfoNoDeps verifies the guard that prevents expensive fallback scans
+// when a daemon state exists but lacks dependency graph data (large repos).
+func TestGetHubInfoNoDeps(t *testing.T) {
+	t.Run("state with all-empty deps returns nil (avoids expensive scan)", func(t *testing.T) {
+		root := t.TempDir()
+		writeWatchState(t, root, watch.State{
+			UpdatedAt: time.Now(),
+			FileCount: 2000,
+			// Hubs, Importers, and Imports are all nil/empty
+		})
+		if info := getHubInfo(root); info != nil {
+			t.Errorf("expected nil when state has no dep graph, got %+v", info)
+		}
+	})
+
+	t.Run("state with hub data returns populated hubInfo", func(t *testing.T) {
+		root := t.TempDir()
+		writeWatchState(t, root, watch.State{
+			UpdatedAt: time.Now(),
+			FileCount: 5,
+			Hubs:      []string{"types.go"},
+			Importers: map[string][]string{
+				"types.go": {"a.go", "b.go", "c.go"},
+			},
+		})
+		info := getHubInfo(root)
+		if info == nil {
+			t.Fatal("expected hubInfo when state has dep graph")
+		}
+		if len(info.Hubs) != 1 || info.Hubs[0] != "types.go" {
+			t.Errorf("expected [types.go] hubs, got %v", info.Hubs)
+		}
+		if len(info.Importers["types.go"]) != 3 {
+			t.Errorf("expected 3 importers for types.go, got %v", info.Importers["types.go"])
+		}
+	})
+
+	t.Run("state only with imports (no hubs) also returns hubInfo", func(t *testing.T) {
+		root := t.TempDir()
+		writeWatchState(t, root, watch.State{
+			UpdatedAt: time.Now(),
+			FileCount: 5,
+			Imports: map[string][]string{
+				"main.go": {"types.go"},
+			},
+		})
+		if info := getHubInfo(root); info == nil {
+			t.Error("expected hubInfo when state has at least one imports entry")
+		}
+	})
+}
+
+// TestHookPreCompact verifies that pre-compact saves hub state and prints the
+// correct output, while silently skipping when no hubs exist.
+func TestHookPreCompact(t *testing.T) {
+	t.Run("no hubs: no output and no hubs.txt created", func(t *testing.T) {
+		root := t.TempDir()
+		// All-empty state → getHubInfo returns nil → hookPreCompact exits early.
+		writeWatchState(t, root, watch.State{
+			UpdatedAt: time.Now(),
+			FileCount: 5,
+		})
+
+		out := captureOutput(func() {
+			if err := hookPreCompact(root); err != nil {
+				t.Errorf("hookPreCompact returned error: %v", err)
+			}
+		})
+
+		if out != "" {
+			t.Errorf("expected no output when no hubs, got %q", out)
+		}
+		hubsFile := filepath.Join(root, ".codemap", "hubs.txt")
+		if _, err := os.Stat(hubsFile); !os.IsNotExist(err) {
+			t.Error("expected no hubs.txt when hub list is empty")
+		}
+	})
+
+	t.Run("with hubs: creates hubs.txt and prints count", func(t *testing.T) {
+		root := t.TempDir()
+		writeWatchState(t, root, watch.State{
+			UpdatedAt: time.Now(),
+			FileCount: 20,
+			Hubs:      []string{"types.go", "utils.go", "config.go"},
+			Importers: map[string][]string{
+				"types.go":  {"a.go", "b.go", "c.go"},
+				"utils.go":  {"a.go", "b.go", "c.go"},
+				"config.go": {"a.go", "b.go", "c.go"},
+			},
+		})
+
+		out := captureOutput(func() {
+			if err := hookPreCompact(root); err != nil {
+				t.Errorf("hookPreCompact returned error: %v", err)
+			}
+		})
+
+		if !strings.Contains(out, "3 hub files tracked") {
+			t.Errorf("expected hub count in output, got %q", out)
+		}
+		if !strings.Contains(out, "hubs.txt") {
+			t.Errorf("expected hubs.txt mention, got %q", out)
+		}
+
+		hubsFile := filepath.Join(root, ".codemap", "hubs.txt")
+		content, err := os.ReadFile(hubsFile)
+		if err != nil {
+			t.Fatalf("expected hubs.txt to be created: %v", err)
+		}
+		for _, hub := range []string{"types.go", "utils.go", "config.go"} {
+			if !strings.Contains(string(content), hub) {
+				t.Errorf("expected %q in hubs.txt, got %q", hub, content)
+			}
+		}
+	})
+}
+
+// TestShowRecentHandoffSummary verifies the handoff output and its
+// MaxHandoffCompactBytes guard against context bloat.
+func TestShowRecentHandoffSummary(t *testing.T) {
+	t.Run("nil artifact produces no output", func(t *testing.T) {
+		out := captureOutput(func() { showRecentHandoffSummary(nil) })
+		if out != "" {
+			t.Errorf("expected no output for nil artifact, got %q", out)
+		}
+	})
+
+	t.Run("artifact with changed files shows header and file", func(t *testing.T) {
+		a := &handoff.Artifact{
+			Branch:  "feature/test",
+			BaseRef: "main",
+			Delta: handoff.DeltaSnapshot{
+				Changed: []handoff.FileStub{
+					{Path: "cmd/hooks.go", Status: "modified"},
+				},
+			},
+		}
+		out := captureOutput(func() { showRecentHandoffSummary(a) })
+		if !strings.Contains(out, "Recent handoff") {
+			t.Errorf("expected 'Recent handoff' header, got %q", out)
+		}
+		if !strings.Contains(out, "feature/test") {
+			t.Errorf("expected branch name, got %q", out)
+		}
+	})
+
+	t.Run("large summary is truncated to MaxHandoffCompactBytes (context bloat protection)", func(t *testing.T) {
+		// Build a NextSteps list large enough to overflow MaxHandoffCompactBytes (3000 bytes).
+		var nextSteps []string
+		for i := 0; i < 200; i++ {
+			nextSteps = append(nextSteps, fmt.Sprintf("Step %03d: do the thing with the long description that adds bytes %s", i, strings.Repeat("x", 30)))
+		}
+		a := &handoff.Artifact{
+			Branch:  "feature/huge",
+			BaseRef: "main",
+			Delta: handoff.DeltaSnapshot{
+				NextSteps: nextSteps,
+			},
+		}
+
+		// Confirm the raw compact render is actually over budget before asserting truncation.
+		raw := handoff.RenderCompact(a, 200)
+		if len(raw) <= limits.MaxHandoffCompactBytes {
+			t.Skipf("test precondition not met: raw compact render is only %d bytes (need >%d)", len(raw), limits.MaxHandoffCompactBytes)
+		}
+
+		out := captureOutput(func() { showRecentHandoffSummary(a) })
+		if !strings.Contains(out, "truncated") {
+			t.Errorf("expected truncation indicator in oversized output, got %d bytes", len(out))
+		}
+	})
+
+	t.Run("artifact with risk files includes them in summary", func(t *testing.T) {
+		a := &handoff.Artifact{
+			Branch:  "feature/risky",
+			BaseRef: "main",
+			Delta: handoff.DeltaSnapshot{
+				Changed: []handoff.FileStub{{Path: "types.go", Status: "modified"}},
+				RiskFiles: []handoff.RiskFile{
+					{Path: "types.go", Importers: 10, IsHub: true, Reason: "hub"},
+				},
+			},
+		}
+		out := captureOutput(func() { showRecentHandoffSummary(a) })
+		if !strings.Contains(out, "types.go") {
+			t.Errorf("expected risk file in summary output, got %q", out)
+		}
+	})
 }
