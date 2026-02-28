@@ -18,11 +18,57 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
+// eventDebouncer coalesces rapid successive WRITE events for the same path.
+// Non-WRITE operations are never debounced so create/remove transitions stay accurate.
+type eventDebouncer struct {
+	window     time.Duration
+	pruneAfter time.Duration
+	lastSeen   map[string]time.Time
+	lastPruned time.Time
+}
+
+func newEventDebouncer(window time.Duration) *eventDebouncer {
+	pruneAfter := 10 * window
+	if pruneAfter < time.Second {
+		pruneAfter = time.Second
+	}
+	return &eventDebouncer{
+		window:     window,
+		pruneAfter: pruneAfter,
+		lastSeen:   make(map[string]time.Time),
+	}
+}
+
+func (d *eventDebouncer) shouldSkip(event fsnotify.Event, now time.Time) bool {
+	if event.Op&fsnotify.Write == 0 {
+		return false
+	}
+
+	if last, exists := d.lastSeen[event.Name]; exists && now.Sub(last) < d.window {
+		return true
+	}
+	d.lastSeen[event.Name] = now
+
+	if d.lastPruned.IsZero() || now.Sub(d.lastPruned) >= d.pruneAfter {
+		d.prune(now)
+		d.lastPruned = now
+	}
+
+	return false
+}
+
+func (d *eventDebouncer) prune(now time.Time) {
+	cutoff := now.Add(-d.pruneAfter)
+	for path, ts := range d.lastSeen {
+		if ts.Before(cutoff) {
+			delete(d.lastSeen, path)
+		}
+	}
+}
+
 // eventLoop processes file system events
 func (d *Daemon) eventLoop() {
-	// Debounce rapid changes (e.g., save + format)
-	debounce := make(map[string]time.Time)
-	debounceWindow := 100 * time.Millisecond
+	debouncer := newEventDebouncer(100 * time.Millisecond)
 
 	for {
 		select {
@@ -50,13 +96,9 @@ func (d *Daemon) eventLoop() {
 				}
 			}
 
-			// Debounce rapid events on same file
-			if last, exists := debounce[event.Name]; exists {
-				if time.Since(last) < debounceWindow {
-					continue
-				}
+			if debouncer.shouldSkip(event, time.Now()) {
+				continue
 			}
-			debounce[event.Name] = time.Now()
 
 			// Process the event
 			d.handleEvent(event)
@@ -125,6 +167,12 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 	case "CREATE", "WRITE":
 		info, err := os.Stat(fsEvent.Name)
 		if err != nil {
+			// Event delivery can race file deletion (e.g., atomic saves or temp
+			// files); if the path disappeared, clear any stale tracked entry.
+			if os.IsNotExist(err) {
+				delete(d.graph.Files, relPath)
+				delete(d.graph.State, relPath)
+			}
 			d.graph.mu.Unlock()
 			return
 		}
