@@ -32,7 +32,10 @@ type hubInfo struct {
 const (
 	DefaultHookTimeout      = 8 * time.Second
 	daemonRestartStaleAfter = 2 * time.Hour
+	diffCaptureSlackBytes   = 4 * 1024
 )
+
+var isOwnedDaemonProcess = watch.IsOwnedDaemon
 
 type HookTimeoutError struct {
 	Hook    string
@@ -41,6 +44,47 @@ type HookTimeoutError struct {
 
 func (e *HookTimeoutError) Error() string {
 	return fmt.Sprintf("hook %q timed out after %s", e.Hook, e.Timeout)
+}
+
+// cappedStringWriter captures at most maxBytes while still reporting full
+// progress to avoid blocking subprocess writers on large output.
+type cappedStringWriter struct {
+	maxBytes  int
+	buf       strings.Builder
+	truncated bool
+}
+
+func newCappedStringWriter(maxBytes int) *cappedStringWriter {
+	return &cappedStringWriter{maxBytes: maxBytes}
+}
+
+func (w *cappedStringWriter) Write(p []byte) (int, error) {
+	if w.maxBytes <= 0 {
+		w.truncated = true
+		return len(p), nil
+	}
+
+	remaining := w.maxBytes - w.buf.Len()
+	if remaining <= 0 {
+		w.truncated = true
+		return len(p), nil
+	}
+	if len(p) <= remaining {
+		_, _ = w.buf.Write(p)
+		return len(p), nil
+	}
+
+	_, _ = w.buf.Write(p[:remaining])
+	w.truncated = true
+	return len(p), nil
+}
+
+func (w *cappedStringWriter) String() string {
+	return w.buf.String()
+}
+
+func (w *cappedStringWriter) Truncated() bool {
+	return w.truncated
 }
 
 // getHubInfo returns hub info from daemon state.
@@ -148,6 +192,9 @@ func IsHookTimeoutError(err error) bool {
 
 func shouldRestartDaemon(root string, now time.Time) bool {
 	if !watch.IsRunning(root) {
+		return false
+	}
+	if !isOwnedDaemonProcess(root) {
 		return false
 	}
 
@@ -362,13 +409,17 @@ func showDiffVsMain(root string, fileCount int, fileCountKnown bool) {
 	}
 	args = append(args, root)
 	cmd := exec.Command(exe, args...)
-	var buf strings.Builder
-	cmd.Stdout = &buf
+	captureLimit := limits.MaxDiffOutputBytes + diffCaptureSlackBytes
+	if captureLimit < limits.MaxDiffOutputBytes {
+		captureLimit = limits.MaxDiffOutputBytes
+	}
+	buf := newCappedStringWriter(captureLimit)
+	cmd.Stdout = buf
 	cmd.Stderr = os.Stderr
 	cmd.Run()
 
 	output := buf.String()
-	if len(output) > limits.MaxDiffOutputBytes {
+	if len(output) > limits.MaxDiffOutputBytes || buf.Truncated() {
 		output = limits.TruncateAtLineBoundary(
 			output,
 			limits.MaxDiffOutputBytes,
@@ -422,9 +473,12 @@ func getLastSessionEvents(root string) []string {
 	if maxTail > 0 && readBytes > maxTail {
 		readBytes = maxTail
 	}
+	if readBytes <= 0 {
+		return nil
+	}
 	start := info.Size() - readBytes
 
-	buf := make([]byte, readBytes)
+	buf := make([]byte, int(readBytes))
 	n, err := f.ReadAt(buf, start)
 	if err != nil && err != io.EOF {
 		return nil

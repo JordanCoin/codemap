@@ -18,6 +18,15 @@ import (
 	"codemap/watch"
 )
 
+func withOwnedDaemonProcess(t *testing.T, fn func(string) bool) {
+	t.Helper()
+	prev := isOwnedDaemonProcess
+	isOwnedDaemonProcess = fn
+	t.Cleanup(func() {
+		isOwnedDaemonProcess = prev
+	})
+}
+
 // TestHubInfoIsHub tests the hub detection threshold (3+ importers)
 func TestHubInfoIsHub(t *testing.T) {
 	tests := []struct {
@@ -136,6 +145,42 @@ func TestRunWithTimeout(t *testing.T) {
 	})
 }
 
+func TestCappedStringWriter(t *testing.T) {
+	t.Run("captures full output under limit", func(t *testing.T) {
+		w := newCappedStringWriter(8)
+		n, err := w.Write([]byte("hello"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if n != 5 {
+			t.Fatalf("expected 5 bytes written, got %d", n)
+		}
+		if got := w.String(); got != "hello" {
+			t.Fatalf("expected %q, got %q", "hello", got)
+		}
+		if w.Truncated() {
+			t.Fatal("expected writer not truncated")
+		}
+	})
+
+	t.Run("caps output and marks truncated", func(t *testing.T) {
+		w := newCappedStringWriter(4)
+		n, err := w.Write([]byte("helloworld"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if n != len("helloworld") {
+			t.Fatalf("expected write count %d, got %d", len("helloworld"), n)
+		}
+		if got := w.String(); got != "hell" {
+			t.Fatalf("expected %q, got %q", "hell", got)
+		}
+		if !w.Truncated() {
+			t.Fatal("expected writer to be truncated")
+		}
+	})
+}
+
 func TestHookTimeoutFromEnv(t *testing.T) {
 	tests := []struct {
 		name string
@@ -166,12 +211,14 @@ func TestHookTimeoutFromEnv(t *testing.T) {
 
 func TestShouldRestartDaemon(t *testing.T) {
 	t.Run("not running returns false", func(t *testing.T) {
+		withOwnedDaemonProcess(t, func(string) bool { return true })
 		if shouldRestartDaemon(t.TempDir(), time.Now()) {
 			t.Fatal("expected false when daemon is not running")
 		}
 	})
 
 	t.Run("running with fresh state returns false", func(t *testing.T) {
+		withOwnedDaemonProcess(t, func(string) bool { return true })
 		root := t.TempDir()
 		writeWatchState(t, root, watch.State{
 			UpdatedAt: time.Now().Add(-5 * time.Minute),
@@ -183,6 +230,7 @@ func TestShouldRestartDaemon(t *testing.T) {
 	})
 
 	t.Run("running with stale state returns true", func(t *testing.T) {
+		withOwnedDaemonProcess(t, func(string) bool { return true })
 		root := t.TempDir()
 		writeWatchState(t, root, watch.State{
 			UpdatedAt: time.Now().Add(-3 * time.Hour),
@@ -194,6 +242,7 @@ func TestShouldRestartDaemon(t *testing.T) {
 	})
 
 	t.Run("running without state returns true", func(t *testing.T) {
+		withOwnedDaemonProcess(t, func(string) bool { return true })
 		root := t.TempDir()
 		codemapDir := filepath.Join(root, ".codemap")
 		if err := os.MkdirAll(codemapDir, 0755); err != nil {
@@ -206,6 +255,18 @@ func TestShouldRestartDaemon(t *testing.T) {
 
 		if !shouldRestartDaemon(root, time.Now()) {
 			t.Fatal("expected true when daemon pid exists but state is missing")
+		}
+	})
+
+	t.Run("running stale state but daemon not owned returns false", func(t *testing.T) {
+		withOwnedDaemonProcess(t, func(string) bool { return false })
+		root := t.TempDir()
+		writeWatchState(t, root, watch.State{
+			UpdatedAt: time.Now().Add(-3 * time.Hour),
+			FileCount: 10,
+		})
+		if shouldRestartDaemon(root, time.Now()) {
+			t.Fatal("expected false for unowned daemon process")
 		}
 	})
 }
