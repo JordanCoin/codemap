@@ -42,6 +42,22 @@ func TestEventDebouncerDoesNotSkipNonWriteOps(t *testing.T) {
 	}
 }
 
+func TestEventDebouncerDoesNotSkipCombinedLifecycleOps(t *testing.T) {
+	debouncer := newEventDebouncer(100 * time.Millisecond)
+	base := time.Unix(0, 0)
+	path := "src/tmp.go"
+
+	if debouncer.shouldSkip(fsnotify.Event{Name: path, Op: fsnotify.Create | fsnotify.Write}, base) {
+		t.Fatal("create+write should not be skipped")
+	}
+	if debouncer.shouldSkip(fsnotify.Event{Name: path, Op: fsnotify.Rename | fsnotify.Write}, base.Add(10*time.Millisecond)) {
+		t.Fatal("rename+write should not be skipped")
+	}
+	if debouncer.shouldSkip(fsnotify.Event{Name: path, Op: fsnotify.Remove | fsnotify.Write}, base.Add(20*time.Millisecond)) {
+		t.Fatal("remove+write should not be skipped")
+	}
+}
+
 func TestEventDebouncerPrunesStaleEntries(t *testing.T) {
 	debouncer := newEventDebouncer(100 * time.Millisecond)
 	base := time.Unix(0, 0)

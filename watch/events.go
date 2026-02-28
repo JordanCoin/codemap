@@ -40,7 +40,18 @@ func newEventDebouncer(window time.Duration) *eventDebouncer {
 }
 
 func (d *eventDebouncer) shouldSkip(event fsnotify.Event, now time.Time) bool {
-	if event.Op&fsnotify.Write == 0 {
+	op := event.Op
+	// Never debounce transitions that include create/remove/rename bits,
+	// even if they also carry WRITE, so lifecycle tracking stays accurate.
+	if op&(fsnotify.Create|fsnotify.Remove|fsnotify.Rename) != 0 {
+		return false
+	}
+	// Only debounce pure write events (allow CHMOD alongside WRITE).
+	if op&fsnotify.Write == 0 {
+		return false
+	}
+	allowedWriteMask := fsnotify.Write | fsnotify.Chmod
+	if op&^allowedWriteMask != 0 {
 		return false
 	}
 
