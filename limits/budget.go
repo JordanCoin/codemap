@@ -5,6 +5,7 @@ import "strings"
 const (
 	// Shared text response budgets.
 	MaxStructureOutputBytes = MaxContextOutputBytes
+	MaxDiffOutputBytes      = 30000
 	MaxHandoffCompactBytes  = 3000
 	MaxHandoffMarkdownBytes = 20000
 	MaxHandoffDetailBytes   = 12000

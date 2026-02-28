@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -54,6 +55,36 @@ func ReadPID(root string) (int, error) {
 func RemovePID(root string) {
 	pidFile := filepath.Join(root, ".codemap", "watch.pid")
 	os.Remove(pidFile)
+}
+
+// IsOwnedDaemon checks whether the PID file points to a codemap watch daemon
+// for this repository root.
+func IsOwnedDaemon(root string) bool {
+	pid, err := ReadPID(root)
+	if err != nil || pid <= 0 {
+		return false
+	}
+
+	cmdline, err := processCommandLine(pid)
+	if err != nil {
+		return false
+	}
+	cmdline = strings.TrimSpace(cmdline)
+	if cmdline == "" {
+		return false
+	}
+
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		absRoot = root
+	}
+	if absRoot == "" {
+		return false
+	}
+
+	return strings.Contains(cmdline, "watch") &&
+		strings.Contains(cmdline, "daemon") &&
+		strings.Contains(cmdline, absRoot)
 }
 
 // IsRunning checks if the daemon is running

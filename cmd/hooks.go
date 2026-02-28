@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -28,9 +29,77 @@ type hubInfo struct {
 	Imports   map[string][]string
 }
 
+const (
+	DefaultHookTimeout      = 8 * time.Second
+	daemonRestartStaleAfter = 2 * time.Hour
+	diffCaptureSlackBytes   = 4 * 1024
+)
+
+var isOwnedDaemonProcess = watch.IsOwnedDaemon
+
+type HookTimeoutError struct {
+	Hook    string
+	Timeout time.Duration
+}
+
+func (e *HookTimeoutError) Error() string {
+	return fmt.Sprintf("hook %q timed out after %s", e.Hook, e.Timeout)
+}
+
+// cappedStringWriter captures at most maxBytes while still reporting full
+// progress to avoid blocking subprocess writers on large output.
+type cappedStringWriter struct {
+	maxBytes  int
+	buf       strings.Builder
+	truncated bool
+}
+
+func newCappedStringWriter(maxBytes int) *cappedStringWriter {
+	return &cappedStringWriter{maxBytes: maxBytes}
+}
+
+func (w *cappedStringWriter) Write(p []byte) (int, error) {
+	if w.maxBytes <= 0 {
+		w.truncated = true
+		return len(p), nil
+	}
+
+	remaining := w.maxBytes - w.buf.Len()
+	if remaining <= 0 {
+		w.truncated = true
+		return len(p), nil
+	}
+	if len(p) <= remaining {
+		_, _ = w.buf.Write(p)
+		return len(p), nil
+	}
+
+	_, _ = w.buf.Write(p[:remaining])
+	w.truncated = true
+	return len(p), nil
+}
+
+func (w *cappedStringWriter) String() string {
+	return w.buf.String()
+}
+
+func (w *cappedStringWriter) Truncated() bool {
+	return w.truncated
+}
+
 // getHubInfo returns hub info from daemon state.
 // If daemon isn't running, falls back to a fresh scan.
 func getHubInfo(root string) *hubInfo {
+	return getHubInfoWithFallback(root, true)
+}
+
+// getHubInfoNoFallback returns cached hub information only.
+// It never triggers expensive graph scans.
+func getHubInfoNoFallback(root string) *hubInfo {
+	return getHubInfoWithFallback(root, false)
+}
+
+func getHubInfoWithFallback(root string, allowFallback bool) *hubInfo {
 	if state := watch.ReadState(root); state != nil {
 		// State may contain file/event info only (no dependency graph) on very
 		// large repos. Avoid expensive fallback scans in that case.
@@ -42,6 +111,10 @@ func getHubInfo(root string) *hubInfo {
 			Importers: state.Importers,
 			Imports:   state.Imports,
 		}
+	}
+
+	if !allowFallback {
+		return nil
 	}
 
 	// If daemon is running but state is unavailable, skip expensive fallback.
@@ -60,6 +133,77 @@ func getHubInfo(root string) *hubInfo {
 		Importers: fg.Importers,
 		Imports:   fg.Imports,
 	}
+}
+
+// RunHookWithTimeout executes a hook with a hard timeout.
+// On timeout, returns HookTimeoutError and callers should fail open.
+func RunHookWithTimeout(hookName, root string, timeout time.Duration) error {
+	if timeout <= 0 {
+		return RunHook(hookName, root)
+	}
+
+	return runWithTimeout(hookName, timeout, func() error {
+		return RunHook(hookName, root)
+	})
+}
+
+func runWithTimeout(hookName string, timeout time.Duration, fn func() error) error {
+	if timeout <= 0 {
+		return fn()
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- fn()
+	}()
+
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(timeout):
+		return &HookTimeoutError{Hook: hookName, Timeout: timeout}
+	}
+}
+
+func HookTimeoutFromEnv(getenv func(string) string) time.Duration {
+	if getenv == nil {
+		return DefaultHookTimeout
+	}
+
+	value := strings.TrimSpace(getenv("CODEMAP_HOOK_TIMEOUT"))
+	if value == "" {
+		return DefaultHookTimeout
+	}
+
+	d, err := time.ParseDuration(value)
+	if err != nil {
+		return DefaultHookTimeout
+	}
+	if d < 0 {
+		return DefaultHookTimeout
+	}
+	return d
+}
+
+func IsHookTimeoutError(err error) bool {
+	var timeoutErr *HookTimeoutError
+	return errors.As(err, &timeoutErr)
+}
+
+func shouldRestartDaemon(root string, now time.Time) bool {
+	if !watch.IsRunning(root) {
+		return false
+	}
+	if !isOwnedDaemonProcess(root) {
+		return false
+	}
+
+	state := watch.ReadState(root)
+	if state == nil {
+		return true
+	}
+
+	return now.Sub(state.UpdatedAt) > daemonRestartStaleAfter
 }
 
 func waitForDaemonState(root string, timeout time.Duration) *watch.State {
@@ -111,6 +255,11 @@ func hookSessionStart(root string) error {
 
 	// Check for previous session context before starting new daemon
 	lastSessionEvents := getLastSessionEvents(root)
+
+	// Restart stale daemons so long-lived background processes do not drift.
+	if shouldRestartDaemon(root, time.Now()) {
+		stopDaemon(root)
+	}
 
 	// Start the watch daemon in background (if not already running)
 	if !watch.IsRunning(root) {
@@ -260,9 +409,24 @@ func showDiffVsMain(root string, fileCount int, fileCountKnown bool) {
 	}
 	args = append(args, root)
 	cmd := exec.Command(exe, args...)
-	cmd.Stdout = os.Stdout
+	captureLimit := limits.MaxDiffOutputBytes + diffCaptureSlackBytes
+	if captureLimit < limits.MaxDiffOutputBytes {
+		captureLimit = limits.MaxDiffOutputBytes
+	}
+	buf := newCappedStringWriter(captureLimit)
+	cmd.Stdout = buf
 	cmd.Stderr = os.Stderr
 	cmd.Run()
+
+	output := buf.String()
+	if len(output) > limits.MaxDiffOutputBytes || buf.Truncated() {
+		output = limits.TruncateAtLineBoundary(
+			output,
+			limits.MaxDiffOutputBytes,
+			"\n\n... (diff output truncated, run `codemap --diff` for full output)\n",
+		)
+	}
+	fmt.Print(output)
 }
 
 func showLightweightDiffVsMain(root string) {
@@ -293,12 +457,44 @@ func showLightweightDiffVsMain(root string) {
 // getLastSessionEvents reads events.log for previous session context
 func getLastSessionEvents(root string) []string {
 	eventsFile := filepath.Join(root, ".codemap", "events.log")
-	data, err := os.ReadFile(eventsFile)
+	f, err := os.Open(eventsFile)
 	if err != nil {
 		return nil
 	}
+	defer f.Close()
 
-	lines := strings.Split(string(data), "\n")
+	info, err := f.Stat()
+	if err != nil || info.Size() == 0 {
+		return nil
+	}
+
+	readBytes := info.Size()
+	maxTail := int64(limits.MaxEventLogReadBytes)
+	if maxTail > 0 && readBytes > maxTail {
+		readBytes = maxTail
+	}
+	if readBytes <= 0 {
+		return nil
+	}
+	start := info.Size() - readBytes
+
+	buf := make([]byte, int(readBytes))
+	n, err := f.ReadAt(buf, start)
+	if err != nil && err != io.EOF {
+		return nil
+	}
+	if n == 0 {
+		return nil
+	}
+
+	text := string(buf[:n])
+	if start > 0 {
+		if idx := strings.IndexByte(text, '\n'); idx >= 0 && idx+1 < len(text) {
+			text = text[idx+1:]
+		}
+	}
+
+	lines := strings.Split(text, "\n")
 	if len(lines) == 0 {
 		return nil
 	}
@@ -474,7 +670,7 @@ func hookPromptSubmit(root string) error {
 		return nil
 	}
 
-	info := getHubInfo(root)
+	info := getHubInfoNoFallback(root)
 
 	// Look for file patterns in the prompt
 	var filesMentioned []string
@@ -551,7 +747,7 @@ func hookPreCompact(root string) error {
 		return err
 	}
 
-	info := getHubInfo(root)
+	info := getHubInfoNoFallback(root)
 	if info == nil || len(info.Hubs) == 0 {
 		return nil
 	}
@@ -661,7 +857,7 @@ func hookSessionStop(root string) error {
 			return nil
 		}
 
-		info := getHubInfo(root)
+		info := getHubInfoNoFallback(root)
 
 		fmt.Println()
 		fmt.Println("Files modified:")
@@ -788,7 +984,7 @@ func extractFilePathFromStdin() (string, error) {
 
 // checkFileImporters checks if a file is a hub and shows its importers
 func checkFileImporters(root, filePath string) error {
-	info := getHubInfo(root)
+	info := getHubInfoNoFallback(root)
 	if info == nil {
 		return nil // silently skip if deps unavailable
 	}

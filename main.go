@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -48,7 +49,13 @@ func main() {
 		if len(os.Args) >= 4 {
 			root = os.Args[3]
 		}
-		if err := cmd.RunHook(hookName, root); err != nil {
+		if err := cmd.RunHookWithTimeout(hookName, root, cmd.HookTimeoutFromEnv(os.Getenv)); err != nil {
+			var timeoutErr *cmd.HookTimeoutError
+			if errors.As(err, &timeoutErr) {
+				fmt.Fprintf(os.Stderr, "Hook warning: %v\n", timeoutErr)
+				fmt.Fprintln(os.Stderr, "Continuing without hook output. Set CODEMAP_HOOK_TIMEOUT=0 to disable timeout.")
+				return
+			}
 			fmt.Fprintf(os.Stderr, "Hook error: %v\n", err)
 			os.Exit(1)
 		}

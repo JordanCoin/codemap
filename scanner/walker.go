@@ -64,6 +64,15 @@ func (c *GitIgnoreCache) tryLoadGitignore(dir string) {
 	}
 }
 
+// EnsureDir loads a .gitignore for dir if present.
+// Safe to call repeatedly; directories are memoized.
+func (c *GitIgnoreCache) EnsureDir(dir string) {
+	if c == nil || dir == "" {
+		return
+	}
+	c.tryLoadGitignore(dir)
+}
+
 // ShouldIgnore checks if a path should be ignored based on all applicable .gitignore files.
 // Git evaluates rules from root to leaf, with later rules overriding earlier ones.
 func (c *GitIgnoreCache) ShouldIgnore(absPath string) bool {

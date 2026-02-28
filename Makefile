@@ -1,4 +1,4 @@
-.PHONY: all build build-mcp run deps grammars clean
+.PHONY: all build build-mcp run deps grammars coverage clean
 
 all: build
 
@@ -24,6 +24,10 @@ grammars:
 # Dependency graph mode - shows functions and imports per file
 deps: build grammars
 	./codemap --deps "$(ABS_DIR)"
+
+coverage:
+	go test -coverprofile=coverage.out ./...
+	go tool cover -func=coverage.out | tail -n 1
 
 clean:
 	rm -f codemap codemap-mcp
