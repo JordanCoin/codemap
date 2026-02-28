@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"codemap/limits"
 )
 
 func TestLoad_MissingFile(t *testing.T) {
@@ -23,7 +25,32 @@ func TestLoad_ValidConfig(t *testing.T) {
 	data := `{
 		"only": ["rs", "sh", "sql"],
 		"exclude": ["docs/reference", "vendor"],
-		"depth": 3
+		"depth": 3,
+		"mode": "structured",
+		"budgets": {
+			"session_start_bytes": 28000,
+			"diff_bytes": 11000,
+			"max_hubs": 6
+		},
+		"routing": {
+			"retrieval": {
+				"strategy": "keyword",
+				"top_k": 4
+			},
+			"subsystems": [
+				{
+					"id": "watching",
+					"keywords": ["hook", "daemon"],
+					"docs": ["docs/HOOKS.md"],
+					"agents": ["codemap-hook-triage"]
+				}
+			]
+		},
+		"drift": {
+			"enabled": true,
+			"recent_commits": 9,
+			"require_docs_for": ["watching"]
+		}
 	}`
 	if err := os.WriteFile(filepath.Join(codemapDir, "config.json"), []byte(data), 0644); err != nil {
 		t.Fatal(err)
@@ -38,6 +65,33 @@ func TestLoad_ValidConfig(t *testing.T) {
 	}
 	if cfg.Depth != 3 {
 		t.Errorf("unexpected Depth: %d", cfg.Depth)
+	}
+	if cfg.Mode != "structured" {
+		t.Errorf("unexpected Mode: %q", cfg.Mode)
+	}
+	if cfg.Budgets.SessionStartBytes != 28000 {
+		t.Errorf("unexpected SessionStartBytes: %d", cfg.Budgets.SessionStartBytes)
+	}
+	if cfg.Budgets.DiffBytes != 11000 {
+		t.Errorf("unexpected DiffBytes: %d", cfg.Budgets.DiffBytes)
+	}
+	if cfg.Budgets.MaxHubs != 6 {
+		t.Errorf("unexpected MaxHubs: %d", cfg.Budgets.MaxHubs)
+	}
+	if got := cfg.RoutingTopKOrDefault(); got != 4 {
+		t.Errorf("unexpected routing top_k: %d", got)
+	}
+	if len(cfg.Routing.Subsystems) != 1 || cfg.Routing.Subsystems[0].ID != "watching" {
+		t.Errorf("unexpected Routing.Subsystems: %+v", cfg.Routing.Subsystems)
+	}
+	if !cfg.Drift.Enabled {
+		t.Errorf("expected drift enabled, got false")
+	}
+	if cfg.Drift.RecentCommits != 9 {
+		t.Errorf("unexpected Drift.RecentCommits: %d", cfg.Drift.RecentCommits)
+	}
+	if len(cfg.Drift.RequireDocsFor) != 1 || cfg.Drift.RequireDocsFor[0] != "watching" {
+		t.Errorf("unexpected Drift.RequireDocsFor: %v", cfg.Drift.RequireDocsFor)
 	}
 }
 
@@ -107,4 +161,63 @@ func TestConfigPath(t *testing.T) {
 	if got != want {
 		t.Errorf("ConfigPath = %q, want %q", got, want)
 	}
+}
+
+func TestPolicyDefaultsAndClamps(t *testing.T) {
+	t.Run("defaults for empty config", func(t *testing.T) {
+		var cfg ProjectConfig
+		if got := cfg.ModeOrDefault(); got != "auto" {
+			t.Fatalf("ModeOrDefault() = %q, want auto", got)
+		}
+		if got := cfg.SessionStartOutputBytes(); got != limits.MaxStructureOutputBytes {
+			t.Fatalf("SessionStartOutputBytes() = %d, want %d", got, limits.MaxStructureOutputBytes)
+		}
+		if got := cfg.DiffOutputBytes(); got != limits.MaxDiffOutputBytes {
+			t.Fatalf("DiffOutputBytes() = %d, want %d", got, limits.MaxDiffOutputBytes)
+		}
+		if got := cfg.HubDisplayLimit(); got != 10 {
+			t.Fatalf("HubDisplayLimit() = %d, want 10", got)
+		}
+		if got := cfg.RoutingStrategyOrDefault(); got != "keyword" {
+			t.Fatalf("RoutingStrategyOrDefault() = %q, want keyword", got)
+		}
+		if got := cfg.RoutingTopKOrDefault(); got != 3 {
+			t.Fatalf("RoutingTopKOrDefault() = %d, want 3", got)
+		}
+	})
+
+	t.Run("clamps unsafe values", func(t *testing.T) {
+		cfg := ProjectConfig{
+			Mode: "invalid",
+			Budgets: HookBudgets{
+				SessionStartBytes: limits.MaxContextOutputBytes * 5,
+				DiffBytes:         limits.MaxContextOutputBytes * 4,
+				MaxHubs:           500,
+			},
+			Routing: RoutingConfig{
+				Retrieval: RetrievalConfig{
+					Strategy: "semantic",
+					TopK:     0,
+				},
+			},
+		}
+		if got := cfg.ModeOrDefault(); got != "auto" {
+			t.Fatalf("ModeOrDefault() = %q, want auto", got)
+		}
+		if got := cfg.SessionStartOutputBytes(); got != limits.MaxContextOutputBytes {
+			t.Fatalf("SessionStartOutputBytes() = %d, want %d", got, limits.MaxContextOutputBytes)
+		}
+		if got := cfg.DiffOutputBytes(); got != limits.MaxContextOutputBytes {
+			t.Fatalf("DiffOutputBytes() = %d, want %d", got, limits.MaxContextOutputBytes)
+		}
+		if got := cfg.HubDisplayLimit(); got != 100 {
+			t.Fatalf("HubDisplayLimit() = %d, want 100", got)
+		}
+		if got := cfg.RoutingStrategyOrDefault(); got != "keyword" {
+			t.Fatalf("RoutingStrategyOrDefault() = %q, want keyword", got)
+		}
+		if got := cfg.RoutingTopKOrDefault(); got != 3 {
+			t.Fatalf("RoutingTopKOrDefault() = %d, want 3", got)
+		}
+	})
 }

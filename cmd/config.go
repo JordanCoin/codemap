@@ -150,7 +150,7 @@ func configInit(root string) {
 
 func configShow(root string) {
 	cfg := config.Load(root)
-	if len(cfg.Only) == 0 && len(cfg.Exclude) == 0 && cfg.Depth == 0 {
+	if isConfigEmpty(cfg) {
 		cfgPath := config.ConfigPath(root)
 		if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
 			fmt.Println("No config file found.")
@@ -172,4 +172,69 @@ func configShow(root string) {
 	if cfg.Depth > 0 {
 		fmt.Printf("  depth:   %d\n", cfg.Depth)
 	}
+	if strings.TrimSpace(cfg.Mode) != "" {
+		fmt.Printf("  mode:    %s\n", cfg.ModeOrDefault())
+	}
+	if cfg.Budgets.SessionStartBytes > 0 || cfg.Budgets.DiffBytes > 0 || cfg.Budgets.MaxHubs > 0 {
+		fmt.Println("  budgets:")
+		if cfg.Budgets.SessionStartBytes > 0 {
+			fmt.Printf("    session_start_bytes: %d\n", cfg.Budgets.SessionStartBytes)
+		}
+		if cfg.Budgets.DiffBytes > 0 {
+			fmt.Printf("    diff_bytes:          %d\n", cfg.Budgets.DiffBytes)
+		}
+		if cfg.Budgets.MaxHubs > 0 {
+			fmt.Printf("    max_hubs:            %d\n", cfg.Budgets.MaxHubs)
+		}
+	}
+	if strings.TrimSpace(cfg.Routing.Retrieval.Strategy) != "" || cfg.Routing.Retrieval.TopK > 0 || len(cfg.Routing.Subsystems) > 0 {
+		fmt.Println("  routing:")
+		if strings.TrimSpace(cfg.Routing.Retrieval.Strategy) != "" || cfg.Routing.Retrieval.TopK > 0 {
+			fmt.Printf("    retrieval: strategy=%s top_k=%d\n", cfg.RoutingStrategyOrDefault(), cfg.RoutingTopKOrDefault())
+		}
+		if len(cfg.Routing.Subsystems) > 0 {
+			fmt.Printf("    subsystems: %d configured\n", len(cfg.Routing.Subsystems))
+			const maxShown = 5
+			for i, sub := range cfg.Routing.Subsystems {
+				if i >= maxShown {
+					fmt.Printf("      ... and %d more\n", len(cfg.Routing.Subsystems)-maxShown)
+					break
+				}
+				label := strings.TrimSpace(sub.ID)
+				if label == "" {
+					label = fmt.Sprintf("(unnamed-%d)", i+1)
+				}
+				fmt.Printf("      - %s (keywords=%d docs=%d agents=%d)\n", label, len(sub.Keywords), len(sub.Docs), len(sub.Agents))
+			}
+		}
+	}
+	if cfg.Drift.Enabled || cfg.Drift.RecentCommits > 0 || len(cfg.Drift.RequireDocsFor) > 0 {
+		fmt.Println("  drift:")
+		fmt.Printf("    enabled: %t\n", cfg.Drift.Enabled)
+		if cfg.Drift.RecentCommits > 0 {
+			fmt.Printf("    recent_commits: %d\n", cfg.Drift.RecentCommits)
+		}
+		if len(cfg.Drift.RequireDocsFor) > 0 {
+			fmt.Printf("    require_docs_for: %s\n", strings.Join(cfg.Drift.RequireDocsFor, ", "))
+		}
+	}
+}
+
+func isConfigEmpty(cfg config.ProjectConfig) bool {
+	if len(cfg.Only) > 0 || len(cfg.Exclude) > 0 || cfg.Depth > 0 {
+		return false
+	}
+	if strings.TrimSpace(cfg.Mode) != "" {
+		return false
+	}
+	if cfg.Budgets.SessionStartBytes > 0 || cfg.Budgets.DiffBytes > 0 || cfg.Budgets.MaxHubs > 0 {
+		return false
+	}
+	if strings.TrimSpace(cfg.Routing.Retrieval.Strategy) != "" || cfg.Routing.Retrieval.TopK > 0 || len(cfg.Routing.Subsystems) > 0 {
+		return false
+	}
+	if cfg.Drift.Enabled || cfg.Drift.RecentCommits > 0 || len(cfg.Drift.RequireDocsFor) > 0 {
+		return false
+	}
+	return true
 }

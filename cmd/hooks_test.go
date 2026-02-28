@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"codemap/config"
 	"codemap/handoff"
 	"codemap/limits"
 	"codemap/watch"
@@ -541,16 +542,9 @@ func TestPromptFileMentionDetection(t *testing.T) {
 		},
 	}
 
-	extensions := []string{"go", "tsx", "ts", "jsx", "js", "py", "rs", "rb", "java", "swift", "kt", "c", "cpp", "h"}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var filesMentioned []string
-			for _, ext := range extensions {
-				pattern := regexp.MustCompile(`[a-zA-Z0-9_/-]+\.` + ext)
-				matches := pattern.FindAllString(tt.prompt, 3)
-				filesMentioned = append(filesMentioned, matches...)
-			}
+			filesMentioned := extractMentionedFiles(tt.prompt, 10)
 
 			if tt.wantNoFile {
 				if len(filesMentioned) > 0 {
@@ -572,6 +566,50 @@ func TestPromptFileMentionDetection(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestExtractMentionedFilesLimitAndDedup(t *testing.T) {
+	prompt := "check main.go then main.go and api/server.go and util/file.py"
+	files := extractMentionedFiles(prompt, 2)
+	if len(files) != 2 {
+		t.Fatalf("expected 2 files due to limit, got %d: %v", len(files), files)
+	}
+	if files[0] != "main.go" || files[1] != "api/server.go" {
+		t.Fatalf("unexpected ordered files: %v", files)
+	}
+}
+
+func TestMatchSubsystemRoutes(t *testing.T) {
+	cfg := config.ProjectConfig{
+		Routing: config.RoutingConfig{
+			Retrieval: config.RetrievalConfig{Strategy: "keyword", TopK: 2},
+			Subsystems: []config.Subsystem{
+				{
+					ID:       "watching",
+					Keywords: []string{"hook", "daemon", "events"},
+					Docs:     []string{"docs/HOOKS.md"},
+					Agents:   []string{"codemap-hook-triage"},
+				},
+				{
+					ID:       "handoff",
+					Keywords: []string{"handoff", "delta"},
+					Docs:     []string{"README.md"},
+				},
+			},
+		},
+	}
+
+	prompt := "the daemon hook events log is too noisy, handoff delta might also be stale"
+	matches := matchSubsystemRoutes(prompt, cfg, cfg.RoutingTopKOrDefault())
+	if len(matches) != 2 {
+		t.Fatalf("expected top_k=2 matches, got %d: %+v", len(matches), matches)
+	}
+	if matches[0].ID != "watching" {
+		t.Fatalf("expected highest score route to be watching, got %+v", matches[0])
+	}
+	if len(matches[0].Docs) != 1 || matches[0].Docs[0] != "docs/HOOKS.md" {
+		t.Fatalf("unexpected watching docs: %+v", matches[0].Docs)
 	}
 }
 

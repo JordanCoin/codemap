@@ -37,6 +37,8 @@ const (
 
 var isOwnedDaemonProcess = watch.IsOwnedDaemon
 
+var promptFileExtensions = []string{"go", "tsx", "ts", "jsx", "js", "py", "rs", "rb", "java", "swift", "kt", "c", "cpp", "h"}
+
 type HookTimeoutError struct {
 	Hook    string
 	Timeout time.Duration
@@ -288,10 +290,12 @@ func hookSessionStart(root string) error {
 		fileCount = state.FileCount
 		fileCountKnown = true
 	}
+	projCfg := config.Load(root)
+	structureBudget := projCfg.SessionStartOutputBytes()
+	maxHubs := projCfg.HubDisplayLimit()
 
 	exe, err := os.Executable()
 	if err == nil {
-		projCfg := config.Load(root)
 		depth := limits.AdaptiveDepth(fileCount)
 		if projCfg.Depth > 0 {
 			depth = projCfg.Depth
@@ -314,14 +318,14 @@ func hookSessionStart(root string) error {
 		cmd.Run()
 
 		output := buf.String()
-		if len(output) > limits.MaxStructureOutputBytes {
+		if len(output) > structureBudget {
 			repoSummary := "repo size unknown"
 			if fileCountKnown {
 				repoSummary = fmt.Sprintf("repo has %d files", fileCount)
 			}
 			output = limits.TruncateAtLineBoundary(
 				output,
-				limits.MaxStructureOutputBytes,
+				structureBudget,
 				"\n\n... (truncated - "+repoSummary+", use `codemap .` for full tree)\n",
 			)
 		}
@@ -335,8 +339,8 @@ func hookSessionStart(root string) error {
 	if info != nil && len(info.Hubs) > 0 {
 		fmt.Println("⚠️  High-impact files (hubs):")
 		for i, hub := range info.Hubs {
-			if i >= 10 {
-				fmt.Printf("   ... and %d more\n", len(info.Hubs)-10)
+			if i >= maxHubs {
+				fmt.Printf("   ... and %d more\n", len(info.Hubs)-maxHubs)
 				break
 			}
 			importers := len(info.Importers[hub])
@@ -353,7 +357,7 @@ func hookSessionStart(root string) error {
 
 	// Show diff vs main only when we do not already have a recent structured handoff.
 	if !hasRecentHandoffChanges {
-		showDiffVsMain(root, fileCount, fileCountKnown)
+		showDiffVsMain(root, fileCount, fileCountKnown, projCfg)
 	}
 
 	// Show last session context only when recent handoff is unavailable/incomplete.
@@ -369,7 +373,7 @@ func hookSessionStart(root string) error {
 
 // showDiffVsMain shows files changed on this branch vs main.
 // For large/unknown repos, uses lightweight git output to avoid expensive scans.
-func showDiffVsMain(root string, fileCount int, fileCountKnown bool) {
+func showDiffVsMain(root string, fileCount int, fileCountKnown bool, projCfg config.ProjectConfig) {
 	// Check if we're on a branch other than main
 	branchCmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
 	branchCmd.Dir = root
@@ -399,7 +403,7 @@ func showDiffVsMain(root string, fileCount int, fileCountKnown bool) {
 	}
 
 	// Run codemap --diff to show richer impact analysis on manageable repos.
-	projCfg := config.Load(root)
+	diffBudget := projCfg.DiffOutputBytes()
 	args := []string{"--diff"}
 	if len(projCfg.Only) > 0 {
 		args = append(args, "--only", strings.Join(projCfg.Only, ","))
@@ -409,9 +413,9 @@ func showDiffVsMain(root string, fileCount int, fileCountKnown bool) {
 	}
 	args = append(args, root)
 	cmd := exec.Command(exe, args...)
-	captureLimit := limits.MaxDiffOutputBytes + diffCaptureSlackBytes
-	if captureLimit < limits.MaxDiffOutputBytes {
-		captureLimit = limits.MaxDiffOutputBytes
+	captureLimit := diffBudget + diffCaptureSlackBytes
+	if captureLimit < diffBudget {
+		captureLimit = diffBudget
 	}
 	buf := newCappedStringWriter(captureLimit)
 	cmd.Stdout = buf
@@ -419,10 +423,10 @@ func showDiffVsMain(root string, fileCount int, fileCountKnown bool) {
 	cmd.Run()
 
 	output := buf.String()
-	if len(output) > limits.MaxDiffOutputBytes || buf.Truncated() {
+	if len(output) > diffBudget || buf.Truncated() {
 		output = limits.TruncateAtLineBoundary(
 			output,
-			limits.MaxDiffOutputBytes,
+			diffBudget,
 			"\n\n... (diff output truncated, run `codemap --diff` for full output)\n",
 		)
 	}
@@ -670,18 +674,12 @@ func hookPromptSubmit(root string) error {
 		return nil
 	}
 
+	projCfg := config.Load(root)
+	topK := projCfg.RoutingTopKOrDefault()
 	info := getHubInfoNoFallback(root)
 
-	// Look for file patterns in the prompt
-	var filesMentioned []string
-
-	// Check for common source file extensions (tsx before ts so it matches first)
-	extensions := []string{"go", "tsx", "ts", "jsx", "js", "py", "rs", "rb", "java", "swift", "kt", "c", "cpp", "h"}
-	for _, ext := range extensions {
-		pattern := regexp.MustCompile(`[a-zA-Z0-9_/-]+\.` + ext)
-		matches := pattern.FindAllString(prompt, 3)
-		filesMentioned = append(filesMentioned, matches...)
-	}
+	// Look for file patterns in the prompt.
+	filesMentioned := extractMentionedFiles(prompt, topK)
 
 	// Build output for mentioned files
 	var output []string
@@ -704,11 +702,112 @@ func hookPromptSubmit(root string) error {
 			fmt.Println(line)
 		}
 	}
+	showRouteSuggestions(prompt, projCfg, topK)
 
 	// Show mid-session awareness: what's been edited so far
 	showSessionProgress(root)
 
 	return nil
+}
+
+func extractMentionedFiles(prompt string, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+
+	var files []string
+	seen := make(map[string]struct{})
+	for _, ext := range promptFileExtensions {
+		pattern := regexp.MustCompile(`[a-zA-Z0-9_/-]+\.` + ext)
+		matches := pattern.FindAllString(prompt, -1)
+		for _, match := range matches {
+			if _, exists := seen[match]; exists {
+				continue
+			}
+			seen[match] = struct{}{}
+			files = append(files, match)
+			if len(files) >= limit {
+				return files
+			}
+		}
+	}
+	return files
+}
+
+type subsystemRouteMatch struct {
+	ID     string
+	Score  int
+	Docs   []string
+	Agents []string
+}
+
+func matchSubsystemRoutes(prompt string, cfg config.ProjectConfig, topK int) []subsystemRouteMatch {
+	if topK <= 0 || cfg.RoutingStrategyOrDefault() != "keyword" {
+		return nil
+	}
+
+	promptLower := strings.ToLower(prompt)
+	var matches []subsystemRouteMatch
+	for _, subsystem := range cfg.Routing.Subsystems {
+		score := 0
+		for _, keyword := range subsystem.Keywords {
+			keyword = strings.TrimSpace(strings.ToLower(keyword))
+			if keyword != "" && strings.Contains(promptLower, keyword) {
+				score++
+			}
+		}
+		for _, pathHint := range subsystem.Paths {
+			pathHint = strings.TrimSpace(strings.ToLower(pathHint))
+			if pathHint != "" && strings.Contains(promptLower, pathHint) {
+				score++
+			}
+		}
+		if score <= 0 {
+			continue
+		}
+
+		id := strings.TrimSpace(subsystem.ID)
+		if id == "" {
+			id = "(unnamed)"
+		}
+		matches = append(matches, subsystemRouteMatch{
+			ID:     id,
+			Score:  score,
+			Docs:   subsystem.Docs,
+			Agents: subsystem.Agents,
+		})
+	}
+
+	sort.Slice(matches, func(i, j int) bool {
+		if matches[i].Score == matches[j].Score {
+			return matches[i].ID < matches[j].ID
+		}
+		return matches[i].Score > matches[j].Score
+	})
+	if len(matches) > topK {
+		matches = matches[:topK]
+	}
+	return matches
+}
+
+func showRouteSuggestions(prompt string, cfg config.ProjectConfig, topK int) {
+	matches := matchSubsystemRoutes(prompt, cfg, topK)
+	if len(matches) == 0 {
+		return
+	}
+
+	fmt.Println()
+	fmt.Println("📚 Suggested context routes:")
+	for _, match := range matches {
+		line := fmt.Sprintf("   • %s (score=%d)", match.ID, match.Score)
+		if len(match.Docs) > 0 {
+			line += fmt.Sprintf(" docs=%s", strings.Join(match.Docs, ", "))
+		}
+		if len(match.Agents) > 0 {
+			line += fmt.Sprintf(" agents=%s", strings.Join(match.Agents, ", "))
+		}
+		fmt.Println(line)
+	}
 }
 
 // showSessionProgress shows files edited so far in this session

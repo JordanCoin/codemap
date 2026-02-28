@@ -109,7 +109,30 @@ Example `.codemap/config.json`:
 {
   "only": ["rs", "sh", "sql", "toml", "yml"],
   "exclude": ["docs/reference", "docs/research"],
-  "depth": 4
+  "depth": 4,
+  "mode": "auto",
+  "budgets": {
+    "session_start_bytes": 30000,
+    "diff_bytes": 15000,
+    "max_hubs": 8
+  },
+  "routing": {
+    "retrieval": { "strategy": "keyword", "top_k": 3 },
+    "subsystems": [
+      {
+        "id": "watching",
+        "paths": ["watch/**"],
+        "keywords": ["hook", "daemon", "events"],
+        "docs": ["docs/HOOKS.md"],
+        "agents": ["codemap-hook-triage"]
+      }
+    ]
+  },
+  "drift": {
+    "enabled": true,
+    "recent_commits": 10,
+    "require_docs_for": ["watching"]
+  }
 }
 ```
 
@@ -117,6 +140,10 @@ All fields are optional. When set:
 - `only` — session-start tree shows only files with these extensions
 - `exclude` — hides matching paths from the tree
 - `depth` — overrides the adaptive depth calculation
+- `mode` — optional hook orchestration hint (`auto`, `structured`, `ad-hoc`)
+- `budgets` — optional hook budgets (`session_start_bytes`, `diff_bytes`, `max_hubs`)
+- `routing` — optional prompt-submit routing hints (keyword `strategy`, `top_k`, subsystem docs/agents)
+- `drift` — optional drift policy metadata for external checks
 
 CLI flags (`--only`, `--exclude`, `--depth`) always override config values. The bare `codemap` command also respects this config.
 

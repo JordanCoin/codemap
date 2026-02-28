@@ -200,11 +200,35 @@ Example `.codemap/config.json`:
 {
   "only": ["rs", "sh", "sql", "toml", "yml"],
   "exclude": ["docs/reference", "docs/research"],
-  "depth": 4
+  "depth": 4,
+  "mode": "auto",
+  "budgets": {
+    "session_start_bytes": 30000,
+    "diff_bytes": 15000,
+    "max_hubs": 8
+  },
+  "routing": {
+    "retrieval": { "strategy": "keyword", "top_k": 3 },
+    "subsystems": [
+      {
+        "id": "watching",
+        "paths": ["watch/**"],
+        "keywords": ["hook", "daemon", "events"],
+        "docs": ["docs/HOOKS.md"],
+        "agents": ["codemap-hook-triage"]
+      }
+    ]
+  },
+  "drift": {
+    "enabled": true,
+    "recent_commits": 10,
+    "require_docs_for": ["watching"]
+  }
 }
 ```
 
 All fields are optional. CLI flags always override config values.
+Hook-specific policy fields are optional and bounded by safe defaults.
 
 ## Roadmap
 
