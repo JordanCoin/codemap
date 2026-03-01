@@ -1,5 +1,18 @@
 # 🛑 STOP — Run codemap before ANY task
 
+## Repo Root Requirement (Critical)
+
+Run codemap from the git repository root. Hooks and context files resolve from the current working directory, so running from a subdirectory can break hook context.
+
+```bash
+cd "$(git rev-parse --show-toplevel)"
+```
+
+`codemap` expects these at repo root:
+- `.git/`
+- `.codemap/`
+- `.claude/settings.local.json` (project-local hooks)
+
 ```bash
 codemap .                     # Project structure
 codemap --deps                # How files connect

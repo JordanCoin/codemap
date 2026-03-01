@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,15 @@ import (
 	"codemap/config"
 	"codemap/scanner"
 )
+
+var errConfigExists = errors.New("config already exists")
+
+type configInitResult struct {
+	Path         string
+	TopExts      []string
+	TotalFiles   int
+	MatchedFiles int
+}
 
 // nonCodeExtensions are extensions excluded from "config init" auto-detection.
 // These are documentation, data, or lock files that rarely represent the
@@ -46,106 +56,107 @@ func RunConfig(subCmd, root string) {
 }
 
 func configInit(root string) {
-	cfgPath := config.ConfigPath(root)
-
-	// Warn if config already exists
-	if _, err := os.Stat(cfgPath); err == nil {
+	result, err := initProjectConfig(root)
+	if errors.Is(err, errConfigExists) {
+		cfgPath := config.ConfigPath(root)
 		fmt.Fprintf(os.Stderr, "Config already exists: %s\n", cfgPath)
 		fmt.Fprintln(os.Stderr, "Use 'codemap config show' to view it, or edit directly.")
 		os.Exit(1)
 	}
-
-	// Scan the repo to find top extensions
-	gitCache := scanner.NewGitIgnoreCache(root)
-	files, err := scanner.ScanFiles(root, gitCache, nil, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error scanning files: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error creating config: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Count extensions
+	fmt.Printf("Created %s\n", result.Path)
+	fmt.Println()
+	if len(result.TopExts) == 0 {
+		fmt.Println("No code extensions detected — wrote empty config.")
+	} else {
+		fmt.Printf("  only: %s\n", strings.Join(result.TopExts, ", "))
+		if result.TotalFiles > 0 {
+			fmt.Printf("  (%d of %d files)\n", result.MatchedFiles, result.TotalFiles)
+		}
+	}
+	fmt.Println()
+	fmt.Println("Edit the file to add 'exclude' patterns or adjust 'depth'.")
+}
+
+func initProjectConfig(root string) (configInitResult, error) {
+	cfgPath := config.ConfigPath(root)
+	result := configInitResult{Path: cfgPath}
+
+	if _, err := os.Stat(cfgPath); err == nil {
+		return result, errConfigExists
+	} else if err != nil && !os.IsNotExist(err) {
+		return result, err
+	}
+
+	gitCache := scanner.NewGitIgnoreCache(root)
+	files, err := scanner.ScanFiles(root, gitCache, nil, nil)
+	if err != nil {
+		return result, fmt.Errorf("scan files: %w", err)
+	}
+
 	extCount := make(map[string]int)
 	for _, f := range files {
-		ext := strings.TrimPrefix(f.Ext, ".")
-		if ext == "" {
-			continue
-		}
-		ext = strings.ToLower(ext)
-		if nonCodeExtensions[ext] {
+		ext := strings.TrimPrefix(strings.ToLower(f.Ext), ".")
+		if ext == "" || nonCodeExtensions[ext] {
 			continue
 		}
 		extCount[ext]++
 	}
 
-	// Sort by frequency
 	type extEntry struct {
 		Ext   string
 		Count int
 	}
 	var entries []extEntry
 	for ext, count := range extCount {
-		entries = append(entries, extEntry{ext, count})
+		entries = append(entries, extEntry{Ext: ext, Count: count})
 	}
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].Count > entries[j].Count
 	})
 
-	// Take top 5
-	var topExts []string
 	for i, e := range entries {
 		if i >= 5 {
 			break
 		}
-		topExts = append(topExts, e.Ext)
+		result.TopExts = append(result.TopExts, e.Ext)
 	}
 
-	if len(topExts) == 0 {
-		fmt.Println("No code extensions detected — writing empty config.")
-		topExts = nil
-	}
+	cfg := config.ProjectConfig{Only: result.TopExts}
 
-	cfg := config.ProjectConfig{
-		Only: topExts,
-	}
-
-	// Ensure .codemap/ directory exists
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating directory: %v\n", err)
-		os.Exit(1)
+		return result, fmt.Errorf("create .codemap directory: %w", err)
 	}
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error encoding config: %v\n", err)
-		os.Exit(1)
+		return result, fmt.Errorf("encode config: %w", err)
 	}
 	data = append(data, '\n')
 
 	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing config: %v\n", err)
-		os.Exit(1)
+		return result, fmt.Errorf("write config: %w", err)
 	}
 
-	fmt.Printf("Created %s\n", cfgPath)
-	fmt.Println()
-	fmt.Printf("  only: %s\n", strings.Join(topExts, ", "))
-	if len(files) > 0 && len(topExts) > 0 {
-		// Count how many files match the selected extensions
-		matchExts := make(map[string]bool)
-		for _, ext := range topExts {
+	result.TotalFiles = len(files)
+	if len(result.TopExts) > 0 {
+		matchExts := make(map[string]bool, len(result.TopExts))
+		for _, ext := range result.TopExts {
 			matchExts[ext] = true
 		}
-		matched := 0
 		for _, f := range files {
 			ext := strings.TrimPrefix(strings.ToLower(f.Ext), ".")
 			if matchExts[ext] {
-				matched++
+				result.MatchedFiles++
 			}
 		}
-		fmt.Printf("  (%d of %d files)\n", matched, len(files))
 	}
-	fmt.Println()
-	fmt.Println("Edit the file to add 'exclude' patterns or adjust 'depth'.")
+
+	return result, nil
 }
 
 func configShow(root string) {

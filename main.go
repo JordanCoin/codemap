@@ -76,6 +76,13 @@ func main() {
 		return
 	}
 
+	// Handle "setup" subcommand before global flag parsing
+	if len(os.Args) >= 2 && os.Args[1] == "setup" {
+		root, _ := os.Getwd()
+		cmd.RunSetup(os.Args[2:], root)
+		return
+	}
+
 	// Handle "handoff" subcommand before global flag parsing
 	if len(os.Args) >= 2 && os.Args[1] == "handoff" {
 		runHandoffSubcommand(os.Args[2:])
@@ -147,6 +154,10 @@ func main() {
 		fmt.Println("Project config:")
 		fmt.Println("  codemap config init             # Create .codemap/config.json (auto-detects extensions)")
 		fmt.Println("  codemap config show             # Show current project config")
+		fmt.Println()
+		fmt.Println("Recommended onboarding:")
+		fmt.Println("  codemap setup                   # Configure project config + Claude hooks")
+		fmt.Println("  codemap setup --global          # Write hooks to ~/.claude/settings.json")
 		os.Exit(0)
 	}
 
