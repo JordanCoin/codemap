@@ -24,18 +24,65 @@ scoop install codemap
 
 > Other options: [Releases](https://github.com/JordanCoin/codemap/releases) | `go install` | Build from source
 
-## Quick Start
+## Recommended Setup (Hooks + Daemon + Config)
+
+No repo clone is required for normal users.
 
 ```bash
-codemap .                    # Project tree
-codemap --only swift .       # Just Swift files
-codemap --exclude .xcassets,Fonts,.png .  # Hide assets
-codemap --depth 2 .          # Limit depth
-codemap --diff               # What changed vs main
-codemap --deps .             # Dependency flow
-codemap config init          # Create .codemap/config.json
-codemap handoff .            # Save cross-agent handoff summary
-codemap github.com/user/repo # Remote GitHub repo
+# install codemap first (package manager)
+brew tap JordanCoin/tap && brew install codemap
+
+# then run setup inside your project
+cd /path/to/your/project
+codemap setup
+```
+
+`codemap setup` is the default onboarding path and configures the pieces that make codemap most useful with Claude:
+- creates `.codemap/config.json` (if missing) with auto-detected language filters
+- installs codemap hooks into `.claude/settings.local.json` (project-local by default)
+- hooks automatically start/read daemon state on session start
+
+Use global Claude settings instead of project-local settings:
+
+```bash
+codemap setup --global
+```
+
+Windows equivalent:
+
+```bash
+scoop bucket add codemap https://github.com/JordanCoin/scoop-codemap
+scoop install codemap
+cd C:\path\to\your\project
+codemap setup
+```
+
+Optional helper scripts (mainly for contributors running from this repo):
+- macOS/Linux: `./scripts/onboard.sh /path/to/your/project`
+- Windows (PowerShell): `./scripts/onboard.ps1 -ProjectRoot C:\path\to\your\project`
+
+## Verify Setup
+
+1. Restart Claude Code or open a new session.
+2. At session start, you should see codemap project context.
+3. Edit a file and confirm pre/post edit hook context appears.
+
+## Daily Commands
+
+```bash
+codemap .          # Fast tree/context view (respects .codemap/config.json)
+codemap --diff     # What changed vs main
+codemap handoff .  # Save layered handoff for cross-agent continuation
+codemap --deps .   # Dependency flow (requires ast-grep)
+```
+
+## Other Commands
+
+```bash
+codemap --only swift .
+codemap --exclude .xcassets,Fonts,.png .
+codemap --depth 2 .
+codemap github.com/user/repo
 ```
 
 ## Options

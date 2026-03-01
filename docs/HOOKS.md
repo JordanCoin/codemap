@@ -18,9 +18,30 @@ Turn Claude into a codebase-aware assistant. These hooks give Claude automatic c
 
 ## Quick Setup
 
-**Tell Claude:** "Add codemap hooks to my Claude settings"
+Recommended (project-local hooks + config):
 
-Add to `.claude/settings.local.json` in your project (or `~/.claude/settings.json` globally):
+```bash
+# install codemap (no repo clone needed)
+brew tap JordanCoin/tap && brew install codemap
+
+cd /path/to/your/project
+codemap setup
+```
+
+Global Claude settings instead of project-local:
+
+```bash
+codemap setup --global
+```
+
+This command:
+- creates `.codemap/config.json` when missing
+- inserts codemap hook commands into Claude settings (without removing existing hooks)
+- keeps hook setup idempotent (safe to run more than once)
+
+### Manual Hook JSON (advanced)
+
+If you want to manage Claude settings manually, add this `hooks` object to `.claude/settings.local.json` (or `~/.claude/settings.json`):
 
 ```json
 {
@@ -91,7 +112,7 @@ Add to `.claude/settings.local.json` in your project (or `~/.claude/settings.jso
 }
 ```
 
-Restart Claude Code. You'll immediately see your project structure at session start.
+Restart Claude Code. You should immediately see project context at session start.
 
 ---
 
@@ -284,22 +305,22 @@ With these hooks, Claude:
 ## Prerequisites
 
 ```bash
-# macOS
-brew install jonesrussell/tap/codemap
+# macOS/Linux
+brew tap JordanCoin/tap && brew install codemap
 
 # Windows
-scoop bucket add codemap https://github.com/jonesrussell/scoop-bucket
+scoop bucket add codemap https://github.com/JordanCoin/scoop-codemap
 scoop install codemap
 
 # Go
-go install github.com/jonesrussell/codemap@latest
+go install github.com/JordanCoin/codemap@latest
 ```
 
 ---
 
 ## Verify It Works
 
-1. Add hooks to your Claude settings (copy the JSON above)
+1. Run `codemap setup` in your project
 2. Restart Claude Code (or start a new session)
 3. You should see project structure at the top
 4. Ask Claude to edit a core file - watch for hub warnings
