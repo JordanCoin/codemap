@@ -39,6 +39,8 @@ This command:
 - inserts codemap hook commands into Claude settings (without removing existing hooks)
 - keeps hook setup idempotent (safe to run more than once)
 
+Important: run `codemap setup` from the git repo root. Hook commands run relative to the current working directory; starting Claude from a nested folder can prevent codemap from finding `.git` and `.codemap`.
+
 ### Manual Hook JSON (advanced)
 
 If you want to manage Claude settings manually, add this `hooks` object to `.claude/settings.local.json` (or `~/.claude/settings.json`):
@@ -113,6 +115,12 @@ If you want to manage Claude settings manually, add this `hooks` object to `.cla
 ```
 
 Restart Claude Code. You should immediately see project context at session start.
+
+If you intentionally run Claude from subdirectories, pass the repo root explicitly:
+
+```bash
+codemap hook session-start "$(git rev-parse --show-toplevel)"
+```
 
 ---
 

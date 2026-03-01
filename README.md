@@ -27,6 +27,7 @@ scoop install codemap
 ## Recommended Setup (Hooks + Daemon + Config)
 
 No repo clone is required for normal users.
+Run setup from your git repo root (not a subdirectory), or hooks may not resolve project context.
 
 ```bash
 # install codemap first (package manager)
