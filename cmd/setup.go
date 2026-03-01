@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,6 +32,7 @@ type claudeHookEntry struct {
 type ensureHooksResult struct {
 	SettingsPath   string
 	CreatedFile    bool
+	WroteFile      bool
 	AddedHooks     int
 	ExistingHooks  int
 	TotalCodemap   int
@@ -54,13 +56,19 @@ var recommendedClaudeHooks = []claudeHookSpec{
 //
 // Use --global to target ~/.claude/settings.json for hooks.
 func RunSetup(args []string, defaultRoot string) {
-	fs := flag.NewFlagSet("setup", flag.ExitOnError)
+	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
 	useGlobalHooks := fs.Bool("global", false, "Install hooks into ~/.claude/settings.json instead of project-local .claude/settings.local.json")
 	skipConfig := fs.Bool("no-config", false, "Skip creating .codemap/config.json")
 	skipHooks := fs.Bool("no-hooks", false, "Skip writing Claude hook settings")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Println("Usage: codemap setup [--global] [--no-config] [--no-hooks] [path]")
+			return
+		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintln(os.Stderr, "Usage: codemap setup [--global] [--no-config] [--no-hooks] [path]")
+		os.Exit(2)
 	}
 	if fs.NArg() > 1 {
 		fmt.Fprintln(os.Stderr, "Usage: codemap setup [--global] [--no-config] [--no-hooks] [path]")
@@ -155,10 +163,12 @@ func ensureClaudeHooks(settingsPath string, global bool) (ensureHooksResult, err
 		TargetIsGlobal: global,
 	}
 
-	root := make(map[string]json.RawMessage)
+	settingsExisted := false
+	root := make(map[string]interface{})
 	data, err := os.ReadFile(settingsPath)
 	switch {
 	case err == nil:
+		settingsExisted = true
 		if len(strings.TrimSpace(string(data))) > 0 {
 			if err := json.Unmarshal(data, &root); err != nil {
 				return result, fmt.Errorf("parse %s: %w", settingsPath, err)
@@ -171,14 +181,20 @@ func ensureClaudeHooks(settingsPath string, global bool) (ensureHooksResult, err
 	}
 
 	hooksByEvent := make(map[string][]claudeHookEntry)
-	if raw, ok := root["hooks"]; ok && len(raw) > 0 && string(raw) != "null" {
-		if err := json.Unmarshal(raw, &hooksByEvent); err != nil {
-			return result, fmt.Errorf("parse hooks in %s: %w", settingsPath, err)
+	if raw, ok := root["hooks"]; ok && raw != nil {
+		rawJSON, err := json.Marshal(raw)
+		if err != nil {
+			return result, fmt.Errorf("encode existing hooks in %s: %w", settingsPath, err)
+		}
+		if string(rawJSON) != "null" {
+			if err := json.Unmarshal(rawJSON, &hooksByEvent); err != nil {
+				return result, fmt.Errorf("parse hooks in %s: %w", settingsPath, err)
+			}
 		}
 	}
 
 	for _, spec := range recommendedClaudeHooks {
-		if hasHookCommand(hooksByEvent[spec.Event], spec.Command) {
+		if hasHookSpec(hooksByEvent[spec.Event], spec) {
 			result.ExistingHooks++
 			continue
 		}
@@ -195,11 +211,12 @@ func ensureClaudeHooks(settingsPath string, global bool) (ensureHooksResult, err
 		result.AddedHooks++
 	}
 
-	hooksRaw, err := json.Marshal(hooksByEvent)
-	if err != nil {
-		return result, fmt.Errorf("encode hooks: %w", err)
+	// Preserve no-op behavior when settings already contain all recommended hooks.
+	if settingsExisted && result.AddedHooks == 0 {
+		return result, nil
 	}
-	root["hooks"] = hooksRaw
+
+	root["hooks"] = hooksByEvent
 
 	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
 		return result, fmt.Errorf("create .claude directory: %w", err)
@@ -214,15 +231,20 @@ func ensureClaudeHooks(settingsPath string, global bool) (ensureHooksResult, err
 	if err := os.WriteFile(settingsPath, out, 0644); err != nil {
 		return result, fmt.Errorf("write %s: %w", settingsPath, err)
 	}
+	result.WroteFile = true
 
 	return result, nil
 }
 
-func hasHookCommand(entries []claudeHookEntry, command string) bool {
-	target := strings.TrimSpace(command)
+func hasHookSpec(entries []claudeHookEntry, spec claudeHookSpec) bool {
+	targetCommand := strings.TrimSpace(spec.Command)
+	requiredMatcher := strings.TrimSpace(spec.Matcher)
 	for _, entry := range entries {
+		if requiredMatcher != "" && !strings.EqualFold(strings.TrimSpace(entry.Matcher), requiredMatcher) {
+			continue
+		}
 		for _, hook := range entry.Hooks {
-			if strings.EqualFold(strings.TrimSpace(hook.Type), "command") && strings.TrimSpace(hook.Command) == target {
+			if strings.EqualFold(strings.TrimSpace(hook.Type), "command") && strings.TrimSpace(hook.Command) == targetCommand {
 				return true
 			}
 		}

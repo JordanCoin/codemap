@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -17,6 +18,9 @@ func TestEnsureClaudeHooksCreatesSettings(t *testing.T) {
 	if !result.CreatedFile {
 		t.Fatal("expected CreatedFile to be true for first write")
 	}
+	if !result.WroteFile {
+		t.Fatal("expected WroteFile to be true for first write")
+	}
 	if result.AddedHooks != len(recommendedClaudeHooks) {
 		t.Fatalf("expected %d added hooks, got %d", len(recommendedClaudeHooks), result.AddedHooks)
 	}
@@ -24,7 +28,7 @@ func TestEnsureClaudeHooksCreatesSettings(t *testing.T) {
 	settings := readSettingsFile(t, settingsPath)
 	hooks := readHooksMap(t, settings)
 	for _, spec := range recommendedClaudeHooks {
-		if !hasHookCommand(hooks[spec.Event], spec.Command) {
+		if !hasHookSpec(hooks[spec.Event], spec) {
 			t.Fatalf("expected %q hook command in event %q", spec.Command, spec.Event)
 		}
 	}
@@ -59,6 +63,9 @@ func TestEnsureClaudeHooksPreservesFieldsAndAvoidsDuplicates(t *testing.T) {
 	if result.CreatedFile {
 		t.Fatal("expected CreatedFile to be false for existing file")
 	}
+	if !result.WroteFile {
+		t.Fatal("expected WroteFile to be true when new hooks were added")
+	}
 	if result.ExistingHooks != 1 {
 		t.Fatalf("expected ExistingHooks=1, got %d", result.ExistingHooks)
 	}
@@ -75,6 +82,9 @@ func TestEnsureClaudeHooksPreservesFieldsAndAvoidsDuplicates(t *testing.T) {
 	}
 	if second.ExistingHooks != len(recommendedClaudeHooks) {
 		t.Fatalf("expected second run ExistingHooks=%d, got %d", len(recommendedClaudeHooks), second.ExistingHooks)
+	}
+	if second.WroteFile {
+		t.Fatal("expected second run to avoid rewriting settings file")
 	}
 
 	settings := readSettingsFile(t, settingsPath)
@@ -110,6 +120,57 @@ func TestEnsureClaudeHooksRejectsInvalidJSON(t *testing.T) {
 
 	if _, err := ensureClaudeHooks(settingsPath, false); err == nil {
 		t.Fatal("expected error for malformed settings JSON")
+	}
+}
+
+func TestEnsureClaudeHooksAddsMatcherScopedHookWhenMatcherMissing(t *testing.T) {
+	settingsPath := filepath.Join(t.TempDir(), ".claude", "settings.local.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	existing := `{
+  "hooks": {
+    "SessionStart": [{"hooks":[{"type":"command","command":"codemap hook session-start"}]}],
+    "PreToolUse": [{"hooks":[{"type":"command","command":"codemap hook pre-edit"}]}],
+    "PostToolUse": [{"matcher":"Edit|Write","hooks":[{"type":"command","command":"codemap hook post-edit"}]}],
+    "UserPromptSubmit": [{"hooks":[{"type":"command","command":"codemap hook prompt-submit"}]}],
+    "PreCompact": [{"hooks":[{"type":"command","command":"codemap hook pre-compact"}]}],
+    "SessionEnd": [{"hooks":[{"type":"command","command":"codemap hook session-stop"}]}]
+  }
+}`
+	if err := os.WriteFile(settingsPath, []byte(existing), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := ensureClaudeHooks(settingsPath, false)
+	if err != nil {
+		t.Fatalf("ensureClaudeHooks returned error: %v", err)
+	}
+	if result.AddedHooks != 1 {
+		t.Fatalf("expected exactly 1 added hook for missing matcher, got %d", result.AddedHooks)
+	}
+	if result.ExistingHooks != len(recommendedClaudeHooks)-1 {
+		t.Fatalf("expected ExistingHooks=%d, got %d", len(recommendedClaudeHooks)-1, result.ExistingHooks)
+	}
+
+	settings := readSettingsFile(t, settingsPath)
+	hooks := readHooksMap(t, settings)
+	preToolUseEntries := hooks["PreToolUse"]
+
+	foundRecommended := false
+	for _, entry := range preToolUseEntries {
+		if strings.TrimSpace(entry.Matcher) != "Edit|Write" {
+			continue
+		}
+		for _, hook := range entry.Hooks {
+			if strings.TrimSpace(hook.Command) == "codemap hook pre-edit" && strings.EqualFold(strings.TrimSpace(hook.Type), "command") {
+				foundRecommended = true
+			}
+		}
+	}
+	if !foundRecommended {
+		t.Fatal("expected setup to add matcher-scoped PreToolUse codemap hook")
 	}
 }
 
