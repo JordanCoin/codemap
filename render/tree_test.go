@@ -1,6 +1,10 @@
 package render
 
 import (
+	"bytes"
+	"math/rand/v2"
+	"reflect"
+	"strings"
 	"testing"
 
 	"codemap/scanner"
@@ -252,5 +256,216 @@ func TestTreeNodeStructure(t *testing.T) {
 	}
 	if len(node.children) != 1 {
 		t.Errorf("Expected 1 child, got %d", len(node.children))
+	}
+}
+
+func TestTitleCase(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "single word", input: "render", want: "Render"},
+		{name: "multiple words", input: "dependency flow", want: "Dependency Flow"},
+		{name: "extra spaces collapsed", input: "go   module", want: "Go Module"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := titleCase(tt.input)
+			if got != tt.want {
+				t.Errorf("titleCase(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetSystemName(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{name: "skips src prefix", path: "src/auth/service", want: "Auth"},
+		{name: "normalizes separators and dashes", path: "pkg\\payment-gateway\\v2", want: "Payment Gateway"},
+		{name: "normalizes underscores", path: "internal/user_profile/api", want: "User Profile"},
+		{name: "root marker fallback", path: ".", want: "."},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := getSystemName(tt.path)
+			if got != tt.want {
+				t.Errorf("getSystemName(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFilterCodeFiles(t *testing.T) {
+	tests := []struct {
+		name  string
+		files []scanner.FileInfo
+		want  []scanner.FileInfo
+	}{
+		{
+			name: "filters to code extensions and known code filenames",
+			files: []scanner.FileInfo{
+				{Path: "main.go", Ext: ".go"},
+				{Path: "README.md", Ext: ".md"},
+				{Path: "Dockerfile", Ext: ""},
+				{Path: "assets/logo.png", Ext: ".png"},
+			},
+			want: []scanner.FileInfo{
+				{Path: "main.go", Ext: ".go"},
+				{Path: "Dockerfile", Ext: ""},
+			},
+		},
+		{
+			name: "returns original slice when no code files match",
+			files: []scanner.FileInfo{
+				{Path: "README.md", Ext: ".md"},
+				{Path: "assets/logo.png", Ext: ".png"},
+			},
+			want: []scanner.FileInfo{
+				{Path: "README.md", Ext: ".md"},
+				{Path: "assets/logo.png", Ext: ".png"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := filterCodeFiles(tt.files)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("filterCodeFiles() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAggregateByExtension(t *testing.T) {
+	files := []scanner.FileInfo{
+		{Path: "main.go", Ext: ".go", Size: 100},
+		{Path: "service.go", Ext: ".go", Size: 40},
+		{Path: "app.ts", Ext: ".ts", Size: 120},
+		{Path: "Makefile", Ext: "", Size: 30},
+	}
+
+	got := aggregateByExtension(files)
+	if len(got) != 3 {
+		t.Fatalf("aggregateByExtension() len = %d, want 3", len(got))
+	}
+
+	if got[0].ext != ".go" || got[0].size != 140 || got[0].count != 2 {
+		t.Errorf("first aggregate = %+v, want ext=.go size=140 count=2", got[0])
+	}
+	if got[1].ext != ".ts" || got[1].size != 120 || got[1].count != 1 {
+		t.Errorf("second aggregate = %+v, want ext=.ts size=120 count=1", got[1])
+	}
+	if got[2].ext != "Makefile" || got[2].size != 30 || got[2].count != 1 {
+		t.Errorf("third aggregate = %+v, want ext=Makefile size=30 count=1", got[2])
+	}
+}
+
+func TestGetBuildingChar(t *testing.T) {
+	tests := []struct {
+		name string
+		ext  string
+		want rune
+	}{
+		{name: "go", ext: ".go", want: '▓'},
+		{name: "javascript", ext: ".js", want: '░'},
+		{name: "ruby", ext: ".rb", want: '▒'},
+		{name: "shell", ext: ".sh", want: '█'},
+		{name: "makefile", ext: "makefile", want: '█'},
+		{name: "default", ext: ".unknown", want: '▓'},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := getBuildingChar(tt.ext)
+			if got != tt.want {
+				t.Errorf("getBuildingChar(%q) = %q, want %q", tt.ext, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCreateBuildings(t *testing.T) {
+	t.Run("empty input", func(t *testing.T) {
+		got := createBuildings(nil, 80)
+		if got != nil {
+			t.Errorf("createBuildings(nil, 80) = %#v, want nil", got)
+		}
+	})
+
+	t.Run("assigns scaled heights and trims long extension labels", func(t *testing.T) {
+		rng = rand.New(rand.NewPCG(42, 0))
+		sorted := []extAgg{
+			{ext: ".verylong", size: 1000, count: 1},
+			{ext: ".go", size: 400, count: 1},
+			{ext: ".ts", size: 100, count: 1},
+		}
+
+		got := createBuildings(sorted, 120)
+		if len(got) != 3 {
+			t.Fatalf("createBuildings() len = %d, want 3", len(got))
+		}
+
+		byExt := make(map[string]building, len(got))
+		for _, b := range got {
+			byExt[b.ext] = b
+			if b.height < minHeight || b.height > maxHeight {
+				t.Errorf("building %q height = %d, want within [%d,%d]", b.ext, b.height, minHeight, maxHeight)
+			}
+		}
+
+		if byExt[".verylong"].height != maxHeight {
+			t.Errorf("largest extension height = %d, want %d", byExt[".verylong"].height, maxHeight)
+		}
+		if byExt[".ts"].height != minHeight {
+			t.Errorf("smallest extension height = %d, want %d", byExt[".ts"].height, minHeight)
+		}
+		if byExt[".verylong"].extLabel != ".very" {
+			t.Errorf("long ext label = %q, want %q", byExt[".verylong"].extLabel, ".very")
+		}
+	})
+
+	t.Run("drops buildings until layout fits width budget", func(t *testing.T) {
+		rng = rand.New(rand.NewPCG(42, 0))
+		sorted := []extAgg{
+			{ext: ".go", size: 1000, count: 1},
+			{ext: ".ts", size: 900, count: 1},
+			{ext: ".js", size: 800, count: 1},
+			{ext: ".rb", size: 700, count: 1},
+			{ext: ".py", size: 600, count: 1},
+		}
+
+		got := createBuildings(sorted, 24)
+		totalWidth := 0
+		for _, b := range got {
+			totalWidth += buildingWidth + b.gap
+		}
+
+		if totalWidth > 16 {
+			t.Errorf("total building width = %d, want <= %d", totalWidth, 16)
+		}
+		if len(got) == 0 {
+			t.Fatal("expected at least one building to remain after trimming")
+		}
+	})
+}
+
+func TestDepgraphNoSourceFiles(t *testing.T) {
+	var buf bytes.Buffer
+	Depgraph(&buf, scanner.DepsProject{
+		Root:  "/tmp/example",
+		Files: nil,
+	})
+
+	out := buf.String()
+	if !strings.Contains(out, "No source files found.") {
+		t.Fatalf("Depgraph output missing empty-source message, got %q", out)
 	}
 }
