@@ -49,6 +49,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23'
         run: |
           total=$(go tool cover -func=coverage.out | awk '/^total:/ {gsub("%","",$3); print $3}')
+          # Floor target: 90%. Codex PRs will incrementally raise this value.
           min=30.0
           awk -v t="$total" -v m="$min" 'BEGIN {
             if (t+0 < m+0) {
@@ -57,6 +58,21 @@ jobs:
             }
             printf "Coverage %.1f%% meets floor %.1f%%\n", t, m
           }'
+          # Export for badge step
+          echo "COVERAGE=$(printf '%.0f' "$total")" >> "$GITHUB_ENV"
+
+      - name: Update coverage badge
+        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23' && github.ref == 'refs/heads/main'
+        uses: schneegans/dynamic-badges-action@v1.7.0
+        with:
+          auth: ${{ secrets.GIST_TOKEN }}
+          gistID: 6ffe3276ddb8a7a7f08d50d649e567bd
+          filename: codemap-coverage.json
+          label: coverage
+          message: ${{ env.COVERAGE }}%
+          valColorRange: ${{ env.COVERAGE }}
+          minColorRange: 30
+          maxColorRange: 90
 
       - name: Upload coverage
         if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23'

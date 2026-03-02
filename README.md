@@ -8,6 +8,7 @@
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Go](https://img.shields.io/badge/go-1.21+-00ADD8.svg)
+![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/JordanCoin/6ffe3276ddb8a7a7f08d50d649e567bd/raw/codemap-coverage.json)
 
 ![codemap screenshot](assets/codemap.png)
 
