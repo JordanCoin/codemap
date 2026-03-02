@@ -401,6 +401,10 @@ func TestCreateBuildings(t *testing.T) {
 	})
 
 	t.Run("assigns scaled heights and trims long extension labels", func(t *testing.T) {
+		prevRng := rng
+		t.Cleanup(func() {
+			rng = prevRng
+		})
 		rng = rand.New(rand.NewPCG(42, 0))
 		sorted := []extAgg{
 			{ext: ".verylong", size: 1000, count: 1},
