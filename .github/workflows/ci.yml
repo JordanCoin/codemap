@@ -49,7 +49,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23'
         run: |
           total=$(go tool cover -func=coverage.out | awk '/^total:/ {gsub("%","",$3); print $3}')
-          # Floor target: 90%. Codex PRs will incrementally raise this value.
+          # Current enforced coverage floor. Codex PRs raise this incrementally toward 90%.
           min=35.0
           awk -v t="$total" -v m="$min" 'BEGIN {
             if (t+0 < m+0) {
@@ -71,7 +71,7 @@ jobs:
           label: coverage
           message: ${{ env.COVERAGE }}%
           valColorRange: ${{ env.COVERAGE }}
-          minColorRange: 30
+          minColorRange: 35
           maxColorRange: 90
 
       - name: Upload coverage

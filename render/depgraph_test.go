@@ -8,7 +8,7 @@ import (
 	"codemap/scanner"
 )
 
-func TestTitleCase(t *testing.T) {
+func TestDepgraphTitleCase(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
@@ -30,7 +30,7 @@ func TestTitleCase(t *testing.T) {
 	}
 }
 
-func TestGetSystemName(t *testing.T) {
+func TestDepgraphGetSystemName(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
@@ -52,7 +52,7 @@ func TestGetSystemName(t *testing.T) {
 	}
 }
 
-func TestDepgraphNoFiles(t *testing.T) {
+func TestDepgraphNoSourceFiles(t *testing.T) {
 	project := scanner.DepsProject{
 		Root:  t.TempDir(),
 		Files: nil,
@@ -67,7 +67,7 @@ func TestDepgraphNoFiles(t *testing.T) {
 	}
 }
 
-func TestDepgraphRendersExternalDepsAndSummary(t *testing.T) {
+func TestDepgraphRendersExternalDepsAndSummarySection(t *testing.T) {
 	project := scanner.DepsProject{
 		Root: t.TempDir(),
 		Files: []scanner.FileAnalysis{
