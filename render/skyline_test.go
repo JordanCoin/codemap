@@ -16,7 +16,7 @@ func resetSkylineRNG() {
 	rng = rand.New(rand.NewPCG(42, 0))
 }
 
-func TestFilterCodeFiles(t *testing.T) {
+func TestSkylineFilterCodeFiles(t *testing.T) {
 	tests := []struct {
 		name     string
 		files    []scanner.FileInfo
@@ -51,7 +51,7 @@ func TestFilterCodeFiles(t *testing.T) {
 	}
 }
 
-func TestAggregateByExtension(t *testing.T) {
+func TestSkylineAggregateByExtension(t *testing.T) {
 	files := []scanner.FileInfo{
 		{Path: "a/main.go", Ext: ".go", Size: 100},
 		{Path: "a/util.go", Ext: ".go", Size: 50},
@@ -80,7 +80,7 @@ func TestAggregateByExtension(t *testing.T) {
 	}
 }
 
-func TestGetBuildingChar(t *testing.T) {
+func TestSkylineGetBuildingChar(t *testing.T) {
 	tests := []struct {
 		name     string
 		ext      string
@@ -103,7 +103,7 @@ func TestGetBuildingChar(t *testing.T) {
 	}
 }
 
-func TestCreateBuildings(t *testing.T) {
+func TestSkylineCreateBuildings(t *testing.T) {
 	resetSkylineRNG()
 
 	tests := []struct {
@@ -168,7 +168,7 @@ func TestCreateBuildings(t *testing.T) {
 	}
 }
 
-func TestSkylineNoFiles(t *testing.T) {
+func TestSkylineNoSourceFilesMessage(t *testing.T) {
 	project := scanner.Project{Root: t.TempDir(), Name: "Demo", Files: nil}
 	var buf bytes.Buffer
 
@@ -180,7 +180,7 @@ func TestSkylineNoFiles(t *testing.T) {
 	}
 }
 
-func TestRenderStaticIncludesTitleAndStats(t *testing.T) {
+func TestSkylineRenderStaticIncludesTitleAndStats(t *testing.T) {
 	resetSkylineRNG()
 
 	arranged := []building{{
@@ -209,7 +209,7 @@ func TestRenderStaticIncludesTitleAndStats(t *testing.T) {
 	}
 }
 
-func TestAnimationModelUpdateAndView(t *testing.T) {
+func TestSkylineAnimationModelUpdateAndView(t *testing.T) {
 	resetSkylineRNG()
 
 	m := animationModel{
@@ -250,7 +250,7 @@ func TestAnimationModelUpdateAndView(t *testing.T) {
 	}
 }
 
-func TestMinMax(t *testing.T) {
+func TestSkylineMinMax(t *testing.T) {
 	tests := []struct {
 		name    string
 		a       int
