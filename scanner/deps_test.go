@@ -496,24 +496,28 @@ func TestResolvePathAliasNoMatch(t *testing.T) {
 }
 
 func TestBuildFileIndex(t *testing.T) {
+	handlerPath := filepath.FromSlash("pkg/service/handler.go")
 	files := []FileInfo{
 		{Path: "main.go"},
-		{Path: "pkg/service/handler.go"},
-		{Path: "src/modules/auth/index.ts"},
+		{Path: handlerPath},
+		{Path: filepath.FromSlash("src/modules/auth/index.ts")},
 	}
 
 	idx := buildFileIndex(files, "example.com/project")
 
-	if got := idx.byDir["pkg/service"]; len(got) != 1 || got[0] != "pkg/service/handler.go" {
-		t.Fatalf("expected pkg/service/handler.go in byDir, got %v", got)
+	handlerDir := filepath.Dir(handlerPath)
+	if got := idx.byDir[handlerDir]; len(got) != 1 || got[0] != handlerPath {
+		t.Fatalf("expected %q in byDir, got %v", handlerPath, got)
 	}
-	if got := idx.byExact["pkg/service/handler"]; len(got) != 1 || got[0] != "pkg/service/handler.go" {
+	handlerNoExt := strings.TrimSuffix(handlerPath, filepath.Ext(handlerPath))
+	if got := idx.byExact[handlerNoExt]; len(got) != 1 || got[0] != handlerPath {
 		t.Fatalf("expected no-ext exact match for handler.go, got %v", got)
 	}
-	if got := idx.bySuffix["service/handler.go"]; len(got) != 1 || got[0] != "pkg/service/handler.go" {
+	handlerSuffix := filepath.Join("service", "handler.go")
+	if got := idx.bySuffix[handlerSuffix]; len(got) != 1 || got[0] != handlerPath {
 		t.Fatalf("expected suffix match for service/handler.go, got %v", got)
 	}
-	if got := idx.goPkgs["example.com/project/pkg/service"]; len(got) != 1 || got[0] != "pkg/service/handler.go" {
+	if got := idx.goPkgs["example.com/project/pkg/service"]; len(got) != 1 || got[0] != handlerPath {
 		t.Fatalf("expected go package index for pkg/service, got %v", got)
 	}
 }
@@ -542,10 +546,14 @@ func TestNormalizeImport(t *testing.T) {
 }
 
 func TestResolveRelative(t *testing.T) {
+	handlerPath := filepath.FromSlash("pkg/api/handler.go")
+	typesPath := filepath.FromSlash("pkg/common/types.go")
+	loggerPath := filepath.FromSlash("pkg/log/logger.go")
+
 	files := []FileInfo{
-		{Path: "pkg/api/handler.go"},
-		{Path: "pkg/common/types.go"},
-		{Path: "pkg/log/logger.go"},
+		{Path: handlerPath},
+		{Path: typesPath},
+		{Path: loggerPath},
 	}
 	idx := buildFileIndex(files, "")
 
@@ -555,9 +563,9 @@ func TestResolveRelative(t *testing.T) {
 		fromDir string
 		want    []string
 	}{
-		{name: "same directory file", imp: "./handler", fromDir: "pkg/api", want: []string{"pkg/api/handler.go"}},
-		{name: "parent directory file", imp: "../common/types", fromDir: "pkg/api", want: []string{"pkg/common/types.go"}},
-		{name: "two levels up", imp: "../../log/logger", fromDir: "pkg/api/internal", want: []string{"pkg/log/logger.go"}},
+		{name: "same directory file", imp: "./handler", fromDir: filepath.FromSlash("pkg/api"), want: []string{handlerPath}},
+		{name: "parent directory file", imp: "../common/types", fromDir: filepath.FromSlash("pkg/api"), want: []string{typesPath}},
+		{name: "two levels up", imp: "../../log/logger", fromDir: filepath.FromSlash("pkg/api/internal"), want: []string{loggerPath}},
 		{name: "missing file", imp: "./missing", fromDir: "pkg/api", want: nil},
 	}
 
@@ -572,15 +580,20 @@ func TestResolveRelative(t *testing.T) {
 }
 
 func TestFuzzyResolve(t *testing.T) {
+	goHandler := filepath.FromSlash("pkg/service/handler.go")
+	tsLogin := filepath.FromSlash("src/modules/auth/login.ts")
+	tsHelper := filepath.FromSlash("src/shared/utils/helpers.ts")
+	pyConfig := filepath.FromSlash("app/core/config.py")
+
 	files := []FileInfo{
-		{Path: "pkg/service/handler.go"},
-		{Path: "src/modules/auth/login.ts"},
-		{Path: "src/shared/utils/helpers.ts"},
-		{Path: "app/core/config.py"},
+		{Path: goHandler},
+		{Path: tsLogin},
+		{Path: tsHelper},
+		{Path: pyConfig},
 	}
 	idx := buildFileIndex(files, "example.com/project")
 	aliases := map[string][]string{
-		"@modules/*": {"src/modules/*"},
+		"@modules/*": {filepath.FromSlash("src/modules/*")},
 	}
 
 	tests := []struct {
@@ -599,43 +612,43 @@ func TestFuzzyResolve(t *testing.T) {
 			goModule:  "example.com/project",
 			pathAlias: nil,
 			baseURL:   "",
-			want:      []string{"pkg/service/handler.go"},
+			want:      []string{goHandler},
 		},
 		{
 			name:      "relative import",
 			imp:       "../service/handler",
-			fromFile:  "pkg/api/router.go",
+			fromFile:  filepath.FromSlash("pkg/api/router.go"),
 			goModule:  "example.com/project",
 			pathAlias: nil,
 			baseURL:   "",
-			want:      []string{"pkg/service/handler.go"},
+			want:      []string{goHandler},
 		},
 		{
 			name:      "alias import",
 			imp:       "@modules/auth/login",
-			fromFile:  "src/app.ts",
+			fromFile:  filepath.FromSlash("src/app.ts"),
 			goModule:  "example.com/project",
 			pathAlias: aliases,
 			baseURL:   ".",
-			want:      []string{"src/modules/auth/login.ts"},
+			want:      []string{tsLogin},
 		},
 		{
 			name:      "exact import",
 			imp:       "src/shared/utils/helpers",
-			fromFile:  "src/app.ts",
+			fromFile:  filepath.FromSlash("src/app.ts"),
 			goModule:  "example.com/project",
 			pathAlias: nil,
 			baseURL:   "",
-			want:      []string{"src/shared/utils/helpers.ts"},
+			want:      []string{tsHelper},
 		},
 		{
 			name:      "suffix import",
 			imp:       "core.config",
-			fromFile:  "app/main.py",
+			fromFile:  filepath.FromSlash("app/main.py"),
 			goModule:  "example.com/project",
 			pathAlias: nil,
 			baseURL:   "",
-			want:      []string{"app/core/config.py"},
+			want:      []string{pyConfig},
 		},
 		{
 			name:      "no match",

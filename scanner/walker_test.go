@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -585,9 +586,15 @@ func TestMatchesPattern(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := matchesPattern(tt.relPath, tt.pattern)
+			relPath := filepath.ToSlash(filepath.FromSlash(tt.relPath))
+			pattern := tt.pattern
+			if strings.Contains(pattern, "/") {
+				pattern = filepath.ToSlash(filepath.FromSlash(pattern))
+			}
+
+			got := matchesPattern(relPath, pattern)
 			if got != tt.want {
-				t.Fatalf("matchesPattern(%q, %q): want %v, got %v", tt.relPath, tt.pattern, tt.want, got)
+				t.Fatalf("matchesPattern(%q, %q): want %v, got %v", relPath, pattern, tt.want, got)
 			}
 		})
 	}
