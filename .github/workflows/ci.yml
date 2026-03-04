@@ -49,8 +49,8 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23'
         run: |
           total=$(go tool cover -func=coverage.out | awk '/^total:/ {gsub("%","",$3); print $3}')
-          # Floor target: 90%. Codex PRs will incrementally raise this value.
-          min=30.0
+          # Long-term floor target is 90%; this run enforces the current incremental floor.
+          min=35.0
           awk -v t="$total" -v m="$min" 'BEGIN {
             if (t+0 < m+0) {
               printf "Coverage %.1f%% is below floor %.1f%%\n", t, m

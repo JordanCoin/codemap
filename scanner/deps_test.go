@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -491,5 +492,285 @@ func TestResolvePathAliasNoMatch(t *testing.T) {
 	result = resolvePathAlias("@modules/nonexistent", pathAliases, ".", idx)
 	if len(result) != 0 {
 		t.Errorf("Expected no results for non-existent file, got %v", result)
+	}
+}
+
+func TestBuildFileIndex(t *testing.T) {
+	handlerPath := filepath.FromSlash("pkg/service/handler.go")
+	files := []FileInfo{
+		{Path: "main.go"},
+		{Path: handlerPath},
+		{Path: filepath.FromSlash("src/modules/auth/index.ts")},
+	}
+
+	idx := buildFileIndex(files, "example.com/project")
+
+	handlerDir := filepath.Dir(handlerPath)
+	if got := idx.byDir[handlerDir]; len(got) != 1 || got[0] != handlerPath {
+		t.Fatalf("expected %q in byDir, got %v", handlerPath, got)
+	}
+	handlerNoExt := strings.TrimSuffix(handlerPath, filepath.Ext(handlerPath))
+	if got := idx.byExact[handlerNoExt]; len(got) != 1 || got[0] != handlerPath {
+		t.Fatalf("expected no-ext exact match for handler.go, got %v", got)
+	}
+	handlerSuffix := filepath.Join("service", "handler.go")
+	if got := idx.bySuffix[handlerSuffix]; len(got) != 1 || got[0] != handlerPath {
+		t.Fatalf("expected suffix match for service/handler.go, got %v", got)
+	}
+	if got := idx.goPkgs["example.com/project/pkg/service"]; len(got) != 1 || got[0] != handlerPath {
+		t.Fatalf("expected go package index for pkg/service, got %v", got)
+	}
+}
+
+func TestNormalizeImport(t *testing.T) {
+	tests := []struct {
+		name string
+		imp  string
+		want string
+	}{
+		{name: "trims quotes", imp: "\"pkg/util\"", want: "pkg/util"},
+		{name: "python dotted path", imp: "app.core.config", want: filepath.Join("app", "core", "config")},
+		{name: "crate path", imp: "crate::net::http", want: filepath.Join("net", "http")},
+		{name: "super path", imp: "super::service::api", want: filepath.Join("super", "service", "api")},
+		{name: "already slash path", imp: "src/util", want: "src/util"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeImport(tt.imp)
+			if got != tt.want {
+				t.Fatalf("normalizeImport(%q): want %q, got %q", tt.imp, tt.want, got)
+			}
+		})
+	}
+}
+
+func TestResolveRelative(t *testing.T) {
+	handlerPath := filepath.FromSlash("pkg/api/handler.go")
+	typesPath := filepath.FromSlash("pkg/common/types.go")
+	loggerPath := filepath.FromSlash("pkg/log/logger.go")
+
+	files := []FileInfo{
+		{Path: handlerPath},
+		{Path: typesPath},
+		{Path: loggerPath},
+	}
+	idx := buildFileIndex(files, "")
+
+	tests := []struct {
+		name    string
+		imp     string
+		fromDir string
+		want    []string
+	}{
+		{name: "same directory file", imp: "./handler", fromDir: filepath.FromSlash("pkg/api"), want: []string{handlerPath}},
+		{name: "parent directory file", imp: "../common/types", fromDir: filepath.FromSlash("pkg/api"), want: []string{typesPath}},
+		{name: "two levels up", imp: "../../log/logger", fromDir: filepath.FromSlash("pkg/api/internal"), want: []string{loggerPath}},
+		{name: "missing file", imp: "./missing", fromDir: "pkg/api", want: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveRelative(tt.imp, tt.fromDir, idx)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("resolveRelative(%q, %q): want %v, got %v", tt.imp, tt.fromDir, tt.want, got)
+			}
+		})
+	}
+}
+
+func TestFuzzyResolve(t *testing.T) {
+	goHandler := filepath.FromSlash("pkg/service/handler.go")
+	tsLogin := filepath.FromSlash("src/modules/auth/login.ts")
+	tsHelper := filepath.FromSlash("src/shared/utils/helpers.ts")
+	pyConfig := filepath.FromSlash("app/core/config.py")
+
+	files := []FileInfo{
+		{Path: goHandler},
+		{Path: tsLogin},
+		{Path: tsHelper},
+		{Path: pyConfig},
+	}
+	idx := buildFileIndex(files, "example.com/project")
+	aliases := map[string][]string{
+		"@modules/*": {filepath.FromSlash("src/modules/*")},
+	}
+
+	tests := []struct {
+		name      string
+		imp       string
+		fromFile  string
+		goModule  string
+		pathAlias map[string][]string
+		baseURL   string
+		want      []string
+	}{
+		{
+			name:      "go package lookup",
+			imp:       "example.com/project/pkg/service",
+			fromFile:  "cmd/main.go",
+			goModule:  "example.com/project",
+			pathAlias: nil,
+			baseURL:   "",
+			want:      []string{goHandler},
+		},
+		{
+			name:      "relative import",
+			imp:       "../service/handler",
+			fromFile:  filepath.FromSlash("pkg/api/router.go"),
+			goModule:  "example.com/project",
+			pathAlias: nil,
+			baseURL:   "",
+			want:      []string{goHandler},
+		},
+		{
+			name:      "alias import",
+			imp:       "@modules/auth/login",
+			fromFile:  filepath.FromSlash("src/app.ts"),
+			goModule:  "example.com/project",
+			pathAlias: aliases,
+			baseURL:   ".",
+			want:      []string{tsLogin},
+		},
+		{
+			name:      "exact import",
+			imp:       "src/shared/utils/helpers",
+			fromFile:  filepath.FromSlash("src/app.ts"),
+			goModule:  "example.com/project",
+			pathAlias: nil,
+			baseURL:   "",
+			want:      []string{tsHelper},
+		},
+		{
+			name:      "suffix import",
+			imp:       "core.config",
+			fromFile:  filepath.FromSlash("app/main.py"),
+			goModule:  "example.com/project",
+			pathAlias: nil,
+			baseURL:   "",
+			want:      []string{pyConfig},
+		},
+		{
+			name:      "no match",
+			imp:       "github.com/external/lib",
+			fromFile:  "main.go",
+			goModule:  "example.com/project",
+			pathAlias: nil,
+			baseURL:   "",
+			want:      nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := fuzzyResolve(tt.imp, tt.fromFile, idx, tt.goModule, tt.pathAlias, tt.baseURL)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("fuzzyResolve(%q): want %v, got %v", tt.imp, tt.want, got)
+			}
+		})
+	}
+}
+
+func TestDetectModule(t *testing.T) {
+	tests := []struct {
+		name       string
+		goModBody  string
+		writeGoMod bool
+		want       string
+	}{
+		{
+			name: "module found",
+			goModBody: strings.Join([]string{
+				"module example.com/project",
+				"",
+				"go 1.22",
+			}, "\n"),
+			writeGoMod: true,
+			want:       "example.com/project",
+		},
+		{
+			name:       "missing go.mod",
+			writeGoMod: false,
+			want:       "",
+		},
+		{
+			name: "go.mod without module",
+			goModBody: strings.Join([]string{
+				"go 1.22",
+			}, "\n"),
+			writeGoMod: true,
+			want:       "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tt.writeGoMod {
+				err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(tt.goModBody), 0o644)
+				if err != nil {
+					t.Fatalf("write go.mod: %v", err)
+				}
+			}
+
+			got := detectModule(dir)
+			if got != tt.want {
+				t.Fatalf("detectModule(): want %q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestFileGraphHubAndConnectedFiles(t *testing.T) {
+	fg := &FileGraph{
+		Imports: map[string][]string{
+			"a.go": {"hub.go", "c.go"},
+			"b.go": {"hub.go"},
+		},
+		Importers: map[string][]string{
+			"hub.go": {"a.go", "b.go", "d.go"},
+			"a.go":   {"x.go"},
+		},
+	}
+
+	if !fg.IsHub("hub.go") {
+		t.Fatal("expected hub.go to be treated as hub")
+	}
+	if fg.IsHub("a.go") {
+		t.Fatal("did not expect a.go to be treated as hub")
+	}
+
+	hubs := fg.HubFiles()
+	if len(hubs) != 1 || hubs[0] != "hub.go" {
+		t.Fatalf("expected only hub.go as hub, got %v", hubs)
+	}
+
+	connected := fg.ConnectedFiles("a.go")
+	sort.Strings(connected)
+	want := []string{"c.go", "hub.go", "x.go"}
+	if !reflect.DeepEqual(connected, want) {
+		t.Fatalf("expected connected files %v, got %v", want, connected)
+	}
+}
+
+func TestDetectLanguage(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{name: "go file", path: "main.go", want: "go"},
+		{name: "typescript upper extension", path: "comp.TSX", want: "typescript"},
+		{name: "scala", path: "build.sc", want: "scala"},
+		{name: "unknown extension", path: "README.md", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := DetectLanguage(tt.path)
+			if got != tt.want {
+				t.Fatalf("DetectLanguage(%q): want %q, got %q", tt.path, tt.want, got)
+			}
+		})
 	}
 }

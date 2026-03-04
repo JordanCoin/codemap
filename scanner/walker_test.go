@@ -3,6 +3,9 @@ package scanner
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
+	"strings"
 	"testing"
 )
 
@@ -562,5 +565,157 @@ func TestNestedGitignoreDirectoryIgnore(t *testing.T) {
 	// Total: .gitignore, root.go, visible_dir/sub/file.go = 3 files
 	if len(files) != 3 {
 		t.Errorf("Expected 3 files, got %d: %v", len(files), foundPaths)
+	}
+}
+
+func TestMatchesPattern(t *testing.T) {
+	tests := []struct {
+		name    string
+		relPath string
+		pattern string
+		want    bool
+	}{
+		{name: "glob filename match", relPath: "src/user_test.go", pattern: "*_test.go", want: true},
+		{name: "glob path match", relPath: "assets/icons/logo.svg", pattern: "assets/*/*.svg", want: true},
+		{name: "extension with dot", relPath: "assets/logo.png", pattern: ".png", want: true},
+		{name: "extension without dot", relPath: "assets/logo.PNG", pattern: "png", want: true},
+		{name: "directory component", relPath: "src/Fonts/Inter.ttf", pattern: "Fonts", want: true},
+		{name: "exact directory path", relPath: "Fonts", pattern: "Fonts", want: true},
+		{name: "no match", relPath: "src/main.go", pattern: "images", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			relPath := filepath.ToSlash(filepath.FromSlash(tt.relPath))
+			pattern := tt.pattern
+			if strings.Contains(pattern, "/") {
+				pattern = filepath.ToSlash(filepath.FromSlash(pattern))
+			}
+
+			got := matchesPattern(relPath, pattern)
+			if got != tt.want {
+				t.Fatalf("matchesPattern(%q, %q): want %v, got %v", relPath, pattern, tt.want, got)
+			}
+		})
+	}
+}
+
+func TestShouldIncludeFile(t *testing.T) {
+	tests := []struct {
+		name    string
+		relPath string
+		ext     string
+		only    []string
+		exclude []string
+		want    bool
+	}{
+		{
+			name:    "no filters includes file",
+			relPath: "src/main.go",
+			ext:     ".go",
+			only:    nil,
+			exclude: nil,
+			want:    true,
+		},
+		{
+			name:    "only filter match",
+			relPath: "src/main.go",
+			ext:     ".go",
+			only:    []string{"go", "ts"},
+			exclude: nil,
+			want:    true,
+		},
+		{
+			name:    "only filter no match",
+			relPath: "src/main.py",
+			ext:     ".py",
+			only:    []string{"go", "ts"},
+			exclude: nil,
+			want:    false,
+		},
+		{
+			name:    "exclude extension pattern",
+			relPath: "assets/logo.png",
+			ext:     ".png",
+			only:    nil,
+			exclude: []string{".png"},
+			want:    false,
+		},
+		{
+			name:    "exclude directory pattern",
+			relPath: "src/generated/file.go",
+			ext:     ".go",
+			only:    []string{"go"},
+			exclude: []string{"generated"},
+			want:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shouldIncludeFile(tt.relPath, tt.ext, tt.only, tt.exclude)
+			if got != tt.want {
+				t.Fatalf("shouldIncludeFile(%q, %q): want %v, got %v", tt.relPath, tt.ext, tt.want, got)
+			}
+		})
+	}
+}
+
+func TestEnsureDir(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "nested")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cache := NewGitIgnoreCache(root)
+	if err := os.WriteFile(filepath.Join(nested, ".gitignore"), []byte("*.tmp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cache.EnsureDir(nested)
+	if _, ok := cache.patterns[nested]; !ok {
+		t.Fatal("expected EnsureDir to load nested .gitignore patterns")
+	}
+	if !cache.ShouldIgnore(filepath.Join(nested, "file.tmp")) {
+		t.Fatal("expected nested .gitignore pattern to apply")
+	}
+
+	var nilCache *GitIgnoreCache
+	nilCache.EnsureDir(nested)
+}
+
+func TestScanFilesWithOnlyAndExcludeFilters(t *testing.T) {
+	tmpDir := t.TempDir()
+	files := []string{
+		"cmd/main.go",
+		"cmd/main_test.go",
+		"pkg/data.json",
+		"docs/readme.md",
+	}
+	for _, f := range files {
+		full := filepath.Join(tmpDir, f)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("content"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := ScanFiles(tmpDir, nil, []string{"go"}, []string{"*_test.go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var paths []string
+	for _, f := range got {
+		paths = append(paths, filepath.ToSlash(f.Path))
+	}
+	sort.Strings(paths)
+
+	want := []string{"cmd/main.go"}
+	if !reflect.DeepEqual(paths, want) {
+		t.Fatalf("expected %v, got %v", want, paths)
 	}
 }
