@@ -564,3 +564,135 @@ func TestNestedGitignoreDirectoryIgnore(t *testing.T) {
 		t.Errorf("Expected 3 files, got %d: %v", len(files), foundPaths)
 	}
 }
+
+func TestMatchesPattern(t *testing.T) {
+	tests := []struct {
+		name     string
+		relPath  string
+		pattern  string
+		expected bool
+	}{
+		{name: "glob filename match", relPath: "src/service_test.go", pattern: "*test*", expected: true},
+		{name: "extension pattern with dot", relPath: "assets/logo.PNG", pattern: ".png", expected: true},
+		{name: "extension pattern without dot", relPath: "assets/logo.png", pattern: "png", expected: true},
+		{name: "directory component match", relPath: "App/Fonts/Roboto.ttf", pattern: "Fonts", expected: true},
+		{name: "exact directory name", relPath: "dist", pattern: "dist", expected: true},
+		{name: "no match", relPath: "src/main.go", pattern: "vendor", expected: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := matchesPattern(tt.relPath, tt.pattern)
+			if got != tt.expected {
+				t.Errorf("matchesPattern(%q, %q) = %v, want %v", tt.relPath, tt.pattern, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestShouldIncludeFile(t *testing.T) {
+	tests := []struct {
+		name     string
+		relPath  string
+		ext      string
+		only     []string
+		exclude  []string
+		expected bool
+	}{
+		{
+			name:     "included by only extension",
+			relPath:  "pkg/main.go",
+			ext:      ".go",
+			only:     []string{"go", ".py"},
+			exclude:  nil,
+			expected: true,
+		},
+		{
+			name:     "filtered out by only extension",
+			relPath:  "pkg/main.go",
+			ext:      ".go",
+			only:     []string{"py"},
+			exclude:  nil,
+			expected: false,
+		},
+		{
+			name:     "filtered out by exclude glob",
+			relPath:  "pkg/service_test.go",
+			ext:      ".go",
+			only:     []string{"go"},
+			exclude:  []string{"*test*"},
+			expected: false,
+		},
+		{
+			name:     "filtered out by exclude component",
+			relPath:  "assets/Fonts/Roboto.ttf",
+			ext:      ".ttf",
+			only:     nil,
+			exclude:  []string{"Fonts"},
+			expected: false,
+		},
+		{
+			name:     "included when exclude does not match",
+			relPath:  "pkg/main.go",
+			ext:      ".go",
+			only:     nil,
+			exclude:  []string{"vendor"},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shouldIncludeFile(tt.relPath, tt.ext, tt.only, tt.exclude)
+			if got != tt.expected {
+				t.Errorf("shouldIncludeFile(%q, %q, %v, %v) = %v, want %v", tt.relPath, tt.ext, tt.only, tt.exclude, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGitIgnoreCacheEnsureDir(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(t *testing.T)
+	}{
+		{
+			name: "nil cache no panic",
+			run: func(t *testing.T) {
+				var cache *GitIgnoreCache
+				cache.EnsureDir("any/path")
+			},
+		},
+		{
+			name: "empty dir no panic",
+			run: func(t *testing.T) {
+				cache := NewGitIgnoreCache(t.TempDir())
+				cache.EnsureDir("")
+			},
+		},
+		{
+			name: "loads gitignore in provided dir",
+			run: func(t *testing.T) {
+				root := t.TempDir()
+				sub := filepath.Join(root, "sub")
+				if err := os.MkdirAll(sub, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(sub, ".gitignore"), []byte("*.tmp\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				cache := NewGitIgnoreCache(root)
+				cache.EnsureDir(sub)
+				if _, ok := cache.cache[sub]; !ok {
+					t.Fatalf("expected gitignore cache for %q", sub)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.run(t)
+		})
+	}
+}
