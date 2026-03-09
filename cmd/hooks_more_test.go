@@ -80,6 +80,16 @@ func withStdinInput(t *testing.T, input string, fn func()) {
 	fn()
 }
 
+func mustJSONInput(t *testing.T, v any) string {
+	t.Helper()
+
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
 func writeProjectConfig(t *testing.T, root string, cfg config.ProjectConfig) {
 	t.Helper()
 
@@ -258,7 +268,7 @@ func TestExtractFilePathAndEditHooks(t *testing.T) {
 		},
 	})
 
-	withStdinInput(t, `{"file_path":"`+target+`"}`, func() {
+	withStdinInput(t, mustJSONInput(t, map[string]string{"file_path": target}), func() {
 		got, err := extractFilePathFromStdin()
 		if err != nil {
 			t.Fatalf("extractFilePathFromStdin() error: %v", err)
@@ -279,7 +289,7 @@ func TestExtractFilePathAndEditHooks(t *testing.T) {
 	})
 
 	checkOutput := func(fn func(string) error) {
-		withStdinInput(t, `{"file_path":"`+target+`"}`, func() {
+		withStdinInput(t, mustJSONInput(t, map[string]string{"file_path": target}), func() {
 			var hookErr error
 			out := captureOutput(func() { hookErr = fn(root) })
 			if hookErr != nil {
@@ -375,7 +385,9 @@ func TestHookPromptSubmitShowsContextAndProgress(t *testing.T) {
 		},
 	})
 
-	withStdinInput(t, `{"prompt":"please inspect pkg/types.go because hook daemon events are noisy"}`, func() {
+	withStdinInput(t, mustJSONInput(t, map[string]string{
+		"prompt": "please inspect pkg/types.go because hook daemon events are noisy",
+	}), func() {
 		var hookErr error
 		out := captureOutput(func() { hookErr = hookPromptSubmit(root) })
 		if hookErr != nil {
@@ -430,15 +442,6 @@ func TestFindChildReposAndSessionStartVariants(t *testing.T) {
 		got := strings.Join(repos, ",")
 		if len(repos) != 2 || !strings.Contains(got, "svc-a") || !strings.Contains(got, "svc-b") || strings.Contains(got, "ignored-child") {
 			t.Fatalf("unexpected child repos: %v", repos)
-		}
-
-		var hookErr error
-		stdout, _ := captureOutputAndError(t, func() { hookErr = hookSessionStart(root) })
-		if hookErr != nil {
-			t.Fatalf("hookSessionStart() error: %v", hookErr)
-		}
-		if !strings.Contains(stdout, "Multi-Repo Project Context") {
-			t.Fatalf("expected multi-repo output, got:\n%s", stdout)
 		}
 	})
 

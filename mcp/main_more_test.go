@@ -79,6 +79,9 @@ func TestHandleGetDependenciesAndDiff(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
+	if !scanner.NewAstGrepAnalyzer().Available() {
+		t.Skip("ast-grep not available")
+	}
 
 	root := makeMCPGitRepo(t, "main")
 	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
@@ -98,8 +101,11 @@ func TestHandleGetDependenciesAndDiff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handleGetDependencies error: %v", err)
 	}
-	if resultText(t, res) == "" {
-		t.Fatal("expected dependencies handler to return text")
+	if res.IsError {
+		t.Fatalf("expected dependencies success result, got error:\n%s", resultText(t, res))
+	}
+	if !strings.Contains(resultText(t, res), "Dependency Flow") {
+		t.Fatalf("expected dependency output, got:\n%s", resultText(t, res))
 	}
 }
 
