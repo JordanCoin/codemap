@@ -76,6 +76,10 @@ func writeMCPImportersFixture(t *testing.T, root string) {
 }
 
 func TestHandleGetDependenciesAndDiff(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
 	root := makeMCPGitRepo(t, "main")
 	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -102,12 +106,12 @@ func TestHandleGetDependenciesAndDiff(t *testing.T) {
 func TestHandleWatchLifecycleAndActivity(t *testing.T) {
 	withWatcherRegistry(t)
 
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+	startRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(startRoot, "main.go"), []byte("package main\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	startRes, _, err := handleStartWatch(context.Background(), nil, WatchInput{Path: root})
+	startRes, _, err := handleStartWatch(context.Background(), nil, WatchInput{Path: startRoot})
 	if err != nil {
 		t.Fatalf("handleStartWatch error: %v", err)
 	}
@@ -116,7 +120,7 @@ func TestHandleWatchLifecycleAndActivity(t *testing.T) {
 		t.Fatalf("unexpected start output:\n%s", startOut)
 	}
 
-	againRes, _, err := handleStartWatch(context.Background(), nil, WatchInput{Path: root})
+	againRes, _, err := handleStartWatch(context.Background(), nil, WatchInput{Path: startRoot})
 	if err != nil {
 		t.Fatalf("handleStartWatch second call error: %v", err)
 	}
@@ -124,7 +128,29 @@ func TestHandleWatchLifecycleAndActivity(t *testing.T) {
 		t.Fatalf("expected already-watching response, got:\n%s", resultText(t, againRes))
 	}
 
-	noActivityRes, _, err := handleGetActivity(context.Background(), nil, WatchActivityInput{Path: root, Minutes: 60})
+	stopRes, _, err := handleStopWatch(context.Background(), nil, WatchInput{Path: startRoot})
+	if err != nil {
+		t.Fatalf("handleStopWatch error: %v", err)
+	}
+	if !strings.Contains(resultText(t, stopRes), "Watcher stopped for:") {
+		t.Fatalf("unexpected stop output:\n%s", resultText(t, stopRes))
+	}
+
+	activityRoot := t.TempDir()
+	daemon, err := watch.NewDaemon(activityRoot, false)
+	if err != nil {
+		t.Fatalf("watch.NewDaemon error: %v", err)
+	}
+	absActivityRoot, _ := filepath.Abs(activityRoot)
+	watchersMu.Lock()
+	watchers[absActivityRoot] = daemon
+	watchersMu.Unlock()
+
+	graph := daemon.GetGraph()
+	graph.Files["main.go"] = &scanner.FileInfo{Path: "main.go"}
+	graph.Files["pkg/types.go"] = &scanner.FileInfo{Path: "pkg/types.go"}
+
+	noActivityRes, _, err := handleGetActivity(context.Background(), nil, WatchActivityInput{Path: activityRoot, Minutes: 60})
 	if err != nil {
 		t.Fatalf("handleGetActivity no-activity error: %v", err)
 	}
@@ -132,24 +158,13 @@ func TestHandleWatchLifecycleAndActivity(t *testing.T) {
 		t.Fatalf("expected no-activity response, got:\n%s", resultText(t, noActivityRes))
 	}
 
-	absRoot, _ := filepath.Abs(root)
-	watchersMu.RLock()
-	daemon := watchers[absRoot]
-	watchersMu.RUnlock()
-	if daemon == nil {
-		t.Fatal("expected active watcher in registry")
-	}
-
-	graph := daemon.GetGraph()
-	graph.Files["main.go"] = &scanner.FileInfo{Path: "main.go"}
-	graph.Files["pkg/types.go"] = &scanner.FileInfo{Path: "pkg/types.go"}
 	graph.Events = []watch.Event{
 		{Time: time.Now().Add(-5 * time.Minute), Op: "WRITE", Path: "main.go", Delta: 4, Dirty: true},
 		{Time: time.Now().Add(-2 * time.Minute), Op: "CREATE", Path: "pkg/types.go", Delta: 7},
 		{Time: time.Now().Add(-time.Minute), Op: "WRITE", Path: "main.go", Delta: -1, Dirty: true},
 	}
 
-	activityRes, _, err := handleGetActivity(context.Background(), nil, WatchActivityInput{Path: root, Minutes: 60})
+	activityRes, _, err := handleGetActivity(context.Background(), nil, WatchActivityInput{Path: activityRoot, Minutes: 60})
 	if err != nil {
 		t.Fatalf("handleGetActivity activity error: %v", err)
 	}
@@ -160,7 +175,7 @@ func TestHandleWatchLifecycleAndActivity(t *testing.T) {
 		}
 	}
 
-	stopRes, _, err := handleStopWatch(context.Background(), nil, WatchInput{Path: root})
+	stopRes, _, err = handleStopWatch(context.Background(), nil, WatchInput{Path: activityRoot})
 	if err != nil {
 		t.Fatalf("handleStopWatch error: %v", err)
 	}
@@ -168,7 +183,7 @@ func TestHandleWatchLifecycleAndActivity(t *testing.T) {
 		t.Fatalf("unexpected stop output:\n%s", resultText(t, stopRes))
 	}
 
-	missingRes, _, err := handleStopWatch(context.Background(), nil, WatchInput{Path: root})
+	missingRes, _, err := handleStopWatch(context.Background(), nil, WatchInput{Path: activityRoot})
 	if err != nil {
 		t.Fatalf("handleStopWatch missing error: %v", err)
 	}
@@ -176,7 +191,7 @@ func TestHandleWatchLifecycleAndActivity(t *testing.T) {
 		t.Fatalf("unexpected missing stop output:\n%s", resultText(t, missingRes))
 	}
 
-	afterStopRes, _, err := handleGetActivity(context.Background(), nil, WatchActivityInput{Path: root})
+	afterStopRes, _, err := handleGetActivity(context.Background(), nil, WatchActivityInput{Path: activityRoot})
 	if err != nil {
 		t.Fatalf("handleGetActivity after stop error: %v", err)
 	}

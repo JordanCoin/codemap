@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,29 +23,40 @@ func captureOutputAndError(t *testing.T, fn func()) (string, string) {
 
 	oldOut := os.Stdout
 	oldErr := os.Stderr
-	outR, outW, err := os.Pipe()
+	outFile, err := os.CreateTemp("", "codemap-cmd-stdout-*")
 	if err != nil {
 		t.Fatal(err)
 	}
-	errR, errW, err := os.Pipe()
+	errFile, err := os.CreateTemp("", "codemap-cmd-stderr-*")
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() {
+		_ = os.Remove(outFile.Name())
+		_ = os.Remove(errFile.Name())
+	}()
 
-	os.Stdout = outW
-	os.Stderr = errW
+	func() {
+		defer func() {
+			_ = outFile.Close()
+			_ = errFile.Close()
+			os.Stdout = oldOut
+			os.Stderr = oldErr
+		}()
+		os.Stdout = outFile
+		os.Stderr = errFile
+		fn()
+	}()
 
-	fn()
-
-	_ = outW.Close()
-	_ = errW.Close()
-	os.Stdout = oldOut
-	os.Stderr = oldErr
-
-	var stdout, stderr bytes.Buffer
-	_, _ = io.Copy(&stdout, outR)
-	_, _ = io.Copy(&stderr, errR)
-	return stdout.String(), stderr.String()
+	stdout, err := os.ReadFile(outFile.Name())
+	if err != nil {
+		t.Fatalf("read stdout capture: %v", err)
+	}
+	stderr, err := os.ReadFile(errFile.Name())
+	if err != nil {
+		t.Fatalf("read stderr capture: %v", err)
+	}
+	return string(stdout), string(stderr)
 }
 
 func withStdinInput(t *testing.T, input string, fn func()) {
@@ -143,6 +153,10 @@ func TestWaitForDaemonState(t *testing.T) {
 }
 
 func TestGetRecentHandoffAndBranchDetection(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
 	root := t.TempDir()
 	if got := getRecentHandoff(root); got != nil {
 		t.Fatalf("expected nil without handoff, got %+v", got)
@@ -266,11 +280,11 @@ func TestExtractFilePathAndEditHooks(t *testing.T) {
 
 	checkOutput := func(fn func(string) error) {
 		withStdinInput(t, `{"file_path":"`+target+`"}`, func() {
-			out := captureOutput(func() {
-				if err := fn(root); err != nil {
-					t.Fatalf("hook returned error: %v", err)
-				}
-			})
+			var hookErr error
+			out := captureOutput(func() { hookErr = fn(root) })
+			if hookErr != nil {
+				t.Fatalf("hook returned error: %v", hookErr)
+			}
 			if !strings.Contains(out, "HUB FILE: pkg/types.go") {
 				t.Fatalf("expected hub warning, got:\n%s", out)
 			}
@@ -302,11 +316,11 @@ func TestCheckFileImportersAndRouteSuggestions(t *testing.T) {
 		},
 	})
 
-	out := captureOutput(func() {
-		if err := checkFileImporters(root, target); err != nil {
-			t.Fatalf("checkFileImporters() error: %v", err)
-		}
-	})
+	var checkErr error
+	out := captureOutput(func() { checkErr = checkFileImporters(root, target) })
+	if checkErr != nil {
+		t.Fatalf("checkFileImporters() error: %v", checkErr)
+	}
 	if !strings.Contains(out, "HUB FILE: pkg/types.go") {
 		t.Fatalf("expected hub warning, got:\n%s", out)
 	}
@@ -362,11 +376,11 @@ func TestHookPromptSubmitShowsContextAndProgress(t *testing.T) {
 	})
 
 	withStdinInput(t, `{"prompt":"please inspect pkg/types.go because hook daemon events are noisy"}`, func() {
-		out := captureOutput(func() {
-			if err := hookPromptSubmit(root); err != nil {
-				t.Fatalf("hookPromptSubmit() error: %v", err)
-			}
-		})
+		var hookErr error
+		out := captureOutput(func() { hookErr = hookPromptSubmit(root) })
+		if hookErr != nil {
+			t.Fatalf("hookPromptSubmit() error: %v", hookErr)
+		}
 		checks := []string{
 			"Context for mentioned files",
 			"pkg/types.go is a HUB",
@@ -388,11 +402,11 @@ func TestFindChildReposAndSessionStartVariants(t *testing.T) {
 	}
 
 	t.Run("non git repo exits early", func(t *testing.T) {
-		out := captureOutput(func() {
-			if err := hookSessionStart(t.TempDir()); err != nil {
-				t.Fatalf("hookSessionStart() error: %v", err)
-			}
-		})
+		var hookErr error
+		out := captureOutput(func() { hookErr = hookSessionStart(t.TempDir()) })
+		if hookErr != nil {
+			t.Fatalf("hookSessionStart() error: %v", hookErr)
+		}
 		if !strings.Contains(out, "Not a git repository") {
 			t.Fatalf("expected non-git notice, got:\n%s", out)
 		}
@@ -418,11 +432,11 @@ func TestFindChildReposAndSessionStartVariants(t *testing.T) {
 			t.Fatalf("unexpected child repos: %v", repos)
 		}
 
-		stdout, _ := captureOutputAndError(t, func() {
-			if err := hookSessionStart(root); err != nil {
-				t.Fatalf("hookSessionStart() error: %v", err)
-			}
-		})
+		var hookErr error
+		stdout, _ := captureOutputAndError(t, func() { hookErr = hookSessionStart(root) })
+		if hookErr != nil {
+			t.Fatalf("hookSessionStart() error: %v", hookErr)
+		}
 		if !strings.Contains(stdout, "Multi-Repo Project Context") {
 			t.Fatalf("expected multi-repo output, got:\n%s", stdout)
 		}
@@ -455,11 +469,11 @@ func TestFindChildReposAndSessionStartVariants(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		stdout, _ := captureOutputAndError(t, func() {
-			if err := hookSessionStart(root); err != nil {
-				t.Fatalf("hookSessionStart() error: %v", err)
-			}
-		})
+		var hookErr error
+		stdout, _ := captureOutputAndError(t, func() { hookErr = hookSessionStart(root) })
+		if hookErr != nil {
+			t.Fatalf("hookSessionStart() error: %v", hookErr)
+		}
 
 		checks := []string{
 			"Project Context",
@@ -495,11 +509,11 @@ func TestHookSessionStopSummaryBranches(t *testing.T) {
 			},
 		})
 
-		out := captureOutput(func() {
-			if err := hookSessionStop(root); err != nil {
-				t.Fatalf("hookSessionStop() error: %v", err)
-			}
-		})
+		var hookErr error
+		out := captureOutput(func() { hookErr = hookSessionStop(root) })
+		if hookErr != nil {
+			t.Fatalf("hookSessionStop() error: %v", hookErr)
+		}
 
 		for _, check := range []string{"Session Summary", "Edit Timeline:", "Stats:", "Saved handoff"} {
 			if !strings.Contains(out, check) {
@@ -517,11 +531,11 @@ func TestHookSessionStopSummaryBranches(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		out := captureOutput(func() {
-			if err := hookSessionStop(root); err != nil {
-				t.Fatalf("hookSessionStop() error: %v", err)
-			}
-		})
+		var hookErr error
+		out := captureOutput(func() { hookErr = hookSessionStop(root) })
+		if hookErr != nil {
+			t.Fatalf("hookSessionStop() error: %v", hookErr)
+		}
 
 		if !strings.Contains(out, "Files modified:") || !strings.Contains(out, "main.go") {
 			t.Fatalf("expected modified file list, got:\n%s", out)

@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,27 +21,40 @@ func captureMainStreams(t *testing.T, fn func()) (string, string) {
 
 	oldOut := os.Stdout
 	oldErr := os.Stderr
-	outR, outW, err := os.Pipe()
+	outFile, err := os.CreateTemp("", "codemap-stdout-*")
 	if err != nil {
 		t.Fatal(err)
 	}
-	errR, errW, err := os.Pipe()
+	errFile, err := os.CreateTemp("", "codemap-stderr-*")
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() {
+		_ = os.Remove(outFile.Name())
+		_ = os.Remove(errFile.Name())
+	}()
 
-	os.Stdout = outW
-	os.Stderr = errW
-	fn()
-	_ = outW.Close()
-	_ = errW.Close()
-	os.Stdout = oldOut
-	os.Stderr = oldErr
+	func() {
+		defer func() {
+			_ = outFile.Close()
+			_ = errFile.Close()
+			os.Stdout = oldOut
+			os.Stderr = oldErr
+		}()
+		os.Stdout = outFile
+		os.Stderr = errFile
+		fn()
+	}()
 
-	var stdout, stderr bytes.Buffer
-	_, _ = io.Copy(&stdout, outR)
-	_, _ = io.Copy(&stderr, errR)
-	return stdout.String(), stderr.String()
+	stdout, err := os.ReadFile(outFile.Name())
+	if err != nil {
+		t.Fatalf("read stdout capture: %v", err)
+	}
+	stderr, err := os.ReadFile(errFile.Name())
+	if err != nil {
+		t.Fatalf("read stderr capture: %v", err)
+	}
+	return string(stdout), string(stderr)
 }
 
 func runCodemapWithInput(input string, args ...string) (string, string, error) {
