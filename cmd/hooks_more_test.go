@@ -236,10 +236,10 @@ func TestExtractFilePathAndEditHooks(t *testing.T) {
 			"pkg/types.go": {"cmd/a.go", "cmd/b.go", "cmd/c.go"},
 		},
 		Imports: map[string][]string{
-			"pkg/types.go": {"shared/hub.go"},
-			"cmd/a.go":     {"pkg/types.go"},
-			"cmd/b.go":     {"pkg/types.go"},
-			"cmd/c.go":     {"pkg/types.go"},
+			"pkg/types.go":  {"shared/hub.go"},
+			"cmd/a.go":      {"pkg/types.go"},
+			"cmd/b.go":      {"pkg/types.go"},
+			"cmd/c.go":      {"pkg/types.go"},
 			"shared/hub.go": {"x.go", "y.go", "z.go"},
 		},
 	})
@@ -294,7 +294,7 @@ func TestCheckFileImportersAndRouteSuggestions(t *testing.T) {
 		UpdatedAt: time.Now(),
 		FileCount: 4,
 		Importers: map[string][]string{
-			"pkg/types.go": {"a.go", "b.go", "c.go"},
+			"pkg/types.go":  {"a.go", "b.go", "c.go"},
 			"shared/hub.go": {"d.go", "e.go", "f.go"},
 		},
 		Imports: map[string][]string{

@@ -79,39 +79,16 @@ func writeMainWatchState(t *testing.T, root string, state watch.State, running b
 	}
 }
 
-func runGitMainTestCmd(t *testing.T, dir string, args ...string) {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %v failed: %v\n%s", args, err, string(out))
-	}
-}
-
-func makeMainTestRepo(t *testing.T, branch string) string {
-	t.Helper()
-
-	root := t.TempDir()
-	runGitMainTestCmd(t, root, "init")
-	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runGitMainTestCmd(t, root, "add", ".")
-	runGitMainTestCmd(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "init")
-	runGitMainTestCmd(t, root, "branch", "-M", branch)
-	return root
-}
-
 func writeImportersFixture(t *testing.T, root string) {
 	t.Helper()
 
 	files := map[string]string{
-		"go.mod":            "module example.com/demo\n\ngo 1.22\n",
+		"go.mod":             "module example.com/demo\n\ngo 1.22\n",
 		"pkg/types/types.go": "package types\n\ntype Item struct{}\n",
-		"a/a.go":            "package a\n\nimport _ \"example.com/demo/pkg/types\"\n",
-		"b/b.go":            "package b\n\nimport _ \"example.com/demo/pkg/types\"\n",
-		"c/c.go":            "package c\n\nimport _ \"example.com/demo/pkg/types\"\n",
-		"main.go":           "package main\n\nimport _ \"example.com/demo/pkg/types\"\n",
+		"a/a.go":             "package a\n\nimport _ \"example.com/demo/pkg/types\"\n",
+		"b/b.go":             "package b\n\nimport _ \"example.com/demo/pkg/types\"\n",
+		"c/c.go":             "package c\n\nimport _ \"example.com/demo/pkg/types\"\n",
+		"main.go":            "package main\n\nimport _ \"example.com/demo/pkg/types\"\n",
 	}
 	for path, content := range files {
 		full := filepath.Join(root, path)
