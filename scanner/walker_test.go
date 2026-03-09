@@ -3,6 +3,9 @@ package scanner
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
+	"strings"
 	"testing"
 )
 
@@ -567,24 +570,35 @@ func TestNestedGitignoreDirectoryIgnore(t *testing.T) {
 
 func TestMatchesPattern(t *testing.T) {
 	tests := []struct {
-		name     string
-		relPath  string
-		pattern  string
-		expected bool
+		name    string
+		relPath string
+		pattern string
+		want    bool
 	}{
-		{name: "glob filename match", relPath: "src/service_test.go", pattern: "*test*", expected: true},
-		{name: "extension pattern with dot", relPath: "assets/logo.PNG", pattern: ".png", expected: true},
-		{name: "extension pattern without dot", relPath: "assets/logo.png", pattern: "png", expected: true},
-		{name: "directory component match", relPath: "App/Fonts/Roboto.ttf", pattern: "Fonts", expected: true},
-		{name: "exact directory name", relPath: "dist", pattern: "dist", expected: true},
-		{name: "no match", relPath: "src/main.go", pattern: "vendor", expected: false},
+		{name: "glob broad filename match", relPath: "src/service_test.go", pattern: "*test*", want: true},
+		{name: "glob filename match", relPath: "src/user_test.go", pattern: "*_test.go", want: true},
+		{name: "glob path match", relPath: "assets/icons/logo.svg", pattern: "assets/*/*.svg", want: true},
+		{name: "extension with dot", relPath: "assets/logo.png", pattern: ".png", want: true},
+		{name: "extension without dot", relPath: "assets/logo.PNG", pattern: "png", want: true},
+		{name: "directory component mixed case path", relPath: "App/Fonts/Roboto.ttf", pattern: "Fonts", want: true},
+		{name: "directory component", relPath: "src/Fonts/Inter.ttf", pattern: "Fonts", want: true},
+		{name: "exact directory path", relPath: "Fonts", pattern: "Fonts", want: true},
+		{name: "exact directory name", relPath: "dist", pattern: "dist", want: true},
+		{name: "no vendor match", relPath: "src/main.go", pattern: "vendor", want: false},
+		{name: "no match", relPath: "src/main.go", pattern: "images", want: false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := matchesPattern(tt.relPath, tt.pattern)
-			if got != tt.expected {
-				t.Errorf("matchesPattern(%q, %q) = %v, want %v", tt.relPath, tt.pattern, got, tt.expected)
+			relPath := filepath.ToSlash(filepath.FromSlash(tt.relPath))
+			pattern := tt.pattern
+			if strings.Contains(pattern, "/") {
+				pattern = filepath.ToSlash(filepath.FromSlash(pattern))
+			}
+
+			got := matchesPattern(relPath, pattern)
+			if got != tt.want {
+				t.Fatalf("matchesPattern(%q, %q): want %v, got %v", relPath, pattern, tt.want, got)
 			}
 		})
 	}
@@ -592,60 +606,100 @@ func TestMatchesPattern(t *testing.T) {
 
 func TestShouldIncludeFile(t *testing.T) {
 	tests := []struct {
-		name     string
-		relPath  string
-		ext      string
-		only     []string
-		exclude  []string
-		expected bool
+		name    string
+		relPath string
+		ext     string
+		only    []string
+		exclude []string
+		want    bool
 	}{
 		{
-			name:     "included by only extension",
-			relPath:  "pkg/main.go",
-			ext:      ".go",
-			only:     []string{"go", ".py"},
-			exclude:  nil,
-			expected: true,
+			name:    "no filters includes file",
+			relPath: "src/main.go",
+			ext:     ".go",
+			only:    nil,
+			exclude: nil,
+			want:    true,
 		},
 		{
-			name:     "filtered out by only extension",
-			relPath:  "pkg/main.go",
-			ext:      ".go",
-			only:     []string{"py"},
-			exclude:  nil,
-			expected: false,
+			name:    "only filter match",
+			relPath: "src/main.go",
+			ext:     ".go",
+			only:    []string{"go", "ts"},
+			exclude: nil,
+			want:    true,
 		},
 		{
-			name:     "filtered out by exclude glob",
-			relPath:  "pkg/service_test.go",
-			ext:      ".go",
-			only:     []string{"go"},
-			exclude:  []string{"*test*"},
-			expected: false,
+			name:    "only filter no match",
+			relPath: "src/main.py",
+			ext:     ".py",
+			only:    []string{"go", "ts"},
+			exclude: nil,
+			want:    false,
 		},
 		{
-			name:     "filtered out by exclude component",
-			relPath:  "assets/Fonts/Roboto.ttf",
-			ext:      ".ttf",
-			only:     nil,
-			exclude:  []string{"Fonts"},
-			expected: false,
+			name:    "exclude extension pattern",
+			relPath: "assets/logo.png",
+			ext:     ".png",
+			only:    nil,
+			exclude: []string{".png"},
+			want:    false,
 		},
 		{
-			name:     "included when exclude does not match",
-			relPath:  "pkg/main.go",
-			ext:      ".go",
-			only:     nil,
-			exclude:  []string{"vendor"},
-			expected: true,
+			name:    "exclude directory pattern",
+			relPath: "src/generated/file.go",
+			ext:     ".go",
+			only:    []string{"go"},
+			exclude: []string{"generated"},
+			want:    false,
+		},
+		{
+			name:    "included by only extension with dot mix",
+			relPath: "pkg/main.go",
+			ext:     ".go",
+			only:    []string{"go", ".py"},
+			exclude: nil,
+			want:    true,
+		},
+		{
+			name:    "filtered out by only extension",
+			relPath: "pkg/main.go",
+			ext:     ".go",
+			only:    []string{"py"},
+			exclude: nil,
+			want:    false,
+		},
+		{
+			name:    "filtered out by exclude glob",
+			relPath: "pkg/service_test.go",
+			ext:     ".go",
+			only:    []string{"go"},
+			exclude: []string{"*test*"},
+			want:    false,
+		},
+		{
+			name:    "filtered out by exclude component",
+			relPath: "assets/Fonts/Roboto.ttf",
+			ext:     ".ttf",
+			only:    nil,
+			exclude: []string{"Fonts"},
+			want:    false,
+		},
+		{
+			name:    "included when exclude does not match",
+			relPath: "pkg/main.go",
+			ext:     ".go",
+			only:    nil,
+			exclude: []string{"vendor"},
+			want:    true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := shouldIncludeFile(tt.relPath, tt.ext, tt.only, tt.exclude)
-			if got != tt.expected {
-				t.Errorf("shouldIncludeFile(%q, %q, %v, %v) = %v, want %v", tt.relPath, tt.ext, tt.only, tt.exclude, got, tt.expected)
+			if got != tt.want {
+				t.Fatalf("shouldIncludeFile(%q, %q, %v, %v): want %v, got %v", tt.relPath, tt.ext, tt.only, tt.exclude, tt.want, got)
 			}
 		})
 	}
@@ -686,6 +740,12 @@ func TestGitIgnoreCacheEnsureDir(t *testing.T) {
 				if _, ok := cache.cache[sub]; !ok {
 					t.Fatalf("expected gitignore cache for %q", sub)
 				}
+				if _, ok := cache.patterns[sub]; !ok {
+					t.Fatalf("expected gitignore patterns for %q", sub)
+				}
+				if !cache.ShouldIgnore(filepath.Join(sub, "file.tmp")) {
+					t.Fatal("expected nested .gitignore pattern to apply")
+				}
 			},
 		},
 	}
@@ -694,5 +754,40 @@ func TestGitIgnoreCacheEnsureDir(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.run(t)
 		})
+	}
+}
+
+func TestScanFilesWithOnlyAndExcludeFilters(t *testing.T) {
+	tmpDir := t.TempDir()
+	files := []string{
+		"cmd/main.go",
+		"cmd/main_test.go",
+		"pkg/data.json",
+		"docs/readme.md",
+	}
+	for _, f := range files {
+		full := filepath.Join(tmpDir, f)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("content"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := ScanFiles(tmpDir, nil, []string{"go"}, []string{"*_test.go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var paths []string
+	for _, f := range got {
+		paths = append(paths, filepath.ToSlash(f.Path))
+	}
+	sort.Strings(paths)
+
+	want := []string{"cmd/main.go"}
+	if !reflect.DeepEqual(paths, want) {
+		t.Fatalf("expected %v, got %v", want, paths)
 	}
 }
