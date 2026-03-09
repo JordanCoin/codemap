@@ -461,7 +461,7 @@ func TestCreateBuildings(t *testing.T) {
 	})
 }
 
-func TestDepgraphNoSourceFiles(t *testing.T) {
+func TestTreeDepgraphNoSourceFiles(t *testing.T) {
 	var buf bytes.Buffer
 	Depgraph(&buf, scanner.DepsProject{
 		Root:  "/tmp/example",

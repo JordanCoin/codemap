@@ -14,6 +14,7 @@ codemap-dev
 dev_codemap
 firebase-debug.log
 firebalse-debug.log
+coverage.out
 
 # Local settings
 .claude/settings.local.json

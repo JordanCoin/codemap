@@ -495,7 +495,7 @@ func TestResolvePathAliasNoMatch(t *testing.T) {
 	}
 }
 
-func TestBuildFileIndex(t *testing.T) {
+func TestDepsBuildFileIndex(t *testing.T) {
 	handlerPath := filepath.FromSlash("pkg/service/handler.go")
 	files := []FileInfo{
 		{Path: "main.go"},
@@ -522,7 +522,7 @@ func TestBuildFileIndex(t *testing.T) {
 	}
 }
 
-func TestNormalizeImport(t *testing.T) {
+func TestDepsNormalizeImport(t *testing.T) {
 	tests := []struct {
 		name string
 		imp  string
@@ -545,7 +545,7 @@ func TestNormalizeImport(t *testing.T) {
 	}
 }
 
-func TestResolveRelative(t *testing.T) {
+func TestDepsResolveRelative(t *testing.T) {
 	handlerPath := filepath.FromSlash("pkg/api/handler.go")
 	typesPath := filepath.FromSlash("pkg/common/types.go")
 	loggerPath := filepath.FromSlash("pkg/log/logger.go")
@@ -579,7 +579,7 @@ func TestResolveRelative(t *testing.T) {
 	}
 }
 
-func TestFuzzyResolve(t *testing.T) {
+func TestDepsFuzzyResolve(t *testing.T) {
 	goHandler := filepath.FromSlash("pkg/service/handler.go")
 	tsLogin := filepath.FromSlash("src/modules/auth/login.ts")
 	tsHelper := filepath.FromSlash("src/shared/utils/helpers.ts")
@@ -671,7 +671,7 @@ func TestFuzzyResolve(t *testing.T) {
 	}
 }
 
-func TestDetectModule(t *testing.T) {
+func TestDepsDetectModule(t *testing.T) {
 	tests := []struct {
 		name       string
 		goModBody  string
@@ -721,7 +721,7 @@ func TestDetectModule(t *testing.T) {
 	}
 }
 
-func TestFileGraphHubAndConnectedFiles(t *testing.T) {
+func TestDepsFileGraphHubAndConnectedFiles(t *testing.T) {
 	fg := &FileGraph{
 		Imports: map[string][]string{
 			"a.go": {"hub.go", "c.go"},
@@ -753,7 +753,7 @@ func TestFileGraphHubAndConnectedFiles(t *testing.T) {
 	}
 }
 
-func TestDetectLanguage(t *testing.T) {
+func TestDepsDetectLanguage(t *testing.T) {
 	tests := []struct {
 		name string
 		path string
