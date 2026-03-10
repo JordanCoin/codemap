@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -15,6 +16,87 @@ import (
 	"codemap/scanner"
 	"codemap/watch"
 )
+
+type fakeWatchProcess struct {
+	startErr  error
+	started   bool
+	stopped   bool
+	fileCount int
+	events    []watch.Event
+}
+
+func (f *fakeWatchProcess) Start() error {
+	f.started = true
+	return f.startErr
+}
+
+func (f *fakeWatchProcess) Stop() {
+	f.stopped = true
+}
+
+func (f *fakeWatchProcess) FileCount() int {
+	return f.fileCount
+}
+
+func (f *fakeWatchProcess) GetEvents(limit int) []watch.Event {
+	if limit <= 0 || len(f.events) <= limit {
+		return append([]watch.Event(nil), f.events...)
+	}
+	return append([]watch.Event(nil), f.events[len(f.events)-limit:]...)
+}
+
+func withMainRuntimeStubs(
+	t *testing.T,
+	watchFactory func(root string, verbose bool) (watchProcess, error),
+	signalNotifier func(c chan<- os.Signal, sig ...os.Signal),
+	cmdFactory func(name string, args ...string) *exec.Cmd,
+	exePath func() (string, error),
+	isRunning func(string) bool,
+	stopWatch func(string) error,
+	terminal func(*os.File) bool,
+) {
+	t.Helper()
+
+	prevWatchFactory := newWatchProcess
+	prevNotifier := notifySignals
+	prevCmdFactory := execCommand
+	prevExePath := executablePath
+	prevIsRunning := watchIsRunning
+	prevStopWatch := stopWatchDaemon
+	prevTerminal := terminalChecker
+
+	if watchFactory != nil {
+		newWatchProcess = watchFactory
+	}
+	if signalNotifier != nil {
+		notifySignals = signalNotifier
+	}
+	if cmdFactory != nil {
+		execCommand = cmdFactory
+	}
+	if exePath != nil {
+		executablePath = exePath
+	}
+	if isRunning != nil {
+		watchIsRunning = isRunning
+	}
+	if stopWatch != nil {
+		stopWatchDaemon = stopWatch
+	}
+	if terminal != nil {
+		terminalChecker = terminal
+	}
+
+	t.Cleanup(func() {
+		newWatchProcess = prevWatchFactory
+		notifySignals = prevNotifier
+		execCommand = prevCmdFactory
+		executablePath = prevExePath
+		watchIsRunning = prevIsRunning
+		stopWatchDaemon = prevStopWatch
+		terminalChecker = prevTerminal
+	})
+}
 
 func captureMainStreams(t *testing.T, fn func()) (string, string) {
 	t.Helper()
@@ -58,7 +140,7 @@ func captureMainStreams(t *testing.T, fn func()) (string, string) {
 }
 
 func runCodemapWithInput(input string, args ...string) (string, string, error) {
-	cmd := exec.Command("./codemap_test_binary", args...)
+	cmd := exec.Command(codemapTestBinaryPath, args...)
 	if input != "" {
 		cmd.Stdin = strings.NewReader(input)
 	}
@@ -68,6 +150,15 @@ func runCodemapWithInput(input string, args ...string) (string, string, error) {
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	return out.String(), stderr.String(), err
+}
+
+func runGitMainTestCmd(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, string(out))
+	}
 }
 
 func writeMainWatchState(t *testing.T, root string, state watch.State, running bool) {
@@ -111,6 +202,18 @@ func writeImportersFixture(t *testing.T, root string) {
 			t.Fatal(err)
 		}
 	}
+}
+
+func makeMainGitRepo(t *testing.T, branch string) string {
+	t.Helper()
+
+	root := t.TempDir()
+	writeImportersFixture(t, root)
+	runGitMainTestCmd(t, root, "init")
+	runGitMainTestCmd(t, root, "add", ".")
+	runGitMainTestCmd(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "init")
+	runGitMainTestCmd(t, root, "branch", "-M", branch)
+	return root
 }
 
 func TestRunWatchSubcommandMessages(t *testing.T) {
@@ -194,6 +297,384 @@ func TestRunImportersMode(t *testing.T) {
 		if !strings.Contains(stdout, check) {
 			t.Fatalf("expected %q in output, got:\n%s", check, stdout)
 		}
+	}
+}
+
+func TestRunDepsModeJSONAndMainDispatchesDepsAndImporters(t *testing.T) {
+	if !scanner.NewAstGrepAnalyzer().Available() {
+		t.Skip("ast-grep not available")
+	}
+
+	root := t.TempDir()
+	writeImportersFixture(t, root)
+
+	stdout, _ := captureMainStreams(t, func() {
+		runDepsMode(root, root, true, "main", map[string]bool{"a/a.go": true})
+	})
+
+	var depsProject scanner.DepsProject
+	if err := json.Unmarshal([]byte(stdout), &depsProject); err != nil {
+		t.Fatalf("expected deps JSON output, got error %v with body:\n%s", err, stdout)
+	}
+	if depsProject.Mode != "deps" {
+		t.Fatalf("deps mode = %q, want deps", depsProject.Mode)
+	}
+	if depsProject.DiffRef != "main" {
+		t.Fatalf("deps diff_ref = %q, want main", depsProject.DiffRef)
+	}
+	if len(depsProject.Files) != 1 || depsProject.Files[0].Path != "a/a.go" {
+		t.Fatalf("expected diff filter to keep only a/a.go, got %+v", depsProject.Files)
+	}
+
+	stdout = runMainWithArgs(t, []string{"codemap", "--deps", "--json", root})
+	if err := json.Unmarshal([]byte(stdout), &depsProject); err != nil {
+		t.Fatalf("expected main deps JSON output, got error %v with body:\n%s", err, stdout)
+	}
+	if depsProject.Mode != "deps" || len(depsProject.Files) == 0 {
+		t.Fatalf("expected deps project output, got %+v", depsProject)
+	}
+
+	stdout = runMainWithArgs(t, []string{"codemap", "--importers", "main.go", root})
+	if !strings.Contains(stdout, "File: main.go") {
+		t.Fatalf("expected importers output for main.go, got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "Imports 1 hub(s): pkg/types/types.go") {
+		t.Fatalf("expected hub import summary for main.go, got:\n%s", stdout)
+	}
+}
+
+func TestRunHandoffSubcommandBuildAndDetailJSON(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	root := makeMainGitRepo(t, "feature/handoff-main")
+	if err := os.WriteFile(filepath.Join(root, "pkg", "types", "types.go"), []byte("package types\n\ntype Item struct{ Value string }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeMainWatchState(t, root, watch.State{
+		UpdatedAt: time.Now(),
+		FileCount: 5,
+		Importers: map[string][]string{
+			"pkg/types/types.go": {"a/a.go", "b/b.go", "c/c.go", "main.go"},
+		},
+		Imports: map[string][]string{
+			"main.go": {"pkg/types/types.go"},
+		},
+		RecentEvents: []watch.Event{
+			{Time: time.Now().Add(-time.Minute), Op: "WRITE", Path: "pkg/types/types.go", Delta: 2, IsHub: true},
+		},
+	}, false)
+
+	stdout, _ := captureMainStreams(t, func() {
+		runHandoffSubcommand([]string{"--json", "--no-save", root})
+	})
+
+	var artifact handoff.Artifact
+	if err := json.Unmarshal([]byte(stdout), &artifact); err != nil {
+		t.Fatalf("expected handoff JSON output, got error %v with body:\n%s", err, stdout)
+	}
+	if artifact.Branch != "feature/handoff-main" {
+		t.Fatalf("artifact branch = %q, want feature/handoff-main", artifact.Branch)
+	}
+	if len(artifact.Delta.Changed) == 0 || artifact.Delta.Changed[0].Path != "pkg/types/types.go" {
+		t.Fatalf("expected changed type file in artifact, got %+v", artifact.Delta.Changed)
+	}
+	if _, err := os.Stat(handoff.LatestPath(root)); !os.IsNotExist(err) {
+		t.Fatalf("expected --no-save to skip latest artifact write, got err=%v", err)
+	}
+
+	stdout, _ = captureMainStreams(t, func() {
+		runHandoffSubcommand([]string{root})
+	})
+	for _, check := range []string{"# Handoff", "Saved:", "Prefix:", "Delta:", "Metrics:"} {
+		if !strings.Contains(stdout, check) {
+			t.Fatalf("expected %q in handoff output, got:\n%s", check, stdout)
+		}
+	}
+
+	stdout, _ = captureMainStreams(t, func() {
+		runHandoffSubcommand([]string{"--latest", "--detail", "pkg/types/types.go", "--json", root})
+	})
+
+	var detail handoff.FileDetail
+	if err := json.Unmarshal([]byte(stdout), &detail); err != nil {
+		t.Fatalf("expected handoff detail JSON output, got error %v with body:\n%s", err, stdout)
+	}
+	if detail.Path != "pkg/types/types.go" {
+		t.Fatalf("detail path = %q, want pkg/types/types.go", detail.Path)
+	}
+	if len(detail.Importers) != 4 {
+		t.Fatalf("expected 4 importers in detail, got %+v", detail.Importers)
+	}
+}
+
+func TestRunWatchModeRunDaemonAndWatchStart(t *testing.T) {
+	t.Run("watch mode prints summary after interrupt", func(t *testing.T) {
+		fake := &fakeWatchProcess{
+			fileCount: 7,
+			events: []watch.Event{
+				{Path: "main.go", Op: "WRITE"},
+				{Path: "pkg/types.go", Op: "CREATE"},
+			},
+		}
+		withMainRuntimeStubs(
+			t,
+			func(root string, verbose bool) (watchProcess, error) { return fake, nil },
+			func(c chan<- os.Signal, sig ...os.Signal) { c <- os.Interrupt },
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+		)
+
+		stdout, _ := captureMainStreams(t, func() { runWatchMode(t.TempDir(), false) })
+		for _, check := range []string{"codemap watch - Live code graph daemon", "Watching:", "Press Ctrl+C to stop", "Session summary:", "Files tracked: 7", "Events logged: 2"} {
+			if !strings.Contains(stdout, check) {
+				t.Fatalf("expected %q in watch mode output, got:\n%s", check, stdout)
+			}
+		}
+		if !fake.started || !fake.stopped {
+			t.Fatalf("expected fake watch process to start and stop, got %+v", fake)
+		}
+	})
+
+	t.Run("daemon writes and removes pid around lifecycle", func(t *testing.T) {
+		fake := &fakeWatchProcess{}
+		root := t.TempDir()
+		withMainRuntimeStubs(
+			t,
+			func(root string, verbose bool) (watchProcess, error) { return fake, nil },
+			func(c chan<- os.Signal, sig ...os.Signal) { c <- syscall.SIGTERM },
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+		)
+
+		runDaemon(root)
+		if !fake.started || !fake.stopped {
+			t.Fatalf("expected fake daemon to start and stop, got %+v", fake)
+		}
+		if _, err := os.Stat(filepath.Join(root, ".codemap", "watch.pid")); !os.IsNotExist(err) {
+			t.Fatalf("expected pid file to be removed after daemon stops, got err=%v", err)
+		}
+	})
+
+	t.Run("watch start shells out to daemon entrypoint", func(t *testing.T) {
+		root := t.TempDir()
+		var gotName string
+		var gotArgs []string
+		withMainRuntimeStubs(
+			t,
+			nil,
+			nil,
+			func(name string, args ...string) *exec.Cmd {
+				gotName = name
+				gotArgs = append([]string(nil), args...)
+				return exec.Command("sh", "-c", "exit 0")
+			},
+			func() (string, error) { return "/tmp/codemap-test", nil },
+			func(string) bool { return false },
+			nil,
+			nil,
+		)
+
+		stdout, _ := captureMainStreams(t, func() { runWatchSubcommand("start", root) })
+		if gotName != "/tmp/codemap-test" {
+			t.Fatalf("watch start executable = %q, want /tmp/codemap-test", gotName)
+		}
+		absRoot, _ := filepath.Abs(root)
+		wantArgs := []string{"watch", "daemon", absRoot}
+		if strings.Join(gotArgs, "|") != strings.Join(wantArgs, "|") {
+			t.Fatalf("watch start args = %v, want %v", gotArgs, wantArgs)
+		}
+		if !strings.Contains(stdout, "Watch daemon started (pid ") {
+			t.Fatalf("expected start output, got:\n%s", stdout)
+		}
+	})
+}
+
+func TestCloneRepoUsesCommandAndCleansUpOnFailure(t *testing.T) {
+	withMainRuntimeStubs(
+		t,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		func(*os.File) bool { return false },
+	)
+
+	t.Run("success", func(t *testing.T) {
+		var gotName string
+		var gotArgs []string
+		withMainRuntimeStubs(
+			t,
+			nil,
+			nil,
+			func(name string, args ...string) *exec.Cmd {
+				gotName = name
+				gotArgs = append([]string(nil), args...)
+				dest := args[len(args)-1]
+				return exec.Command("sh", "-c", `mkdir -p "$1/.git"; echo ok > "$1/README.md"`, "sh", dest)
+			},
+			nil,
+			nil,
+			nil,
+			func(*os.File) bool { return false },
+		)
+
+		dir, err := cloneRepo("github.com/acme/codemap", "acme/codemap")
+		if err != nil {
+			t.Fatalf("cloneRepo() error: %v", err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(dir) })
+		if gotName != "git" {
+			t.Fatalf("cloneRepo command = %q, want git", gotName)
+		}
+		wantPrefix := []string{"clone", "--depth", "1", "--single-branch", "-q", "https://github.com/acme/codemap"}
+		if strings.Join(gotArgs[:len(wantPrefix)], "|") != strings.Join(wantPrefix, "|") {
+			t.Fatalf("cloneRepo args = %v, want prefix %v", gotArgs, wantPrefix)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "README.md")); err != nil {
+			t.Fatalf("expected cloned README to exist: %v", err)
+		}
+	})
+
+	t.Run("failure removes temp dir", func(t *testing.T) {
+		var failedDest string
+		withMainRuntimeStubs(
+			t,
+			nil,
+			nil,
+			func(name string, args ...string) *exec.Cmd {
+				failedDest = args[len(args)-1]
+				return exec.Command("sh", "-c", "exit 1")
+			},
+			nil,
+			nil,
+			nil,
+			func(*os.File) bool { return false },
+		)
+
+		dir, err := cloneRepo("gitlab.com/acme/codemap", "acme/codemap")
+		if err == nil {
+			t.Fatal("expected cloneRepo failure")
+		}
+		if dir != "" {
+			t.Fatalf("expected empty dir on clone failure, got %q", dir)
+		}
+		if _, statErr := os.Stat(failedDest); !os.IsNotExist(statErr) {
+			t.Fatalf("expected failed clone temp dir to be removed, got err=%v", statErr)
+		}
+	})
+}
+
+func TestMainWatchCloneAndDiffModes(t *testing.T) {
+	t.Run("watch flag dispatches to watch mode", func(t *testing.T) {
+		fake := &fakeWatchProcess{fileCount: 3, events: []watch.Event{{Path: "main.go", Op: "WRITE"}}}
+		withMainRuntimeStubs(
+			t,
+			func(root string, verbose bool) (watchProcess, error) { return fake, nil },
+			func(c chan<- os.Signal, sig ...os.Signal) { c <- os.Interrupt },
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+		)
+
+		stdout := runMainWithArgs(t, []string{"codemap", "--watch", t.TempDir()})
+		if !strings.Contains(stdout, "codemap watch - Live code graph daemon") || !strings.Contains(stdout, "Events logged: 1") {
+			t.Fatalf("expected watch mode output, got:\n%s", stdout)
+		}
+	})
+
+	t.Run("github url path clones and renders json project", func(t *testing.T) {
+		withMainRuntimeStubs(
+			t,
+			nil,
+			nil,
+			func(name string, args ...string) *exec.Cmd {
+				dest := args[len(args)-1]
+				return exec.Command("sh", "-c", `mkdir -p "$1"; printf 'package main\n' > "$1/main.go"`, "sh", dest)
+			},
+			nil,
+			nil,
+			nil,
+			func(*os.File) bool { return false },
+		)
+
+		stdout := runMainWithArgs(t, []string{"codemap", "--json", "github.com/acme/codemap"})
+		var project scanner.Project
+		if err := json.Unmarshal([]byte(stdout), &project); err != nil {
+			t.Fatalf("expected cloned project JSON output, got error %v with body:\n%s", err, stdout)
+		}
+		if project.Name != "acme/codemap" {
+			t.Fatalf("project name = %q, want acme/codemap", project.Name)
+		}
+		if project.RemoteURL != "github.com/acme/codemap" {
+			t.Fatalf("project remote URL = %q, want github.com/acme/codemap", project.RemoteURL)
+		}
+		if len(project.Files) != 1 || project.Files[0].Path != "main.go" {
+			t.Fatalf("expected cloned project files to include main.go, got %+v", project.Files)
+		}
+	})
+
+	t.Run("diff json includes changed file annotations", func(t *testing.T) {
+		if _, err := exec.LookPath("git"); err != nil {
+			t.Skip("git not available")
+		}
+
+		root := makeMainGitRepo(t, "main")
+		if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n\nfunc changed() {}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		stdout := runMainWithArgs(t, []string{"codemap", "--json", "--diff", "--ref", "HEAD", root})
+		var project scanner.Project
+		if err := json.Unmarshal([]byte(stdout), &project); err != nil {
+			t.Fatalf("expected diff project JSON output, got error %v with body:\n%s", err, stdout)
+		}
+		if project.DiffRef != "HEAD" {
+			t.Fatalf("project diff_ref = %q, want HEAD", project.DiffRef)
+		}
+		if len(project.Files) != 1 || project.Files[0].Path != "main.go" {
+			t.Fatalf("expected only changed main.go in diff output, got %+v", project.Files)
+		}
+		if project.Files[0].Added == 0 && project.Files[0].Removed == 0 {
+			t.Fatalf("expected diff annotations on changed file, got %+v", project.Files[0])
+		}
+	})
+}
+
+func TestRunDepsModeRenderedOutputAndMainTreeModes(t *testing.T) {
+	if !scanner.NewAstGrepAnalyzer().Available() {
+		t.Skip("ast-grep not available")
+	}
+
+	root := t.TempDir()
+	writeImportersFixture(t, root)
+
+	stdout, _ := captureMainStreams(t, func() {
+		runDepsMode(root, root, false, "main", nil)
+	})
+	if !strings.Contains(stdout, "Dependency Flow") {
+		t.Fatalf("expected rendered dependency graph output, got:\n%s", stdout)
+	}
+
+	stdout = runMainWithArgs(t, []string{"codemap", root})
+	if !strings.Contains(stdout, "Files:") {
+		t.Fatalf("expected tree mode output, got:\n%s", stdout)
+	}
+
+	stdout = runMainWithArgs(t, []string{"codemap", "--skyline", root})
+	if strings.TrimSpace(stdout) == "" {
+		t.Fatal("expected skyline output")
 	}
 }
 

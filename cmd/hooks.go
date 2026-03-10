@@ -36,6 +36,10 @@ const (
 )
 
 var isOwnedDaemonProcess = watch.IsOwnedDaemon
+var hookExecutablePath = os.Executable
+var hookExecCommand = exec.Command
+var hookWatchIsRunning = watch.IsRunning
+var daemonStartupPause = time.Sleep
 
 var promptFileExtensions = []string{"go", "tsx", "ts", "jsx", "js", "py", "rs", "rb", "java", "swift", "kt", "c", "cpp", "h"}
 
@@ -623,17 +627,17 @@ func showRecentHandoffSummary(artifact *handoff.Artifact) {
 
 // startDaemon launches the watch daemon in background
 func startDaemon(root string) {
-	exe, err := os.Executable()
+	exe, err := hookExecutablePath()
 	if err != nil {
 		return
 	}
-	cmd := exec.Command(exe, "watch", "start", root)
+	cmd := hookExecCommand(exe, "watch", "start", root)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	cmd.Stdin = nil
 	cmd.Start()
 	// Give daemon a moment to initialize
-	time.Sleep(200 * time.Millisecond)
+	daemonStartupPause(200 * time.Millisecond)
 }
 
 // hookPreEdit warns before editing hub files (reads JSON from stdin)
@@ -1044,14 +1048,14 @@ func gitSymbolicRef(root, ref string) (string, bool) {
 
 // stopDaemon stops the watch daemon
 func stopDaemon(root string) {
-	if !watch.IsRunning(root) {
+	if !hookWatchIsRunning(root) {
 		return
 	}
-	exe, err := os.Executable()
+	exe, err := hookExecutablePath()
 	if err != nil {
 		return
 	}
-	cmd := exec.Command(exe, "watch", "stop", root)
+	cmd := hookExecCommand(exe, "watch", "stop", root)
 	cmd.Run()
 }
 
@@ -1190,7 +1194,7 @@ func hookSessionStartMultiRepo(root string, childRepos []string) error {
 	fmt.Printf("   %d repositories in %s\n", len(childRepos), filepath.Base(root))
 	fmt.Println()
 
-	exe, err := os.Executable()
+	exe, err := hookExecutablePath()
 	if err != nil {
 		return err
 	}
@@ -1213,7 +1217,7 @@ func hookSessionStartMultiRepo(root string, childRepos []string) error {
 			args = append(args, "--exclude", strings.Join(projCfg.Exclude, ","))
 		}
 		args = append(args, repoPath)
-		cmd := exec.Command(exe, args...)
+		cmd := hookExecCommand(exe, args...)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		cmd.Run()
