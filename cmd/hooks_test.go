@@ -769,7 +769,6 @@ func captureOutput(f func()) string {
 		panic(err)
 	}
 	defer os.Remove(outFile.Name())
-
 	func() {
 		defer func() {
 			_ = outFile.Close()

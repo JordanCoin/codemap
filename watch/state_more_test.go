@@ -3,13 +3,30 @@
 package watch
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
+
+func skipIfProcessInspectionUnavailable(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		return
+	}
+
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && strings.Contains(string(exitErr.Stderr), "operation not permitted") {
+		t.Skipf("process inspection unavailable in sandbox: %v", err)
+	}
+	if strings.Contains(err.Error(), "operation not permitted") {
+		t.Skipf("process inspection unavailable in sandbox: %v", err)
+	}
+}
 
 func TestReadStateMissingAndInvalid(t *testing.T) {
 	root := t.TempDir()
@@ -55,6 +72,7 @@ func TestPIDRoundTripAndRemovePID(t *testing.T) {
 func TestProcessCommandLineCurrentProcess(t *testing.T) {
 	cmdline, err := processCommandLine(os.Getpid())
 	if err != nil {
+		skipIfProcessInspectionUnavailable(t, err)
 		t.Fatalf("processCommandLine error: %v", err)
 	}
 	if cmdline == "" {
@@ -62,19 +80,26 @@ func TestProcessCommandLineCurrentProcess(t *testing.T) {
 	}
 }
 
+func TestOwnedDaemonHelperProcess(t *testing.T) {
+	if os.Getenv("CODEMAP_WATCH_HELPER") != "1" {
+		return
+	}
+	time.Sleep(30 * time.Second)
+}
+
 func TestIsOwnedDaemonMatchesCommandLine(t *testing.T) {
+	if _, err := processCommandLine(os.Getpid()); err != nil {
+		skipIfProcessInspectionUnavailable(t, err)
+	}
+
 	root := t.TempDir()
 	codemapDir := filepath.Join(root, ".codemap")
 	if err := os.MkdirAll(codemapDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	script := filepath.Join(root, "watch-daemon.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nsleep 5\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	cmd := exec.Command(script, "watch", "daemon", root)
+	cmd := exec.Command(os.Args[0], "-test.run=TestOwnedDaemonHelperProcess", "watch", "daemon", root)
+	cmd.Env = append(os.Environ(), "CODEMAP_WATCH_HELPER=1")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start helper daemon: %v", err)
 	}
@@ -94,6 +119,60 @@ func TestIsOwnedDaemonMatchesCommandLine(t *testing.T) {
 			t.Fatal("expected process command line to match owned daemon")
 		}
 		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func TestReadPIDInvalidContent(t *testing.T) {
+	root := t.TempDir()
+	codemapDir := filepath.Join(root, ".codemap")
+	if err := os.MkdirAll(codemapDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(codemapDir, "watch.pid"), []byte("not-a-number"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ReadPID(root); err == nil {
+		t.Fatal("expected parse error for invalid pid file content")
+	}
+}
+
+func TestIsOwnedDaemonFalseCases(t *testing.T) {
+	tests := []struct {
+		name       string
+		pidContent string
+	}{
+		{name: "missing pid file", pidContent: ""},
+		{name: "invalid pid file", pidContent: "bad"},
+		{name: "nonexistent pid", pidContent: "999999"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			codemapDir := filepath.Join(root, ".codemap")
+			if err := os.MkdirAll(codemapDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if tt.pidContent != "" {
+				if err := os.WriteFile(filepath.Join(codemapDir, "watch.pid"), []byte(tt.pidContent), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if IsOwnedDaemon(root) {
+				t.Fatal("expected IsOwnedDaemon to be false")
+			}
+		})
+	}
+}
+
+func TestStopNoDaemonRunning(t *testing.T) {
+	root := t.TempDir()
+	if err := Stop(root); err == nil {
+		t.Fatal("expected error when no daemon pid file exists")
+	} else if !strings.Contains(err.Error(), "no daemon running") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

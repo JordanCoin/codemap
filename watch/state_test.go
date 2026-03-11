@@ -112,3 +112,35 @@ func TestWriteStateWithoutFileGraph(t *testing.T) {
 		t.Fatalf("Expected 0 hubs without file graph, got %d", len(state.Hubs))
 	}
 }
+
+func TestWriteInitialStateWritesReadableState(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
+		t.Fatalf("Failed to create .codemap dir: %v", err)
+	}
+
+	d := &Daemon{
+		root: root,
+		graph: &Graph{
+			Files: map[string]*scanner.FileInfo{
+				"main.go": {Path: "main.go", Ext: ".go"},
+			},
+			Events: []Event{
+				{Time: time.Now(), Op: "WRITE", Path: "main.go"},
+			},
+		},
+	}
+
+	d.WriteInitialState()
+
+	got := ReadState(root)
+	if got == nil {
+		t.Fatal("expected state to be readable after WriteInitialState")
+	}
+	if got.FileCount != 1 {
+		t.Fatalf("expected file_count 1, got %d", got.FileCount)
+	}
+	if len(got.RecentEvents) != 1 || got.RecentEvents[0].Path != "main.go" {
+		t.Fatalf("unexpected recent events in state: %#v", got.RecentEvents)
+	}
+}
