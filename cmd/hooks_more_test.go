@@ -18,6 +18,41 @@ import (
 	"codemap/watch"
 )
 
+func withHookRuntimeStubs(
+	t *testing.T,
+	exePath func() (string, error),
+	cmdFactory func(name string, args ...string) *exec.Cmd,
+	isRunning func(string) bool,
+	sleep func(time.Duration),
+) {
+	t.Helper()
+
+	prevExePath := hookExecutablePath
+	prevCmdFactory := hookExecCommand
+	prevIsRunning := hookWatchIsRunning
+	prevSleep := daemonStartupPause
+
+	if exePath != nil {
+		hookExecutablePath = exePath
+	}
+	if cmdFactory != nil {
+		hookExecCommand = cmdFactory
+	}
+	if isRunning != nil {
+		hookWatchIsRunning = isRunning
+	}
+	if sleep != nil {
+		daemonStartupPause = sleep
+	}
+
+	t.Cleanup(func() {
+		hookExecutablePath = prevExePath
+		hookExecCommand = prevCmdFactory
+		hookWatchIsRunning = prevIsRunning
+		daemonStartupPause = prevSleep
+	})
+}
+
 func captureOutputAndError(t *testing.T, fn func()) (string, string) {
 	t.Helper()
 
@@ -542,6 +577,104 @@ func TestHookSessionStopSummaryBranches(t *testing.T) {
 
 		if !strings.Contains(out, "Files modified:") || !strings.Contains(out, "main.go") {
 			t.Fatalf("expected modified file list, got:\n%s", out)
+		}
+	})
+}
+
+func TestDaemonCommandHelpersAndMultiRepoShellout(t *testing.T) {
+	t.Run("start daemon shells out to watch start", func(t *testing.T) {
+		var gotName string
+		var gotArgs []string
+		withHookRuntimeStubs(
+			t,
+			func() (string, error) { return "/tmp/codemap-hook", nil },
+			func(name string, args ...string) *exec.Cmd {
+				gotName = name
+				gotArgs = append([]string(nil), args...)
+				return exec.Command("sh", "-c", "exit 0")
+			},
+			nil,
+			func(time.Duration) {},
+		)
+
+		startDaemon("/repo")
+		if gotName != "/tmp/codemap-hook" {
+			t.Fatalf("startDaemon executable = %q, want /tmp/codemap-hook", gotName)
+		}
+		wantArgs := []string{"watch", "start", "/repo"}
+		if strings.Join(gotArgs, "|") != strings.Join(wantArgs, "|") {
+			t.Fatalf("startDaemon args = %v, want %v", gotArgs, wantArgs)
+		}
+	})
+
+	t.Run("stop daemon shells out only when running", func(t *testing.T) {
+		var callCount int
+		var gotArgs []string
+		withHookRuntimeStubs(
+			t,
+			func() (string, error) { return "/tmp/codemap-hook", nil },
+			func(name string, args ...string) *exec.Cmd {
+				callCount++
+				gotArgs = append([]string(nil), args...)
+				return exec.Command("sh", "-c", "exit 0")
+			},
+			func(string) bool { return true },
+			nil,
+		)
+
+		stopDaemon("/repo")
+		if callCount != 1 {
+			t.Fatalf("expected stopDaemon to shell out once, got %d", callCount)
+		}
+		wantArgs := []string{"watch", "stop", "/repo"}
+		if strings.Join(gotArgs, "|") != strings.Join(wantArgs, "|") {
+			t.Fatalf("stopDaemon args = %v, want %v", gotArgs, wantArgs)
+		}
+	})
+
+	t.Run("multi repo start shells out for each child repo", func(t *testing.T) {
+		root := t.TempDir()
+		for _, repo := range []string{"svc-a", "svc-b"} {
+			repoPath := filepath.Join(root, repo)
+			if err := os.MkdirAll(repoPath, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeProjectConfig(t, repoPath, config.ProjectConfig{
+				Depth:   3,
+				Only:    []string{"go"},
+				Exclude: []string{"vendor"},
+			})
+		}
+
+		var calls [][]string
+		withHookRuntimeStubs(
+			t,
+			func() (string, error) { return "/tmp/codemap-hook", nil },
+			func(name string, args ...string) *exec.Cmd {
+				calls = append(calls, append([]string{name}, args...))
+				return exec.Command("sh", "-c", "exit 0")
+			},
+			nil,
+			nil,
+		)
+
+		out := captureOutput(func() {
+			if err := hookSessionStartMultiRepo(root, []string{"svc-a", "svc-b"}); err != nil {
+				t.Fatalf("hookSessionStartMultiRepo() error: %v", err)
+			}
+		})
+		if !strings.Contains(out, "Multi-Repo Project Context") || !strings.Contains(out, "2 repositories") {
+			t.Fatalf("expected multi-repo header output, got:\n%s", out)
+		}
+		if len(calls) != 2 {
+			t.Fatalf("expected 2 shell-outs, got %d", len(calls))
+		}
+		for i, repo := range []string{"svc-a", "svc-b"} {
+			repoPath := filepath.Join(root, repo)
+			want := []string{"/tmp/codemap-hook", "--depth", "3", "--only", "go", "--exclude", "vendor", repoPath}
+			if strings.Join(calls[i], "|") != strings.Join(want, "|") {
+				t.Fatalf("call %d = %v, want %v", i, calls[i], want)
+			}
 		}
 	})
 }

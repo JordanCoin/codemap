@@ -1,11 +1,9 @@
 package cmd
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -766,21 +764,25 @@ func TestHandoffMatchesBranch(t *testing.T) {
 // captureOutput captures stdout during function execution
 func captureOutput(f func()) string {
 	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	done := make(chan string, 1)
-	go func() {
-		var buf bytes.Buffer
-		_, _ = io.Copy(&buf, r)
-		done <- buf.String()
+	outFile, err := os.CreateTemp("", "codemap-cmd-output-*")
+	if err != nil {
+		panic(err)
+	}
+	defer os.Remove(outFile.Name())
+	func() {
+		defer func() {
+			_ = outFile.Close()
+			os.Stdout = old
+		}()
+		os.Stdout = outFile
+		f()
 	}()
 
-	f()
-
-	_ = w.Close()
-	os.Stdout = old
-	return <-done
+	data, err := os.ReadFile(outFile.Name())
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
 }
 
 // writeWatchState writes a watch.State JSON file to <root>/.codemap/state.json

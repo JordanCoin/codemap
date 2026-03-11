@@ -71,7 +71,7 @@ jobs:
           label: coverage
           message: ${{ env.COVERAGE }}%
           valColorRange: ${{ env.COVERAGE }}
-          minColorRange: 40
+          minColorRange: 45
           maxColorRange: 90
 
       - name: Upload coverage

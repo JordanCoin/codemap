@@ -3,6 +3,7 @@
 package watch
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,21 @@ import (
 	"testing"
 	"time"
 )
+
+func skipIfProcessInspectionUnavailable(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		return
+	}
+
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && strings.Contains(string(exitErr.Stderr), "operation not permitted") {
+		t.Skipf("process inspection unavailable in sandbox: %v", err)
+	}
+	if strings.Contains(err.Error(), "operation not permitted") {
+		t.Skipf("process inspection unavailable in sandbox: %v", err)
+	}
+}
 
 func TestReadStateMissingAndInvalid(t *testing.T) {
 	root := t.TempDir()
@@ -56,9 +72,7 @@ func TestPIDRoundTripAndRemovePID(t *testing.T) {
 func TestProcessCommandLineCurrentProcess(t *testing.T) {
 	cmdline, err := processCommandLine(os.Getpid())
 	if err != nil {
-		if strings.Contains(err.Error(), "operation not permitted") {
-			t.Skipf("process inspection unavailable in sandbox: %v", err)
-		}
+		skipIfProcessInspectionUnavailable(t, err)
 		t.Fatalf("processCommandLine error: %v", err)
 	}
 	if cmdline == "" {
@@ -66,11 +80,16 @@ func TestProcessCommandLineCurrentProcess(t *testing.T) {
 	}
 }
 
+func TestOwnedDaemonHelperProcess(t *testing.T) {
+	if os.Getenv("CODEMAP_WATCH_HELPER") != "1" {
+		return
+	}
+	time.Sleep(30 * time.Second)
+}
+
 func TestIsOwnedDaemonMatchesCommandLine(t *testing.T) {
 	if _, err := processCommandLine(os.Getpid()); err != nil {
-		if strings.Contains(err.Error(), "operation not permitted") {
-			t.Skipf("process inspection unavailable in sandbox: %v", err)
-		}
+		skipIfProcessInspectionUnavailable(t, err)
 	}
 
 	root := t.TempDir()
@@ -79,9 +98,8 @@ func TestIsOwnedDaemonMatchesCommandLine(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Keep process alive and embed watch/daemon/root in command line text.
-	cmdline := "tail -f /dev/null # watch daemon " + root
-	cmd := exec.Command("sh", "-c", cmdline)
+	cmd := exec.Command(os.Args[0], "-test.run=TestOwnedDaemonHelperProcess", "watch", "daemon", root)
+	cmd.Env = append(os.Environ(), "CODEMAP_WATCH_HELPER=1")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start helper daemon: %v", err)
 	}

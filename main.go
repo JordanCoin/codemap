@@ -22,6 +22,27 @@ import (
 	"codemap/watch"
 )
 
+type watchProcess interface {
+	Start() error
+	Stop()
+	FileCount() int
+	GetEvents(limit int) []watch.Event
+}
+
+var (
+	newWatchProcess = func(root string, verbose bool) (watchProcess, error) {
+		return watch.NewDaemon(root, verbose)
+	}
+	watchIsRunning  = watch.IsRunning
+	stopWatchDaemon = watch.Stop
+	writeWatchPID   = watch.WritePID
+	removeWatchPID  = watch.RemovePID
+	executablePath  = os.Executable
+	execCommand     = exec.Command
+	notifySignals   = signal.Notify
+	terminalChecker = isTerminal
+)
+
 func main() {
 	// Handle "watch" subcommand before flag parsing
 	if len(os.Args) >= 2 && os.Args[1] == "watch" {
@@ -350,7 +371,7 @@ func runWatchMode(root string, verbose bool) {
 	fmt.Println("codemap watch - Live code graph daemon")
 	fmt.Println()
 
-	daemon, err := watch.NewDaemon(root, verbose)
+	daemon, err := newWatchProcess(root, verbose)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -370,7 +391,7 @@ func runWatchMode(root string, verbose bool) {
 
 	// Wait for interrupt
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	notifySignals(sigChan, os.Interrupt, syscall.SIGTERM)
 	<-sigChan
 
 	fmt.Println()
@@ -445,17 +466,17 @@ func runWatchSubcommand(subCmd, root string) {
 
 	switch subCmd {
 	case "start":
-		if watch.IsRunning(absRoot) {
+		if watchIsRunning(absRoot) {
 			fmt.Println("Watch daemon already running")
 			return
 		}
 		// Fork a background daemon
-		exe, err := os.Executable()
+		exe, err := executablePath()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		cmd := exec.Command(exe, "watch", "daemon", absRoot)
+		cmd := execCommand(exe, "watch", "daemon", absRoot)
 		cmd.Stdout = nil
 		cmd.Stderr = nil
 		cmd.Stdin = nil
@@ -472,18 +493,18 @@ func runWatchSubcommand(subCmd, root string) {
 		runDaemon(absRoot)
 
 	case "stop":
-		if !watch.IsRunning(absRoot) {
+		if !watchIsRunning(absRoot) {
 			fmt.Println("Watch daemon not running")
 			return
 		}
-		if err := watch.Stop(absRoot); err != nil {
+		if err := stopWatchDaemon(absRoot); err != nil {
 			fmt.Fprintf(os.Stderr, "Error stopping daemon: %v\n", err)
 			os.Exit(1)
 		}
 		fmt.Println("Watch daemon stopped")
 
 	case "status":
-		if watch.IsRunning(absRoot) {
+		if watchIsRunning(absRoot) {
 			state := watch.ReadState(absRoot)
 			if state != nil {
 				fmt.Printf("Watch daemon running\n")
@@ -636,7 +657,7 @@ func runHandoffSubcommand(args []string) {
 }
 
 func runDaemon(root string) {
-	daemon, err := watch.NewDaemon(root, false)
+	daemon, err := newWatchProcess(root, false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -648,15 +669,15 @@ func runDaemon(root string) {
 	}
 
 	// Write PID file
-	watch.WritePID(root)
+	writeWatchPID(root)
 
 	// Wait for stop signal (SIGTERM or state file removal)
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
+	notifySignals(sigChan, syscall.SIGTERM, syscall.SIGINT)
 	<-sigChan
 
 	daemon.Stop()
-	watch.RemovePID(root)
+	removeWatchPID(root)
 }
 
 // isGitHubURL checks if the input looks like a GitHub repo URL
@@ -683,7 +704,7 @@ func cloneRepo(url string, repoName string) (string, error) {
 	}
 
 	// Only animate if stderr is a real terminal
-	isTTY := isTerminal(os.Stderr)
+	isTTY := terminalChecker(os.Stderr)
 
 	var done chan bool
 	if isTTY {
@@ -709,7 +730,7 @@ func cloneRepo(url string, repoName string) (string, error) {
 	}
 
 	// Shallow clone (quiet)
-	cmd := exec.Command("git", "clone", "--depth", "1", "--single-branch", "-q", url, tempDir)
+	cmd := execCommand("git", "clone", "--depth", "1", "--single-branch", "-q", url, tempDir)
 	cloneErr := cmd.Run()
 
 	if isTTY {
