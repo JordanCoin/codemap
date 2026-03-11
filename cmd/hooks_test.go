@@ -769,14 +769,18 @@ func captureOutput(f func()) string {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+
 	f()
 
-	w.Close()
+	_ = w.Close()
 	os.Stdout = old
-
-	var buf bytes.Buffer
-	io.Copy(&buf, r)
-	return buf.String()
+	return <-done
 }
 
 // writeWatchState writes a watch.State JSON file to <root>/.codemap/state.json
