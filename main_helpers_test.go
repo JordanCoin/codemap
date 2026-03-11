@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"flag"
 	"io"
@@ -194,25 +193,28 @@ func TestMainJSONModeUsesConfigDefaults(t *testing.T) {
 func captureMainOutput(fn func()) string {
 	oldStdout := os.Stdout
 	oldStderr := os.Stderr
-	r, w, err := os.Pipe()
+	outFile, err := os.CreateTemp("", "codemap-main-output-*")
 	if err != nil {
 		panic(err)
 	}
-	defer r.Close()
+	defer os.Remove(outFile.Name())
 
-	os.Stdout = w
-	os.Stderr = w
-	defer func() {
-		os.Stdout = oldStdout
-		os.Stderr = oldStderr
+	func() {
+		defer func() {
+			_ = outFile.Close()
+			os.Stdout = oldStdout
+			os.Stderr = oldStderr
+		}()
+		os.Stdout = outFile
+		os.Stderr = outFile
+		fn()
 	}()
 
-	fn()
-	_ = w.Close()
-
-	var buf bytes.Buffer
-	_, _ = io.Copy(&buf, r)
-	return buf.String()
+	data, err := os.ReadFile(outFile.Name())
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
 }
 
 func runMainWithArgs(t *testing.T, args []string) string {

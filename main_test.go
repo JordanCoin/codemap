@@ -12,20 +12,29 @@ import (
 	"codemap/scanner"
 )
 
+var codemapTestBinaryPath string
+
 // TestMain runs before all tests
 func TestMain(m *testing.M) {
+	tmpDir, err := os.MkdirTemp("", "codemap-test-bin-*")
+	if err != nil {
+		os.Exit(1)
+	}
+	codemapTestBinaryPath = filepath.Join(tmpDir, "codemap_test_binary")
+
 	// Build the binary for integration tests
-	cmd := exec.Command("go", "build", "-o", "codemap_test_binary", ".")
+	cmd := exec.Command("go", "build", "-o", codemapTestBinaryPath, ".")
 	if err := cmd.Run(); err != nil {
+		_ = os.RemoveAll(tmpDir)
 		os.Exit(1)
 	}
 	code := m.Run()
-	os.Remove("codemap_test_binary")
+	_ = os.RemoveAll(tmpDir)
 	os.Exit(code)
 }
 
 func runCodemap(args ...string) (string, error) {
-	cmd := exec.Command("./codemap_test_binary", args...)
+	cmd := exec.Command(codemapTestBinaryPath, args...)
 	var out bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &out
