@@ -13,19 +13,25 @@ import (
 	"time"
 )
 
-func skipIfProcessInspectionUnavailable(t *testing.T, err error) {
-	t.Helper()
+func shouldSkipProcessCommandError(err error) bool {
 	if err == nil {
-		return
+		return false
+	}
+
+	lowerErr := strings.ToLower(err.Error())
+	if strings.Contains(lowerErr, "operation not permitted") || strings.Contains(lowerErr, "permission denied") {
+		return true
 	}
 
 	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && strings.Contains(string(exitErr.Stderr), "operation not permitted") {
-		t.Skipf("process inspection unavailable in sandbox: %v", err)
+	if errors.As(err, &exitErr) {
+		lowerStderr := strings.ToLower(string(exitErr.Stderr))
+		if strings.Contains(lowerStderr, "operation not permitted") || strings.Contains(lowerStderr, "permission denied") {
+			return true
+		}
 	}
-	if strings.Contains(err.Error(), "operation not permitted") {
-		t.Skipf("process inspection unavailable in sandbox: %v", err)
-	}
+
+	return false
 }
 
 func TestReadStateMissingAndInvalid(t *testing.T) {
@@ -72,7 +78,9 @@ func TestPIDRoundTripAndRemovePID(t *testing.T) {
 func TestProcessCommandLineCurrentProcess(t *testing.T) {
 	cmdline, err := processCommandLine(os.Getpid())
 	if err != nil {
-		skipIfProcessInspectionUnavailable(t, err)
+		if shouldSkipProcessCommandError(err) {
+			t.Skipf("process command introspection not permitted in this environment: %v", err)
+		}
 		t.Fatalf("processCommandLine error: %v", err)
 	}
 	if cmdline == "" {
@@ -88,8 +96,8 @@ func TestOwnedDaemonHelperProcess(t *testing.T) {
 }
 
 func TestIsOwnedDaemonMatchesCommandLine(t *testing.T) {
-	if _, err := processCommandLine(os.Getpid()); err != nil {
-		skipIfProcessInspectionUnavailable(t, err)
+	if _, err := processCommandLine(os.Getpid()); shouldSkipProcessCommandError(err) {
+		t.Skipf("process command introspection not permitted in this environment: %v", err)
 	}
 
 	root := t.TempDir()
@@ -137,14 +145,16 @@ func TestReadPIDInvalidContent(t *testing.T) {
 	}
 }
 
-func TestIsOwnedDaemonFalseCases(t *testing.T) {
+func TestIsOwnedDaemonInvalidPIDInputs(t *testing.T) {
 	tests := []struct {
 		name       string
 		pidContent string
+		writePID   bool
 	}{
-		{name: "missing pid file", pidContent: ""},
-		{name: "invalid pid file", pidContent: "bad"},
-		{name: "nonexistent pid", pidContent: "999999"},
+		{name: "missing pid file", writePID: false},
+		{name: "non numeric pid", pidContent: "not-a-pid", writePID: true},
+		{name: "zero pid", pidContent: "0", writePID: true},
+		{name: "negative pid", pidContent: "-42", writePID: true},
 	}
 
 	for _, tt := range tests {
@@ -154,25 +164,54 @@ func TestIsOwnedDaemonFalseCases(t *testing.T) {
 			if err := os.MkdirAll(codemapDir, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if tt.pidContent != "" {
+			if tt.writePID {
 				if err := os.WriteFile(filepath.Join(codemapDir, "watch.pid"), []byte(tt.pidContent), 0o644); err != nil {
 					t.Fatal(err)
 				}
 			}
 
 			if IsOwnedDaemon(root) {
-				t.Fatal("expected IsOwnedDaemon to be false")
+				t.Fatalf("IsOwnedDaemon(root=%q, pidContent=%q) = true, want false", root, tt.pidContent)
 			}
 		})
 	}
 }
 
-func TestStopNoDaemonRunning(t *testing.T) {
+func TestIsRunningInvalidPIDInputs(t *testing.T) {
+	tests := []struct {
+		name       string
+		pidContent string
+		writePID   bool
+	}{
+		{name: "missing pid file", writePID: false},
+		{name: "invalid pid format", pidContent: "NaN", writePID: true},
+		{name: "nonexistent pid", pidContent: "999999", writePID: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			codemapDir := filepath.Join(root, ".codemap")
+			if err := os.MkdirAll(codemapDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if tt.writePID {
+				if err := os.WriteFile(filepath.Join(codemapDir, "watch.pid"), []byte(tt.pidContent), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if IsRunning(root) {
+				t.Fatalf("IsRunning(root=%q, pidContent=%q) = true, want false", root, tt.pidContent)
+			}
+		})
+	}
+}
+
+func TestStopWithoutPIDFileReturnsNoDaemonError(t *testing.T) {
 	root := t.TempDir()
-	if err := Stop(root); err == nil {
-		t.Fatal("expected error when no daemon pid file exists")
-	} else if !strings.Contains(err.Error(), "no daemon running") {
-		t.Fatalf("unexpected error: %v", err)
+	if err := Stop(root); err == nil || !strings.Contains(err.Error(), "no daemon running") {
+		t.Fatalf("Stop() error = %v, want no daemon running error", err)
 	}
 }
 
