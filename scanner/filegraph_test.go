@@ -338,3 +338,76 @@ func TestFileGraphHubAndConnectedFiles(t *testing.T) {
 		}
 	})
 }
+
+func TestTryDirMatch(t *testing.T) {
+	files := []FileInfo{
+		{Path: filepath.Join("MyApp", "Models", "User.cs")},
+		{Path: filepath.Join("MyApp", "Models", "Product.cs")},
+		{Path: filepath.Join("MyApp", "Services", "UserService.cs")},
+	}
+	idx := buildFileIndex(files, "")
+
+	t.Run("matches directory with multiple files", func(t *testing.T) {
+		got := tryDirMatch(filepath.Join("MyApp", "Models"), idx)
+		sort.Strings(got)
+		want := []string{
+			filepath.Join("MyApp", "Models", "Product.cs"),
+			filepath.Join("MyApp", "Models", "User.cs"),
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("tryDirMatch = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("matches directory with single file", func(t *testing.T) {
+		got := tryDirMatch(filepath.Join("MyApp", "Services"), idx)
+		want := []string{filepath.Join("MyApp", "Services", "UserService.cs")}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("tryDirMatch = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("no match for missing directory", func(t *testing.T) {
+		got := tryDirMatch(filepath.Join("MyApp", "Missing"), idx)
+		if got != nil {
+			t.Errorf("expected nil, got %v", got)
+		}
+	})
+}
+
+func TestFuzzyResolveCsharpNamespace(t *testing.T) {
+	userCS := filepath.Join("MyApp", "Models", "User.cs")
+	productCS := filepath.Join("MyApp", "Models", "Product.cs")
+	serviceCS := filepath.Join("MyApp", "Services", "UserService.cs")
+
+	files := []FileInfo{
+		{Path: userCS},
+		{Path: productCS},
+		{Path: serviceCS},
+	}
+	idx := buildFileIndex(files, "")
+
+	t.Run("namespace with multiple files resolves via directory", func(t *testing.T) {
+		got := fuzzyResolve("MyApp.Models", "MyApp/Services/UserService.cs", idx, "", nil, "")
+		sort.Strings(got)
+		want := []string{productCS, userCS}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("fuzzyResolve(MyApp.Models) = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("namespace with single file resolves via directory", func(t *testing.T) {
+		got := fuzzyResolve("MyApp.Services", "MyApp/Program.cs", idx, "", nil, "")
+		want := []string{serviceCS}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("fuzzyResolve(MyApp.Services) = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("external namespace does not resolve", func(t *testing.T) {
+		got := fuzzyResolve("System.Collections.Generic", "MyApp/Program.cs", idx, "", nil, "")
+		if got != nil {
+			t.Errorf("expected nil for external namespace, got %v", got)
+		}
+	})
+}
