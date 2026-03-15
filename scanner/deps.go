@@ -42,6 +42,18 @@ func ReadExternalDeps(root string) map[string][]string {
 			if c, err := os.ReadFile(path); err == nil {
 				deps["swift"] = append(deps["swift"], parsePackageSwift(string(c))...)
 			}
+		case "packages.config":
+			if c, err := os.ReadFile(path); err == nil {
+				deps["csharp"] = append(deps["csharp"], parsePackagesConfig(string(c))...)
+			}
+		default:
+			// .csproj files have project-specific names, so they must be matched
+			// by extension rather than a fixed case above.
+			if strings.HasSuffix(info.Name(), ".csproj") {
+				if c, err := os.ReadFile(path); err == nil {
+					deps["csharp"] = append(deps["csharp"], parseCsproj(string(c))...)
+				}
+			}
 		}
 		return nil
 	})
@@ -153,6 +165,58 @@ func parsePackageSwift(c string) (deps []string) {
 						}
 					}
 				}
+			}
+		}
+	}
+	return
+}
+
+// parseCsproj extracts NuGet package names from a .csproj file.
+// It handles <PackageReference Include="Name" ... /> elements.
+func parseCsproj(c string) (deps []string) {
+	for _, line := range strings.Split(c, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.Contains(line, "<PackageReference") {
+			continue
+		}
+		// Match Include="PackageName" (double or single quotes)
+		for _, attr := range []string{`Include="`, `Include='`} {
+			if start := strings.Index(line, attr); start >= 0 {
+				rest := line[start+len(attr):]
+				quote := string(attr[len(attr)-1])
+				if end := strings.Index(rest, quote); end >= 0 {
+					name := rest[:end]
+					if name != "" {
+						deps = append(deps, name)
+					}
+				}
+				break
+			}
+		}
+	}
+	return
+}
+
+// parsePackagesConfig extracts NuGet package names from a packages.config file.
+// It handles <package id="Name" ... /> elements.
+func parsePackagesConfig(c string) (deps []string) {
+	for _, line := range strings.Split(c, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.Contains(line, "<package") {
+			continue
+		}
+		// Match id="PackageName" (double or single quotes)
+		for _, attr := range []string{`id="`, `id='`} {
+			if start := strings.Index(line, attr); start >= 0 {
+				rest := line[start+len(attr):]
+				quote := string(attr[len(attr)-1])
+				if end := strings.Index(rest, quote); end >= 0 {
+					name := rest[:end]
+					if name != "" {
+						deps = append(deps, name)
+					}
+				}
+				break
 			}
 		}
 	}

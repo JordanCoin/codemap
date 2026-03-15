@@ -774,3 +774,128 @@ func TestDepsDetectLanguage(t *testing.T) {
 		})
 	}
 }
+
+func TestParseCsproj(t *testing.T) {
+	csproj := `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.0" />
+    <PackageReference Include='Serilog' Version='3.0.0' />
+  </ItemGroup>
+</Project>`
+
+	deps := parseCsproj(csproj)
+
+	expected := []string{"Newtonsoft.Json", "Microsoft.Extensions.Logging", "Serilog"}
+
+	if len(deps) != len(expected) {
+		t.Errorf("Expected %d deps, got %d: %v", len(expected), len(deps), deps)
+	}
+
+	depsMap := make(map[string]bool)
+	for _, d := range deps {
+		depsMap[d] = true
+	}
+	for _, exp := range expected {
+		if !depsMap[exp] {
+			t.Errorf("Expected dep %q not found in %v", exp, deps)
+		}
+	}
+}
+
+func TestParseCsprojEmpty(t *testing.T) {
+	csproj := `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+</Project>`
+
+	deps := parseCsproj(csproj)
+	if len(deps) != 0 {
+		t.Errorf("Expected no deps, got %v", deps)
+	}
+}
+
+func TestParsePackagesConfig(t *testing.T) {
+	config := `<?xml version="1.0" encoding="utf-8"?>
+<packages>
+  <package id="Newtonsoft.Json" version="13.0.3" targetFramework="net48" />
+  <package id="NUnit" version="3.14.0" targetFramework="net48" />
+  <package id='log4net' version='2.0.15' />
+</packages>`
+
+	deps := parsePackagesConfig(config)
+
+	expected := []string{"Newtonsoft.Json", "NUnit", "log4net"}
+
+	if len(deps) != len(expected) {
+		t.Errorf("Expected %d deps, got %d: %v", len(expected), len(deps), deps)
+	}
+
+	depsMap := make(map[string]bool)
+	for _, d := range deps {
+		depsMap[d] = true
+	}
+	for _, exp := range expected {
+		if !depsMap[exp] {
+			t.Errorf("Expected dep %q not found in %v", exp, deps)
+		}
+	}
+}
+
+func TestReadExternalDepsCsharp(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	csproj := `<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="Serilog" Version="3.0.0" />
+  </ItemGroup>
+</Project>`
+	if err := os.WriteFile(filepath.Join(tmpDir, "MyApp.csproj"), []byte(csproj), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := ReadExternalDeps(tmpDir)
+
+	csDeps, ok := deps["csharp"]
+	if !ok {
+		t.Fatal("Expected csharp deps")
+	}
+	sort.Strings(csDeps)
+	expected := []string{"Newtonsoft.Json", "Serilog"}
+	sort.Strings(expected)
+	if !reflect.DeepEqual(csDeps, expected) {
+		t.Errorf("Expected csharp deps %v, got %v", expected, csDeps)
+	}
+}
+
+func TestReadExternalDepsPackagesConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	config := `<?xml version="1.0" encoding="utf-8"?>
+<packages>
+  <package id="Newtonsoft.Json" version="13.0.3" targetFramework="net48" />
+  <package id="NUnit" version="3.14.0" targetFramework="net48" />
+</packages>`
+	if err := os.WriteFile(filepath.Join(tmpDir, "packages.config"), []byte(config), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := ReadExternalDeps(tmpDir)
+
+	csDeps, ok := deps["csharp"]
+	if !ok {
+		t.Fatal("Expected csharp deps from packages.config")
+	}
+	sort.Strings(csDeps)
+	expected := []string{"Newtonsoft.Json", "NUnit"}
+	sort.Strings(expected)
+	if !reflect.DeepEqual(csDeps, expected) {
+		t.Errorf("Expected csharp deps %v, got %v", expected, csDeps)
+	}
+}
