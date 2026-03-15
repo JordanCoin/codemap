@@ -178,6 +178,46 @@ func TestCappedStringWriter(t *testing.T) {
 			t.Fatal("expected writer to be truncated")
 		}
 	})
+
+	t.Run("zero max immediately truncates and reports full write", func(t *testing.T) {
+		w := newCappedStringWriter(0)
+		n, err := w.Write([]byte("hello"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if n != 5 {
+			t.Fatalf("expected n=5 (consume input), got %d", n)
+		}
+		if w.String() != "" {
+			t.Fatalf("expected empty buffer for zero-max writer, got %q", w.String())
+		}
+		if !w.Truncated() {
+			t.Fatal("expected truncated=true for zero-max writer")
+		}
+	})
+
+	t.Run("second write into already-full buffer marks truncated without adding bytes", func(t *testing.T) {
+		w := newCappedStringWriter(5)
+		// First write fills the buffer exactly.
+		_, _ = w.Write([]byte("hello"))
+		if w.Truncated() {
+			t.Fatal("expected not truncated after exact-fit first write")
+		}
+		// Second write hits the "remaining <= 0" branch.
+		n, err := w.Write([]byte("world"))
+		if err != nil {
+			t.Fatalf("unexpected error on second write: %v", err)
+		}
+		if n != 5 {
+			t.Fatalf("expected n=5 (consume input), got %d", n)
+		}
+		if w.String() != "hello" {
+			t.Fatalf("expected buffer unchanged after overflow, got %q", w.String())
+		}
+		if !w.Truncated() {
+			t.Fatal("expected truncated=true after buffer overflow")
+		}
+	})
 }
 
 func TestHookTimeoutFromEnv(t *testing.T) {
@@ -1099,6 +1139,25 @@ func TestGetHubInfoNoDeps(t *testing.T) {
 			t.Errorf("expected nil when no daemon state and fallback disabled, got %+v", info)
 		}
 	})
+
+	t.Run("running daemon with unavailable state skips expensive fallback scan", func(t *testing.T) {
+		// Write our own PID so watch.IsRunning returns true while state.json is absent.
+		// This guards the context-bloat fix: if the daemon is live but hasn't written
+		// state yet, we must not fall back to a full fresh graph scan.
+		root := t.TempDir()
+		codemapDir := filepath.Join(root, ".codemap")
+		if err := os.MkdirAll(codemapDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := watch.WritePID(root); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { watch.RemovePID(root) })
+
+		if info := getHubInfo(root); info != nil {
+			t.Errorf("expected nil when daemon is running but state is unavailable, got %+v", info)
+		}
+	})
 }
 
 // TestHookPreCompact verifies that pre-compact saves hub state and prints the
@@ -1196,21 +1255,32 @@ func TestShowRecentHandoffSummary(t *testing.T) {
 	})
 
 	t.Run("large summary is truncated to MaxHandoffCompactBytes (context bloat protection)", func(t *testing.T) {
-		// Build a NextSteps list large enough to overflow MaxHandoffCompactBytes (3000 bytes).
-		var nextSteps []string
-		for i := 0; i < 200; i++ {
-			nextSteps = append(nextSteps, fmt.Sprintf("Step %03d: do the thing with the long description that adds bytes %s", i, strings.Repeat("x", 30)))
+		// Build Changed entries with very long paths so that even 5 items exceed
+		// MaxHandoffCompactBytes (3000). Path breakdown:
+		//   580 "a"s + "/file.go" (8) = 588 chars per segment
+		//   "module00/" (9) + 588 = 597 chars total path length
+		//   "   • " (5) + 597 + " (modified)\n" (12) = 614 bytes per item
+		//   5 items × 614 = 3070 bytes + ~80 byte header ≈ 3150 bytes > 3000
+		const pathPadLen = 580
+		longPath := strings.Repeat("a", pathPadLen) + "/file.go"
+		var changed []handoff.FileStub
+		for i := 0; i < 5; i++ {
+			changed = append(changed, handoff.FileStub{
+				Path:   fmt.Sprintf("module%02d/%s", i, longPath),
+				Status: "modified",
+			})
 		}
 		a := &handoff.Artifact{
 			Branch:  "feature/huge",
 			BaseRef: "main",
 			Delta: handoff.DeltaSnapshot{
-				NextSteps: nextSteps,
+				Changed: changed,
 			},
 		}
 
-		// Confirm the raw compact render is actually over budget before asserting truncation.
-		raw := handoff.RenderCompact(a, 200)
+		// Confirm the raw compact render (with the same maxItems=5 that
+		// showRecentHandoffSummary uses) actually exceeds the budget.
+		raw := handoff.RenderCompact(a, 5)
 		if len(raw) <= limits.MaxHandoffCompactBytes {
 			t.Skipf("test precondition not met: raw compact render is only %d bytes (need >%d)", len(raw), limits.MaxHandoffCompactBytes)
 		}
