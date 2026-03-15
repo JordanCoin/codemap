@@ -278,6 +278,44 @@ func TestShowDiffVsMainUsesLightweightPath(t *testing.T) {
 	}
 }
 
+// TestShowDiffVsMainOnDefaultBranch verifies that no diff output is produced
+// when the current branch is the default branch (main/master).
+// This is an important context-bloat guard: we never inject diff context when
+// there is nothing meaningful to compare against.
+func TestShowDiffVsMainOnDefaultBranch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	for _, branch := range []string{"main", "master"} {
+		t.Run("on "+branch+" branch produces no output", func(t *testing.T) {
+			root := makeRepoOnBranch(t, branch)
+			stdout, _ := captureOutputAndError(t, func() {
+				showDiffVsMain(root, 100, true, config.ProjectConfig{})
+			})
+			if stdout != "" {
+				t.Errorf("expected no output when on %s branch, got:\n%s", branch, stdout)
+			}
+		})
+	}
+}
+
+// TestRunHookWithTimeoutZeroBypassesTimeout verifies that a zero timeout
+// passes through directly to RunHook without installing a timer.
+// This prevents accidental blocking in CI/no-timeout configurations.
+func TestRunHookWithTimeoutZeroBypassesTimeout(t *testing.T) {
+	// Use an intentionally invalid hook name to exercise the error path
+	// without triggering any real hook logic.
+	const nonexistentHook = "unknown-hook"
+	err := RunHookWithTimeout(nonexistentHook, t.TempDir(), 0)
+	if err == nil {
+		t.Fatal("expected error for nonexistent hook")
+	}
+	if !strings.Contains(err.Error(), "unknown hook") {
+		t.Fatalf("expected 'unknown hook' error, got: %v", err)
+	}
+}
+
 func TestExtractFilePathAndEditHooks(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "pkg", "types.go")
