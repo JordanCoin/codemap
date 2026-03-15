@@ -323,11 +323,7 @@ func extractImportPath(text string) string {
 			text = text[idx+1:]
 		}
 
-		text = strings.TrimSpace(text)
-		if idx := strings.LastIndex(text, "."); idx > 0 {
-			return strings.TrimSpace(text[:idx])
-		}
-		return text
+		return strings.TrimSpace(text)
 	}
 
 	// Python: import foo

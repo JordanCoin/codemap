@@ -166,8 +166,8 @@ namespace TestApp
 	if !imports["System"] {
 		t.Errorf("Expected System import, got: %v", analysis.Imports)
 	}
-	if !imports["System.Collections"] {
-		t.Errorf("Expected System.Collections import, got: %v", analysis.Imports)
+	if !imports["System.Collections.Generic"] {
+		t.Errorf("Expected System.Collections.Generic import, got: %v", analysis.Imports)
 	}
 }
 
