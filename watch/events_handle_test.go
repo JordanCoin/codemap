@@ -1,9 +1,11 @@
 package watch
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -155,5 +157,170 @@ func TestFindRelatedHot(t *testing.T) {
 				t.Fatalf("findRelatedHot(%q) = %v, want %v", tt.path, got, tt.wantPaths)
 			}
 		})
+	}
+}
+
+func TestHandleEventWriteUpdatesTrackedState(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	rel := "pkg/main.go"
+	abs := filepath.Join(root, rel)
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "package main\n\nfunc run() {}\n"
+	if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d := &Daemon{
+		root:     root,
+		eventLog: filepath.Join(root, ".codemap", "events.log"),
+		graph: &Graph{
+			Files: map[string]*scanner.FileInfo{
+				rel: {Path: rel, Size: 10, Ext: ".go"},
+			},
+			State: map[string]*FileState{
+				rel: {Lines: 1, Size: 10},
+			},
+		},
+	}
+
+	d.handleEvent(fsnotify.Event{Name: abs, Op: fsnotify.Write})
+
+	d.graph.mu.RLock()
+	defer d.graph.mu.RUnlock()
+
+	state, ok := d.graph.State[rel]
+	if !ok {
+		t.Fatalf("expected %q to remain tracked in graph state", rel)
+	}
+	if state.Lines != 3 {
+		t.Fatalf("expected updated line count 3, got %d", state.Lines)
+	}
+	if state.Size != info.Size() {
+		t.Fatalf("expected updated size %d, got %d", info.Size(), state.Size)
+	}
+
+	file, ok := d.graph.Files[rel]
+	if !ok {
+		t.Fatalf("expected %q to remain tracked in graph files", rel)
+	}
+	if file.Ext != ".go" {
+		t.Fatalf("expected .go extension, got %q", file.Ext)
+	}
+
+	if len(d.graph.Events) != 1 {
+		t.Fatalf("expected one event, got %d", len(d.graph.Events))
+	}
+	event := d.graph.Events[0]
+	if event.Op != "WRITE" || event.Path != rel {
+		t.Fatalf("unexpected event: %+v", event)
+	}
+	if event.Delta != 2 {
+		t.Fatalf("expected line delta +2, got %d", event.Delta)
+	}
+	if event.SizeDelta != info.Size()-10 {
+		t.Fatalf("expected size delta %d, got %d", info.Size()-10, event.SizeDelta)
+	}
+
+	logData, err := os.ReadFile(filepath.Join(root, ".codemap", "events.log"))
+	if err != nil {
+		t.Fatalf("expected log file to be written: %v", err)
+	}
+	if !strings.Contains(string(logData), "WRITE") || !strings.Contains(string(logData), rel) {
+		t.Fatalf("expected event log to contain write event for %q, got:\n%s", rel, string(logData))
+	}
+}
+
+func TestHandleEventRemoveDeletesTrackedState(t *testing.T) {
+	root := t.TempDir()
+	rel := "old.go"
+
+	d := &Daemon{
+		root: root,
+		graph: &Graph{
+			Files: map[string]*scanner.FileInfo{
+				rel: {Path: rel, Size: 40, Ext: ".go"},
+			},
+			State: map[string]*FileState{
+				rel: {Lines: 4, Size: 40},
+			},
+		},
+	}
+
+	d.handleEvent(fsnotify.Event{Name: filepath.Join(root, rel), Op: fsnotify.Remove})
+
+	d.graph.mu.RLock()
+	defer d.graph.mu.RUnlock()
+
+	if _, ok := d.graph.Files[rel]; ok {
+		t.Fatalf("expected %q to be removed from graph files", rel)
+	}
+	if _, ok := d.graph.State[rel]; ok {
+		t.Fatalf("expected %q to be removed from graph state", rel)
+	}
+
+	if len(d.graph.Events) != 1 {
+		t.Fatalf("expected one event, got %d", len(d.graph.Events))
+	}
+	event := d.graph.Events[0]
+	if event.Op != "REMOVE" || event.Path != rel {
+		t.Fatalf("unexpected event: %+v", event)
+	}
+	if event.Delta != -4 {
+		t.Fatalf("expected line delta -4, got %d", event.Delta)
+	}
+	if event.SizeDelta != -40 {
+		t.Fatalf("expected size delta -40, got %d", event.SizeDelta)
+	}
+}
+
+func TestHandleEventSkipsGitignoredPath(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("ignored.go\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rel := "ignored.go"
+	abs := filepath.Join(root, rel)
+	if err := os.WriteFile(abs, []byte("package ignored\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gitCache := scanner.NewGitIgnoreCache(root)
+	gitCache.EnsureDir(root)
+
+	d := &Daemon{
+		root:     root,
+		gitCache: gitCache,
+		eventLog: filepath.Join(root, ".codemap", "events.log"),
+		graph: &Graph{
+			Files:  map[string]*scanner.FileInfo{},
+			State:  map[string]*FileState{},
+			Events: []Event{},
+		},
+	}
+
+	d.handleEvent(fsnotify.Event{Name: abs, Op: fsnotify.Write})
+
+	d.graph.mu.RLock()
+	defer d.graph.mu.RUnlock()
+
+	if len(d.graph.Events) != 0 {
+		t.Fatalf("expected gitignored event to be skipped, got %+v", d.graph.Events)
+	}
+	if len(d.graph.Files) != 0 || len(d.graph.State) != 0 {
+		t.Fatalf("expected gitignored event to avoid graph updates, files=%d state=%d", len(d.graph.Files), len(d.graph.State))
 	}
 }

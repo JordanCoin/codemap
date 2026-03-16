@@ -67,3 +67,37 @@ func TestTrimEventLogToBytes(t *testing.T) {
 		t.Fatalf("expected newest entry to be retained after trim")
 	}
 }
+
+func TestTrimEventLogToBytesIgnoresInvalidLimits(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "events.log")
+	original := "line1\nline2\n"
+	if err := os.WriteFile(logPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name      string
+		maxBytes  int64
+		keepBytes int64
+	}{
+		{name: "max bytes non-positive", maxBytes: 0, keepBytes: 10},
+		{name: "keep bytes non-positive", maxBytes: 10, keepBytes: 0},
+		{name: "keep bytes larger than max", maxBytes: 10, keepBytes: 11},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := trimEventLogToBytes(logPath, tt.maxBytes, tt.keepBytes); err != nil {
+				t.Fatalf("trimEventLogToBytes() error = %v", err)
+			}
+			data, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != original {
+				t.Fatalf("expected log content to remain unchanged, got %q", string(data))
+			}
+		})
+	}
+}

@@ -76,3 +76,10 @@ func TestEventDebouncerPrunesStaleEntries(t *testing.T) {
 		t.Fatal("expected recent path entry to be retained")
 	}
 }
+
+func TestNewEventDebouncerHasMinimumPruneWindow(t *testing.T) {
+	debouncer := newEventDebouncer(10 * time.Millisecond)
+	if debouncer.pruneAfter != time.Second {
+		t.Fatalf("pruneAfter = %v, want %v", debouncer.pruneAfter, time.Second)
+	}
+}
