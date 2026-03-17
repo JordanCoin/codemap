@@ -7,6 +7,32 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
+func TestNewEventDebouncerPruneAfter(t *testing.T) {
+	tests := []struct {
+		name           string
+		window         time.Duration
+		wantPruneAfter time.Duration
+	}{
+		{name: "floors prune window at one second", window: 50 * time.Millisecond, wantPruneAfter: time.Second},
+		{name: "uses ten times window above floor", window: 250 * time.Millisecond, wantPruneAfter: 2500 * time.Millisecond},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := newEventDebouncer(tt.window)
+			if d.window != tt.window {
+				t.Fatalf("window = %v, want %v", d.window, tt.window)
+			}
+			if d.pruneAfter != tt.wantPruneAfter {
+				t.Fatalf("pruneAfter = %v, want %v", d.pruneAfter, tt.wantPruneAfter)
+			}
+			if d.lastSeen == nil {
+				t.Fatal("lastSeen map should be initialized")
+			}
+		})
+	}
+}
+
 func TestEventDebouncerSkipsRapidWrites(t *testing.T) {
 	debouncer := newEventDebouncer(100 * time.Millisecond)
 	base := time.Unix(0, 0)

@@ -67,3 +67,44 @@ func TestTrimEventLogToBytes(t *testing.T) {
 		t.Fatalf("expected newest entry to be retained after trim")
 	}
 }
+
+func TestTrimEventLogToBytesNoopCases(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "events.log")
+	if err := os.WriteFile(logPath, []byte("line1\nline2\n"), 0o644); err != nil {
+		t.Fatalf("failed to seed log file: %v", err)
+	}
+	original, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("failed to read seed log file: %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		path      string
+		maxBytes  int64
+		keepBytes int64
+	}{
+		{name: "max bytes zero", path: logPath, maxBytes: 0, keepBytes: 10},
+		{name: "keep bytes zero", path: logPath, maxBytes: 10, keepBytes: 0},
+		{name: "keep bytes over max", path: logPath, maxBytes: 10, keepBytes: 20},
+		{name: "missing log file returns nil", path: filepath.Join(tmpDir, "missing.log"), maxBytes: 10, keepBytes: 5},
+		{name: "file already under max", path: logPath, maxBytes: 1024, keepBytes: 512},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := trimEventLogToBytes(tt.path, tt.maxBytes, tt.keepBytes); err != nil {
+				t.Fatalf("trimEventLogToBytes error: %v", err)
+			}
+		})
+	}
+
+	after, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("failed to read log file after noop cases: %v", err)
+	}
+	if string(after) != string(original) {
+		t.Fatalf("expected noop cases to preserve content, before=%q after=%q", string(original), string(after))
+	}
+}
