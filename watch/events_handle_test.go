@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -155,5 +156,142 @@ func TestFindRelatedHot(t *testing.T) {
 				t.Fatalf("findRelatedHot(%q) = %v, want %v", tt.path, got, tt.wantPaths)
 			}
 		})
+	}
+}
+
+func TestHandleEventIgnoresUnsupportedOp(t *testing.T) {
+	root := t.TempDir()
+	rel := "file.go"
+	abs := filepath.Join(root, rel)
+	if err := os.WriteFile(abs, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	d := &Daemon{
+		root: root,
+		graph: &Graph{
+			Files:  map[string]*scanner.FileInfo{},
+			State:  map[string]*FileState{},
+			Events: nil,
+		},
+	}
+
+	d.handleEvent(fsnotify.Event{Name: abs, Op: fsnotify.Chmod})
+
+	d.graph.mu.RLock()
+	defer d.graph.mu.RUnlock()
+	if len(d.graph.Events) != 0 {
+		t.Fatalf("expected no events for unsupported op, got %d", len(d.graph.Events))
+	}
+}
+
+func TestHandleEventRemoveCapturesNegativeDeltaAndClearsState(t *testing.T) {
+	root := t.TempDir()
+	rel := "gone.go"
+
+	d := &Daemon{
+		root: root,
+		graph: &Graph{
+			Files: map[string]*scanner.FileInfo{
+				rel: {Path: rel, Size: 44, Ext: ".go"},
+			},
+			State: map[string]*FileState{
+				rel: {Lines: 7, Size: 44},
+			},
+		},
+	}
+
+	d.handleEvent(fsnotify.Event{Name: filepath.Join(root, rel), Op: fsnotify.Remove})
+
+	d.graph.mu.RLock()
+	defer d.graph.mu.RUnlock()
+	if _, exists := d.graph.Files[rel]; exists {
+		t.Fatalf("expected removed file %q to be deleted from graph.Files", rel)
+	}
+	if _, exists := d.graph.State[rel]; exists {
+		t.Fatalf("expected removed file %q to be deleted from graph.State", rel)
+	}
+	if len(d.graph.Events) != 1 {
+		t.Fatalf("expected one event, got %d", len(d.graph.Events))
+	}
+	got := d.graph.Events[0]
+	if got.Op != "REMOVE" {
+		t.Fatalf("event op = %q, want REMOVE", got.Op)
+	}
+	if got.Path != rel {
+		t.Fatalf("event path = %q, want %q", got.Path, rel)
+	}
+	if got.Delta != -7 {
+		t.Fatalf("event delta = %d, want -7", got.Delta)
+	}
+	if got.SizeDelta != -44 {
+		t.Fatalf("event size delta = %d, want -44", got.SizeDelta)
+	}
+}
+
+func TestEventLoopProcessesSourceWriteAndSkipsNonSourceWrite(t *testing.T) {
+	root := t.TempDir()
+	watcher := &fsnotify.Watcher{
+		Events: make(chan fsnotify.Event, 4),
+		Errors: make(chan error, 1),
+	}
+
+	srcPath := filepath.Join(root, "main.go")
+	txtPath := filepath.Join(root, "notes.txt")
+	if err := os.WriteFile(srcPath, []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(txtPath, []byte("ignore me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	d := &Daemon{
+		root:    root,
+		watcher: watcher,
+		done:    make(chan struct{}),
+		graph: &Graph{
+			Files: map[string]*scanner.FileInfo{},
+			State: map[string]*FileState{},
+		},
+	}
+
+	finished := make(chan struct{})
+	go func() {
+		d.eventLoop()
+		close(finished)
+	}()
+
+	watcher.Events <- fsnotify.Event{Name: txtPath, Op: fsnotify.Write}
+	watcher.Events <- fsnotify.Event{Name: srcPath, Op: fsnotify.Write}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		d.graph.mu.RLock()
+		got := len(d.graph.Events)
+		d.graph.mu.RUnlock()
+		if got == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for source event to be processed; events=%d", got)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	d.graph.mu.RLock()
+	got := d.graph.Events[0]
+	d.graph.mu.RUnlock()
+	if got.Op != "WRITE" {
+		t.Fatalf("event op = %q, want WRITE", got.Op)
+	}
+	if got.Path != "main.go" {
+		t.Fatalf("event path = %q, want main.go", got.Path)
+	}
+
+	close(d.done)
+	select {
+	case <-finished:
+	case <-time.After(2 * time.Second):
+		t.Fatal("event loop did not exit after done signal")
 	}
 }

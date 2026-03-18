@@ -76,3 +76,25 @@ func TestEventDebouncerPrunesStaleEntries(t *testing.T) {
 		t.Fatal("expected recent path entry to be retained")
 	}
 }
+
+func TestNewEventDebouncerUsesScaledPruneWindowForLargeDurations(t *testing.T) {
+	debouncer := newEventDebouncer(250 * time.Millisecond)
+	if debouncer.pruneAfter != 2500*time.Millisecond {
+		t.Fatalf("pruneAfter = %v, want %v", debouncer.pruneAfter, 2500*time.Millisecond)
+	}
+}
+
+func TestEventDebouncerDoesNotSkipWriteWithUnknownOpBits(t *testing.T) {
+	debouncer := newEventDebouncer(100 * time.Millisecond)
+	base := time.Unix(0, 0)
+	path := "src/weird.go"
+	unknownBit := fsnotify.Op(1 << 8)
+	event := fsnotify.Event{Name: path, Op: fsnotify.Write | unknownBit}
+
+	if debouncer.shouldSkip(event, base) {
+		t.Fatal("write with unknown op bits should not be skipped")
+	}
+	if debouncer.shouldSkip(event, base.Add(10*time.Millisecond)) {
+		t.Fatal("subsequent write with unknown op bits should not be skipped")
+	}
+}

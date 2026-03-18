@@ -122,6 +122,43 @@ func TestIsOwnedDaemonMatchesCommandLine(t *testing.T) {
 	}
 }
 
+func TestIsOwnedDaemonFalseWhenCommandLineMissingDaemonToken(t *testing.T) {
+	if _, err := processCommandLine(os.Getpid()); err != nil {
+		skipIfProcessInspectionUnavailable(t, err)
+	}
+
+	root := t.TempDir()
+	codemapDir := filepath.Join(root, ".codemap")
+	if err := os.MkdirAll(codemapDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=TestOwnedDaemonHelperProcess", "watch", "status", root)
+	cmd.Env = append(os.Environ(), "CODEMAP_WATCH_HELPER=1")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start helper process: %v", err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	}()
+
+	pidPath := filepath.Join(codemapDir, "watch.pid")
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !IsOwnedDaemon(root) {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	t.Fatal("expected helper process without daemon token to fail owned-daemon check")
+}
+
 func TestReadPIDInvalidContent(t *testing.T) {
 	root := t.TempDir()
 	codemapDir := filepath.Join(root, ".codemap")
