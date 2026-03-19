@@ -67,3 +67,73 @@ func TestTrimEventLogToBytes(t *testing.T) {
 		t.Fatalf("expected newest entry to be retained after trim")
 	}
 }
+
+func TestTrimEventLogToBytesInvalidBoundsNoOp(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "events.log")
+	original := "line-one\nline-two\n"
+	if err := os.WriteFile(logPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name     string
+		maxBytes int64
+		keep     int64
+	}{
+		{name: "zero max bytes", maxBytes: 0, keep: 10},
+		{name: "zero keep bytes", maxBytes: 10, keep: 0},
+		{name: "keep exceeds max", maxBytes: 10, keep: 11},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := trimEventLogToBytes(logPath, tt.maxBytes, tt.keep); err != nil {
+				t.Fatalf("trimEventLogToBytes error: %v", err)
+			}
+			got, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != original {
+				t.Fatalf("file content changed unexpectedly: %q", string(got))
+			}
+		})
+	}
+}
+
+func TestTrimEventLogToBytesMissingFileReturnsNil(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "missing.log")
+
+	if err := trimEventLogToBytes(logPath, 100, 50); err != nil {
+		t.Fatalf("expected nil error for missing file, got %v", err)
+	}
+}
+
+func TestTrimEventLogToBytesNoTrimWhenBelowMax(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "events.log")
+	original := "small-file\nstill-small\n"
+	if err := os.WriteFile(logPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := trimEventLogToBytes(logPath, int64(len(original))+10, 5); err != nil {
+		t.Fatalf("trimEventLogToBytes error: %v", err)
+	}
+
+	got, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != original {
+		t.Fatalf("content changed unexpectedly: %q", string(got))
+	}
+}
+
+func TestCountLinesMissingFileReturnsZero(t *testing.T) {
+	if got := countLines(filepath.Join(t.TempDir(), "nope.go")); got != 0 {
+		t.Fatalf("countLines for missing file = %d, want 0", got)
+	}
+}

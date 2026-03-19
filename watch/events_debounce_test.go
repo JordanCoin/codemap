@@ -76,3 +76,23 @@ func TestEventDebouncerPrunesStaleEntries(t *testing.T) {
 		t.Fatal("expected recent path entry to be retained")
 	}
 }
+
+func TestNewEventDebouncerMinimumPruneWindow(t *testing.T) {
+	debouncer := newEventDebouncer(25 * time.Millisecond)
+	if debouncer.pruneAfter != time.Second {
+		t.Fatalf("pruneAfter = %v, want %v", debouncer.pruneAfter, time.Second)
+	}
+}
+
+func TestEventDebouncerSkipsWriteWithChmodMask(t *testing.T) {
+	debouncer := newEventDebouncer(100 * time.Millisecond)
+	base := time.Unix(0, 0)
+	event := fsnotify.Event{Name: "src/file.go", Op: fsnotify.Write | fsnotify.Chmod}
+
+	if debouncer.shouldSkip(event, base) {
+		t.Fatal("first write+chmod should not be skipped")
+	}
+	if !debouncer.shouldSkip(event, base.Add(50*time.Millisecond)) {
+		t.Fatal("rapid write+chmod should be skipped")
+	}
+}

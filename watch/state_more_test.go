@@ -80,6 +80,12 @@ func TestProcessCommandLineCurrentProcess(t *testing.T) {
 	}
 }
 
+func TestProcessCommandLineInvalidPID(t *testing.T) {
+	if _, err := processCommandLine(-1); err == nil {
+		t.Fatal("expected processCommandLine to fail for invalid pid")
+	}
+}
+
 func TestOwnedDaemonHelperProcess(t *testing.T) {
 	if os.Getenv("CODEMAP_WATCH_HELPER") != "1" {
 		return
