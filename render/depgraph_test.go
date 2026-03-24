@@ -2,6 +2,8 @@ package render
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -95,6 +97,83 @@ func TestDepgraphRendersExternalDepsAndSummarySection(t *testing.T) {
 		"1 files",
 		"1 functions",
 		"0 deps",
+	}
+
+	for _, snippet := range expectedSnippets {
+		if !strings.Contains(output, snippet) {
+			t.Fatalf("expected output to contain %q, got:\n%s", snippet, output)
+		}
+	}
+}
+
+func TestDepgraphRendersInternalChainsAndHubs(t *testing.T) {
+	root := t.TempDir()
+
+	files := map[string]string{
+		"go.mod": "module example.com/demo\n\ngo 1.23\n",
+		"pkg/root.go": `package pkg
+import (
+	_ "example.com/demo/pkg/a"
+	_ "example.com/demo/pkg/b"
+)
+func Root() {}
+`,
+		"pkg/a/a.go": `package a
+import (
+	_ "example.com/demo/pkg/c"
+	_ "example.com/demo/pkg/d"
+	_ "example.com/demo/pkg/e"
+	_ "example.com/demo/pkg/f"
+	_ "example.com/demo/pkg/common"
+)
+func A() {}
+`,
+		"pkg/b/b.go": `package b
+import _ "example.com/demo/pkg/common"
+func B() {}
+`,
+		"pkg/c/c.go":         "package c\nfunc C() {}\n",
+		"pkg/d/d.go":         "package d\nfunc D() {}\n",
+		"pkg/e/e.go":         "package e\nfunc E() {}\n",
+		"pkg/f/f.go":         "package f\nfunc F() {}\n",
+		"pkg/common/util.go": "package common\nfunc Util() {}\n",
+	}
+
+	for rel, content := range files {
+		fullPath := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			t.Fatalf("MkdirAll(%q): %v", filepath.Dir(fullPath), err)
+		}
+		if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+			t.Fatalf("WriteFile(%q): %v", fullPath, err)
+		}
+	}
+
+	project := scanner.DepsProject{
+		Root: root,
+		Files: []scanner.FileAnalysis{
+			{Path: "pkg/root.go", Functions: []string{"Root"}},
+			{Path: "pkg/a/a.go", Functions: []string{"A"}},
+			{Path: "pkg/b/b.go", Functions: []string{"B"}},
+			{Path: "pkg/c/c.go", Functions: []string{"C"}},
+			{Path: "pkg/d/d.go", Functions: []string{"D"}},
+			{Path: "pkg/e/e.go", Functions: []string{"E"}},
+			{Path: "pkg/f/f.go", Functions: []string{"F"}},
+			{Path: "pkg/common/util.go", Functions: []string{"Util"}},
+		},
+	}
+
+	var buf bytes.Buffer
+	Depgraph(&buf, project)
+	output := buf.String()
+
+	expectedSnippets := []string{
+		"Pkg",
+		"root ───▶ pkg/a/a, pkg/b/b",
+		"a ──┬──▶ pkg/c/c",
+		"└──▶ pkg/common/util",
+		"HUBS: pkg/common/util (2←)",
+		"8 files · 8 functions · 8 deps",
 	}
 
 	for _, snippet := range expectedSnippets {

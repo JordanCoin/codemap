@@ -3,6 +3,7 @@ package render
 import (
 	"bytes"
 	"math/rand/v2"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -180,6 +181,26 @@ func TestSkylineNoSourceFilesMessage(t *testing.T) {
 	}
 }
 
+func TestSkylineUsesRootBaseWhenNameMissing(t *testing.T) {
+	resetSkylineRNG()
+
+	root := t.TempDir()
+	project := scanner.Project{
+		Root: root,
+		Files: []scanner.FileInfo{
+			{Path: "main.go", Size: 120, Ext: ".go"},
+		},
+	}
+	var buf bytes.Buffer
+
+	Skyline(&buf, project, false)
+
+	out := buf.String()
+	if !strings.Contains(out, filepath.Base(root)) {
+		t.Fatalf("expected output to include root base name %q, got:\n%s", filepath.Base(root), out)
+	}
+}
+
 func TestSkylineRenderStaticIncludesTitleAndStats(t *testing.T) {
 	resetSkylineRNG()
 
@@ -248,6 +269,94 @@ func TestSkylineAnimationModelUpdateAndView(t *testing.T) {
 	if !m2.done {
 		t.Fatal("expected model to be marked done after key press")
 	}
+}
+
+func TestSkylineTickCmdAndAnimationModelBranches(t *testing.T) {
+	resetSkylineRNG()
+
+	t.Run("tick command returns tick message", func(t *testing.T) {
+		cmd := tickCmd()
+		if cmd == nil {
+			t.Fatal("expected non-nil tick command")
+		}
+		if _, ok := cmd().(tickMsg); !ok {
+			t.Fatalf("expected tick command to return tickMsg, got %T", cmd())
+		}
+	})
+
+	t.Run("init returns tick command", func(t *testing.T) {
+		m := animationModel{}
+		if cmd := m.Init(); cmd == nil {
+			t.Fatal("expected non-nil init command")
+		}
+	})
+
+	t.Run("activates shooting star in phase two", func(t *testing.T) {
+		m := animationModel{
+			phase:     2,
+			frame:     9,
+			sceneLeft: 3,
+		}
+
+		updated, cmd := m.Update(tickMsg(time.Now()))
+		if cmd == nil {
+			t.Fatal("expected tick command")
+		}
+		next := updated.(animationModel)
+		if !next.shootingStarActive {
+			t.Fatal("expected shooting star to activate")
+		}
+		if next.shootingStarCol != 3 {
+			t.Fatalf("shootingStarCol = %d, want 3", next.shootingStarCol)
+		}
+	})
+
+	t.Run("deactivates shooting star past scene right edge", func(t *testing.T) {
+		m := animationModel{
+			phase:              2,
+			frame:              3,
+			sceneRight:         10,
+			shootingStarActive: true,
+			shootingStarCol:    9,
+		}
+
+		updated, cmd := m.Update(tickMsg(time.Now()))
+		if cmd == nil {
+			t.Fatal("expected tick command")
+		}
+		next := updated.(animationModel)
+		if next.shootingStarActive {
+			t.Fatal("expected shooting star to deactivate after passing sceneRight")
+		}
+	})
+
+	t.Run("quits after phase two max frame", func(t *testing.T) {
+		m := animationModel{
+			phase: 2,
+			frame: 39,
+		}
+
+		updated, cmd := m.Update(tickMsg(time.Now()))
+		if cmd == nil {
+			t.Fatal("expected quit command")
+		}
+		next := updated.(animationModel)
+		if !next.done {
+			t.Fatal("expected model to be marked done")
+		}
+	})
+
+	t.Run("unknown message returns nil command", func(t *testing.T) {
+		m := animationModel{phase: 1}
+		updated, cmd := m.Update(struct{}{})
+		if cmd != nil {
+			t.Fatal("expected nil command for unknown message")
+		}
+		next := updated.(animationModel)
+		if next.phase != 1 {
+			t.Fatalf("phase changed unexpectedly: got %d", next.phase)
+		}
+	})
 }
 
 func TestSkylineMinMax(t *testing.T) {
