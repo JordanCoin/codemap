@@ -1,0 +1,18 @@
+#!/bin/sh
+# Pre-commit hook: run gofmt on staged Go files
+
+STAGED_GO=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$')
+
+if [ -z "$STAGED_GO" ]; then
+    exit 0
+fi
+
+UNFORMATTED=$(echo "$STAGED_GO" | xargs gofmt -l 2>/dev/null)
+
+if [ -n "$UNFORMATTED" ]; then
+    echo "gofmt required on:"
+    echo "$UNFORMATTED"
+    echo ""
+    echo "Run: gofmt -w $UNFORMATTED"
+    exit 1
+fi

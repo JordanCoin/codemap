@@ -761,11 +761,9 @@ func emitIntentMarker(intent TaskIntent) {
 	fmt.Printf("<!-- codemap:intent %s -->\n", string(data))
 }
 
-// maxSkillOutputBytes limits total skill body output to avoid context blowup.
-const maxSkillOutputBytes = 8 * 1024
-
-// showMatchedSkills loads the skill index, matches against intent, and injects
-// the top skills' instructions into the hook output.
+// showMatchedSkills loads the skill index, matches against intent, and emits
+// a compact marker. Skill bodies are pull-based (via `codemap skill show` or
+// the get_skill MCP tool) to avoid context bloat on every prompt.
 func showMatchedSkills(root string, intent TaskIntent) {
 	idx, err := skills.LoadSkills(root)
 	if err != nil || idx == nil || len(idx.Skills) == 0 {
@@ -788,7 +786,7 @@ func showMatchedSkills(root string, intent TaskIntent) {
 		return
 	}
 
-	// Emit structured marker
+	// Emit structured marker only — no bodies (pull-based, not push-based)
 	type skillRef struct {
 		Name   string `json:"name"`
 		Score  int    `json:"score"`
@@ -800,25 +798,6 @@ func showMatchedSkills(root string, intent TaskIntent) {
 	}
 	if data, err := json.Marshal(refs); err == nil {
 		fmt.Printf("<!-- codemap:skills %s -->\n", string(data))
-	}
-
-	// Inject skill bodies (budget-capped)
-	totalBytes := 0
-	for _, m := range matches {
-		body := m.Skill.Body
-		if totalBytes+len(body) > maxSkillOutputBytes {
-			remaining := maxSkillOutputBytes - totalBytes
-			if remaining > 100 {
-				body = body[:remaining] + "\n... (skill truncated)"
-			} else {
-				break
-			}
-		}
-
-		fmt.Println()
-		fmt.Printf("📘 Skill: %s\n", m.Skill.Meta.Name)
-		fmt.Println(body)
-		totalBytes += len(body)
 	}
 }
 

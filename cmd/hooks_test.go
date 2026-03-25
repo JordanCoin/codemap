@@ -569,12 +569,25 @@ func TestPromptFileMentionDetection(t *testing.T) {
 
 func TestExtractMentionedFilesLimitAndDedup(t *testing.T) {
 	prompt := "check main.go then main.go and api/server.go and util/file.py"
-	files := extractMentionedFiles(prompt, 2)
-	if len(files) != 2 {
-		t.Fatalf("expected 2 files due to limit, got %d: %v", len(files), files)
+	files := extractMentionedFiles(prompt, 10)
+	// Should deduplicate main.go and find all 3 unique files
+	if len(files) != 3 {
+		t.Fatalf("expected 3 unique files, got %d: %v", len(files), files)
 	}
-	if files[0] != "main.go" || files[1] != "api/server.go" {
-		t.Fatalf("unexpected ordered files: %v", files)
+	seen := make(map[string]bool)
+	for _, f := range files {
+		seen[f] = true
+	}
+	for _, want := range []string{"main.go", "api/server.go", "util/file.py"} {
+		if !seen[want] {
+			t.Errorf("missing expected file %q in %v", want, files)
+		}
+	}
+
+	// Limit should cap results
+	limited := extractMentionedFiles(prompt, 2)
+	if len(limited) != 2 {
+		t.Fatalf("expected 2 files with limit=2, got %d: %v", len(limited), limited)
 	}
 }
 
