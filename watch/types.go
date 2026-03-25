@@ -38,16 +38,17 @@ type DepContext struct {
 
 // Graph holds the live code graph state
 type Graph struct {
-	mu        sync.RWMutex
-	Root      string
-	Files     map[string]*scanner.FileInfo // path -> file info
-	FileGraph *scanner.FileGraph           // internal file-to-file dependencies
-	DepCtx    map[string]*DepContext       // path -> dependency context (precomputed)
-	State     map[string]*FileState        // path -> line/size cache for deltas
-	Events    []Event
-	LastScan  time.Time
-	IsGitRepo bool
-	HasDeps   bool // whether deps were successfully computed
+	mu         sync.RWMutex
+	Root       string
+	Files      map[string]*scanner.FileInfo // path -> file info
+	FileGraph  *scanner.FileGraph           // internal file-to-file dependencies
+	DepCtx     map[string]*DepContext       // path -> dependency context (precomputed)
+	State      map[string]*FileState        // path -> line/size cache for deltas
+	Events     []Event
+	WorkingSet *WorkingSet // session working set
+	LastScan   time.Time
+	IsGitRepo  bool
+	HasDeps    bool // whether deps were successfully computed
 }
 
 // State represents the daemon state that hooks can read
@@ -58,4 +59,5 @@ type State struct {
 	Importers    map[string][]string `json:"importers"`     // file -> files that import it
 	Imports      map[string][]string `json:"imports"`       // file -> files it imports
 	RecentEvents []Event             `json:"recent_events"` // last 50 events for timeline
+	WorkingSet   *WorkingSet         `json:"working_set,omitempty"`
 }

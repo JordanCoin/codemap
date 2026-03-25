@@ -165,6 +165,12 @@ func main() {
 		Description: "Build or read a layered handoff artifact for agent switching. Prefix = stable project context, delta = recent work. Supports lazy per-file detail via file=<path>. Set save=true to persist generated artifacts.",
 	}, handleGetHandoff)
 
+	// Tool: get_working_set - Get current session's working set
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_working_set",
+		Description: "Get the current session's working set: files actively being edited, ranked by edit frequency. Shows edit count, net line delta, hub status, and importer count per file. Use this to understand what the user is actively working on right now.",
+	}, handleGetWorkingSet)
+
 	// Run server on stdio
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Printf("Server error: %v", err)
@@ -944,6 +950,46 @@ func handleGetFileContext(ctx context.Context, req *mcp.CallToolRequest, input I
 
 	// Connected files summary
 	sb.WriteString(fmt.Sprintf("CONNECTED: %d files in dependency graph\n", len(connected)))
+
+	return textResult(sb.String()), nil, nil
+}
+
+// handleGetWorkingSet returns the current session's working set
+func handleGetWorkingSet(ctx context.Context, req *mcp.CallToolRequest, input WatchInput) (*mcp.CallToolResult, any, error) {
+	path := input.Path
+	if strings.HasPrefix(path, "~/") {
+		home := os.Getenv("HOME")
+		path = filepath.Join(home, path[2:])
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return errorResult("Invalid path: " + err.Error()), nil, nil
+	}
+
+	// Try daemon state first (includes working set)
+	state := watch.ReadState(absPath)
+	if state == nil || state.WorkingSet == nil || state.WorkingSet.Size() == 0 {
+		return textResult("No working set available.\n\nThe working set tracks files edited during the current session.\nStart a watch daemon first: use start_watch tool."), nil, nil
+	}
+
+	ws := state.WorkingSet
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("WORKING SET: %d files", ws.Size()))
+	if ws.HubCount() > 0 {
+		sb.WriteString(fmt.Sprintf(" (%d hubs)", ws.HubCount()))
+	}
+	sb.WriteString(fmt.Sprintf("\nSession started: %s\n\n", ws.StartedAt.Format("15:04:05")))
+
+	hot := ws.HotFiles(10)
+	for i, wf := range hot {
+		hubStr := ""
+		if wf.IsHub {
+			hubStr = fmt.Sprintf(" [HUB, %d importers]", wf.Importers)
+		}
+		sb.WriteString(fmt.Sprintf("%d. %s — %d edits, %+d lines%s\n",
+			i+1, wf.Path, wf.EditCount, wf.NetDelta, hubStr))
+	}
 
 	return textResult(sb.String()), nil, nil
 }

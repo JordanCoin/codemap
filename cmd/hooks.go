@@ -660,7 +660,7 @@ func hookPostEdit(root string) error {
 	return checkFileImporters(root, filePath)
 }
 
-// hookPromptSubmit detects file mentions in user prompt and shows session context
+// hookPromptSubmit analyzes user prompt with code intelligence and shows context
 func hookPromptSubmit(root string) error {
 	input, err := io.ReadAll(os.Stdin)
 	if err != nil {
@@ -682,10 +682,14 @@ func hookPromptSubmit(root string) error {
 	topK := projCfg.RoutingTopKOrDefault()
 	info := getHubInfoNoFallback(root)
 
-	// Look for file patterns in the prompt.
+	// Extract mentioned files and classify intent
 	filesMentioned := extractMentionedFiles(prompt, topK)
+	intent := classifyIntent(prompt, filesMentioned, info, projCfg)
 
-	// Build output for mentioned files
+	// Emit structured intent marker (machine-readable for tools)
+	emitIntentMarker(intent)
+
+	// Human-readable file context (backwards compatible)
 	var output []string
 	if info != nil {
 		for _, file := range filesMentioned {
@@ -706,12 +710,79 @@ func hookPromptSubmit(root string) error {
 			fmt.Println(line)
 		}
 	}
+
+	// Show suggestions from intent analysis
+	if len(intent.Suggestions) > 0 {
+		fmt.Println()
+		fmt.Printf("💡 Suggestions (risk: %s):\n", intent.RiskLevel)
+		for _, s := range intent.Suggestions {
+			fmt.Printf("   • [%s] %s — %s\n", s.Type, s.Target, s.Reason)
+		}
+	}
+
 	showRouteSuggestions(prompt, projCfg, topK)
 
-	// Show mid-session awareness: what's been edited so far
+	// Show drift warnings if configured
+	if projCfg.Drift.Enabled {
+		showDriftWarnings(root, projCfg.Drift, projCfg.Routing)
+	}
+
+	// Show working set and session progress
+	showWorkingSetSummary(root)
 	showSessionProgress(root)
 
 	return nil
+}
+
+// emitIntentMarker outputs a structured JSON comment for machine consumption.
+func emitIntentMarker(intent TaskIntent) {
+	data, err := json.Marshal(intent)
+	if err != nil {
+		return
+	}
+	fmt.Printf("<!-- codemap:intent %s -->\n", string(data))
+}
+
+// showDriftWarnings checks and displays documentation drift warnings.
+func showDriftWarnings(root string, cfg config.DriftConfig, routing config.RoutingConfig) {
+	warnings := CheckDrift(root, cfg, routing)
+	if len(warnings) == 0 {
+		return
+	}
+
+	fmt.Println()
+	fmt.Println("📖 Doc drift warnings:")
+	for _, w := range warnings {
+		fmt.Printf("   ⚠️  %s: %s\n", w.Subsystem, w.Reason)
+	}
+}
+
+// showWorkingSetSummary displays the current working set from daemon state.
+func showWorkingSetSummary(root string) {
+	state := watch.ReadState(root)
+	if state == nil || state.WorkingSet == nil || state.WorkingSet.Size() == 0 {
+		return
+	}
+
+	ws := state.WorkingSet
+	hot := ws.HotFiles(5)
+	if len(hot) == 0 {
+		return
+	}
+
+	fmt.Println()
+	fmt.Printf("🔧 Working set: %d files", ws.Size())
+	if ws.HubCount() > 0 {
+		fmt.Printf(" (%d hubs)", ws.HubCount())
+	}
+	fmt.Println()
+	for _, wf := range hot {
+		hubStr := ""
+		if wf.IsHub {
+			hubStr = " ⚠️HUB"
+		}
+		fmt.Printf("   • %s (%d edits, %+d lines%s)\n", wf.Path, wf.EditCount, wf.NetDelta, hubStr)
+	}
 }
 
 func extractMentionedFiles(prompt string, limit int) []string {
@@ -739,10 +810,11 @@ func extractMentionedFiles(prompt string, limit int) []string {
 }
 
 type subsystemRouteMatch struct {
-	ID     string
-	Score  int
-	Docs   []string
-	Agents []string
+	ID           string   `json:"id"`
+	Score        int      `json:"score"`
+	Docs         []string `json:"docs,omitempty"`
+	Agents       []string `json:"agents,omitempty"`
+	Instructions string   `json:"instructions,omitempty"`
 }
 
 func matchSubsystemRoutes(prompt string, cfg config.ProjectConfig, topK int) []subsystemRouteMatch {
@@ -775,10 +847,11 @@ func matchSubsystemRoutes(prompt string, cfg config.ProjectConfig, topK int) []s
 			id = "(unnamed)"
 		}
 		matches = append(matches, subsystemRouteMatch{
-			ID:     id,
-			Score:  score,
-			Docs:   subsystem.Docs,
-			Agents: subsystem.Agents,
+			ID:           id,
+			Score:        score,
+			Docs:         subsystem.Docs,
+			Agents:       subsystem.Agents,
+			Instructions: subsystem.Instructions,
 		})
 	}
 
@@ -800,6 +873,10 @@ func showRouteSuggestions(prompt string, cfg config.ProjectConfig, topK int) {
 		return
 	}
 
+	// Emit structured JSON marker for machine consumption
+	emitRouteMarker(matches)
+
+	// Human-readable output (backwards compatible)
 	fmt.Println()
 	fmt.Println("📚 Suggested context routes:")
 	for _, match := range matches {
@@ -811,7 +888,28 @@ func showRouteSuggestions(prompt string, cfg config.ProjectConfig, topK int) {
 			line += fmt.Sprintf(" agents=%s", strings.Join(match.Agents, ", "))
 		}
 		fmt.Println(line)
+
+		// Show subsystem instructions if available (handle multi-line)
+		if match.Instructions != "" {
+			instrLines := strings.Split(match.Instructions, "\n")
+			for i, il := range instrLines {
+				if i == 0 {
+					fmt.Printf("     📝 %s\n", il)
+				} else {
+					fmt.Printf("        %s\n", il)
+				}
+			}
+		}
 	}
+}
+
+// emitRouteMarker outputs structured JSON for matched routes.
+func emitRouteMarker(matches []subsystemRouteMatch) {
+	data, err := json.Marshal(matches)
+	if err != nil {
+		return
+	}
+	fmt.Printf("<!-- codemap:routes %s -->\n", string(data))
 }
 
 // showSessionProgress shows files edited so far in this session

@@ -53,12 +53,13 @@ func NewDaemon(root string, verbose bool) (*Daemon, error) {
 		done:     make(chan struct{}),
 		eventLog: filepath.Join(absRoot, ".codemap", "events.log"),
 		graph: &Graph{
-			Root:      absRoot,
-			Files:     make(map[string]*scanner.FileInfo),
-			DepCtx:    make(map[string]*DepContext),
-			State:     make(map[string]*FileState),
-			Events:    make([]Event, 0),
-			IsGitRepo: isGitRepo,
+			Root:       absRoot,
+			Files:      make(map[string]*scanner.FileInfo),
+			DepCtx:     make(map[string]*DepContext),
+			State:      make(map[string]*FileState),
+			Events:     make([]Event, 0),
+			WorkingSet: NewWorkingSet(),
+			IsGitRepo:  isGitRepo,
 		},
 	}
 

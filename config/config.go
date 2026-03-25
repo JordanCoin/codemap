@@ -44,11 +44,12 @@ type RetrievalConfig struct {
 
 // Subsystem is a lightweight task-routing entry used by prompt-submit hooks.
 type Subsystem struct {
-	ID       string   `json:"id,omitempty"`
-	Paths    []string `json:"paths,omitempty"`
-	Keywords []string `json:"keywords,omitempty"`
-	Docs     []string `json:"docs,omitempty"`
-	Agents   []string `json:"agents,omitempty"`
+	ID           string   `json:"id,omitempty"`
+	Paths        []string `json:"paths,omitempty"`
+	Keywords     []string `json:"keywords,omitempty"`
+	Docs         []string `json:"docs,omitempty"`
+	Agents       []string `json:"agents,omitempty"`
+	Instructions string   `json:"instructions,omitempty"` // markdown instructions injected when this subsystem matches
 }
 
 // DriftConfig stores optional doc drift policy metadata.
