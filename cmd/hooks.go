@@ -19,6 +19,7 @@ import (
 	"codemap/handoff"
 	"codemap/limits"
 	"codemap/scanner"
+	"codemap/skills"
 	"codemap/watch"
 )
 
@@ -722,6 +723,9 @@ func hookPromptSubmit(root string) error {
 
 	showRouteSuggestions(prompt, projCfg, topK)
 
+	// Match and inject relevant skills
+	showMatchedSkills(root, intent)
+
 	// Show drift warnings if configured
 	if projCfg.Drift.Enabled {
 		showDriftWarnings(root, projCfg.Drift, projCfg.Routing)
@@ -741,6 +745,67 @@ func emitIntentMarker(intent TaskIntent) {
 		return
 	}
 	fmt.Printf("<!-- codemap:intent %s -->\n", string(data))
+}
+
+// maxSkillOutputBytes limits total skill body output to avoid context blowup.
+const maxSkillOutputBytes = 8 * 1024
+
+// showMatchedSkills loads the skill index, matches against intent, and injects
+// the top skills' instructions into the hook output.
+func showMatchedSkills(root string, intent TaskIntent) {
+	idx, err := skills.LoadSkills(root)
+	if err != nil || idx == nil || len(idx.Skills) == 0 {
+		return
+	}
+
+	// Detect languages from mentioned files
+	var langs []string
+	langSeen := make(map[string]bool)
+	for _, f := range intent.Files {
+		lang := scanner.DetectLanguage(f)
+		if lang != "" && !langSeen[lang] {
+			langSeen[lang] = true
+			langs = append(langs, lang)
+		}
+	}
+
+	matches := idx.MatchSkills(intent.Category, intent.Files, langs, 3)
+	if len(matches) == 0 {
+		return
+	}
+
+	// Emit structured marker
+	type skillRef struct {
+		Name   string `json:"name"`
+		Score  int    `json:"score"`
+		Reason string `json:"reason"`
+	}
+	var refs []skillRef
+	for _, m := range matches {
+		refs = append(refs, skillRef{Name: m.Skill.Meta.Name, Score: m.Score, Reason: m.Reason})
+	}
+	if data, err := json.Marshal(refs); err == nil {
+		fmt.Printf("<!-- codemap:skills %s -->\n", string(data))
+	}
+
+	// Inject skill bodies (budget-capped)
+	totalBytes := 0
+	for _, m := range matches {
+		body := m.Skill.Body
+		if totalBytes+len(body) > maxSkillOutputBytes {
+			remaining := maxSkillOutputBytes - totalBytes
+			if remaining > 100 {
+				body = body[:remaining] + "\n... (skill truncated)"
+			} else {
+				break
+			}
+		}
+
+		fmt.Println()
+		fmt.Printf("📘 Skill: %s\n", m.Skill.Meta.Name)
+		fmt.Println(body)
+		totalBytes += len(body)
+	}
 }
 
 // showDriftWarnings checks and displays documentation drift warnings.
@@ -919,15 +984,16 @@ func showSessionProgress(root string) {
 		return
 	}
 
-	// Count unique files and hub edits
+	// Count unique files and unique hub files edited
 	filesEdited := make(map[string]bool)
-	hubEdits := 0
+	hubFiles := make(map[string]bool)
 	for _, e := range state.RecentEvents {
 		filesEdited[e.Path] = true
 		if e.IsHub {
-			hubEdits++
+			hubFiles[e.Path] = true
 		}
 	}
+	hubEdits := len(hubFiles)
 
 	if len(filesEdited) == 0 {
 		return
