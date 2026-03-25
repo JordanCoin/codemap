@@ -75,6 +75,8 @@ codemap --diff     # What changed vs main
 codemap handoff .  # Save layered handoff for cross-agent continuation
 codemap --deps .   # Dependency flow (requires ast-grep)
 codemap skill list # Show available skills
+codemap context    # Universal JSON context for any AI tool
+codemap serve      # HTTP API for non-MCP integrations
 ```
 
 ## Other Commands
@@ -329,6 +331,53 @@ The prompt-submit hook performs **intent classification** on every prompt — de
 - Matches and injects **relevant skills** automatically
 - Warns about **documentation drift** when docs are stale
 
+## Context Protocol
+
+A single command that gives **any AI tool** codemap's full intelligence:
+
+```bash
+codemap context                       # Full JSON envelope
+codemap context --for "refactor auth" # With pre-classified intent + matched skills
+codemap context --compact             # Minimal for token-constrained agents
+```
+
+The output is a `ContextEnvelope` containing project metadata, intent classification, working set, matched skills, and handoff reference. Cursor, Windsurf, Codex, custom agents — anything that can shell out gets code-aware intelligence.
+
+## HTTP API
+
+For tools that prefer HTTP over CLI:
+
+```bash
+codemap serve --port 9471
+```
+
+| Endpoint | Returns |
+|----------|---------|
+| `GET /api/context?intent=refactor+auth` | Full context envelope |
+| `GET /api/context?compact=true` | Minimal envelope |
+| `GET /api/skills` | All skills with metadata |
+| `GET /api/skills?language=go&category=refactor` | Filtered skill matches |
+| `GET /api/skills/<name>` | Full skill body |
+| `GET /api/working-set` | Current session's active files |
+| `GET /api/health` | Server health check |
+
+Binds to `127.0.0.1` by default. Use `--host 0.0.0.0` to expose to network.
+
+## Agent-Aware Handoff
+
+When you switch between AI agents (Claude → Codex → Cursor), codemap tracks who worked and what they did:
+
+```json
+{
+  "agent_history": [
+    {"agent_id": "claude-code", "files_edited": ["cmd/hooks.go", "main.go"], "ended_at": "..."},
+    {"agent_id": "codex", "files_edited": ["scanner/types.go"], "ended_at": "..."}
+  ]
+}
+```
+
+Agent detection is automatic via environment variables. History is carried across sessions (capped at 20 entries) in the handoff artifact.
+
 ## Roadmap
 
 - [x] Diff mode, Skyline mode, Dependency flow
@@ -340,9 +389,11 @@ The prompt-submit hook performs **intent classification** on every prompt — de
 - [x] Remote repo support (GitHub, GitLab)
 - [x] Intelligent routing (intent classification, risk analysis, working set)
 - [x] Skills framework (builtin + custom skills, CLI, MCP tools)
-- [ ] Context protocol (`codemap context` — universal JSON envelope for any AI tool)
-- [ ] HTTP API (`codemap serve` — REST endpoints for non-MCP integrations)
-- [ ] Agent-aware handoff (multi-agent history tracking)
+- [x] Context protocol (`codemap context` — universal JSON envelope for any AI tool)
+- [x] HTTP API (`codemap serve` — REST endpoints for non-MCP integrations)
+- [x] Agent-aware handoff (multi-agent history tracking)
+- [ ] Community skill registry (GitHub-hosted, `codemap skill add <name>`)
+- [ ] Enhanced analysis (entry points, key types)
 
 ## Contributing
 
