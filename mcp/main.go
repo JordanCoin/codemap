@@ -19,6 +19,7 @@ import (
 	"codemap/limits"
 	"codemap/render"
 	"codemap/scanner"
+	"codemap/skills"
 	"codemap/watch"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -63,6 +64,11 @@ type WatchInput struct {
 type WatchActivityInput struct {
 	Path    string `json:"path" jsonschema:"Path to the project directory"`
 	Minutes int    `json:"minutes,omitempty" jsonschema:"Look back this many minutes (default: 30)"`
+}
+
+type SkillInput struct {
+	Path string `json:"path" jsonschema:"Path to the project directory"`
+	Name string `json:"name" jsonschema:"Skill name to retrieve"`
 }
 
 type HandoffInput struct {
@@ -170,6 +176,20 @@ func main() {
 		Name:        "get_working_set",
 		Description: "Get the current session's working set: files actively being edited, ranked by edit frequency. Shows edit count, net line delta, hub status, and importer count per file. Use this to understand what the user is actively working on right now.",
 	}, handleGetWorkingSet)
+
+	// === SKILLS TOOLS ===
+
+	// Tool: list_skills - List available skills (metadata only)
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "list_skills",
+		Description: "List all available skills with their names, descriptions, keywords, and source (builtin/project/global). Returns metadata only — use get_skill for full instructions.",
+	}, handleListSkills)
+
+	// Tool: get_skill - Get full skill instructions
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_skill",
+		Description: "Load the full instructions for a specific skill by name. Returns the complete markdown body with step-by-step guidance. Use after list_skills to get detailed guidance for a task.",
+	}, handleGetSkill)
 
 	// Run server on stdio
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
@@ -991,5 +1011,79 @@ func handleGetWorkingSet(ctx context.Context, req *mcp.CallToolRequest, input Wa
 			i+1, wf.Path, wf.EditCount, wf.NetDelta, hubStr))
 	}
 
+	return textResult(sb.String()), nil, nil
+}
+
+// handleListSkills returns metadata for all available skills
+func handleListSkills(ctx context.Context, req *mcp.CallToolRequest, input PathInput) (*mcp.CallToolResult, any, error) {
+	path := input.Path
+	if strings.HasPrefix(path, "~/") {
+		home := os.Getenv("HOME")
+		path = filepath.Join(home, path[2:])
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return errorResult("Invalid path: " + err.Error()), nil, nil
+	}
+
+	idx, err := skills.LoadSkills(absPath)
+	if err != nil {
+		return errorResult("Error loading skills: " + err.Error()), nil, nil
+	}
+
+	if len(idx.Skills) == 0 {
+		return textResult("No skills available.\n\nCreate custom skills in .codemap/skills/ using 'codemap skill init'."), nil, nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("AVAILABLE SKILLS: %d\n\n", len(idx.Skills)))
+	for _, s := range idx.Skills {
+		sb.WriteString(fmt.Sprintf("%-20s [%s] %s\n", s.Meta.Name, s.Source, s.Meta.Description))
+		if len(s.Meta.Keywords) > 0 {
+			sb.WriteString(fmt.Sprintf("  keywords: %s\n", strings.Join(s.Meta.Keywords, ", ")))
+		}
+		if len(s.Meta.Languages) > 0 {
+			sb.WriteString(fmt.Sprintf("  languages: %s\n", strings.Join(s.Meta.Languages, ", ")))
+		}
+	}
+	return textResult(sb.String()), nil, nil
+}
+
+// handleGetSkill returns the full body of a specific skill
+func handleGetSkill(ctx context.Context, req *mcp.CallToolRequest, input SkillInput) (*mcp.CallToolResult, any, error) {
+	path := input.Path
+	if strings.HasPrefix(path, "~/") {
+		home := os.Getenv("HOME")
+		path = filepath.Join(home, path[2:])
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return errorResult("Invalid path: " + err.Error()), nil, nil
+	}
+
+	idx, err := skills.LoadSkills(absPath)
+	if err != nil {
+		return errorResult("Error loading skills: " + err.Error()), nil, nil
+	}
+
+	skill, ok := idx.ByName[input.Name]
+	if !ok {
+		available := make([]string, 0, len(idx.Skills))
+		for _, s := range idx.Skills {
+			available = append(available, s.Meta.Name)
+		}
+		return errorResult(fmt.Sprintf("Skill %q not found.\nAvailable: %s", input.Name, strings.Join(available, ", "))), nil, nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("# %s\n\n", skill.Meta.Name))
+	sb.WriteString(fmt.Sprintf("Source: %s | Priority: %d\n", skill.Source, skill.Meta.Priority))
+	if skill.Meta.Description != "" {
+		sb.WriteString(fmt.Sprintf("Description: %s\n", skill.Meta.Description))
+	}
+	sb.WriteString("\n")
+	sb.WriteString(skill.Body)
 	return textResult(sb.String()), nil, nil
 }

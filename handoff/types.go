@@ -70,6 +70,15 @@ type CacheMetrics struct {
 	PreviousCombinedHash string  `json:"previous_combined_hash,omitempty"`
 }
 
+// AgentEntry records which agent worked on this codebase and when.
+type AgentEntry struct {
+	AgentID     string    `json:"agent_id"` // "claude-code", "codex", "cursor", custom
+	StartedAt   time.Time `json:"started_at"`
+	EndedAt     time.Time `json:"ended_at,omitempty"`
+	FilesEdited []string  `json:"files_edited,omitempty"`
+	Summary     string    `json:"summary,omitempty"`
+}
+
 // Artifact is the persisted handoff payload shared between agents.
 type Artifact struct {
 	SchemaVersion int            `json:"schema_version"`
@@ -83,6 +92,9 @@ type Artifact struct {
 	DeltaHash     string         `json:"delta_hash"`
 	CombinedHash  string         `json:"combined_hash"`
 	Metrics       CacheMetrics   `json:"metrics"`
+
+	// Agent history — tracks which agents have worked on this codebase.
+	AgentHistory []AgentEntry `json:"agent_history,omitempty"`
 
 	// Legacy top-level fields preserved for backward compatibility.
 	// Deprecated: these mirrors will be removed in schema v2 after clients migrate to Prefix/Delta.

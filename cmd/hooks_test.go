@@ -1015,8 +1015,8 @@ func TestShowSessionProgress(t *testing.T) {
 			},
 		})
 		out := captureOutput(func() { showSessionProgress(root) })
-		if !strings.Contains(out, "2 hub edits") {
-			t.Errorf("expected '2 hub edits', got %q", out)
+		if !strings.Contains(out, "1 hub edits") {
+			t.Errorf("expected '1 hub edits' (unique hub files, not events), got %q", out)
 		}
 		if !strings.Contains(out, "2 files edited") {
 			t.Errorf("expected '2 files edited', got %q", out)
