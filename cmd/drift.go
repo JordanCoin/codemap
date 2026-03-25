@@ -13,8 +13,8 @@ import (
 type DriftWarning struct {
 	Subsystem     string `json:"subsystem"`
 	CodePath      string `json:"code_path"`      // pattern or file that changed
-	DocPath       string `json:"doc_path"`        // doc file that may need updating
-	CommitsBehind int    `json:"commits_behind"`  // how many code commits since doc was last updated
+	DocPath       string `json:"doc_path"`       // doc file that may need updating
+	CommitsBehind int    `json:"commits_behind"` // how many code commits since doc was last updated
 	Reason        string `json:"reason"`
 }
 

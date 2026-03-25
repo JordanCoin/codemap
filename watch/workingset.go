@@ -8,7 +8,7 @@ import (
 // WorkingSet tracks files actively being edited in the current session.
 type WorkingSet struct {
 	Files     map[string]*WorkingFile `json:"files"`
-	StartedAt time.Time              `json:"started_at"`
+	StartedAt time.Time               `json:"started_at"`
 }
 
 // WorkingFile tracks per-file editing activity.

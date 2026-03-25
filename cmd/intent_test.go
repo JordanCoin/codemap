@@ -8,9 +8,9 @@ import (
 
 func TestClassifyIntent_Categories(t *testing.T) {
 	tests := []struct {
-		name     string
-		prompt   string
-		wantCat  string
+		name    string
+		prompt  string
+		wantCat string
 	}{
 		{"refactor keyword", "refactor the scanner package", "refactor"},
 		{"rename keyword", "rename this function to something better", "refactor"},
