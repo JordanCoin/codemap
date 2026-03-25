@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -91,17 +92,20 @@ func IsSourceExt(ext string) bool {
 	return ok
 }
 
-// SourceExtensions returns all recognized source file extensions (with leading dot).
+// SourceExtensions returns all recognized source file extensions (with leading dot),
+// sorted for deterministic output.
 func SourceExtensions() []string {
 	exts := make([]string, 0, len(extToLang))
 	for ext := range extToLang {
 		exts = append(exts, ext)
 	}
+	sort.Strings(exts)
 	return exts
 }
 
 // PromptExtensions returns extension strings without the leading dot,
 // suitable for regex-based file mention extraction from prompts.
+// Sorted for deterministic output.
 func PromptExtensions() []string {
 	seen := make(map[string]bool)
 	var exts []string
@@ -112,18 +116,30 @@ func PromptExtensions() []string {
 			exts = append(exts, bare)
 		}
 	}
+	sort.Strings(exts)
 	return exts
 }
 
 // ResolverExtensions returns extensions used for import path resolution,
 // including index-file patterns for JS/TS/Python ecosystems.
+// Sorted by length descending so longer extensions match first (.tsx before .ts),
+// with empty string last as the final fallback.
 func ResolverExtensions() []string {
-	exts := []string{""}
+	var exts []string
 	for ext := range extToLang {
 		exts = append(exts, ext)
 	}
+	// Sort by length descending, then alphabetically for stability
+	sort.Slice(exts, func(i, j int) bool {
+		if len(exts[i]) != len(exts[j]) {
+			return len(exts[i]) > len(exts[j])
+		}
+		return exts[i] < exts[j]
+	})
 	// Index-file patterns for module resolution
 	exts = append(exts, "/index.js", "/index.ts", "/index.tsx", "/__init__.py", "/mod.rs")
+	// Empty string last — bare path match as final fallback
+	exts = append(exts, "")
 	return exts
 }
 
