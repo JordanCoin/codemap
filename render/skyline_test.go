@@ -3,6 +3,7 @@ package render
 import (
 	"bytes"
 	"math/rand/v2"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -272,5 +273,168 @@ func TestSkylineMinMax(t *testing.T) {
 				t.Fatalf("min(%d, %d) = %d, want %d", tt.a, tt.b, got, tt.wantMin)
 			}
 		})
+	}
+}
+
+func TestSkylineUsesRootBasenameWhenProjectNameEmpty(t *testing.T) {
+	resetSkylineRNG()
+
+	root := t.TempDir()
+	project := scanner.Project{
+		Root: root,
+		Files: []scanner.FileInfo{
+			{Path: "main.go", Ext: ".go", Size: 120},
+		},
+	}
+
+	var buf bytes.Buffer
+	Skyline(&buf, project, false)
+
+	out := buf.String()
+	expectedTitle := "─── " + filepath.Base(root) + " ───"
+	if !strings.Contains(out, expectedTitle) {
+		t.Fatalf("expected title %q in output, got:\n%s", expectedTitle, out)
+	}
+}
+
+func TestSkylineAnimateFallsBackToStaticForNonStdoutWriter(t *testing.T) {
+	resetSkylineRNG()
+
+	project := scanner.Project{
+		Root: t.TempDir(),
+		Name: "AnimatedDemo",
+		Files: []scanner.FileInfo{
+			{Path: "main.go", Ext: ".go", Size: 256},
+		},
+	}
+
+	var buf bytes.Buffer
+	Skyline(&buf, project, true)
+
+	out := buf.String()
+	if !strings.Contains(out, "─── AnimatedDemo ───") {
+		t.Fatalf("expected static skyline title in output, got:\n%s", out)
+	}
+}
+
+func TestAnimationModelInitReturnsTickCommand(t *testing.T) {
+	m := animationModel{}
+
+	cmd := m.Init()
+	if cmd == nil {
+		t.Fatal("expected non-nil init command")
+	}
+
+	msg := cmd()
+	if _, ok := msg.(tickMsg); !ok {
+		t.Fatalf("expected tickMsg from init command, got %T", msg)
+	}
+}
+
+func TestAnimationModelUpdatePhaseTwoStartsAndMovesShootingStar(t *testing.T) {
+	resetSkylineRNG()
+
+	m := animationModel{
+		phase:      2,
+		frame:      9,
+		sceneLeft:  2,
+		sceneRight: 20,
+	}
+
+	updated, cmd := m.Update(tickMsg(time.Now()))
+	if cmd == nil {
+		t.Fatal("expected tick command while animating")
+	}
+
+	m1 := updated.(animationModel)
+	if !m1.shootingStarActive {
+		t.Fatal("expected shooting star to become active at frame 10")
+	}
+	if m1.shootingStarCol != m.sceneLeft {
+		t.Fatalf("expected shooting star column %d, got %d", m.sceneLeft, m1.shootingStarCol)
+	}
+
+	updated, cmd = m1.Update(tickMsg(time.Now()))
+	if cmd == nil {
+		t.Fatal("expected tick command while animating")
+	}
+	m2 := updated.(animationModel)
+	if m2.shootingStarCol != m1.shootingStarCol+3 {
+		t.Fatalf("expected shooting star to move by 3, got %d -> %d", m1.shootingStarCol, m2.shootingStarCol)
+	}
+}
+
+func TestAnimationModelUpdateDeactivatesShootingStarPastSceneRight(t *testing.T) {
+	m := animationModel{
+		phase:              2,
+		frame:              5,
+		sceneRight:         6,
+		shootingStarActive: true,
+		shootingStarCol:    5,
+	}
+
+	updated, cmd := m.Update(tickMsg(time.Now()))
+	if cmd == nil {
+		t.Fatal("expected tick command while animating")
+	}
+
+	m1 := updated.(animationModel)
+	if m1.shootingStarActive {
+		t.Fatalf("expected shooting star to deactivate when past sceneRight=%d, got active", m.sceneRight)
+	}
+}
+
+func TestAnimationModelUpdatePhaseTwoCompletesAtFrameForty(t *testing.T) {
+	m := animationModel{
+		phase: 2,
+		frame: 39,
+	}
+
+	updated, cmd := m.Update(tickMsg(time.Now()))
+	if cmd == nil {
+		t.Fatal("expected quit command when animation completes")
+	}
+
+	m1 := updated.(animationModel)
+	if !m1.done {
+		t.Fatal("expected model to be marked done at frame 40")
+	}
+}
+
+func TestAnimationModelUpdateUnknownMessageReturnsNilCommand(t *testing.T) {
+	m := animationModel{}
+
+	updated, cmd := m.Update(struct{}{})
+	if cmd != nil {
+		t.Fatal("expected nil command for unknown message")
+	}
+	if updated.(animationModel).done {
+		t.Fatal("expected model to remain unchanged for unknown message")
+	}
+}
+
+func TestAnimationModelViewRendersShootingStarInPhaseTwo(t *testing.T) {
+	resetSkylineRNG()
+
+	m := animationModel{
+		arranged:           []building{{height: 4, char: '▓', color: Cyan, extLabel: ".go", gap: 1}},
+		width:              24,
+		leftMargin:         2,
+		sceneLeft:          1,
+		sceneRight:         20,
+		sceneWidth:         19,
+		starPositions:      [][2]int{{0, 2}},
+		moonCol:            10,
+		maxBuildingHeight:  4,
+		phase:              2,
+		visibleRows:        5,
+		shootingStarRow:    0,
+		shootingStarCol:    3,
+		shootingStarActive: true,
+	}
+
+	out := m.View()
+	if !strings.Contains(out, "★") {
+		t.Fatalf("expected shooting star in view, got:\n%s", out)
 	}
 }
