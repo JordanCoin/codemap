@@ -27,7 +27,7 @@ type ContextSuggestion struct {
 }
 
 // intentSignal represents a word/phrase that signals a specific category.
-// Multi-word phrases (e.g. "how does") are matched first and have higher specificity.
+// Multi-word phrases (e.g. "how does") can be given higher weights for greater specificity.
 type intentSignal struct {
 	Phrase string
 	Weight int
@@ -190,7 +190,7 @@ func analyzeRisk(files []string, info *hubInfo, category string) (string, []Cont
 				Target: file,
 				Reason: formatImporterReason(file, importerCount),
 			})
-			// For refactors on hubs, suggest checking deps
+			// For refactors and features on hubs, suggest checking deps
 			if category == "refactor" || category == "feature" {
 				suggestions = append(suggestions, ContextSuggestion{
 					Type:   "check-deps",

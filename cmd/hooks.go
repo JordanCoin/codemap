@@ -889,9 +889,16 @@ func showRouteSuggestions(prompt string, cfg config.ProjectConfig, topK int) {
 		}
 		fmt.Println(line)
 
-		// Show subsystem instructions if available
+		// Show subsystem instructions if available (handle multi-line)
 		if match.Instructions != "" {
-			fmt.Printf("     📝 %s\n", match.Instructions)
+			instrLines := strings.Split(match.Instructions, "\n")
+			for i, il := range instrLines {
+				if i == 0 {
+					fmt.Printf("     📝 %s\n", il)
+				} else {
+					fmt.Printf("        %s\n", il)
+				}
+			}
 		}
 	}
 }

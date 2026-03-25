@@ -33,9 +33,15 @@ func CheckDrift(root string, cfg config.DriftConfig, routing config.RoutingConfi
 
 	// Build a map of subsystem ID -> configured doc paths
 	subsystemDocs := make(map[string][]string)
+	subsystemPaths := make(map[string][]string)
 	for _, sub := range routing.Subsystems {
-		if sub.ID != "" && len(sub.Docs) > 0 {
-			subsystemDocs[sub.ID] = sub.Docs
+		if sub.ID != "" {
+			if len(sub.Docs) > 0 {
+				subsystemDocs[sub.ID] = sub.Docs
+			}
+			if len(sub.Paths) > 0 {
+				subsystemPaths[sub.ID] = sub.Paths
+			}
 		}
 	}
 
@@ -43,7 +49,7 @@ func CheckDrift(root string, cfg config.DriftConfig, routing config.RoutingConfi
 
 	for _, subsystemID := range cfg.RequireDocsFor {
 		docPaths := resolveDocPaths(subsystemID, subsystemDocs)
-		codePaths := guessCodePaths(subsystemID)
+		codePaths := resolveCodePaths(subsystemID, subsystemPaths)
 		w := checkSubsystemDrift(root, subsystemID, docPaths, codePaths, recentCommits)
 		warnings = append(warnings, w...)
 	}
@@ -71,13 +77,24 @@ func resolveDocPaths(subsystemID string, subsystemDocs map[string][]string) []st
 func checkSubsystemDrift(root, subsystemID string, docPaths, codePaths []string, recentCommits int) []DriftWarning {
 	var warnings []DriftWarning
 
+	// Cache git log results to avoid redundant calls within this subsystem check
+	cache := make(map[string]int)
+	cachedCommitsAgo := func(path string) int {
+		if v, ok := cache[path]; ok {
+			return v
+		}
+		v := lastModifiedCommitsAgo(root, path, recentCommits)
+		cache[path] = v
+		return v
+	}
+
 	for _, docPath := range docPaths {
 		// Check how many commits ago the doc was last modified.
 		// -1 means the doc has no commits in the window — treat as very stale.
-		docCommits := lastModifiedCommitsAgo(root, docPath, recentCommits)
+		docCommits := cachedCommitsAgo(docPath)
 
 		for _, codePath := range codePaths {
-			codeCommits := lastModifiedCommitsAgo(root, codePath, recentCommits)
+			codeCommits := cachedCommitsAgo(codePath)
 			if codeCommits < 0 {
 				continue // code hasn't changed in window — no drift
 			}
@@ -145,6 +162,26 @@ func lastModifiedCommitsAgo(root, path string, window int) int {
 	}
 
 	return -1
+}
+
+// resolveCodePaths returns code paths for a subsystem. Uses configured paths
+// first, then falls back to convention-based guessing.
+func resolveCodePaths(subsystemID string, subsystemPaths map[string][]string) []string {
+	if paths, ok := subsystemPaths[subsystemID]; ok && len(paths) > 0 {
+		// Strip glob suffixes for git log compatibility (watch/** -> watch/)
+		var cleaned []string
+		for _, p := range paths {
+			p = strings.TrimSuffix(p, "**")
+			p = strings.TrimSuffix(p, "*")
+			if p != "" {
+				cleaned = append(cleaned, p)
+			}
+		}
+		if len(cleaned) > 0 {
+			return cleaned
+		}
+	}
+	return guessCodePaths(subsystemID)
 }
 
 // guessCodePaths returns likely code directory paths for a subsystem ID.

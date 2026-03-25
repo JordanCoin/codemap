@@ -94,6 +94,27 @@ func (ws *WorkingSet) HotFiles(topN int) []WorkingFile {
 	return all
 }
 
+// Snapshot returns a capped copy of the working set with at most maxFiles entries,
+// keeping the most-edited files. Returns nil if the set is empty.
+func (ws *WorkingSet) Snapshot(maxFiles int) *WorkingSet {
+	if ws == nil || len(ws.Files) == 0 {
+		return nil
+	}
+	if len(ws.Files) <= maxFiles {
+		return ws
+	}
+	hot := ws.HotFiles(maxFiles)
+	snap := &WorkingSet{
+		Files:     make(map[string]*WorkingFile, len(hot)),
+		StartedAt: ws.StartedAt,
+	}
+	for i := range hot {
+		wf := hot[i]
+		snap.Files[wf.Path] = &wf
+	}
+	return snap
+}
+
 // Size returns the number of files in the working set.
 func (ws *WorkingSet) Size() int {
 	return len(ws.Files)

@@ -398,7 +398,7 @@ func (d *Daemon) writeState() {
 		Importers:    map[string][]string{},
 		Imports:      map[string][]string{},
 		RecentEvents: eventsCopy,
-		WorkingSet:   d.graph.WorkingSet,
+		WorkingSet:   d.graph.WorkingSet.Snapshot(50),
 	}
 	if d.graph.FileGraph != nil {
 		state.Hubs = d.graph.FileGraph.HubFiles()
