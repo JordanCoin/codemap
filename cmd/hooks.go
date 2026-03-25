@@ -735,7 +735,20 @@ func hookPromptSubmit(root string) error {
 	showWorkingSetSummary(root)
 	showSessionProgress(root)
 
+	// Write statusline state for terminal UI
+	writeStatuslineState(root, intent)
+
 	return nil
+}
+
+// writeStatuslineState writes a tiny file for the statusline to read.
+func writeStatuslineState(root string, intent TaskIntent) {
+	codemapDir := filepath.Join(root, ".codemap")
+	status := intent.Category
+	if intent.RiskLevel != "low" {
+		status += " " + intent.RiskLevel
+	}
+	os.WriteFile(filepath.Join(codemapDir, "status"), []byte(status), 0644)
 }
 
 // emitIntentMarker outputs a structured JSON comment for machine consumption.
