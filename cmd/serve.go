@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"codemap/skills"
 	"codemap/watch"
@@ -15,10 +16,10 @@ import (
 
 // RunServe starts a lightweight HTTP server exposing codemap's intelligence.
 func RunServe(args []string, root string) {
-	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	port := fs.Int("port", 9471, "Port to listen on")
+	host := fs.String("host", "127.0.0.1", "Host to bind to (default: localhost only)")
 	if err := fs.Parse(args); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -121,11 +122,11 @@ func RunServe(args []string, root string) {
 
 	// GET /api/health — simple health check
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]string{"status": "ok", "root": absRoot})
+		writeJSON(w, map[string]string{"status": "ok"})
 	})
 
-	addr := fmt.Sprintf(":%d", *port)
-	fmt.Printf("codemap serve — listening on http://localhost%s\n", addr)
+	addr := fmt.Sprintf("%s:%d", *host, *port)
+	fmt.Printf("codemap serve — listening on http://%s\n", addr)
 	fmt.Printf("  GET /api/context?intent=refactor+auth&compact=true\n")
 	fmt.Printf("  GET /api/skills?language=go&category=refactor\n")
 	fmt.Printf("  GET /api/skills/<name>\n")
@@ -133,7 +134,16 @@ func RunServe(args []string, root string) {
 	fmt.Printf("  GET /api/health\n")
 	fmt.Println()
 
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+
+	if err := server.ListenAndServe(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}

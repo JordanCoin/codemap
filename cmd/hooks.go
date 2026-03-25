@@ -1205,7 +1205,7 @@ func detectAgentID() string {
 	if os.Getenv("CODEX") == "1" {
 		return "codex"
 	}
-	// Cursor sets CURSOR=1
+	// Cursor sets CURSOR_SESSION_ID
 	if os.Getenv("CURSOR_SESSION_ID") != "" {
 		return "cursor"
 	}

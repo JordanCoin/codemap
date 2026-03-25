@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"codemap/config"
@@ -75,11 +76,10 @@ type BudgetInfo struct {
 
 // RunContext handles the "codemap context" subcommand.
 func RunContext(args []string, root string) {
-	fs := flag.NewFlagSet("context", flag.ExitOnError)
+	fs := flag.NewFlagSet("context", flag.ContinueOnError)
 	forPrompt := fs.String("for", "", "Pre-classify intent for this prompt")
 	compact := fs.Bool("compact", false, "Minimal output for token-constrained agents")
 	if err := fs.Parse(args); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -205,7 +205,7 @@ func buildProjectContext(root string, info *hubInfo) ProjectContext {
 		}
 	}
 
-	// Detect languages from file extensions
+	// Detect languages from all known files (importers + imports + working set)
 	langSet := make(map[string]bool)
 	if info != nil {
 		for file := range info.Importers {
@@ -213,10 +213,22 @@ func buildProjectContext(root string, info *hubInfo) ProjectContext {
 				langSet[lang] = true
 			}
 		}
+		for file := range info.Imports {
+			if lang := scanner.DetectLanguage(file); lang != "" {
+				langSet[lang] = true
+			}
+		}
+	}
+	// Also check hubs for language detection (covers repos with no importers map)
+	for _, hub := range ctx.TopHubs {
+		if lang := scanner.DetectLanguage(hub); lang != "" {
+			langSet[lang] = true
+		}
 	}
 	for lang := range langSet {
 		ctx.Languages = append(ctx.Languages, lang)
 	}
+	sort.Strings(ctx.Languages)
 
 	return ctx
 }
