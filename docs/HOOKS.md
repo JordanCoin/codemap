@@ -8,7 +8,7 @@ Turn Claude into a codebase-aware assistant. These hooks give Claude automatic c
 |------|--------------|
 | **Session starts** | Claude sees full project tree, hubs, branch diff, and last session context |
 | **After compact** | Claude sees the tree again (context restored) |
-| **You mention a file** | Claude gets hub context + mid-session awareness (files edited so far) |
+| **You mention a file** | Claude gets intent analysis, hub context, risk level, working set, and suggestions |
 | **Before editing** | Claude sees who imports the file AND what hubs it imports |
 | **After editing** | Claude sees the impact of what was just changed |
 | **Before memory clears** | Hub state is saved so Claude remembers what's important |
@@ -153,7 +153,8 @@ Example `.codemap/config.json`:
         "paths": ["watch/**"],
         "keywords": ["hook", "daemon", "events"],
         "docs": ["docs/HOOKS.md"],
-        "agents": ["codemap-hook-triage"]
+        "agents": ["codemap-hook-triage"],
+        "instructions": "This subsystem manages file watching. Check daemon state before modifying events."
       }
     ]
   },
@@ -171,8 +172,12 @@ All fields are optional. When set:
 - `depth` — overrides the adaptive depth calculation
 - `mode` — optional hook orchestration hint (`auto`, `structured`, `ad-hoc`)
 - `budgets` — optional hook budgets (`session_start_bytes`, `diff_bytes`, `max_hubs`)
-- `routing` — optional prompt-submit routing hints (keyword `strategy`, `top_k`, subsystem docs/agents)
-- `drift` — optional drift policy metadata for external checks
+- `routing` — prompt-submit routing hints (keyword `strategy`, `top_k`, subsystem definitions)
+  - `subsystems[].instructions` — markdown instructions injected when this subsystem matches (e.g., domain-specific guidance for Claude)
+- `drift` — documentation drift detection
+  - `enabled` — when true, prompt-submit checks if docs are stale relative to code changes
+  - `recent_commits` — how far back to look in git history (default: 10)
+  - `require_docs_for` — subsystem IDs whose documentation freshness should be checked
 
 CLI flags (`--only`, `--exclude`, `--depth`) always override config values. The bare `codemap` command also respects this config.
 
@@ -230,13 +235,57 @@ Or if it's a hub:
    ... and 7 more
 ```
 
-### When You Mention a File
+### When You Mention a File (Prompt Submit)
+
+The prompt-submit hook now performs **intent classification** — it analyzes what you're trying to do and surfaces relevant code intelligence.
+
 ```
+<!-- codemap:intent {"category":"refactor","confidence":1,"risk":"high",...} -->
+
 📍 Context for mentioned files:
    ⚠️  scanner/types.go is a HUB (imported by 10 files)
 
+💡 Suggestions (risk: high):
+   • [review-hub] scanner/types.go — hub file imported by 10 files — changes have wide impact
+   • [check-deps] scanner/types.go — verify dependents still compile after changes
+   • [run-tests] . — run full test suite after refactoring
+
+<!-- codemap:routes [{"id":"scanning","score":3,"docs":["docs/MCP.md"]}] -->
+
+📚 Suggested context routes:
+   • scanning (score=3) docs=docs/MCP.md
+
+🔧 Working set: 3 files (1 hubs)
+   • scanner/types.go (5 edits, +15 lines ⚠️HUB)
+   • cmd/hooks.go (3 edits, +42 lines)
+
 📊 Session so far: 5 files edited, 2 hub edits
 ```
+
+**Structured markers** (`<!-- codemap:intent -->`, `<!-- codemap:routes -->`) are machine-readable JSON that tools can parse. The human-readable output is always shown alongside them.
+
+#### Intent Categories
+
+| Category | Triggered By | Extra Context |
+|----------|-------------|---------------|
+| `refactor` | refactor, rename, move, extract, split | Dependency checks, full test suite |
+| `bugfix` | fix, bug, broken, error, crash | Test suggestions for affected package |
+| `feature` | add, implement, create, new, build | Hub impact if touching hub files |
+| `explore` | how does, where is, what uses | Subsystem routing suggestions |
+| `test` | test, coverage, spec, benchmark | - |
+| `docs` | document, readme, changelog | Drift warnings if enabled |
+
+#### Risk Levels
+
+| Level | Meaning |
+|-------|---------|
+| `low` | No hub files involved |
+| `medium` | 1 hub file in scope |
+| `high` | 2+ hub files, or a hub with 8+ importers |
+
+#### Working Set
+
+The **working set** tracks files you've edited during the current session. It shows edit count, net line delta, and hub status — giving Claude awareness of your active work context.
 
 ### At Session End
 ```
@@ -275,7 +324,7 @@ If a recent handoff exists **for the current branch**, session start includes a 
 | `codemap hook session-start` | `SessionStart` | Full tree, hubs, branch diff, last session context |
 | `codemap hook pre-edit` | `PreToolUse` (Edit\|Write) | Who imports file + what hubs it imports |
 | `codemap hook post-edit` | `PostToolUse` (Edit\|Write) | Impact of changes (same as pre-edit) |
-| `codemap hook prompt-submit` | `UserPromptSubmit` | Hub context for mentioned files + session progress |
+| `codemap hook prompt-submit` | `UserPromptSubmit` | Intent classification, hub context, risk analysis, working set, route suggestions, drift warnings |
 | `codemap hook pre-compact` | `PreCompact` | Saves hub state to .codemap/hubs.txt |
 | `codemap hook session-stop` | `SessionEnd` | Edit timeline + writes `.codemap/handoff.latest.json`, `.codemap/handoff.prefix.json`, `.codemap/handoff.delta.json` |
 

@@ -261,6 +261,14 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 	}
 
 	d.graph.Events = appendBoundedEvents(d.graph.Events, event)
+
+	// Update working set for create/write events
+	if d.graph.WorkingSet != nil && (op == "CREATE" || op == "WRITE") {
+		d.graph.WorkingSet.Touch(relPath, event.Delta, event.IsHub, event.Importers)
+	} else if d.graph.WorkingSet != nil && (op == "REMOVE" || op == "RENAME") {
+		d.graph.WorkingSet.Remove(relPath)
+	}
+
 	d.graph.mu.Unlock()
 
 	// Log event
@@ -390,6 +398,7 @@ func (d *Daemon) writeState() {
 		Importers:    map[string][]string{},
 		Imports:      map[string][]string{},
 		RecentEvents: eventsCopy,
+		WorkingSet:   d.graph.WorkingSet,
 	}
 	if d.graph.FileGraph != nil {
 		state.Hubs = d.graph.FileGraph.HubFiles()

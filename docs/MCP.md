@@ -57,6 +57,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 | `find_file` | Find files by name pattern |
 | `get_importers` | Find all files that import a specific file |
 | `get_handoff` | Build/read layered handoff artifact (`prefix` + `delta`) with lazy file detail loading |
+| `get_working_set` | Current session's working set: files being edited, ranked by activity, with hub status |
 
 ## Usage
 
