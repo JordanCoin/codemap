@@ -74,6 +74,7 @@ codemap .          # Fast tree/context view (respects .codemap/config.json)
 codemap --diff     # What changed vs main
 codemap handoff .  # Save layered handoff for cross-agent continuation
 codemap --deps .   # Dependency flow (requires ast-grep)
+codemap skill list # Show available skills
 ```
 
 ## Other Commands
@@ -277,6 +278,57 @@ Example `.codemap/config.json`:
 All fields are optional. CLI flags always override config values.
 Hook-specific policy fields are optional and bounded by safe defaults.
 
+## Skills
+
+codemap ships with a **skills framework** — markdown files that provide context-aware guidance to AI agents. Skills are automatically matched against your intent, the files you mention, and the languages in your project.
+
+```bash
+codemap skill list              # Show all available skills
+codemap skill show hub-safety   # Print full skill content
+codemap skill init              # Create a custom skill template
+```
+
+### Builtin Skills
+
+| Skill | Activates When |
+|-------|---------------|
+| `hub-safety` | Editing hub files (3+ importers) |
+| `refactor` | Restructuring, renaming, moving code |
+| `test-first` | Writing tests, TDD workflows |
+| `explore` | Understanding how code works |
+| `handoff` | Switching between AI agents |
+
+### Custom Skills
+
+Drop a `.md` file in `.codemap/skills/` with YAML frontmatter:
+
+```yaml
+---
+name: my-skill
+description: When this skill should activate
+keywords: ["relevant", "keywords"]
+languages: ["go"]
+---
+
+# Instructions for the AI agent
+```
+
+Project-local skills override builtins. No Go code needed — just markdown.
+
+### MCP Tools
+
+Skills are also available via MCP: `list_skills` (metadata) and `get_skill` (full body).
+
+## Intelligent Routing
+
+The prompt-submit hook performs **intent classification** on every prompt — detecting whether you're refactoring, fixing a bug, exploring, testing, or building a feature. It then:
+
+- Surfaces **risk analysis** based on hub file involvement
+- Shows your **working set** (files edited this session)
+- Emits **structured JSON markers** (`<!-- codemap:intent -->`) for tool consumption
+- Matches and injects **relevant skills** automatically
+- Warns about **documentation drift** when docs are stale
+
 ## Roadmap
 
 - [x] Diff mode, Skyline mode, Dependency flow
@@ -286,7 +338,11 @@ Hook-specific policy fields are optional and bounded by safe defaults.
 - [x] Claude Code hooks & MCP server
 - [x] Cross-agent handoff artifact (`.codemap/handoff.latest.json`)
 - [x] Remote repo support (GitHub, GitLab)
-- [ ] Enhanced analysis (entry points, key types)
+- [x] Intelligent routing (intent classification, risk analysis, working set)
+- [x] Skills framework (builtin + custom skills, CLI, MCP tools)
+- [ ] Context protocol (`codemap context` — universal JSON envelope for any AI tool)
+- [ ] HTTP API (`codemap serve` — REST endpoints for non-MCP integrations)
+- [ ] Agent-aware handoff (multi-agent history tracking)
 
 ## Contributing
 
