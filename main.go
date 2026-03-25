@@ -104,6 +104,13 @@ func main() {
 		return
 	}
 
+	// Handle "skill" subcommand before global flag parsing
+	if len(os.Args) >= 2 && os.Args[1] == "skill" {
+		root, _ := os.Getwd()
+		cmd.RunSkill(os.Args[2:], root)
+		return
+	}
+
 	// Handle "handoff" subcommand before global flag parsing
 	if len(os.Args) >= 2 && os.Args[1] == "handoff" {
 		runHandoffSubcommand(os.Args[2:])
