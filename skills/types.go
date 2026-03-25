@@ -22,8 +22,8 @@ type Skill struct {
 
 // SkillIndex provides fast lookup across all loaded skills.
 type SkillIndex struct {
-	Skills     []Skill            `json:"skills"`
-	ByName     map[string]*Skill  `json:"-"`
+	Skills     []Skill             `json:"skills"`
+	ByName     map[string]*Skill   `json:"-"`
 	ByKeyword  map[string][]*Skill `json:"-"`
 	ByLanguage map[string][]*Skill `json:"-"`
 }

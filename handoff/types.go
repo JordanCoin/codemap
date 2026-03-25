@@ -72,7 +72,7 @@ type CacheMetrics struct {
 
 // AgentEntry records which agent worked on this codebase and when.
 type AgentEntry struct {
-	AgentID     string    `json:"agent_id"`               // "claude-code", "codex", "cursor", custom
+	AgentID     string    `json:"agent_id"` // "claude-code", "codex", "cursor", custom
 	StartedAt   time.Time `json:"started_at"`
 	EndedAt     time.Time `json:"ended_at,omitempty"`
 	FilesEdited []string  `json:"files_edited,omitempty"`

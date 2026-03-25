@@ -18,14 +18,14 @@ import (
 
 // ContextEnvelope is the standardized output format that any AI tool can consume.
 type ContextEnvelope struct {
-	Version    int            `json:"version"`
-	GeneratedAt time.Time    `json:"generated_at"`
-	Project    ProjectContext `json:"project"`
-	Intent     *TaskIntent   `json:"intent,omitempty"`
-	WorkingSet *WorkingSetContext `json:"working_set,omitempty"`
-	Skills     []SkillRef    `json:"skills,omitempty"`
-	Handoff    *HandoffRef   `json:"handoff,omitempty"`
-	Budget     BudgetInfo    `json:"budget"`
+	Version     int                `json:"version"`
+	GeneratedAt time.Time          `json:"generated_at"`
+	Project     ProjectContext     `json:"project"`
+	Intent      *TaskIntent        `json:"intent,omitempty"`
+	WorkingSet  *WorkingSetContext `json:"working_set,omitempty"`
+	Skills      []SkillRef         `json:"skills,omitempty"`
+	Handoff     *HandoffRef        `json:"handoff,omitempty"`
+	Budget      BudgetInfo         `json:"budget"`
 }
 
 // ProjectContext contains high-level project metadata.
@@ -40,9 +40,9 @@ type ProjectContext struct {
 
 // WorkingSetContext is a summary of the current working set.
 type WorkingSetContext struct {
-	FileCount int                   `json:"file_count"`
-	HubCount  int                   `json:"hub_count"`
-	TopFiles  []WorkingFileContext  `json:"top_files,omitempty"`
+	FileCount int                  `json:"file_count"`
+	HubCount  int                  `json:"hub_count"`
+	TopFiles  []WorkingFileContext `json:"top_files,omitempty"`
 }
 
 // WorkingFileContext is a single file in the working set summary.
@@ -70,7 +70,7 @@ type HandoffRef struct {
 
 // BudgetInfo reports how much context was generated.
 type BudgetInfo struct {
-	TotalBytes int `json:"total_bytes"`
+	TotalBytes int  `json:"total_bytes"`
 	Compact    bool `json:"compact"`
 }
 
@@ -232,4 +232,3 @@ func buildProjectContext(root string, info *hubInfo) ProjectContext {
 
 	return ctx
 }
-
