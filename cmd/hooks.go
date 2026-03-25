@@ -1164,7 +1164,60 @@ func writeSessionHandoff(root string, state *watch.State) error {
 	if err != nil {
 		return err
 	}
+
+	// Record this agent session in handoff history
+	agentEntry := handoff.AgentEntry{
+		AgentID:   detectAgentID(),
+		StartedAt: sessionStartTime(state),
+		EndedAt:   time.Now(),
+	}
+	if state != nil {
+		seen := make(map[string]bool)
+		for _, e := range state.RecentEvents {
+			if !seen[e.Path] {
+				seen[e.Path] = true
+				agentEntry.FilesEdited = append(agentEntry.FilesEdited, e.Path)
+			}
+		}
+	}
+
+	// Carry over history from previous artifact and append current session
+	if prev, err := handoff.ReadLatest(root); err == nil && prev != nil {
+		artifact.AgentHistory = prev.AgentHistory
+	}
+	artifact.AgentHistory = append(artifact.AgentHistory, agentEntry)
+
+	// Cap history to last 20 entries
+	if len(artifact.AgentHistory) > 20 {
+		artifact.AgentHistory = artifact.AgentHistory[len(artifact.AgentHistory)-20:]
+	}
+
 	return handoff.WriteLatest(root, artifact)
+}
+
+// detectAgentID returns the current AI agent based on environment signals.
+func detectAgentID() string {
+	// Claude Code sets CLAUDE_CODE=1
+	if os.Getenv("CLAUDE_CODE") == "1" || os.Getenv("CLAUDE_CODE_ENTRYPOINT") != "" {
+		return "claude-code"
+	}
+	// Codex sets CODEX=1
+	if os.Getenv("CODEX") == "1" {
+		return "codex"
+	}
+	// Cursor sets CURSOR=1
+	if os.Getenv("CURSOR_SESSION_ID") != "" {
+		return "cursor"
+	}
+	return "unknown"
+}
+
+// sessionStartTime estimates when this session started from daemon events.
+func sessionStartTime(state *watch.State) time.Time {
+	if state != nil && len(state.RecentEvents) > 0 {
+		return state.RecentEvents[0].Time
+	}
+	return time.Now()
 }
 
 func resolveHandoffBaseRef(root string) string {
