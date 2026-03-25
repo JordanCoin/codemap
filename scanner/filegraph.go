@@ -239,14 +239,10 @@ func resolveRelative(imp, fromDir string, idx *fileIndex) []string {
 	return tryExactMatch(candidate, idx)
 }
 
-// tryExactMatch looks for exact path matches with common extensions
+// tryExactMatch looks for exact path matches with common extensions.
+// Extension list derived from the canonical scanner registry.
 func tryExactMatch(path string, idx *fileIndex) []string {
-	// Common extensions to try (in order of preference)
-	extensions := []string{
-		"", ".go", ".py", ".js", ".ts", ".tsx", ".jsx", ".rs", ".rb", ".java",
-		".kt", ".swift", ".c", ".h", ".cpp", ".hpp", ".cs", ".php", ".scala", ".sh", ".ex", ".lua",
-		"/index.js", "/index.ts", "/index.tsx", "/__init__.py", "/mod.rs",
-	}
+	extensions := ResolverExtensions()
 
 	for _, ext := range extensions {
 		candidate := path + ext
@@ -260,9 +256,8 @@ func tryExactMatch(path string, idx *fileIndex) []string {
 
 // trySuffixMatch finds files where the path ends with the normalized import
 func trySuffixMatch(normalized string, idx *fileIndex) []string {
-	// Try with common extensions
-	extensions := []string{"", ".py", ".js", ".ts", ".tsx", ".jsx", ".rs", ".rb", ".java", ".go",
-		".kt", ".swift", ".c", ".h", ".cpp", ".hpp", ".cs", ".php", ".scala", ".sh", ".ex", ".lua"}
+	// Extension list derived from the canonical scanner registry.
+	extensions := ResolverExtensions()
 
 	for _, ext := range extensions {
 		candidate := normalized + ext

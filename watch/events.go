@@ -125,14 +125,11 @@ func (d *Daemon) eventLoop() {
 	}
 }
 
-// isSourceFile checks if a file should be tracked
+// isSourceFile checks if a file should be tracked.
+// Derives from the canonical extension registry in scanner.
 func (d *Daemon) isSourceFile(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
-	switch ext {
-	case ".go", ".py", ".js", ".ts", ".tsx", ".jsx", ".rs", ".rb", ".java", ".swift", ".kt", ".c", ".cpp", ".h":
-		return true
-	}
-	return false
+	return scanner.IsSourceExt(ext)
 }
 
 // handleEvent processes a single file event

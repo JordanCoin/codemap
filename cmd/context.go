@@ -205,8 +205,10 @@ func buildProjectContext(root string, info *hubInfo) ProjectContext {
 		}
 	}
 
-	// Detect languages from all known files (importers + imports + working set)
+	// Detect languages from multiple sources
 	langSet := make(map[string]bool)
+
+	// Source 1: dependency graph (importers + imports)
 	if info != nil {
 		for file := range info.Importers {
 			if lang := scanner.DetectLanguage(file); lang != "" {
@@ -219,16 +221,90 @@ func buildProjectContext(root string, info *hubInfo) ProjectContext {
 			}
 		}
 	}
-	// Also check hubs for language detection (covers repos with no importers map)
+
+	// Source 2: hubs
 	for _, hub := range ctx.TopHubs {
 		if lang := scanner.DetectLanguage(hub); lang != "" {
 			langSet[lang] = true
 		}
 	}
+
+	// Source 3: cheap fallback — scan for manifest files and top-level source files.
+	// This runs when daemon isn't active and dep graph is empty.
+	if len(langSet) == 0 {
+		langSet = detectLanguagesFromFiles(root)
+	}
+
 	for lang := range langSet {
 		ctx.Languages = append(ctx.Languages, lang)
 	}
 	sort.Strings(ctx.Languages)
 
+	// Fallback file count from quick scan if daemon wasn't available
+	if ctx.FileCount == 0 && len(ctx.Languages) > 0 {
+		ctx.FileCount = countSourceFiles(root)
+	}
+
 	return ctx
+}
+
+// detectLanguagesFromFiles does a quick scan of the project root for language signals.
+// Checks manifest files first (fast), then scans top-level source files.
+func detectLanguagesFromFiles(root string) map[string]bool {
+	langs := make(map[string]bool)
+
+	// Manifest files → definitive language signal
+	manifests := map[string]string{
+		"go.mod":           "go",
+		"package.json":     "javascript",
+		"Cargo.toml":       "rust",
+		"pyproject.toml":   "python",
+		"setup.py":         "python",
+		"requirements.txt": "python",
+		"Gemfile":          "ruby",
+		"build.gradle":     "java",
+		"pom.xml":          "java",
+		"Package.swift":    "swift",
+		"mix.exs":          "elixir",
+		"composer.json":    "php",
+		"build.sbt":        "scala",
+	}
+	for file, lang := range manifests {
+		if _, err := os.Stat(filepath.Join(root, file)); err == nil {
+			langs[lang] = true
+		}
+	}
+
+	// If we found manifests, that's usually enough
+	if len(langs) > 0 {
+		return langs
+	}
+
+	// Fall back to scanning top-level files by extension
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return langs
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if lang := scanner.DetectLanguage(entry.Name()); lang != "" {
+			langs[lang] = true
+		}
+	}
+
+	return langs
+}
+
+// countSourceFiles does a quick count of source files in the project.
+func countSourceFiles(root string) int {
+	count := 0
+	gitCache := scanner.NewGitIgnoreCache(root)
+	files, err := scanner.ScanFiles(root, gitCache, nil, nil)
+	if err != nil {
+		return 0
+	}
+	count = len(files)
+	return count
 }

@@ -240,41 +240,22 @@ func (s *AstGrepScanner) ScanDirectory(root string) ([]FileAnalysis, error) {
 	return results, nil
 }
 
+// ruleIDToLang maps ast-grep rule ID prefixes to language names.
+// Must cover every prefix used in sg-rules/*.yml files.
+var ruleIDToLang = map[string]string{
+	"go": "go", "ts": "typescript", "tsx": "typescript",
+	"js": "javascript", "jsx": "javascript", "py": "python",
+	"rust": "rust", "java": "java", "ruby": "ruby",
+	"swift": "swift", "kotlin": "kotlin", "c": "c", "cpp": "cpp",
+	"bash": "bash", "csharp": "csharp",
+	"php": "php", "lua": "lua", "scala": "scala",
+	"elixir": "elixir", "solidity": "solidity",
+}
+
 func detectLangFromRuleID(ruleID string) string {
 	parts := strings.Split(ruleID, "-")
 	if len(parts) > 0 {
-		switch parts[0] {
-		case "go":
-			return "go"
-		case "ts":
-			return "typescript"
-		case "tsx":
-			return "typescript"
-		case "js":
-			return "javascript"
-		case "jsx":
-			return "javascript"
-		case "py":
-			return "python"
-		case "rust":
-			return "rust"
-		case "java":
-			return "java"
-		case "ruby":
-			return "ruby"
-		case "swift":
-			return "swift"
-		case "kotlin":
-			return "kotlin"
-		case "c":
-			return "c"
-		case "cpp":
-			return "cpp"
-		case "bash":
-			return "bash"
-		case "csharp":
-			return "csharp"
-		}
+		return ruleIDToLang[parts[0]]
 	}
 	return ""
 }

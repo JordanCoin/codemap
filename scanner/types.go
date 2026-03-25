@@ -85,6 +85,48 @@ func DetectLanguage(filePath string) string {
 	return extToLang[ext]
 }
 
+// IsSourceExt returns true if the extension (with leading dot) is a recognized source file.
+func IsSourceExt(ext string) bool {
+	_, ok := extToLang[strings.ToLower(ext)]
+	return ok
+}
+
+// SourceExtensions returns all recognized source file extensions (with leading dot).
+func SourceExtensions() []string {
+	exts := make([]string, 0, len(extToLang))
+	for ext := range extToLang {
+		exts = append(exts, ext)
+	}
+	return exts
+}
+
+// PromptExtensions returns extension strings without the leading dot,
+// suitable for regex-based file mention extraction from prompts.
+func PromptExtensions() []string {
+	seen := make(map[string]bool)
+	var exts []string
+	for ext := range extToLang {
+		bare := strings.TrimPrefix(ext, ".")
+		if !seen[bare] {
+			seen[bare] = true
+			exts = append(exts, bare)
+		}
+	}
+	return exts
+}
+
+// ResolverExtensions returns extensions used for import path resolution,
+// including index-file patterns for JS/TS/Python ecosystems.
+func ResolverExtensions() []string {
+	exts := []string{""}
+	for ext := range extToLang {
+		exts = append(exts, ext)
+	}
+	// Index-file patterns for module resolution
+	exts = append(exts, "/index.js", "/index.ts", "/index.tsx", "/__init__.py", "/mod.rs")
+	return exts
+}
+
 // LangDisplay maps internal language names to display names
 var LangDisplay = map[string]string{
 	"go":         "Go",

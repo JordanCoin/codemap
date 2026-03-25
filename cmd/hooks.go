@@ -42,7 +42,8 @@ var hookExecCommand = exec.Command
 var hookWatchIsRunning = watch.IsRunning
 var daemonStartupPause = time.Sleep
 
-var promptFileExtensions = []string{"go", "tsx", "ts", "jsx", "js", "py", "rs", "rb", "java", "swift", "kt", "c", "cpp", "h"}
+// promptFileExtensions is derived from the canonical scanner registry.
+var promptFileExtensions = scanner.PromptExtensions()
 
 type HookTimeoutError struct {
 	Hook    string
@@ -868,10 +869,18 @@ func extractMentionedFiles(prompt string, limit int) []string {
 		return nil
 	}
 
+	// Sort extensions longest-first so .cs matches before .c, .tsx before .ts
+	exts := make([]string, len(promptFileExtensions))
+	copy(exts, promptFileExtensions)
+	sort.Slice(exts, func(i, j int) bool {
+		return len(exts[i]) > len(exts[j])
+	})
+
 	var files []string
 	seen := make(map[string]struct{})
-	for _, ext := range promptFileExtensions {
-		pattern := regexp.MustCompile(`[a-zA-Z0-9_/-]+\.` + ext)
+	for _, ext := range exts {
+		// Use word boundary (\b) to avoid .c matching inside .cs or .cpp
+		pattern := regexp.MustCompile(`[a-zA-Z0-9_/.@-]+\.` + ext + `\b`)
 		matches := pattern.FindAllString(prompt, -1)
 		for _, match := range matches {
 			if _, exists := seen[match]; exists {
