@@ -1,18 +1,44 @@
 #!/bin/sh
 # Pre-commit hook: run gofmt on staged Go files
 
-STAGED_GO=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$')
+STAGED_GO=$(git diff --cached --name-only --diff-filter=ACMR -- '*.go')
 
 if [ -z "$STAGED_GO" ]; then
     exit 0
 fi
 
-UNFORMATTED=$(echo "$STAGED_GO" | xargs gofmt -l 2>/dev/null)
+UNFORMATTED=""
+
+while IFS= read -r file; do
+    [ -z "$file" ] && continue
+
+    orig=$(mktemp)
+    formatted=$(mktemp)
+
+    if ! git show ":$file" >"$orig" 2>/dev/null; then
+        rm -f "$orig" "$formatted"
+        continue
+    fi
+
+    cp "$orig" "$formatted"
+    if ! gofmt -w "$formatted" >/dev/null 2>&1; then
+        rm -f "$orig" "$formatted"
+        continue
+    fi
+
+    if ! cmp -s "$orig" "$formatted"; then
+        UNFORMATTED="${UNFORMATTED}${file}\n"
+    fi
+
+    rm -f "$orig" "$formatted"
+done <<EOF2
+$STAGED_GO
+EOF2
 
 if [ -n "$UNFORMATTED" ]; then
-    echo "gofmt required on:"
-    echo "$UNFORMATTED"
+    echo "gofmt required on staged content:"
+    printf "%b" "$UNFORMATTED"
     echo ""
-    echo "Run: gofmt -w $UNFORMATTED"
+    echo "Run: gofmt -w <files> && git add <files>"
     exit 1
 fi
