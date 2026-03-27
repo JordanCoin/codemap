@@ -6,7 +6,7 @@ build:
 	go build -o codemap .
 
 build-mcp:
-	go build -o codemap-mcp ./mcp/
+	go build -o codemap-mcp ./cmd/codemap-mcp/
 
 DIR ?= .
 ABS_DIR := $(shell cd "$(DIR)" && pwd)

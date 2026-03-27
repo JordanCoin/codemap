@@ -4,6 +4,12 @@ Run codemap as an MCP (Model Context Protocol) server for deep Claude integratio
 
 ## Setup
 
+Preferred when `codemap` is already installed:
+
+```bash
+claude mcp add --transport stdio codemap -- codemap mcp
+```
+
 ### Build
 
 ```bash
@@ -22,8 +28,8 @@ Or add to your project's `.mcp.json`:
 {
   "mcpServers": {
     "codemap": {
-      "command": "/path/to/codemap-mcp",
-      "args": []
+      "command": "codemap",
+      "args": ["mcp"]
     }
   }
 }
@@ -39,11 +45,14 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 {
   "mcpServers": {
     "codemap": {
-      "command": "/path/to/codemap-mcp"
+      "command": "codemap",
+      "args": ["mcp"]
     }
   }
 }
 ```
+
+If you prefer a standalone MCP binary, keep using `/path/to/codemap-mcp`.
 
 ## Available Tools (17)
 

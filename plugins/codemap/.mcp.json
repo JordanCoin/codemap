@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "codemap": {
+      "command": "/bin/bash",
+      "args": [
+        "./scripts/run-codemap-mcp.sh"
+      ]
+    }
+  }
+}

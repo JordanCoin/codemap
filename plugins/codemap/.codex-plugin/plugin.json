@@ -1,0 +1,45 @@
+{
+  "name": "codemap",
+  "version": "0.1.0",
+  "description": "Analyze codebase structure, dependencies, changes, risk, matched skills, and cross-agent handoffs.",
+  "author": {
+    "name": "JordanCoin",
+    "url": "https://github.com/JordanCoin"
+  },
+  "homepage": "https://github.com/JordanCoin/codemap",
+  "repository": "https://github.com/JordanCoin/codemap",
+  "license": "MIT",
+  "keywords": [
+    "codebase",
+    "architecture",
+    "mcp",
+    "handoff",
+    "hooks",
+    "skills"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Codemap",
+    "shortDescription": "Code-aware context and skill routing for local repos",
+    "longDescription": "Use Codemap to inspect project structure, trace dependencies, evaluate change risk, match task-specific skills, and build cross-agent handoffs.",
+    "developerName": "JordanCoin",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Read"
+    ],
+    "websiteURL": "https://github.com/JordanCoin/codemap",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/logo.png",
+    "defaultPrompt": [
+      "Show me this project's structure and hub files.",
+      "What changed on this branch and what looks risky?",
+      "Build a Codemap handoff for the next agent."
+    ],
+    "screenshots": [
+      "./assets/screenshot1.png"
+    ],
+    "brandColor": "#00ADD8"
+  }
+}

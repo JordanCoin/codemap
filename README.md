@@ -76,6 +76,8 @@ codemap handoff .  # Save layered handoff for cross-agent continuation
 codemap --deps .   # Dependency flow (requires ast-grep)
 codemap skill list # Show available skills
 codemap context    # Universal JSON context for any AI tool
+codemap mcp        # Run Codemap MCP server on stdio
+codemap plugin install # Install the Codemap Codex plugin
 codemap serve      # HTTP API for non-MCP integrations
 ```
 

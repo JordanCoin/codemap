@@ -1,12 +1,11 @@
 // MCP Server for codemap - provides codebase analysis tools to LLMs
-package main
+package codemapmcp
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -83,7 +82,7 @@ type HandoffInput struct {
 	File   string `json:"file,omitempty" jsonschema:"Load detailed context for one changed file path from handoff delta"`
 }
 
-func main() {
+func NewServer() *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "codemap",
 		Version: "2.0.0",
@@ -191,10 +190,11 @@ func main() {
 		Description: "Load the full instructions for a specific skill by name. Returns the complete markdown body with step-by-step guidance. Use after list_skills to get detailed guidance for a task.",
 	}, handleGetSkill)
 
-	// Run server on stdio
-	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
-		log.Printf("Server error: %v", err)
-	}
+	return server
+}
+
+func Run(ctx context.Context) error {
+	return NewServer().Run(ctx, &mcp.StdioTransport{})
 }
 
 func textResult(text string) *mcp.CallToolResult {
