@@ -367,6 +367,24 @@ func TestTryDirMatch(t *testing.T) {
 		}
 	})
 
+	t.Run("suffix match strips namespace prefix", func(t *testing.T) {
+		// Files are in Models/ but namespace is ProjectName/Models
+		files2 := []FileInfo{
+			{Path: filepath.Join("Models", "User.cs")},
+			{Path: filepath.Join("Models", "Product.cs")},
+		}
+		idx2 := buildFileIndex(files2, "")
+		got := tryDirMatch(filepath.Join("ProjectName", "Models"), idx2)
+		sort.Strings(got)
+		want := []string{
+			filepath.Join("Models", "Product.cs"),
+			filepath.Join("Models", "User.cs"),
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("tryDirMatch suffix = %v, want %v", got, want)
+		}
+	})
+
 	t.Run("no match for missing directory", func(t *testing.T) {
 		got := tryDirMatch(filepath.Join("MyApp", "Missing"), idx)
 		if got != nil {

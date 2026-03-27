@@ -291,7 +291,10 @@ func trySuffixMatch(normalized string, idx *fileIndex) []string {
 // tryDirMatch returns all files whose parent directory matches the given path.
 // This resolves namespace-level imports (e.g. C# "using Foo.Bar;" -> "Foo/Bar/")
 // where an import refers to a whole directory rather than a single file.
+// It also tries progressively shorter suffixes to handle namespace prefixes
+// (e.g. "MyApp/Models" tries "MyApp/Models" first, then "Models").
 func tryDirMatch(path string, idx *fileIndex) []string {
+	// Try exact match first
 	if files, ok := idx.byDir[path]; ok {
 		return files
 	}
@@ -299,6 +302,15 @@ func tryDirMatch(path string, idx *fileIndex) []string {
 	nativePath := filepath.FromSlash(path)
 	if nativePath != path {
 		if files, ok := idx.byDir[nativePath]; ok {
+			return files
+		}
+	}
+	// Try suffix match: strip leading segments progressively
+	// This handles namespace prefixes like MyApp.Models -> Models
+	parts := strings.Split(filepath.ToSlash(path), "/")
+	for i := 1; i < len(parts); i++ {
+		suffix := filepath.Join(parts[i:]...)
+		if files, ok := idx.byDir[suffix]; ok {
 			return files
 		}
 	}
