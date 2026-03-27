@@ -278,7 +278,6 @@ func detectLanguagesFromFiles(root string) map[string]bool {
 		"composer.json":    {"php"},
 		"build.sbt":        {"scala"},
 		"tsconfig.json":    {"typescript"},
-		"Makefile":         {"make"},
 	}
 	for file, signalLangs := range manifests {
 		if _, err := os.Stat(filepath.Join(root, file)); err == nil {
@@ -301,22 +300,26 @@ func detectLanguagesFromFiles(root string) map[string]bool {
 		addLang("javascript")
 	}
 
-	// Makefile heuristics for C/C++ projects.
-	if _, hasMakefile := langs["make"]; hasMakefile {
+	// Makefile heuristics for C/C++ projects — check directly, no sentinel.
+	if _, err := os.Stat(filepath.Join(root, "Makefile")); err == nil {
 		applyMakefileHeuristics(filepath.Join(root, "Makefile"), addLang)
 	}
-	delete(langs, "make")
 
-	// Include subdirectory-only source files.
+	// Include subdirectory source files. Reuse the scan result for countSourceFiles too.
 	gitCache := scanner.NewGitIgnoreCache(root)
 	if files, err := scanner.ScanFiles(root, gitCache, nil, nil); err == nil {
 		for _, f := range files {
 			addLang(scanner.DetectLanguage(f.Path))
 		}
+		// Cache file count to avoid a second scan in countSourceFiles
+		cachedFileCount = len(files)
 	}
 
 	return langs
 }
+
+// cachedFileCount avoids a second ScanFiles walk in countSourceFiles.
+var cachedFileCount = -1
 
 func applyMakefileHeuristics(path string, addLang func(string)) {
 	f, err := os.Open(path)
@@ -334,19 +337,25 @@ func applyMakefileHeuristics(path string, addLang func(string)) {
 	if strings.Contains(content, "g++") || strings.Contains(content, "clang++") || strings.Contains(content, ".cpp") || strings.Contains(content, ".cc") {
 		addLang("cpp")
 	}
-	if strings.Contains(content, "gcc") || strings.Contains(content, "clang") || strings.Contains(content, ".c") {
+	// Tighten C detection: exclude clang++ and .cpp/.cc false positives
+	if strings.Contains(content, "gcc") ||
+		(strings.Contains(content, "clang") && !strings.Contains(content, "clang++")) {
 		addLang("c")
 	}
 }
 
 // countSourceFiles does a quick count of source files in the project.
+// Uses cached result from detectLanguagesFromFiles if available.
 func countSourceFiles(root string) int {
-	count := 0
+	if cachedFileCount >= 0 {
+		count := cachedFileCount
+		cachedFileCount = -1 // reset for next call
+		return count
+	}
 	gitCache := scanner.NewGitIgnoreCache(root)
 	files, err := scanner.ScanFiles(root, gitCache, nil, nil)
 	if err != nil {
 		return 0
 	}
-	count = len(files)
-	return count
+	return len(files)
 }
