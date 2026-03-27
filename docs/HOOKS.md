@@ -375,6 +375,38 @@ go install github.com/JordanCoin/codemap@latest
 
 ---
 
+## Performance
+
+### Startup Latency
+
+Session-start hook performance depends on whether the daemon is running:
+
+| State | Latency | What Happens |
+|-------|---------|--------------|
+| Daemon running, state fresh | <100ms | Reads `.codemap/state.json` from disk |
+| Daemon running, state stale (>30s) | <100ms | Still reads state (daemon is alive) |
+| No daemon, small repo (<2000 files) | 200-500ms | Starts daemon + initial scan + dep graph |
+| No daemon, medium repo (2000-5000) | 500ms-2s | Starts daemon + scan (deps computed) |
+| No daemon, large repo (>5000 files) | 500ms-1s | Starts daemon + scan (deps skipped) |
+
+The daemon is started automatically on session-start and persists across prompts. Subsequent hooks read from the cached state file, so only the first hook invocation pays the startup cost.
+
+### Context Budget
+
+Hooks are budgeted to avoid context blowup:
+
+| Hook | Typical Size | Cap |
+|------|-------------|-----|
+| session-start | 4-8KB | 60KB hard cap |
+| prompt-submit | 180-350 bytes | Skill bodies not injected (pull-based) |
+| pre/post-edit | 0-500 bytes | Only for files with importers |
+| session-stop | 500-2KB | Last 10 events |
+| multi-repo | Varies | 60KB total across all repos |
+
+The 8-second hook timeout prevents any single hook from blocking Claude.
+
+---
+
 ## Verify It Works
 
 1. Run `codemap setup` in your project
