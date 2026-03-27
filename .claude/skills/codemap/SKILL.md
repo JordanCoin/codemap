@@ -1,26 +1,30 @@
 ---
 name: codemap
-description: Analyze codebase structure, dependencies, changes, and cross-agent handoffs. Use when user asks about project structure, where code is located, how files connect, what changed, how to resume work, or before starting any coding task.
+description: Analyze codebase structure, dependencies, changes, cross-agent handoffs, and get code-aware intelligence. Use when user asks about project structure, where code is located, how files connect, what changed, how to resume work, before starting any coding task, or when you need risk analysis and skill guidance.
 ---
 
 # Codemap
 
-Codemap gives you instant architectural context about any codebase. Use it proactively before exploring or modifying code.
+Codemap gives you instant architectural context about any codebase. It classifies your intent, detects risk, matches relevant skills, and tracks your working set — all automatically via hooks.
 
 ## Commands
 
 ```bash
-codemap .                     # Project structure and top files
-codemap --deps                # Dependency flow (imports/functions)
-codemap --diff                # Changes vs main branch
-codemap --diff --ref <branch> # Changes vs specific branch
-codemap handoff .             # Build + save handoff artifact
-codemap handoff --latest .    # Read latest saved handoff
-codemap handoff --json .      # Machine-readable handoff payload
-codemap handoff --since 2h .  # Limit timeline lookback when building
-codemap handoff --prefix .    # Stable prefix snapshot only
-codemap handoff --delta .     # Recent delta snapshot only
-codemap handoff --detail a.go . # Lazy-load full detail for one changed file
+codemap .                       # Project structure and top files
+codemap --deps                  # Dependency flow (imports/functions/hubs)
+codemap --diff                  # Changes vs main branch
+codemap --diff --ref <branch>   # Changes vs specific branch
+codemap --importers <file>      # Who imports this file? Is it a hub?
+codemap handoff .               # Build + save handoff artifact
+codemap handoff --latest .      # Read latest saved handoff
+codemap handoff --json .        # Machine-readable handoff payload
+codemap skill list              # Show available skills with descriptions
+codemap skill show <name>       # Get full skill instructions
+codemap skill init              # Create custom skill template
+codemap context                 # Universal JSON context envelope
+codemap context --for "prompt"  # With pre-classified intent + matched skills
+codemap context --compact       # Minimal for token-constrained agents
+codemap serve --port 9471       # HTTP API for non-MCP integrations
 ```
 
 ## When to Use
@@ -30,79 +34,115 @@ codemap handoff --detail a.go . # Lazy-load full detail for one changed file
 - User asks "where is X?" or "what files handle Y?"
 - User asks about project structure or organization
 - You need to understand the codebase before making changes
-- Exploring unfamiliar code
 
 ### ALWAYS run `codemap --deps` when:
 - User asks "how does X work?" or "what uses Y?"
 - Refactoring or moving code
 - Need to trace imports or dependencies
-- Evaluating impact of changes
 - Finding hub files (most-imported)
 
 ### ALWAYS run `codemap --diff` when:
 - User asks "what changed?" or "what did I modify?"
 - Reviewing changes before commit
 - Summarizing work done on a branch
-- Assessing what might break
-- Use `--ref <branch>` when comparing against something other than main
 
-### ALWAYS run `codemap handoff` when:
-- Handing work from one agent to another (Claude, Codex, MCP client)
-- Resuming work after a break and you want a compact recap
+### ALWAYS run `codemap --importers <file>` when:
+- About to edit a file — check if it's a hub
+- Need to know the blast radius of a change
+- Deciding whether to refactor or leave alone
+
+### Run `codemap skill show <name>` when:
+- The prompt-submit hook shows matched skills in `<!-- codemap:skills [...] -->`
+- You need guidance for a specific task (hub editing, refactoring, testing)
+- Risk level is medium or high
+
+### Run `codemap context` when:
+- Piping codemap intelligence to another tool
+- Need a structured JSON summary of the project state
+- Building automation that consumes code-aware context
+
+### Run `codemap handoff` when:
+- Switching between agents (Claude, Codex, Cursor)
+- Resuming work after a break
 - User asks "what should the next agent know?"
-- You want a durable summary in `.codemap/handoff.latest.json`
+
+## Hook Output
+
+The prompt-submit hook fires on every message and provides:
+
+```
+<!-- codemap:intent {"category":"refactor","risk":"high",...} -->
+<!-- codemap:skills [{"name":"hub-safety","score":5},...] -->
+Skills matched: hub-safety, refactor — run `codemap skill show <name>` for guidance
+```
+
+- **Intent categories**: refactor, bugfix, feature, explore, test, docs
+- **Risk levels**: low (no hubs), medium (1 hub), high (2+ hubs or 8+ importers)
+- **Skills are pull-based**: only names are shown, run `codemap skill show` for full body
+
+## Builtin Skills
+
+| Skill | When to Pull |
+|-------|-------------|
+| `hub-safety` | Editing files imported by 3+ others |
+| `refactor` | Restructuring, renaming, moving code |
+| `test-first` | Writing tests, TDD workflows |
+| `explore` | Understanding how code works |
+| `handoff` | Switching between AI agents |
 
 ## Output Interpretation
 
 ### Tree View (`codemap .`)
-- Shows file structure with language detection
-- Stars (★) indicate top 5 largest source files
-- Directories are flattened when empty (e.g., `src/main/java`)
+- Stars (⭐) indicate top 5 largest source files
+- Directories flattened when containing single subdirectory
 
 ### Dependency Flow (`codemap --deps`)
 - External dependencies grouped by language
 - Internal import chains showing how files connect
-- HUBS section shows most-imported files
-- Function counts per file
+- HUBS section shows most-imported files (3+ importers)
 
 ### Diff Mode (`codemap --diff`)
-- `(new)` = untracked file
-- `✎` = modified file
-- `(+N -M)` = lines added/removed
-- Warning icons show files imported by others (impact analysis)
+- `(new)` = untracked, `✎` = modified, `(+N -M)` = lines changed
+- Warning icons show hub files (high impact)
 
-### Handoff (`codemap handoff`)
-- layered output: `prefix` (stable hubs/context) + `delta` (recent changed-file stubs + timeline)
-- changed file transport uses stubs (`path`, `hash`, `status`, `size`) for lower context cost
-- `risk_files` highlights high-impact changed files when dependency context is available
-- includes deterministic hashes (`prefix_hash`, `delta_hash`, `combined_hash`) and cache metrics
-- `--latest` reads saved artifact without rebuilding
+### Importers (`codemap --importers <file>`)
+- Shows all files that import this file
+- Flags hub status (3+ importers = high impact)
 
-## Daemon and Hooks
+### Context Envelope (`codemap context`)
+- JSON with project metadata, intent, working set, matched skills, handoff ref
+- `--compact` strips skills and limits working set for token savings
 
-- With daemon state: handoff includes richer timeline and better risk context.
-- Without daemon state: handoff still works using git-based changed files.
-- Hook behavior:
-  - `session-stop` writes `.codemap/handoff.latest.json`
-  - `session-start` may show recent handoff summary (24h freshness window)
-  - session-start structure output is capped/adaptive for large repos
+## MCP Tools
 
-## Examples
+If codemap MCP server is configured, these tools are available:
 
-**User asks:** "Where is the authentication handled?"
-**Action:** Run `codemap .` then `codemap --deps` to find auth-related files and trace their connections.
+| Tool | Use For |
+|------|---------|
+| `get_structure` | Project tree |
+| `get_dependencies` | Dependency flow + hubs |
+| `get_diff` | Changed files with impact |
+| `find_file` | Search by filename |
+| `get_importers` | Who imports a file |
+| `get_hubs` | List all hub files |
+| `get_file_context` | Full context for one file |
+| `get_handoff` | Build/read handoff artifact |
+| `get_working_set` | Files edited this session |
+| `list_skills` | Available skills (metadata) |
+| `get_skill` | Full skill instructions |
+| `get_activity` | Recent coding activity |
+| `start_watch` / `stop_watch` | Control daemon |
+| `status` | Verify MCP connection |
+| `list_projects` | Discover projects |
 
-**User asks:** "What have I changed on this branch?"
-**Action:** Run `codemap --diff` to see all modifications with impact analysis.
+## HTTP API
 
-**User asks:** "How does the API connect to the database?"
-**Action:** Run `codemap --deps` to trace the import chain from API to database files.
+When `codemap serve` is running:
 
-**User asks:** "I want to refactor the utils module"
-**Action:** Run `codemap --deps` first to see what depends on utils before making changes.
-
-**User asks:** "I'm switching to another agent, what should I pass along?"
-**Action:** Run `codemap handoff .` and share the summary (or `--json` for tools).
-
-**User asks:** "I just came back, what was in progress?"
-**Action:** Run `codemap handoff --latest .` and continue from that state.
+| Endpoint | Returns |
+|----------|---------|
+| `GET /api/context?intent=...` | Context envelope |
+| `GET /api/skills` | All skills metadata |
+| `GET /api/skills/<name>` | Full skill body |
+| `GET /api/working-set` | Current working set |
+| `GET /api/health` | Server health |
