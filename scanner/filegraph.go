@@ -72,12 +72,14 @@ func BuildFileGraph(root string) (*FileGraph, error) {
 
 		for _, imp := range a.Imports {
 			resolved := fuzzyResolve(imp, a.Path, idx, fg.Module, fg.PathAliases, fg.BaseURL)
-			// Only count imports that resolve to exactly one file.
-			// If an import resolves to multiple files, it's a package/module
-			// import (Go, Python, Rust, etc.) not a file-level import.
-			// This ensures hub detection works correctly across all languages.
-			if len(resolved) == 1 {
-				resolvedImports = append(resolvedImports, resolved[0])
+			// Exclude multi-file Go package imports to avoid inflating hub counts.
+			// Go package imports start with the module prefix and resolve to all
+			// files in that package. For all other imports (e.g., C# namespace
+			// imports that resolve via directory matching), allow multi-file
+			// resolution so inter-namespace dependencies are tracked.
+			isGoPkg := fg.Module != "" && strings.HasPrefix(imp, fg.Module) && len(resolved) > 1
+			if !isGoPkg && len(resolved) > 0 {
+				resolvedImports = append(resolvedImports, resolved...)
 			}
 		}
 
@@ -185,6 +187,12 @@ func fuzzyResolve(imp, fromFile string, idx *fileIndex, goModule string, pathAli
 		return files
 	}
 
+	// Strategy 6: Directory match (for namespace-level imports like C# "using Foo.Bar;"
+	// where Foo.Bar normalizes to Foo/Bar and maps to the Foo/Bar/ directory).
+	if files := tryDirMatch(normalized, idx); len(files) > 0 {
+		return files
+	}
+
 	return nil
 }
 
@@ -277,6 +285,35 @@ func trySuffixMatch(normalized string, idx *fileIndex) []string {
 		return files
 	}
 
+	return nil
+}
+
+// tryDirMatch returns all files whose parent directory matches the given path.
+// This resolves namespace-level imports (e.g. C# "using Foo.Bar;" -> "Foo/Bar/")
+// where an import refers to a whole directory rather than a single file.
+// It also tries progressively shorter suffixes to handle namespace prefixes
+// (e.g. "MyApp/Models" tries "MyApp/Models" first, then "Models").
+func tryDirMatch(path string, idx *fileIndex) []string {
+	// Try exact match first
+	if files, ok := idx.byDir[path]; ok {
+		return files
+	}
+	// Normalize path separators for cross-platform compatibility
+	nativePath := filepath.FromSlash(path)
+	if nativePath != path {
+		if files, ok := idx.byDir[nativePath]; ok {
+			return files
+		}
+	}
+	// Try suffix match: strip leading segments progressively
+	// This handles namespace prefixes like MyApp.Models -> Models
+	parts := strings.Split(filepath.ToSlash(path), "/")
+	for i := 1; i < len(parts); i++ {
+		suffix := filepath.Join(parts[i:]...)
+		if files, ok := idx.byDir[suffix]; ok {
+			return files
+		}
+	}
 	return nil
 }
 
