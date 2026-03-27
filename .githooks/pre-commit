@@ -1,18 +1,45 @@
 #!/bin/sh
-# Pre-commit hook: run gofmt on staged Go files
+# Pre-commit hook: run gofmt on staged Go file blobs (not working tree).
 
-STAGED_GO=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$')
+STAGED_GO=$(git diff --cached --name-only --diff-filter=ACMR -- '*.go')
 
 if [ -z "$STAGED_GO" ]; then
     exit 0
 fi
 
-UNFORMATTED=$(echo "$STAGED_GO" | xargs gofmt -l 2>/dev/null)
+UNFORMATTED=""
 
-if [ -n "$UNFORMATTED" ]; then
-    echo "gofmt required on:"
-    echo "$UNFORMATTED"
+echo "$STAGED_GO" | while IFS= read -r file; do
+    [ -z "$file" ] && continue
+
+    orig=$(mktemp "${TMPDIR:-/tmp}/gofmt.orig.XXXXXX") || continue
+    formatted=$(mktemp "${TMPDIR:-/tmp}/gofmt.fmt.XXXXXX") || { rm -f "$orig"; continue; }
+
+    if ! git show ":$file" >"$orig" 2>/dev/null; then
+        rm -f "$orig" "$formatted"
+        continue
+    fi
+
+    cp "$orig" "$formatted"
+    if ! gofmt -w "$formatted" >/dev/null 2>&1; then
+        rm -f "$orig" "$formatted"
+        continue
+    fi
+
+    if ! cmp -s "$orig" "$formatted"; then
+        echo "$file" >> "${TMPDIR:-/tmp}/gofmt-unformatted.$$"
+    fi
+
+    rm -f "$orig" "$formatted"
+done
+
+RESULT_FILE="${TMPDIR:-/tmp}/gofmt-unformatted.$$"
+if [ -f "$RESULT_FILE" ]; then
+    echo "gofmt required on staged content:"
+    cat "$RESULT_FILE"
     echo ""
-    echo "Run: gofmt -w $UNFORMATTED"
+    echo "Run: gofmt -w <files> && git add <files>"
+    rm -f "$RESULT_FILE"
     exit 1
 fi
+rm -f "$RESULT_FILE"
