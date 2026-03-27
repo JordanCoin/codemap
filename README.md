@@ -328,7 +328,7 @@ The prompt-submit hook performs **intent classification** on every prompt — de
 - Surfaces **risk analysis** based on hub file involvement
 - Shows your **working set** (files edited this session)
 - Emits **structured JSON markers** (`<!-- codemap:intent -->`) for tool consumption
-- Matches and injects **relevant skills** automatically
+- Matches **relevant skills** and tells you which to pull (`codemap skill show <name>`)
 - Warns about **documentation drift** when docs are stale
 
 ## Context Protocol

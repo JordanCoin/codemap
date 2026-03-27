@@ -799,6 +799,13 @@ func showMatchedSkills(root string, intent TaskIntent) {
 	if data, err := json.Marshal(refs); err == nil {
 		fmt.Printf("<!-- codemap:skills %s -->\n", string(data))
 	}
+
+	// Compact human-readable hint with retrieval instruction
+	names := make([]string, len(refs))
+	for i, r := range refs {
+		names[i] = r.Name
+	}
+	fmt.Printf("Skills matched: %s — run `codemap skill show <name>` for guidance\n", strings.Join(names, ", "))
 }
 
 // showDriftWarnings checks and displays documentation drift warnings.
@@ -1406,7 +1413,8 @@ func findChildRepos(root string) []string {
 	return repos
 }
 
-// hookSessionStartMultiRepo handles meta-repos containing multiple child repos
+// hookSessionStartMultiRepo handles meta-repos containing multiple child repos.
+// Output is capped to MaxContextOutputBytes to prevent context blowup.
 func hookSessionStartMultiRepo(root string, childRepos []string) error {
 	fmt.Println("📍 Multi-Repo Project Context:")
 	fmt.Printf("   %d repositories in %s\n", len(childRepos), filepath.Base(root))
@@ -1417,8 +1425,20 @@ func hookSessionStartMultiRepo(root string, childRepos []string) error {
 		return err
 	}
 
-	// Run codemap on each child repo (with depth limit for compactness)
+	// Budget: divide total budget across repos, with a per-repo cap
+	totalBudget := limits.MaxContextOutputBytes
+	perRepoBudget := totalBudget / len(childRepos)
+	if perRepoBudget < 2000 {
+		perRepoBudget = 2000 // minimum useful output per repo
+	}
+	totalUsed := 0
+
 	for _, repo := range childRepos {
+		if totalUsed >= totalBudget {
+			fmt.Printf("   ... and %d more repos (output budget reached)\n", len(childRepos)-indexOf(childRepos, repo))
+			break
+		}
+
 		repoPath := filepath.Join(root, repo)
 		projCfg := config.Load(repoPath)
 
@@ -1436,11 +1456,31 @@ func hookSessionStartMultiRepo(root string, childRepos []string) error {
 		}
 		args = append(args, repoPath)
 		cmd := hookExecCommand(exe, args...)
-		cmd.Stdout = os.Stdout
+
+		// Capture and budget output instead of piping directly to stdout
+		buf := newCappedStringWriter(perRepoBudget + diffCaptureSlackBytes)
+		cmd.Stdout = buf
 		cmd.Stderr = os.Stderr
 		cmd.Run()
+
+		output := buf.String()
+		if len(output) > perRepoBudget || buf.Truncated() {
+			output = limits.TruncateAtLineBoundary(output, perRepoBudget,
+				"\n   ... (repo output truncated)\n")
+		}
+		fmt.Print(output)
 		fmt.Println()
+		totalUsed += len(output)
 	}
 
 	return nil
+}
+
+func indexOf(slice []string, val string) int {
+	for i, s := range slice {
+		if s == val {
+			return i
+		}
+	}
+	return len(slice)
 }
