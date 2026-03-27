@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -17,6 +18,7 @@ import (
 	"codemap/config"
 	"codemap/handoff"
 	"codemap/limits"
+	codemapmcp "codemap/mcp"
 	"codemap/render"
 	"codemap/scanner"
 	"codemap/watch"
@@ -104,10 +106,25 @@ func main() {
 		return
 	}
 
+	// Handle "mcp" subcommand before global flag parsing
+	if len(os.Args) >= 2 && os.Args[1] == "mcp" {
+		if err := codemapmcp.Run(context.Background()); err != nil {
+			fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// Handle "skill" subcommand before global flag parsing
 	if len(os.Args) >= 2 && os.Args[1] == "skill" {
 		root, _ := os.Getwd()
 		cmd.RunSkill(os.Args[2:], root)
+		return
+	}
+
+	// Handle "plugin" subcommand before global flag parsing
+	if len(os.Args) >= 2 && os.Args[1] == "plugin" {
+		cmd.RunPlugin(os.Args[2:])
 		return
 	}
 
@@ -196,6 +213,12 @@ func main() {
 		fmt.Println("Project config:")
 		fmt.Println("  codemap config init             # Create .codemap/config.json (auto-detects extensions)")
 		fmt.Println("  codemap config show             # Show current project config")
+		fmt.Println()
+		fmt.Println("Plugin management:")
+		fmt.Println("  codemap plugin install          # Install the Codemap plugin into your home plugin marketplace")
+		fmt.Println()
+		fmt.Println("MCP server:")
+		fmt.Println("  codemap mcp                     # Run Codemap MCP server on stdio")
 		fmt.Println()
 		fmt.Println("Recommended onboarding:")
 		fmt.Println("  codemap setup                   # Configure project config + Claude hooks")

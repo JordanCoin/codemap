@@ -2,16 +2,16 @@ venv/
 __pycache__/
 
 # Built binaries
-codemap
-codemap-mcp
-codemap-test
-mcp-test
-hub-check
+/codemap
+/codemap-mcp
+/codemap-test
+/mcp-test
+/hub-check
 
 # Runtime state
 .codemap/
-codemap-dev
-dev_codemap
+/codemap-dev
+/dev_codemap
 firebase-debug.log
 firebalse-debug.log
 coverage.out
