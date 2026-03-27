@@ -45,19 +45,43 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 }
 ```
 
-## Available Tools
+## Available Tools (17)
+
+### Project Analysis
 
 | Tool | Description |
 |------|-------------|
-| `status` | Verify MCP connection and local filesystem access |
-| `list_projects` | Discover projects in a parent directory (with optional filter) |
 | `get_structure` | Project tree view with file sizes and language detection |
 | `get_dependencies` | Dependency flow with imports, functions, and hub files |
 | `get_diff` | Changed files with line counts and impact analysis |
 | `find_file` | Find files by name pattern |
 | `get_importers` | Find all files that import a specific file |
-| `get_handoff` | Build/read layered handoff artifact (`prefix` + `delta`) with lazy file detail loading |
+| `get_hubs` | List all hub files (3+ importers) with dependent counts |
+| `get_file_context` | Complete dependency context for one file (imports, importers, hub status, connected files) |
+
+### Watch Daemon
+
+| Tool | Description |
+|------|-------------|
+| `start_watch` | Begin file watching for a project |
+| `stop_watch` | Stop file watcher |
+| `get_activity` | Recent coding activity (hot files, edits, timeline) |
 | `get_working_set` | Current session's working set: files being edited, ranked by activity, with hub status |
+
+### Skills
+
+| Tool | Description |
+|------|-------------|
+| `list_skills` | List available skills with names, descriptions, keywords (metadata only) |
+| `get_skill` | Load full instructions for a specific skill by name |
+
+### Handoff & Meta
+
+| Tool | Description |
+|------|-------------|
+| `get_handoff` | Build/read layered handoff artifact (`prefix` + `delta`) with lazy file detail loading |
+| `status` | Verify MCP connection and local filesystem access |
+| `list_projects` | Discover projects in a parent directory (with optional filter) |
 
 ## Usage
 
@@ -66,7 +90,10 @@ Once configured, Claude can use these tools automatically. Try asking:
 - "What's the structure of this project?"
 - "Show me the dependency flow"
 - "What files import utils.go?"
+- "Is scanner/types.go a hub file?"
 - "What changed since the last commit?"
+- "What have I been editing this session?"
+- "What skills are available for refactoring?"
 - "Build a handoff summary I can continue in another agent"
 
 ## Handoff Tool Notes
