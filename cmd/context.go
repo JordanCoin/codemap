@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"codemap/config"
@@ -248,63 +250,112 @@ func buildProjectContext(root string, info *hubInfo) ProjectContext {
 	return ctx
 }
 
-// detectLanguagesFromFiles does a quick scan of the project root for language signals.
-// Checks manifest files first (fast), then scans top-level source files.
+// detectLanguagesFromFiles does a quick scan for language signals.
+// Checks manifest files first (fast), then scans source files recursively.
 func detectLanguagesFromFiles(root string) map[string]bool {
 	langs := make(map[string]bool)
+	addLang := func(lang string) {
+		if lang != "" {
+			langs[lang] = true
+		}
+	}
 
 	// Manifest files → definitive language signal
-	manifests := map[string]string{
-		"go.mod":           "go",
-		"package.json":     "javascript",
-		"Cargo.toml":       "rust",
-		"pyproject.toml":   "python",
-		"setup.py":         "python",
-		"requirements.txt": "python",
-		"Gemfile":          "ruby",
-		"build.gradle":     "java",
-		"pom.xml":          "java",
-		"Package.swift":    "swift",
-		"mix.exs":          "elixir",
-		"composer.json":    "php",
-		"build.sbt":        "scala",
+	manifests := map[string][]string{
+		"go.mod":           {"go"},
+		"package.json":     {"javascript"},
+		"Cargo.toml":       {"rust"},
+		"pyproject.toml":   {"python"},
+		"setup.py":         {"python"},
+		"requirements.txt": {"python"},
+		"Gemfile":          {"ruby"},
+		"build.gradle":     {"java"},
+		"build.gradle.kts": {"kotlin", "java"},
+		"pom.xml":          {"java"},
+		"Package.swift":    {"swift"},
+		"Podfile":          {"swift"},
+		"mix.exs":          {"elixir"},
+		"composer.json":    {"php"},
+		"build.sbt":        {"scala"},
+		"tsconfig.json":    {"typescript"},
 	}
-	for file, lang := range manifests {
+	for file, signalLangs := range manifests {
 		if _, err := os.Stat(filepath.Join(root, file)); err == nil {
-			langs[lang] = true
+			for _, lang := range signalLangs {
+				addLang(lang)
+			}
 		}
 	}
 
-	// If we found manifests, that's usually enough
-	if len(langs) > 0 {
-		return langs
+	// C# project files can have arbitrary names; detect by glob at repo root.
+	for _, pattern := range []string{"*.csproj", "*.sln"} {
+		matches, _ := filepath.Glob(filepath.Join(root, pattern))
+		if len(matches) > 0 {
+			addLang("csharp")
+		}
 	}
 
-	// Fall back to scanning top-level files by extension
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return langs
+	// JS/TS monorepo signal: packages/*/package.json.
+	if matches, _ := filepath.Glob(filepath.Join(root, "packages", "*", "package.json")); len(matches) > 0 {
+		addLang("javascript")
 	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
+
+	// Makefile heuristics for C/C++ projects — check directly, no sentinel.
+	if _, err := os.Stat(filepath.Join(root, "Makefile")); err == nil {
+		applyMakefileHeuristics(filepath.Join(root, "Makefile"), addLang)
+	}
+
+	// Include subdirectory source files. Reuse the scan result for countSourceFiles too.
+	gitCache := scanner.NewGitIgnoreCache(root)
+	if files, err := scanner.ScanFiles(root, gitCache, nil, nil); err == nil {
+		for _, f := range files {
+			addLang(scanner.DetectLanguage(f.Path))
 		}
-		if lang := scanner.DetectLanguage(entry.Name()); lang != "" {
-			langs[lang] = true
-		}
+		// Cache file count to avoid a second scan in countSourceFiles
+		cachedFileCount = len(files)
 	}
 
 	return langs
 }
 
+// cachedFileCount avoids a second ScanFiles walk in countSourceFiles.
+var cachedFileCount = -1
+
+func applyMakefileHeuristics(path string, addLang func(string)) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	buf, err := io.ReadAll(io.LimitReader(f, 128*1024))
+	if err != nil {
+		return
+	}
+	content := strings.ToLower(string(buf))
+
+	if strings.Contains(content, "g++") || strings.Contains(content, "clang++") || strings.Contains(content, ".cpp") || strings.Contains(content, ".cc") {
+		addLang("cpp")
+	}
+	// Tighten C detection: exclude clang++ and .cpp/.cc false positives
+	if strings.Contains(content, "gcc") ||
+		(strings.Contains(content, "clang") && !strings.Contains(content, "clang++")) {
+		addLang("c")
+	}
+}
+
 // countSourceFiles does a quick count of source files in the project.
+// Uses cached result from detectLanguagesFromFiles if available.
 func countSourceFiles(root string) int {
-	count := 0
+	if cachedFileCount >= 0 {
+		count := cachedFileCount
+		cachedFileCount = -1 // reset for next call
+		return count
+	}
 	gitCache := scanner.NewGitIgnoreCache(root)
 	files, err := scanner.ScanFiles(root, gitCache, nil, nil)
 	if err != nil {
 		return 0
 	}
-	count = len(files)
-	return count
+	return len(files)
 }
