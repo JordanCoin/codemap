@@ -22,7 +22,7 @@ func RunPlugin(args []string) {
 	case "install":
 		runPluginInstall(args[1:])
 	default:
-		fmt.Println("Usage: codemap plugin <install>")
+		fmt.Println("Usage: codemap plugin install")
 		fmt.Println()
 		fmt.Println("Commands:")
 		fmt.Println("  install       Install the Codemap plugin into ~/.agents/plugins and ~/plugins")

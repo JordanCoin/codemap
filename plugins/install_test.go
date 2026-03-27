@@ -69,6 +69,10 @@ func TestInstallCodemapPluginCreatesBundleAndMarketplace(t *testing.T) {
 	if entry["name"] != "codemap" {
 		t.Fatalf("marketplace entry name = %#v, want codemap", entry["name"])
 	}
+	source := entry["source"].(map[string]any)
+	if source["path"] != "./plugins/codemap" {
+		t.Fatalf("marketplace source path = %#v, want ./plugins/codemap", source["path"])
+	}
 }
 
 func TestInstallCodemapPluginIsIdempotentAndPreservesMarketplaceMetadata(t *testing.T) {
@@ -141,5 +145,37 @@ func TestInstallCodemapPluginIsIdempotentAndPreservesMarketplaceMetadata(t *test
 	plugins := marketplace["plugins"].([]any)
 	if len(plugins) != 2 {
 		t.Fatalf("expected two marketplace entries after install, got %d", len(plugins))
+	}
+}
+
+func TestInstallCodemapPluginUsesInstalledPluginPathInMarketplace(t *testing.T) {
+	home := t.TempDir()
+	pluginPath := filepath.Join(home, "custom-plugins", "codemap")
+
+	result, err := InstallCodemapPlugin(InstallOptions{
+		HomeDir:    home,
+		PluginPath: pluginPath,
+	})
+	if err != nil {
+		t.Fatalf("InstallCodemapPlugin returned error: %v", err)
+	}
+	if result.PluginPath != pluginPath {
+		t.Fatalf("PluginPath = %q, want %q", result.PluginPath, pluginPath)
+	}
+
+	var marketplace map[string]any
+	data, err := os.ReadFile(filepath.Join(home, ".agents", "plugins", "marketplace.json"))
+	if err != nil {
+		t.Fatalf("read marketplace.json: %v", err)
+	}
+	if err := json.Unmarshal(data, &marketplace); err != nil {
+		t.Fatalf("unmarshal marketplace.json: %v", err)
+	}
+
+	plugins := marketplace["plugins"].([]any)
+	entry := plugins[0].(map[string]any)
+	source := entry["source"].(map[string]any)
+	if source["path"] != "./custom-plugins/codemap" {
+		t.Fatalf("marketplace source path = %#v, want ./custom-plugins/codemap", source["path"])
 	}
 }

@@ -5,7 +5,7 @@ This is a Codex plugin bundle for Codemap.
 It bundles:
 
 - the Codemap skill under `./skills/`
-- a local MCP configuration in [`.mcp.json`](/Users/jordan/Code/codemap/plugins/codemap/.mcp.json)
+- a local MCP configuration in [`.mcp.json`](./.mcp.json)
 - a launcher script that prefers `codemap mcp` and falls back to `codemap-mcp`
 - packaged logo/icon assets under `./assets/`
 

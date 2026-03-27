@@ -66,7 +66,7 @@ func InstallCodemapPlugin(opts InstallOptions) (InstallResult, error) {
 		return result, err
 	}
 
-	created, updated, err := ensureMarketplaceEntry(opts.MarketplacePath)
+	created, updated, err := ensureMarketplaceEntry(opts.MarketplacePath, opts.PluginPath)
 	if err != nil {
 		return result, err
 	}
@@ -126,7 +126,7 @@ func fileModeFor(path string) os.FileMode {
 	return 0o644
 }
 
-func ensureMarketplaceEntry(marketplacePath string) (created bool, updated bool, err error) {
+func ensureMarketplaceEntry(marketplacePath string, pluginPath string) (created bool, updated bool, err error) {
 	payload := map[string]any{}
 	data, readErr := os.ReadFile(marketplacePath)
 	switch {
@@ -175,11 +175,12 @@ func ensureMarketplaceEntry(marketplacePath string) (created bool, updated bool,
 		return created, updated, fmt.Errorf("%s field 'plugins' must be an array", marketplacePath)
 	}
 
+	pluginSourcePath := marketplacePluginSourcePath(marketplacePath, pluginPath)
 	entry := map[string]any{
 		"name": CodemapPluginName,
 		"source": map[string]any{
 			"source": "local",
-			"path":   "./plugins/codemap",
+			"path":   pluginSourcePath,
 		},
 		"policy": map[string]any{
 			"installation":   defaultInstallationPolicy,
@@ -232,4 +233,28 @@ func ensureMarketplaceEntry(marketplacePath string) (created bool, updated bool,
 		return created, updated, fmt.Errorf("write %s: %w", marketplacePath, err)
 	}
 	return created, updated, nil
+}
+
+func marketplacePluginSourcePath(marketplacePath, pluginPath string) string {
+	if pluginPath == "" {
+		return "./plugins/" + CodemapPluginName
+	}
+
+	marketplaceRoot := inferMarketplaceRoot(marketplacePath)
+	if marketplaceRoot != "" {
+		if rel, err := filepath.Rel(marketplaceRoot, pluginPath); err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." {
+			return "./" + filepath.ToSlash(rel)
+		}
+	}
+
+	return filepath.Clean(pluginPath)
+}
+
+func inferMarketplaceRoot(marketplacePath string) string {
+	pluginsDir := filepath.Dir(marketplacePath)
+	agentsDir := filepath.Dir(pluginsDir)
+	if filepath.Base(pluginsDir) == "plugins" && filepath.Base(agentsDir) == ".agents" {
+		return filepath.Dir(agentsDir)
+	}
+	return filepath.Dir(marketplacePath)
 }
