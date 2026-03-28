@@ -92,6 +92,25 @@ func TestConfigShowNoConfigFile(t *testing.T) {
 	}
 }
 
+func TestConfigShowMalformedConfig(t *testing.T) {
+	root := t.TempDir()
+	cfgPath := config.ConfigPath(root)
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, []byte("{broken"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureOutput(func() { configShow(root) })
+	if !strings.Contains(out, "malformed or unreadable") {
+		t.Fatalf("expected malformed guidance, got:\n%s", out)
+	}
+	if !strings.Contains(out, "rerun 'codemap config init'") {
+		t.Fatalf("expected recreate guidance, got:\n%s", out)
+	}
+}
+
 func TestConfigShowBoilerplateConfigSuggestsTuning(t *testing.T) {
 	root := t.TempDir()
 	cfgPath := config.ConfigPath(root)

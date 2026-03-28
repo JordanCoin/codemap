@@ -160,19 +160,30 @@ func initProjectConfig(root string) (configInitResult, error) {
 }
 
 func configShow(root string) {
-	cfg := config.Load(root)
-	if cfg.IsZero() {
-		cfgPath := config.ConfigPath(root)
-		if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
-			fmt.Println("No config file found.")
-			fmt.Printf("Run 'codemap config init' to create %s\n", cfgPath)
-		} else {
-			fmt.Println("Config is empty (no filters active).")
+	assessment := config.AssessSetup(root)
+	cfgPath := config.ConfigPath(root)
+	switch assessment.State {
+	case config.SetupStateMissing:
+		fmt.Println("No config file found.")
+		fmt.Printf("Run 'codemap config init' to create %s\n", cfgPath)
+		return
+	case config.SetupStateEmpty:
+		fmt.Println("Config is empty (no filters active).")
+		if len(assessment.Reasons) > 0 {
+			fmt.Println(assessment.Reasons[0])
 		}
+		return
+	case config.SetupStateMalformed:
+		fmt.Println("Config is malformed or unreadable.")
+		if len(assessment.Reasons) > 0 {
+			fmt.Println(assessment.Reasons[0])
+		}
+		fmt.Printf("Fix %s or rerun 'codemap config init' to recreate it.\n", cfgPath)
 		return
 	}
 
-	fmt.Printf("Config: %s\n", config.ConfigPath(root))
+	cfg := config.Load(root)
+	fmt.Printf("Config: %s\n", cfgPath)
 	fmt.Println()
 	if len(cfg.Only) > 0 {
 		fmt.Printf("  only:    %s\n", strings.Join(cfg.Only, ", "))
@@ -230,7 +241,6 @@ func configShow(root string) {
 		}
 	}
 
-	assessment := config.AssessSetup(root)
 	if assessment.State == config.SetupStateBoilerplate {
 		fmt.Println()
 		fmt.Println("Note: this config still looks like a bootstrap.")

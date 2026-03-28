@@ -285,6 +285,22 @@ func TestAssessSetup(t *testing.T) {
 		}
 	})
 
+	t.Run("blank config is empty", func(t *testing.T) {
+		root := t.TempDir()
+		codemapDir := filepath.Join(root, ".codemap")
+		if err := os.MkdirAll(codemapDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(codemapDir, "config.json"), []byte(" \n\t "), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		assessment := AssessSetup(root)
+		if assessment.State != SetupStateEmpty {
+			t.Fatalf("AssessSetup() state = %q, want %q", assessment.State, SetupStateEmpty)
+		}
+	})
+
 	t.Run("bootstrap config is boilerplate", func(t *testing.T) {
 		root := t.TempDir()
 		codemapDir := filepath.Join(root, ".codemap")

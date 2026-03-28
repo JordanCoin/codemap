@@ -1502,6 +1502,7 @@ func hookSessionStartMultiRepo(root string, childRepos []string) error {
 
 		repoPath := filepath.Join(root, repo)
 		projCfg := config.Load(repoPath)
+		showConfigSetupHint(repoPath)
 
 		depth := 2
 		if projCfg.Depth > 0 {

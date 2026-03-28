@@ -236,6 +236,13 @@ func AssessSetup(root string) SetupAssessment {
 		}
 	}
 
+	if strings.TrimSpace(string(data)) == "" {
+		return SetupAssessment{
+			State:   SetupStateEmpty,
+			Reasons: []string{"The config file is blank and does not shape Codemap output yet."},
+		}
+	}
+
 	var cfg ProjectConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return SetupAssessment{

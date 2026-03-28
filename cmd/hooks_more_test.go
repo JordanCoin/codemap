@@ -726,4 +726,36 @@ func TestDaemonCommandHelpersAndMultiRepoShellout(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("multi repo start emits setup hints for child repos needing config", func(t *testing.T) {
+		root := t.TempDir()
+		for _, repo := range []string{"svc-a", "svc-b"} {
+			repoPath := filepath.Join(root, repo)
+			if err := os.MkdirAll(repoPath, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		withHookRuntimeStubs(
+			t,
+			func() (string, error) { return "/tmp/codemap-hook", nil },
+			func(name string, args ...string) *exec.Cmd {
+				return exec.Command("sh", "-c", "exit 0")
+			},
+			nil,
+			nil,
+		)
+
+		out := captureOutput(func() {
+			if err := hookSessionStartMultiRepo(root, []string{"svc-a", "svc-b"}); err != nil {
+				t.Fatalf("hookSessionStartMultiRepo() error: %v", err)
+			}
+		})
+		if !strings.Contains(out, "codemap:config") {
+			t.Fatalf("expected config marker in multi-repo output, got:\n%s", out)
+		}
+		if !strings.Contains(out, "config-setup") {
+			t.Fatalf("expected config-setup guidance in multi-repo output, got:\n%s", out)
+		}
+	})
 }
