@@ -160,19 +160,30 @@ func initProjectConfig(root string) (configInitResult, error) {
 }
 
 func configShow(root string) {
-	cfg := config.Load(root)
-	if isConfigEmpty(cfg) {
-		cfgPath := config.ConfigPath(root)
-		if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
-			fmt.Println("No config file found.")
-			fmt.Printf("Run 'codemap config init' to create %s\n", cfgPath)
-		} else {
-			fmt.Println("Config is empty (no filters active).")
+	assessment := config.AssessSetup(root)
+	cfgPath := config.ConfigPath(root)
+	switch assessment.State {
+	case config.SetupStateMissing:
+		fmt.Println("No config file found.")
+		fmt.Printf("Run 'codemap config init' to create %s\n", cfgPath)
+		return
+	case config.SetupStateEmpty:
+		fmt.Println("Config is empty (no filters active).")
+		if len(assessment.Reasons) > 0 {
+			fmt.Println(assessment.Reasons[0])
 		}
+		return
+	case config.SetupStateMalformed:
+		fmt.Println("Config is malformed or unreadable.")
+		if len(assessment.Reasons) > 0 {
+			fmt.Println(assessment.Reasons[0])
+		}
+		fmt.Printf("Fix %s or rerun 'codemap config init' to recreate it.\n", cfgPath)
 		return
 	}
 
-	fmt.Printf("Config: %s\n", config.ConfigPath(root))
+	cfg := config.Load(root)
+	fmt.Printf("Config: %s\n", cfgPath)
 	fmt.Println()
 	if len(cfg.Only) > 0 {
 		fmt.Printf("  only:    %s\n", strings.Join(cfg.Only, ", "))
@@ -229,23 +240,14 @@ func configShow(root string) {
 			fmt.Printf("    require_docs_for: %s\n", strings.Join(cfg.Drift.RequireDocsFor, ", "))
 		}
 	}
+
+	if assessment.State == config.SetupStateBoilerplate {
+		fmt.Println()
+		fmt.Println("Note: this config still looks like a bootstrap.")
+		fmt.Println("Run `codemap skill show config-setup` to tune it for this repo.")
+	}
 }
 
 func isConfigEmpty(cfg config.ProjectConfig) bool {
-	if len(cfg.Only) > 0 || len(cfg.Exclude) > 0 || cfg.Depth > 0 {
-		return false
-	}
-	if strings.TrimSpace(cfg.Mode) != "" {
-		return false
-	}
-	if cfg.Budgets.SessionStartBytes > 0 || cfg.Budgets.DiffBytes > 0 || cfg.Budgets.MaxHubs > 0 {
-		return false
-	}
-	if strings.TrimSpace(cfg.Routing.Retrieval.Strategy) != "" || cfg.Routing.Retrieval.TopK > 0 || len(cfg.Routing.Subsystems) > 0 {
-		return false
-	}
-	if cfg.Drift.Enabled || cfg.Drift.RecentCommits > 0 || len(cfg.Drift.RequireDocsFor) > 0 {
-		return false
-	}
-	return true
+	return cfg.IsZero()
 }

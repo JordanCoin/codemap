@@ -68,6 +68,27 @@ const (
 	maxMaxHubs             = 100
 )
 
+type SetupState string
+
+const (
+	SetupStateReady       SetupState = "ready"
+	SetupStateMissing     SetupState = "missing"
+	SetupStateMalformed   SetupState = "malformed"
+	SetupStateEmpty       SetupState = "empty"
+	SetupStateBoilerplate SetupState = "boilerplate"
+)
+
+// SetupAssessment describes whether a repo's config needs setup attention.
+type SetupAssessment struct {
+	State   SetupState `json:"state"`
+	Reasons []string   `json:"reasons,omitempty"`
+}
+
+// NeedsAttention reports whether the config should be initialized or tuned.
+func (a SetupAssessment) NeedsAttention() bool {
+	return a.State != SetupStateReady
+}
+
 func clampBudget(v, def, max int) int {
 	if v <= 0 {
 		return def
@@ -89,6 +110,51 @@ func clampRange(v, def, min, max int) int {
 		return max
 	}
 	return v
+}
+
+// IsZero reports whether the config has no active project policy.
+func (c ProjectConfig) IsZero() bool {
+	if len(c.Only) > 0 || len(c.Exclude) > 0 || c.Depth > 0 {
+		return false
+	}
+	if strings.TrimSpace(c.Mode) != "" {
+		return false
+	}
+	if c.Budgets.SessionStartBytes > 0 || c.Budgets.DiffBytes > 0 || c.Budgets.MaxHubs > 0 {
+		return false
+	}
+	if strings.TrimSpace(c.Routing.Retrieval.Strategy) != "" || c.Routing.Retrieval.TopK > 0 || len(c.Routing.Subsystems) > 0 {
+		return false
+	}
+	if c.Drift.Enabled || c.Drift.RecentCommits > 0 || len(c.Drift.RequireDocsFor) > 0 {
+		return false
+	}
+	return true
+}
+
+// LooksBoilerplate reports whether the config resembles a bare bootstrap.
+// This intentionally treats extension-only configs as a first draft that
+// should usually be tuned with project-specific excludes or policy.
+func (c ProjectConfig) LooksBoilerplate() bool {
+	if c.IsZero() {
+		return false
+	}
+	if len(c.Exclude) > 0 {
+		return false
+	}
+	if strings.TrimSpace(c.Mode) != "" {
+		return false
+	}
+	if c.Budgets.SessionStartBytes > 0 || c.Budgets.DiffBytes > 0 || c.Budgets.MaxHubs > 0 {
+		return false
+	}
+	if strings.TrimSpace(c.Routing.Retrieval.Strategy) != "" || c.Routing.Retrieval.TopK > 0 || len(c.Routing.Subsystems) > 0 {
+		return false
+	}
+	if c.Drift.Enabled || c.Drift.RecentCommits > 0 || len(c.Drift.RequireDocsFor) > 0 {
+		return false
+	}
+	return len(c.Only) > 0
 }
 
 // ModeOrDefault returns a valid hook orchestration mode.
@@ -151,4 +217,53 @@ func Load(root string) ProjectConfig {
 		return ProjectConfig{}
 	}
 	return cfg
+}
+
+// AssessSetup inspects .codemap/config.json and reports whether it should be
+// initialized or tuned before deeper Codemap analysis.
+func AssessSetup(root string) SetupAssessment {
+	data, err := os.ReadFile(ConfigPath(root))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return SetupAssessment{
+				State:   SetupStateMissing,
+				Reasons: []string{"No .codemap/config.json is present yet."},
+			}
+		}
+		return SetupAssessment{
+			State:   SetupStateMalformed,
+			Reasons: []string{fmt.Sprintf("Codemap could not read the config file: %v", err)},
+		}
+	}
+
+	if strings.TrimSpace(string(data)) == "" {
+		return SetupAssessment{
+			State:   SetupStateEmpty,
+			Reasons: []string{"The config file is blank and does not shape Codemap output yet."},
+		}
+	}
+
+	var cfg ProjectConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return SetupAssessment{
+			State:   SetupStateMalformed,
+			Reasons: []string{"The existing .codemap/config.json is malformed JSON."},
+		}
+	}
+
+	if cfg.IsZero() {
+		return SetupAssessment{
+			State:   SetupStateEmpty,
+			Reasons: []string{"The config exists but does not shape Codemap output yet."},
+		}
+	}
+
+	if cfg.LooksBoilerplate() {
+		return SetupAssessment{
+			State:   SetupStateBoilerplate,
+			Reasons: []string{"The config only contains generic bootstrap filters and should be tuned for this repo."},
+		}
+	}
+
+	return SetupAssessment{State: SetupStateReady}
 }

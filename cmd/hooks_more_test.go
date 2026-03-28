@@ -443,6 +443,55 @@ func TestHookPromptSubmitShowsContextAndProgress(t *testing.T) {
 	})
 }
 
+func TestHookPromptSubmitInjectsConfigSetupSkillWhenConfigMissing(t *testing.T) {
+	root := t.TempDir()
+
+	withStdinInput(t, mustJSONInput(t, map[string]string{
+		"prompt": "help me understand this repo structure",
+	}), func() {
+		var hookErr error
+		out := captureOutput(func() { hookErr = hookPromptSubmit(root) })
+		if hookErr != nil {
+			t.Fatalf("hookPromptSubmit() error: %v", hookErr)
+		}
+		if !strings.Contains(out, `"name":"config-setup"`) {
+			t.Fatalf("expected config-setup skill marker, got:\n%s", out)
+		}
+		if !strings.Contains(out, "Skills matched: config-setup") {
+			t.Fatalf("expected config-setup skill hint, got:\n%s", out)
+		}
+	})
+}
+
+func TestShowConfigSetupHint(t *testing.T) {
+	t.Run("missing config emits setup hint", func(t *testing.T) {
+		out := captureOutput(func() { showConfigSetupHint(t.TempDir()) })
+		if !strings.Contains(out, "codemap:config") {
+			t.Fatalf("expected config marker, got:\n%s", out)
+		}
+		if !strings.Contains(out, "config setup recommended") {
+			t.Fatalf("expected setup heading, got:\n%s", out)
+		}
+		if !strings.Contains(out, "config-setup") {
+			t.Fatalf("expected config-setup guidance, got:\n%s", out)
+		}
+	})
+
+	t.Run("ready config stays quiet", func(t *testing.T) {
+		root := t.TempDir()
+		writeProjectConfig(t, root, config.ProjectConfig{
+			Only:    []string{"go"},
+			Exclude: []string{"fixtures"},
+			Depth:   4,
+		})
+
+		out := captureOutput(func() { showConfigSetupHint(root) })
+		if strings.TrimSpace(out) != "" {
+			t.Fatalf("expected no output for ready config, got:\n%s", out)
+		}
+	})
+}
+
 func TestFindChildReposAndSessionStartVariants(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -675,6 +724,38 @@ func TestDaemonCommandHelpersAndMultiRepoShellout(t *testing.T) {
 			if strings.Join(calls[i], "|") != strings.Join(want, "|") {
 				t.Fatalf("call %d = %v, want %v", i, calls[i], want)
 			}
+		}
+	})
+
+	t.Run("multi repo start emits setup hints for child repos needing config", func(t *testing.T) {
+		root := t.TempDir()
+		for _, repo := range []string{"svc-a", "svc-b"} {
+			repoPath := filepath.Join(root, repo)
+			if err := os.MkdirAll(repoPath, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		withHookRuntimeStubs(
+			t,
+			func() (string, error) { return "/tmp/codemap-hook", nil },
+			func(name string, args ...string) *exec.Cmd {
+				return exec.Command("sh", "-c", "exit 0")
+			},
+			nil,
+			nil,
+		)
+
+		out := captureOutput(func() {
+			if err := hookSessionStartMultiRepo(root, []string{"svc-a", "svc-b"}); err != nil {
+				t.Fatalf("hookSessionStartMultiRepo() error: %v", err)
+			}
+		})
+		if !strings.Contains(out, "codemap:config") {
+			t.Fatalf("expected config marker in multi-repo output, got:\n%s", out)
+		}
+		if !strings.Contains(out, "config-setup") {
+			t.Fatalf("expected config-setup guidance in multi-repo output, got:\n%s", out)
 		}
 	})
 }

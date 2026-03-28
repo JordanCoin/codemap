@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"codemap/limits"
@@ -218,6 +219,123 @@ func TestPolicyDefaultsAndClamps(t *testing.T) {
 		}
 		if got := cfg.RoutingTopKOrDefault(); got != 3 {
 			t.Fatalf("RoutingTopKOrDefault() = %d, want 3", got)
+		}
+	})
+}
+
+func TestProjectConfigStateHelpers(t *testing.T) {
+	t.Run("zero config is zero and not boilerplate", func(t *testing.T) {
+		var cfg ProjectConfig
+		if !cfg.IsZero() {
+			t.Fatal("expected zero-value config to be zero")
+		}
+		if cfg.LooksBoilerplate() {
+			t.Fatal("did not expect zero-value config to look boilerplate")
+		}
+	})
+
+	t.Run("extension-only config looks boilerplate", func(t *testing.T) {
+		cfg := ProjectConfig{
+			Only: []string{"go", "ts"},
+		}
+		if cfg.IsZero() {
+			t.Fatal("did not expect extension-only config to be zero")
+		}
+		if !cfg.LooksBoilerplate() {
+			t.Fatal("expected extension-only config to look boilerplate")
+		}
+	})
+
+	t.Run("project-shaped config does not look boilerplate", func(t *testing.T) {
+		cfg := ProjectConfig{
+			Only:    []string{"swift"},
+			Exclude: []string{".xcassets", "Snapshots"},
+			Depth:   4,
+		}
+		if cfg.LooksBoilerplate() {
+			t.Fatal("did not expect tuned config to look boilerplate")
+		}
+	})
+}
+
+func TestAssessSetup(t *testing.T) {
+	t.Run("missing config needs setup", func(t *testing.T) {
+		assessment := AssessSetup(t.TempDir())
+		if assessment.State != SetupStateMissing {
+			t.Fatalf("AssessSetup() state = %q, want %q", assessment.State, SetupStateMissing)
+		}
+		if !assessment.NeedsAttention() {
+			t.Fatal("expected missing config to need attention")
+		}
+	})
+
+	t.Run("malformed config needs setup", func(t *testing.T) {
+		root := t.TempDir()
+		codemapDir := filepath.Join(root, ".codemap")
+		if err := os.MkdirAll(codemapDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(codemapDir, "config.json"), []byte("{bad json"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		assessment := AssessSetup(root)
+		if assessment.State != SetupStateMalformed {
+			t.Fatalf("AssessSetup() state = %q, want %q", assessment.State, SetupStateMalformed)
+		}
+	})
+
+	t.Run("blank config is empty", func(t *testing.T) {
+		root := t.TempDir()
+		codemapDir := filepath.Join(root, ".codemap")
+		if err := os.MkdirAll(codemapDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(codemapDir, "config.json"), []byte(" \n\t "), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		assessment := AssessSetup(root)
+		if assessment.State != SetupStateEmpty {
+			t.Fatalf("AssessSetup() state = %q, want %q", assessment.State, SetupStateEmpty)
+		}
+	})
+
+	t.Run("bootstrap config is boilerplate", func(t *testing.T) {
+		root := t.TempDir()
+		codemapDir := filepath.Join(root, ".codemap")
+		if err := os.MkdirAll(codemapDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(codemapDir, "config.json"), []byte(`{"only":["rs","toml"]}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		assessment := AssessSetup(root)
+		if assessment.State != SetupStateBoilerplate {
+			t.Fatalf("AssessSetup() state = %q, want %q", assessment.State, SetupStateBoilerplate)
+		}
+		if len(assessment.Reasons) == 0 || !strings.Contains(strings.ToLower(assessment.Reasons[0]), "bootstrap") {
+			t.Fatalf("expected bootstrap reason, got %v", assessment.Reasons)
+		}
+	})
+
+	t.Run("tuned config is ready", func(t *testing.T) {
+		root := t.TempDir()
+		codemapDir := filepath.Join(root, ".codemap")
+		if err := os.MkdirAll(codemapDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(codemapDir, "config.json"), []byte(`{"only":["swift"],"exclude":[".xcassets"],"depth":4}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		assessment := AssessSetup(root)
+		if assessment.State != SetupStateReady {
+			t.Fatalf("AssessSetup() state = %q, want %q", assessment.State, SetupStateReady)
+		}
+		if assessment.NeedsAttention() {
+			t.Fatal("did not expect tuned config to need attention")
 		}
 	})
 }

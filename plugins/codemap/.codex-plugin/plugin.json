@@ -21,8 +21,8 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Codemap",
-    "shortDescription": "Code-aware context and skill routing for local repos",
-    "longDescription": "Use Codemap to inspect project structure, trace dependencies, evaluate change risk, match task-specific skills, and build cross-agent handoffs.",
+    "shortDescription": "Code-aware context, config tuning, and skill routing for local repos",
+    "longDescription": "Use Codemap to tune per-project config, inspect project structure, trace dependencies, evaluate change risk, match task-specific skills, and build cross-agent handoffs.",
     "developerName": "JordanCoin",
     "category": "Coding",
     "capabilities": [
@@ -33,9 +33,9 @@
     "composerIcon": "./assets/icon.png",
     "logo": "./assets/logo.png",
     "defaultPrompt": [
+      "Set up Codemap for this repo and tune the project config.",
       "Show me this project's structure and hub files.",
-      "What changed on this branch and what looks risky?",
-      "Build a Codemap handoff for the next agent."
+      "What changed on this branch and what looks risky?"
     ],
     "screenshots": [
       "./assets/screenshot1.png"
