@@ -1,11 +1,13 @@
 ---
 name: codemap
-description: Analyze codebase structure, dependencies, changes, cross-agent handoffs, and get code-aware intelligence. Use when user asks about project structure, where code is located, how files connect, what changed, how to resume work, before starting any coding task, or when you need risk analysis and skill guidance.
+description: Analyze codebase structure, dependencies, changes, cross-agent handoffs, and get code-aware intelligence. Use when user asks about project structure, where code is located, how files connect, what changed, how to resume work, before starting any coding task, when you need risk analysis and skill guidance, or when Codemap should tune project config before analysis.
 ---
 
 # Codemap
 
 Codemap gives you instant architectural context about any codebase. It classifies your intent, detects risk, matches relevant skills, and tracks your working set — all automatically via hooks.
+
+Codemap should also keep its own per-project config healthy. On first use in a repo, or when output is obviously noisy, tune `.codemap/config.json` before doing deeper analysis so future calls stay code-first instead of asset-first.
 
 ## Commands
 
@@ -21,11 +23,29 @@ codemap handoff --json .        # Machine-readable handoff payload
 codemap skill list              # Show available skills with descriptions
 codemap skill show <name>       # Get full skill instructions
 codemap skill init              # Create custom skill template
+codemap config show             # Show current project config
 codemap context                 # Universal JSON context envelope
 codemap context --for "prompt"  # With pre-classified intent + matched skills
 codemap context --compact       # Minimal for token-constrained agents
 codemap serve --port 9471       # HTTP API for non-MCP integrations
 ```
+
+## First-Use Setup
+
+Before deeper Codemap analysis in a repo:
+
+1. Check `.codemap/config.json`.
+2. If it is missing, clearly boilerplate, or obviously too noisy for the stack, run `codemap skill show config-setup` and follow it.
+3. After writing or improving config, rerun `codemap .` and `codemap --deps`.
+
+Treat config as repo memory. Once tuned, future Codemap calls should benefit automatically.
+
+Signals that config needs setup or tuning:
+- `.codemap/config.json` is missing
+- config only contains generic auto-detected `only` values with no real project shaping
+- large non-code directories dominate the tree output
+- stack-specific noise is overwhelming source structure (`.xcassets`, screenshots, PDFs, training-data, fixtures, generated files, models, vendor directories)
+- the repo stack is obvious, but the config does not reflect it
 
 ## When to Use
 
@@ -56,6 +76,12 @@ codemap serve --port 9471       # HTTP API for non-MCP integrations
 - You need guidance for a specific task (hub editing, refactoring, testing)
 - Risk level is medium or high
 
+### Run `codemap skill show config-setup` when:
+- The repo has no `.codemap/config.json`
+- The config looks like a bare bootstrap and not a real project policy
+- Codemap output is cluttered by large non-code directories
+- You want Codemap to make better future decisions for this specific repo
+
 ### Run `codemap context` when:
 - Piping codemap intelligence to another tool
 - Need a structured JSON summary of the project state
@@ -84,6 +110,7 @@ Skills matched: hub-safety, refactor — run `codemap skill show <name>` for gui
 
 | Skill | When to Pull |
 |-------|-------------|
+| `config-setup` | Missing, boilerplate, or noisy `.codemap/config.json` |
 | `hub-safety` | Editing files imported by 3+ others |
 | `refactor` | Restructuring, renaming, moving code |
 | `test-first` | Writing tests, TDD workflows |

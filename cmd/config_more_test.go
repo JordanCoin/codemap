@@ -92,6 +92,25 @@ func TestConfigShowNoConfigFile(t *testing.T) {
 	}
 }
 
+func TestConfigShowBoilerplateConfigSuggestsTuning(t *testing.T) {
+	root := t.TempDir()
+	cfgPath := config.ConfigPath(root)
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, []byte(`{"only":["rs","toml"],"depth":4}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureOutput(func() { configShow(root) })
+	if !strings.Contains(out, "looks like a bootstrap") {
+		t.Fatalf("expected bootstrap note, got:\n%s", out)
+	}
+	if !strings.Contains(out, "config-setup") {
+		t.Fatalf("expected config-setup guidance, got:\n%s", out)
+	}
+}
+
 func mustWriteConfigFixture(t *testing.T, path string, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

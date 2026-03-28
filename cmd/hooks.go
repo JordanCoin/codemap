@@ -300,6 +300,8 @@ func hookSessionStart(root string) error {
 	structureBudget := projCfg.SessionStartOutputBytes()
 	maxHubs := projCfg.HubDisplayLimit()
 
+	showConfigSetupHint(root)
+
 	exe, err := os.Executable()
 	if err == nil {
 		depth := limits.AdaptiveDepth(fileCount)
@@ -782,6 +784,7 @@ func showMatchedSkills(root string, intent TaskIntent) {
 	}
 
 	matches := idx.MatchSkills(intent.Category, intent.Files, langs, 3)
+	matches = injectConfigSetupSkill(root, idx, matches)
 	if len(matches) == 0 {
 		return
 	}
@@ -806,6 +809,64 @@ func showMatchedSkills(root string, intent TaskIntent) {
 		names[i] = r.Name
 	}
 	fmt.Printf("Skills matched: %s — run `codemap skill show <name>` for guidance\n", strings.Join(names, ", "))
+}
+
+func injectConfigSetupSkill(root string, idx *skills.SkillIndex, matches []skills.MatchResult) []skills.MatchResult {
+	assessment := config.AssessSetup(root)
+	if !assessment.NeedsAttention() {
+		return matches
+	}
+
+	skill, ok := idx.ByName["config-setup"]
+	if !ok || skill == nil {
+		return matches
+	}
+	for _, match := range matches {
+		if match.Skill != nil && match.Skill.Meta.Name == "config-setup" {
+			return matches
+		}
+	}
+
+	reason := "config:" + string(assessment.State)
+	if len(assessment.Reasons) > 0 {
+		reason = reason + " " + assessment.Reasons[0]
+	}
+
+	injected := skills.MatchResult{
+		Skill:  skill,
+		Score:  100,
+		Reason: reason,
+	}
+	matches = append([]skills.MatchResult{injected}, matches...)
+	if len(matches) > 3 {
+		matches = matches[:3]
+	}
+	return matches
+}
+
+func showConfigSetupHint(root string) {
+	assessment := config.AssessSetup(root)
+	if !assessment.NeedsAttention() {
+		return
+	}
+
+	type configHint struct {
+		State   string   `json:"state"`
+		Reasons []string `json:"reasons,omitempty"`
+	}
+	if data, err := json.Marshal(configHint{
+		State:   string(assessment.State),
+		Reasons: assessment.Reasons,
+	}); err == nil {
+		fmt.Printf("<!-- codemap:config %s -->\n", string(data))
+	}
+
+	fmt.Println("⚙️  Codemap config setup recommended:")
+	for _, reason := range assessment.Reasons {
+		fmt.Printf("   • %s\n", reason)
+	}
+	fmt.Println("   • Run `codemap skill show config-setup` and tune `.codemap/config.json` before deeper analysis.")
+	fmt.Println()
 }
 
 // showDriftWarnings checks and displays documentation drift warnings.
