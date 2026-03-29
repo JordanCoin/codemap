@@ -328,6 +328,7 @@ Skills are also available via MCP: `list_skills` (metadata) and `get_skill` (ful
 The prompt-submit hook performs **intent classification** on every prompt — detecting whether you're refactoring, fixing a bug, exploring, testing, or building a feature. It then:
 
 - Surfaces **risk analysis** based on hub file involvement
+- Emits **exact next-step codemap commands** at transition points like “before editing” and “before refactoring”
 - Shows your **working set** (files edited this session)
 - Emits **structured JSON markers** (`<!-- codemap:intent -->`) for tool consumption
 - Matches **relevant skills** and tells you which to pull (`codemap skill show <name>`)

@@ -651,7 +651,7 @@ func hookPreEdit(root string) error {
 		return nil // silently skip if no file path
 	}
 
-	return checkFileImporters(root, filePath)
+	return checkFileImportersWithPhase(root, filePath, "before")
 }
 
 // hookPostEdit shows impact after editing (reads JSON from stdin)
@@ -661,7 +661,7 @@ func hookPostEdit(root string) error {
 		return nil
 	}
 
-	return checkFileImporters(root, filePath)
+	return checkFileImportersWithPhase(root, filePath, "after")
 }
 
 // hookPromptSubmit analyzes user prompt with code intelligence and shows context
@@ -723,6 +723,8 @@ func hookPromptSubmit(root string) error {
 			fmt.Printf("   • [%s] %s — %s\n", s.Type, s.Target, s.Reason)
 		}
 	}
+
+	showNextCodemapSteps(intent, info)
 
 	showRouteSuggestions(prompt, projCfg, topK)
 
@@ -809,6 +811,112 @@ func showMatchedSkills(root string, intent TaskIntent) {
 		names[i] = r.Name
 	}
 	fmt.Printf("Skills matched: %s — run `codemap skill show <name>` for guidance\n", strings.Join(names, ", "))
+}
+
+type codemapNextStep struct {
+	Command string
+	Reason  string
+}
+
+func showNextCodemapSteps(intent TaskIntent, info *hubInfo) {
+	steps := planCodemapNextSteps(intent, info)
+	if len(steps) == 0 {
+		return
+	}
+
+	fmt.Println()
+	fmt.Println("Next codemap:")
+	for _, step := range steps {
+		fmt.Printf("   • %s — %s\n", step.Command, step.Reason)
+	}
+}
+
+func planCodemapNextSteps(intent TaskIntent, info *hubInfo) []codemapNextStep {
+	var steps []codemapNextStep
+	seen := make(map[string]bool)
+	add := func(command, reason string) {
+		if command == "" || seen[command] {
+			return
+		}
+		seen[command] = true
+		steps = append(steps, codemapNextStep{Command: command, Reason: reason})
+	}
+
+	primaryFile := pickPrimaryCodemapFile(intent.Files, info)
+	if primaryFile != "" {
+		importerCount := 0
+		if info != nil {
+			importerCount = len(info.Importers[primaryFile])
+		}
+
+		reason := "check callers before editing"
+		switch {
+		case importerCount >= 3:
+			reason = fmt.Sprintf("check blast radius before editing this hub (%d importers)", importerCount)
+		case importerCount > 0:
+			reason = fmt.Sprintf("check callers before editing (%d importers)", importerCount)
+		}
+		add("codemap --importers "+shellQuoteIfNeeded(primaryFile), reason)
+		if importerCount >= 3 {
+			add("codemap --deps", "trace dependency flow around this hub before changing it")
+		}
+	}
+
+	switch intent.Category {
+	case "explore":
+		if len(intent.Files) == 0 {
+			add("codemap .", "refresh project structure before diving in")
+		} else {
+			add("codemap --deps", "trace how the mentioned code connects")
+		}
+	case "refactor":
+		add("codemap --deps", "verify dependency flow before refactoring")
+	case "feature":
+		if len(intent.Files) == 0 {
+			add("codemap .", "refresh project structure before choosing edit points")
+		}
+		if len(intent.Files) > 0 || intent.Scope != "single-file" {
+			add("codemap --deps", "feature work tends to cross existing dependencies")
+		}
+	case "bugfix":
+		if len(intent.Files) == 0 {
+			add("codemap --diff", "check recent branch changes before debugging")
+		} else if primaryFile != "" && info != nil && len(info.Importers[primaryFile]) >= 3 {
+			add("codemap --deps", "hub fixes can ripple through dependents")
+		}
+	}
+
+	if len(steps) > 2 {
+		steps = steps[:2]
+	}
+	return steps
+}
+
+func pickPrimaryCodemapFile(files []string, info *hubInfo) string {
+	if len(files) == 0 {
+		return ""
+	}
+
+	best := files[0]
+	bestImporters := -1
+	for _, file := range files {
+		importerCount := 0
+		if info != nil {
+			importerCount = len(info.Importers[file])
+		}
+		if importerCount > bestImporters {
+			best = file
+			bestImporters = importerCount
+		}
+	}
+	return best
+}
+
+func shellQuoteIfNeeded(value string) string {
+	if strings.ContainsAny(value, " \t") {
+		return strconv.Quote(value)
+	}
+	return value
 }
 
 func injectConfigSetupSkill(root string, idx *skills.SkillIndex, matches []skills.MatchResult) []skills.MatchResult {
@@ -1373,6 +1481,10 @@ func extractFilePathFromStdin() (string, error) {
 
 // checkFileImporters checks if a file is a hub and shows its importers
 func checkFileImporters(root, filePath string) error {
+	return checkFileImportersWithPhase(root, filePath, "")
+}
+
+func checkFileImportersWithPhase(root, filePath, phase string) error {
 	info := getHubInfoNoFallback(root)
 	if info == nil {
 		return nil // silently skip if deps unavailable
@@ -1388,8 +1500,18 @@ func checkFileImporters(root, filePath string) error {
 	importers := info.Importers[filePath]
 	if len(importers) >= 3 {
 		fmt.Println()
-		fmt.Printf("⚠️  HUB FILE: %s\n", filePath)
-		fmt.Printf("   Imported by %d files - changes have wide impact!\n", len(importers))
+		switch phase {
+		case "before":
+			fmt.Printf("🛑 Before editing: %s is a hub with %d importers.\n", filePath, len(importers))
+		case "after":
+			fmt.Printf("⚠️  After editing: %s still fans out to %d importers.\n", filePath, len(importers))
+		default:
+			fmt.Printf("⚠️  HUB FILE: %s\n", filePath)
+			fmt.Printf("   Imported by %d files - changes have wide impact!\n", len(importers))
+		}
+		if phase != "" {
+			fmt.Printf("   Changes here have wide impact.\n")
+		}
 		fmt.Println()
 		fmt.Println("   Dependents:")
 		for i, imp := range importers {
@@ -1402,7 +1524,13 @@ func checkFileImporters(root, filePath string) error {
 		fmt.Println()
 	} else if len(importers) > 0 {
 		fmt.Println()
-		fmt.Printf("📍 File: %s\n", filePath)
+		if phase == "after" {
+			fmt.Printf("📍 After editing: %s\n", filePath)
+		} else if phase == "before" {
+			fmt.Printf("📍 Before editing: %s\n", filePath)
+		} else {
+			fmt.Printf("📍 File: %s\n", filePath)
+		}
 		fmt.Printf("   Imported by %d file(s): %s\n", len(importers), strings.Join(importers, ", "))
 		fmt.Println()
 	}
@@ -1420,7 +1548,41 @@ func checkFileImporters(root, filePath string) error {
 		fmt.Println()
 	}
 
+	showFileCodemapActions(filePath, len(importers), len(hubImports) > 0, phase)
+
 	return nil
+}
+
+func showFileCodemapActions(filePath string, importerCount int, importsHub bool, phase string) {
+	steps := []codemapNextStep{
+		{
+			Command: "codemap --importers " + shellQuoteIfNeeded(filePath),
+			Reason:  "review blast radius for this file",
+		},
+	}
+	if importerCount >= 3 || importsHub {
+		steps = append(steps, codemapNextStep{
+			Command: "codemap --deps",
+			Reason:  "verify dependency flow around this change",
+		})
+	}
+
+	if len(steps) == 0 {
+		return
+	}
+
+	switch phase {
+	case "before":
+		fmt.Println("   Run now:")
+	case "after":
+		fmt.Println("   Re-check with:")
+	default:
+		fmt.Println("   Next codemap:")
+	}
+	for _, step := range steps {
+		fmt.Printf("   • %s — %s\n", step.Command, step.Reason)
+	}
+	fmt.Println()
 }
 
 // isHub checks if a file is a hub (has 3+ importers)

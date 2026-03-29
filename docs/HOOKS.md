@@ -218,21 +218,29 @@ myproject
 
 ### Before/After Editing a File
 ```
-📍 File: cmd/hooks.go
+📍 Before editing: cmd/hooks.go
    Imported by 1 file(s): main.go
    Imports 16 hub(s): scanner/types.go, scanner/walker.go, watch/daemon.go...
+
+   Run now:
+   • codemap --importers cmd/hooks.go — review blast radius for this file
+   • codemap --deps — verify dependency flow around this change
 ```
 
 Or if it's a hub:
 ```
-⚠️  HUB FILE: scanner/types.go
-   Imported by 10 files - changes have wide impact!
+🛑 Before editing: scanner/types.go is a hub with 10 importers.
+   Changes here have wide impact.
 
    Dependents:
    • main.go
    • mcp/main.go
    • watch/watch.go
    ... and 7 more
+
+   Run now:
+   • codemap --importers scanner/types.go — review blast radius for this file
+   • codemap --deps — verify dependency flow around this change
 ```
 
 ### When You Mention a File (Prompt Submit)
@@ -249,6 +257,10 @@ The prompt-submit hook now performs **intent classification** — it analyzes wh
    • [review-hub] scanner/types.go — hub file imported by 10 files — changes have wide impact
    • [check-deps] scanner/types.go — verify dependents still compile after changes
    • [run-tests] . — run full test suite after refactoring
+
+Next codemap:
+   • codemap --importers scanner/types.go — check blast radius before editing this hub (10 importers)
+   • codemap --deps — verify dependency flow before refactoring
 
 <!-- codemap:routes [{"id":"scanning","score":3,"docs":["docs/MCP.md"]}] -->
 
@@ -355,7 +367,8 @@ codemap handoff --detail a.go . # lazy-load full detail for one changed file
 With these hooks, Claude:
 1. **Knows** which files are hubs before touching them
 2. **Sees** the blast radius after making changes
-3. **Remembers** important files even after context compaction
+3. **Gets exact codemap commands** at decision points instead of generic protocol reminders
+4. **Remembers** important files even after context compaction
 
 ---
 
