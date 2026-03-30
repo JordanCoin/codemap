@@ -103,3 +103,32 @@ func TestDepgraphRendersExternalDepsAndSummarySection(t *testing.T) {
 		}
 	}
 }
+
+func TestDepgraphWrapsLongDependencyLines(t *testing.T) {
+	project := scanner.DepsProject{
+		Root: t.TempDir(),
+		Files: []scanner.FileAnalysis{
+			{Path: "main.go", Functions: []string{"main"}},
+		},
+		ExternalDeps: map[string][]string{
+			"go": {
+				"github.com/example/super-long-package-alpha",
+				"github.com/example/super-long-package-beta",
+				"github.com/example/super-long-package-gamma",
+				"github.com/example/super-long-package-delta",
+				"github.com/example/super-long-package-epsilon",
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	Depgraph(&buf, project)
+	output := buf.String()
+
+	if !strings.Contains(output, "Go:") {
+		t.Fatalf("expected go language dependency label, got:\n%s", output)
+	}
+	if !strings.Contains(output, "super-long-package-alpha") || !strings.Contains(output, "super-long-package-epsilon") {
+		t.Fatalf("expected long dependency names to be present, got:\n%s", output)
+	}
+}

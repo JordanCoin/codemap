@@ -274,3 +274,79 @@ func TestSkylineMinMax(t *testing.T) {
 		})
 	}
 }
+
+func TestSkylineTickCmd(t *testing.T) {
+	cmd := tickCmd()
+	if cmd == nil {
+		t.Fatal("expected non-nil tick command")
+	}
+
+	msg := cmd()
+	if _, ok := msg.(tickMsg); !ok {
+		t.Fatalf("expected tickMsg, got %T", msg)
+	}
+}
+
+func TestSkylineAnimationModelInit(t *testing.T) {
+	m := animationModel{}
+	if cmd := m.Init(); cmd == nil {
+		t.Fatal("expected non-nil init command")
+	}
+}
+
+func TestSkylineAnimationModelUpdatePhaseTwo(t *testing.T) {
+	t.Run("starts shooting star at configured frame", func(t *testing.T) {
+		m := animationModel{
+			phase:     2,
+			frame:     9,
+			sceneLeft: 3,
+		}
+
+		updated, cmd := m.Update(tickMsg(time.Now()))
+		if cmd == nil {
+			t.Fatal("expected tick command")
+		}
+		got := updated.(animationModel)
+		if !got.shootingStarActive {
+			t.Fatal("expected shooting star to become active")
+		}
+		if got.shootingStarCol != m.sceneLeft {
+			t.Fatalf("shootingStarCol = %d, want %d", got.shootingStarCol, m.sceneLeft)
+		}
+	})
+
+	t.Run("deactivates shooting star after leaving scene", func(t *testing.T) {
+		m := animationModel{
+			phase:              2,
+			frame:              15,
+			sceneRight:         10,
+			shootingStarActive: true,
+			shootingStarCol:    9,
+		}
+
+		updated, cmd := m.Update(tickMsg(time.Now()))
+		if cmd == nil {
+			t.Fatal("expected tick command")
+		}
+		got := updated.(animationModel)
+		if got.shootingStarActive {
+			t.Fatal("expected shooting star to deactivate after leaving scene")
+		}
+	})
+
+	t.Run("quits after final frame", func(t *testing.T) {
+		m := animationModel{
+			phase: 2,
+			frame: 39,
+		}
+
+		updated, cmd := m.Update(tickMsg(time.Now()))
+		if cmd == nil {
+			t.Fatal("expected quit command")
+		}
+		got := updated.(animationModel)
+		if !got.done {
+			t.Fatal("expected animation model to be marked done")
+		}
+	})
+}
