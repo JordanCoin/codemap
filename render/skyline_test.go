@@ -3,6 +3,8 @@ package render
 import (
 	"bytes"
 	"math/rand/v2"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -12,8 +14,14 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+var skylineANSIPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
 func resetSkylineRNG() {
 	rng = rand.New(rand.NewPCG(42, 0))
+}
+
+func stripSkylineANSI(s string) string {
+	return skylineANSIPattern.ReplaceAllString(s, "")
 }
 
 func TestSkylineFilterCodeFiles(t *testing.T) {
@@ -209,6 +217,26 @@ func TestSkylineRenderStaticIncludesTitleAndStats(t *testing.T) {
 	}
 }
 
+func TestSkylineUsesRootBaseNameWhenNameMissing(t *testing.T) {
+	resetSkylineRNG()
+
+	root := t.TempDir()
+	project := scanner.Project{
+		Root: root,
+		Files: []scanner.FileInfo{
+			{Path: "src/main.go", Ext: ".go", Size: 256},
+		},
+	}
+
+	var buf bytes.Buffer
+	Skyline(&buf, project, true)
+
+	out := stripSkylineANSI(buf.String())
+	if !strings.Contains(out, "─── "+filepath.Base(root)+" ───") {
+		t.Fatalf("expected skyline title to use root basename, got:\n%s", out)
+	}
+}
+
 func TestSkylineAnimationModelUpdateAndView(t *testing.T) {
 	resetSkylineRNG()
 
@@ -247,6 +275,122 @@ func TestSkylineAnimationModelUpdateAndView(t *testing.T) {
 	m2 := updated.(animationModel)
 	if !m2.done {
 		t.Fatal("expected model to be marked done after key press")
+	}
+}
+
+func TestAnimationModelInitAndPhaseTransitions(t *testing.T) {
+	resetSkylineRNG()
+
+	m := animationModel{
+		arranged:          []building{{height: 3, char: '▓', color: Cyan, extLabel: ".go", gap: 1}},
+		width:             20,
+		leftMargin:        2,
+		sceneLeft:         1,
+		sceneRight:        12,
+		sceneWidth:        11,
+		maxBuildingHeight: 3,
+		phase:             1,
+		visibleRows:       5,
+	}
+
+	if cmd := m.Init(); cmd == nil {
+		t.Fatal("expected Init to return a tick command")
+	}
+
+	updated, cmd := m.Update(tickMsg(time.Now()))
+	if cmd == nil {
+		t.Fatal("expected tick command during rising phase")
+	}
+
+	m1 := updated.(animationModel)
+	if m1.phase != 2 {
+		t.Fatalf("expected phase transition to 2, got %d", m1.phase)
+	}
+	if m1.frame != 0 {
+		t.Fatalf("expected frame reset after phase transition, got %d", m1.frame)
+	}
+
+	m1.frame = 39
+	updated, cmd = m1.Update(tickMsg(time.Now()))
+	if cmd == nil {
+		t.Fatal("expected quit command when animation completes")
+	}
+
+	m2 := updated.(animationModel)
+	if !m2.done {
+		t.Fatal("expected animation model to be marked done")
+	}
+}
+
+func TestAnimationModelUpdateShootingStarLifecycle(t *testing.T) {
+	resetSkylineRNG()
+
+	m := animationModel{
+		arranged:           []building{{height: 4, char: '▓', color: Cyan, extLabel: ".go", gap: 1}},
+		width:              20,
+		leftMargin:         2,
+		sceneLeft:          3,
+		sceneRight:         10,
+		sceneWidth:         7,
+		maxBuildingHeight:  4,
+		phase:              2,
+		frame:              9,
+		shootingStarActive: false,
+	}
+
+	updated, cmd := m.Update(tickMsg(time.Now()))
+	if cmd == nil {
+		t.Fatal("expected tick command in twinkling phase")
+	}
+
+	m1 := updated.(animationModel)
+	if !m1.shootingStarActive {
+		t.Fatal("expected shooting star to activate on frame 10")
+	}
+	if m1.shootingStarCol != m.sceneLeft {
+		t.Fatalf("expected shooting star to start at scene left %d, got %d", m.sceneLeft, m1.shootingStarCol)
+	}
+
+	m1.shootingStarCol = m1.sceneRight + 1
+	updated, cmd = m1.Update(tickMsg(time.Now()))
+	if cmd == nil {
+		t.Fatal("expected tick command when advancing active shooting star")
+	}
+
+	m2 := updated.(animationModel)
+	if m2.shootingStarActive {
+		t.Fatal("expected shooting star to deactivate after leaving the scene")
+	}
+}
+
+func TestAnimationModelViewRendersLabelsAndShootingStar(t *testing.T) {
+	resetSkylineRNG()
+
+	m := animationModel{
+		arranged: []building{
+			{height: 4, char: '▓', color: Cyan, extLabel: ".go", gap: 1},
+			{height: 4, char: '▒', color: Yellow, extLabel: "A-1", gap: 1},
+		},
+		width:              24,
+		leftMargin:         2,
+		sceneLeft:          1,
+		sceneRight:         20,
+		sceneWidth:         19,
+		starPositions:      [][2]int{{0, 2}},
+		moonCol:            12,
+		maxBuildingHeight:  4,
+		phase:              2,
+		visibleRows:        6,
+		shootingStarActive: true,
+		shootingStarRow:    0,
+		shootingStarCol:    4,
+	}
+
+	out := stripSkylineANSI(m.View())
+	for _, want := range []string{".go", "A-1", "★", "◐", "▀"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected view to contain %q, got:\n%s", want, out)
+		}
 	}
 }
 
