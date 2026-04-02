@@ -2,7 +2,10 @@ package render
 
 import (
 	"bytes"
+	"io"
 	"math/rand/v2"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -247,6 +250,214 @@ func TestSkylineAnimationModelUpdateAndView(t *testing.T) {
 	m2 := updated.(animationModel)
 	if !m2.done {
 		t.Fatal("expected model to be marked done after key press")
+	}
+}
+
+func TestSkylineAnimationModelInitAndPhase2Transitions(t *testing.T) {
+	resetSkylineRNG()
+
+	tests := []struct {
+		name     string
+		model    animationModel
+		msg      tea.Msg
+		assertFn func(t *testing.T, before animationModel, after animationModel, cmd tea.Cmd)
+	}{
+		{
+			name:  "init returns tick command",
+			model: animationModel{},
+			msg:   nil,
+			assertFn: func(t *testing.T, before animationModel, _ animationModel, cmd tea.Cmd) {
+				t.Helper()
+				if before.Init() == nil {
+					t.Fatal("expected non-nil init command")
+				}
+				if cmd != nil {
+					t.Fatal("expected nil command for nil update message")
+				}
+			},
+		},
+		{
+			name: "phase 2 activates shooting star at frame 10",
+			model: animationModel{
+				phase:      2,
+				frame:      9,
+				sceneLeft:  2,
+				sceneRight: 20,
+			},
+			msg: tickMsg(time.Now()),
+			assertFn: func(t *testing.T, before animationModel, after animationModel, cmd tea.Cmd) {
+				t.Helper()
+				if cmd == nil {
+					t.Fatal("expected tick command")
+				}
+				if after.frame != before.frame+1 {
+					t.Fatalf("frame = %d, want %d", after.frame, before.frame+1)
+				}
+				if !after.shootingStarActive {
+					t.Fatal("expected shooting star to activate")
+				}
+				if after.shootingStarCol != before.sceneLeft {
+					t.Fatalf("shootingStarCol = %d, want %d", after.shootingStarCol, before.sceneLeft)
+				}
+				if after.shootingStarRow < 0 || after.shootingStarRow > 2 {
+					t.Fatalf("shootingStarRow out of range: %d", after.shootingStarRow)
+				}
+			},
+		},
+		{
+			name: "active shooting star advances and can deactivate",
+			model: animationModel{
+				phase:              2,
+				frame:              25,
+				sceneRight:         10,
+				shootingStarActive: true,
+				shootingStarCol:    9,
+			},
+			msg: tickMsg(time.Now()),
+			assertFn: func(t *testing.T, _ animationModel, after animationModel, cmd tea.Cmd) {
+				t.Helper()
+				if cmd == nil {
+					t.Fatal("expected tick command")
+				}
+				if after.shootingStarActive {
+					t.Fatal("expected shooting star to deactivate after leaving scene")
+				}
+			},
+		},
+		{
+			name: "phase 2 quits after frame 40",
+			model: animationModel{
+				phase: 2,
+				frame: 39,
+			},
+			msg: tickMsg(time.Now()),
+			assertFn: func(t *testing.T, _ animationModel, after animationModel, cmd tea.Cmd) {
+				t.Helper()
+				if cmd == nil {
+					t.Fatal("expected quit command")
+				}
+				if !after.done {
+					t.Fatal("expected model to be marked done")
+				}
+			},
+		},
+		{
+			name: "non tick message returns nil command",
+			model: animationModel{
+				phase: 1,
+			},
+			msg: struct{}{},
+			assertFn: func(t *testing.T, _ animationModel, _ animationModel, cmd tea.Cmd) {
+				t.Helper()
+				if cmd != nil {
+					t.Fatal("expected nil command for unknown message type")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			before := tt.model
+			updated, cmd := tt.model.Update(tt.msg)
+			after := updated.(animationModel)
+			tt.assertFn(t, before, after, cmd)
+		})
+	}
+}
+
+func TestSkylineAnimationModelViewPhase2ShootingStar(t *testing.T) {
+	resetSkylineRNG()
+
+	m := animationModel{
+		arranged: []building{{height: 4, char: '▓', color: Cyan, extLabel: ".go", gap: 1}},
+		width:    24,
+		phase:    2,
+
+		leftMargin:         2,
+		sceneLeft:          1,
+		sceneRight:         20,
+		sceneWidth:         19,
+		starPositions:      [][2]int{{0, 3}},
+		moonCol:            8,
+		maxBuildingHeight:  4,
+		visibleRows:        4,
+		shootingStarRow:    0,
+		shootingStarCol:    5,
+		shootingStarActive: true,
+	}
+
+	view := m.View()
+	checks := []string{"★", "◐", "▀"}
+	for _, check := range checks {
+		if !strings.Contains(view, check) {
+			t.Fatalf("expected view to contain %q, got:\n%s", check, view)
+		}
+	}
+}
+
+func TestSkylineUsesRootBasenameWhenProjectNameMissing(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "example-project")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	project := scanner.Project{
+		Root: root,
+		Files: []scanner.FileInfo{
+			{Path: "main.go", Ext: ".go", Size: 200},
+			{Path: "utils.ts", Ext: ".ts", Size: 100},
+		},
+	}
+
+	var buf bytes.Buffer
+	Skyline(&buf, project, true)
+
+	out := buf.String()
+	if strings.Contains(out, "No source files to display") {
+		t.Fatalf("expected skyline output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "example-project") {
+		t.Fatalf("expected output to include fallback project name, got:\n%s", out)
+	}
+	if !strings.Contains(out, "languages") {
+		t.Fatalf("expected summary line in output, got:\n%s", out)
+	}
+}
+
+func TestSkylineAnimatePathCallsRenderAnimatedForStdout(t *testing.T) {
+	project := scanner.Project{
+		Root: t.TempDir(),
+		Name: "Demo",
+		Files: []scanner.FileInfo{
+			{Path: "main.go", Ext: ".go", Size: 100},
+		},
+	}
+
+	origStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	t.Cleanup(func() {
+		os.Stdout = origStdout
+	})
+
+	done := make(chan string, 1)
+	go func() {
+		data, _ := io.ReadAll(r)
+		done <- string(data)
+	}()
+
+	Skyline(w, project, true)
+
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out := <-done
+	if !strings.Contains(out, "Demo") {
+		t.Fatalf("expected skyline output to include project name, got:\n%s", out)
 	}
 }
 

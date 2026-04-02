@@ -81,3 +81,18 @@ func TestCloneAnimationBuildFrame(t *testing.T) {
 		}
 	}
 }
+
+func TestCloneAnimationDemo(t *testing.T) {
+	var buf bytes.Buffer
+	a := NewCloneAnimation(&buf, "repo")
+
+	a.Demo()
+
+	out := buf.String()
+	if !strings.Contains(out, "100%") {
+		t.Fatalf("expected demo output to reach 100%%, got %q", out)
+	}
+	if !strings.HasSuffix(out, "\n") {
+		t.Fatalf("expected demo output to end with newline, got %q", out)
+	}
+}
