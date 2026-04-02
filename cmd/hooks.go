@@ -108,6 +108,15 @@ func getHubInfoNoFallback(root string) *hubInfo {
 }
 
 func getHubInfoWithFallback(root string, allowFallback bool) *hubInfo {
+	if info, err := querySocketHubInfo(root); err == nil {
+		if info != nil {
+			return info
+		}
+		if !allowFallback {
+			return nil
+		}
+	}
+
 	if state := watch.ReadState(root); state != nil {
 		// State may contain file/event info only (no dependency graph) on very
 		// large repos. Avoid expensive fallback scans in that case.
@@ -273,6 +282,7 @@ func hookSessionStart(root string) error {
 	if !watch.IsRunning(root) {
 		startDaemon(root)
 	}
+	startSocketDaemon(root)
 
 	fmt.Println("📍 Project Context:")
 	fmt.Println()
@@ -288,13 +298,18 @@ func hookSessionStart(root string) error {
 	// Future: Consider structured output that Claude Code can format/truncate intelligently.
 	fileCount := 0
 	fileCountKnown := false
-	state := watch.ReadState(root)
-	if state == nil && watch.IsRunning(root) {
-		state = waitForDaemonState(root, 2*time.Second)
-	}
-	if state != nil {
-		fileCount = state.FileCount
+	if stats, ok := loadProjectStats(root); ok {
+		fileCount = stats.FileCount
 		fileCountKnown = true
+	} else {
+		state := watch.ReadState(root)
+		if state == nil && watch.IsRunning(root) {
+			state = waitForDaemonState(root, 2*time.Second)
+		}
+		if state != nil {
+			fileCount = state.FileCount
+			fileCountKnown = true
+		}
 	}
 	projCfg := config.Load(root)
 	structureBudget := projCfg.SessionStartOutputBytes()
@@ -885,12 +900,11 @@ func showDriftWarnings(root string, cfg config.DriftConfig, routing config.Routi
 
 // showWorkingSetSummary displays the current working set from daemon state.
 func showWorkingSetSummary(root string) {
-	state := watch.ReadState(root)
-	if state == nil || state.WorkingSet == nil || state.WorkingSet.Size() == 0 {
+	ws := loadWorkingSet(root)
+	if ws == nil || ws.Size() == 0 {
 		return
 	}
 
-	ws := state.WorkingSet
 	hot := ws.HotFiles(5)
 	if len(hot) == 0 {
 		return
@@ -1048,15 +1062,15 @@ func emitRouteMarker(matches []subsystemRouteMatch) {
 
 // showSessionProgress shows files edited so far in this session
 func showSessionProgress(root string) {
-	state := watch.ReadState(root)
-	if state == nil || len(state.RecentEvents) == 0 {
+	events := loadRecentEvents(root, 0)
+	if len(events) == 0 {
 		return
 	}
 
 	// Count unique files and unique hub files edited
 	filesEdited := make(map[string]bool)
 	hubFiles := make(map[string]bool)
-	for _, e := range state.RecentEvents {
+	for _, e := range events {
 		filesEdited[e.Path] = true
 		if e.IsHub {
 			hubFiles[e.Path] = true
@@ -1113,6 +1127,7 @@ func hookPreCompact(root string) error {
 func hookSessionStop(root string) error {
 	// Read state BEFORE stopping daemon (includes timeline)
 	state := watch.ReadState(root)
+	recentEvents := loadRecentEvents(root, 0)
 
 	// Stop the watch daemon
 	stopDaemon(root)
@@ -1122,7 +1137,7 @@ func hookSessionStop(root string) error {
 	fmt.Println("==================")
 
 	// Show timeline from daemon events (if available)
-	if state != nil && len(state.RecentEvents) > 0 {
+	if len(recentEvents) > 0 {
 		fmt.Println()
 		fmt.Println("Edit Timeline:")
 
@@ -1131,7 +1146,7 @@ func hookSessionStop(root string) error {
 		fileEdits := make(map[string]int) // file -> edit count
 		hubEdits := 0
 
-		for _, e := range state.RecentEvents {
+		for _, e := range recentEvents {
 			totalDelta += e.Delta
 			fileEdits[e.Path]++
 			if e.IsHub {
@@ -1140,7 +1155,7 @@ func hookSessionStop(root string) error {
 		}
 
 		// Show last 10 events
-		events := state.RecentEvents
+		events := recentEvents
 		start := 0
 		if len(events) > 10 {
 			start = len(events) - 10
@@ -1172,7 +1187,7 @@ func hookSessionStop(root string) error {
 		// Show stats
 		fmt.Println()
 		fmt.Printf("Stats: %d events, %d files touched, %+d lines",
-			len(state.RecentEvents), len(fileEdits), totalDelta)
+			len(recentEvents), len(fileEdits), totalDelta)
 		if hubEdits > 0 {
 			fmt.Printf(", %d hub edits", hubEdits)
 		}
@@ -1334,6 +1349,8 @@ func gitSymbolicRef(root, ref string) (string, bool) {
 
 // stopDaemon stops the watch daemon
 func stopDaemon(root string) {
+	stopSocketDaemon(root)
+
 	if !hookWatchIsRunning(root) {
 		return
 	}
