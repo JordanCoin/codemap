@@ -309,7 +309,7 @@ func TestRunDepsModeJSONAndMainDispatchesDepsAndImporters(t *testing.T) {
 	writeImportersFixture(t, root)
 
 	stdout, _ := captureMainStreams(t, func() {
-		runDepsMode(root, root, true, "main", map[string]bool{"a/a.go": true}, false)
+		runDepsMode(root, root, true, "main", map[string]bool{"a/a.go": true})
 	})
 
 	var depsProject scanner.DepsProject
@@ -661,7 +661,7 @@ func TestRunDepsModeRenderedOutputAndMainTreeModes(t *testing.T) {
 	writeImportersFixture(t, root)
 
 	stdout, _ := captureMainStreams(t, func() {
-		runDepsMode(root, root, false, "main", nil, false)
+		runDepsMode(root, root, false, "main", nil)
 	})
 	if !strings.Contains(stdout, "Dependency Flow") {
 		t.Fatalf("expected rendered dependency graph output, got:\n%s", stdout)

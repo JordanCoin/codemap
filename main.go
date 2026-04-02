@@ -159,7 +159,6 @@ func main() {
 	jsonMode := flag.Bool("json", false, "Output JSON (for Python renderer compatibility)")
 	debugMode := flag.Bool("debug", false, "Show debug info (gitignore loading, paths, etc.)")
 	watchMode := flag.Bool("watch", false, "Live file watcher daemon (experimental)")
-	stdinMode := flag.Bool("stdin", false, "Read file manifest from stdin (use with --deps)")
 	importersMode := flag.String("importers", "", "Check file impact: who imports it, is it a hub?")
 	helpMode := flag.Bool("help", false, "Show help")
 	// Short flag aliases
@@ -181,7 +180,6 @@ func main() {
 		fmt.Println("  --depth, -d <n>     Limit tree depth (0 = unlimited)")
 		fmt.Println("  --only <exts>       Only show files with these extensions (e.g., 'swift,go')")
 		fmt.Println("  --exclude <patterns> Exclude paths matching patterns (e.g., '.xcassets,Fonts')")
-		fmt.Println("  --stdin             Read JSON file manifest from stdin (use with --deps)")
 		fmt.Println("  --importers <file>  Check file impact (who imports it, hub status)")
 		fmt.Println()
 		fmt.Println("Examples:")
@@ -195,7 +193,6 @@ func main() {
 		fmt.Println("  codemap --only swift .          # Just Swift files")
 		fmt.Println("  codemap --exclude .xcassets,Fonts,.png  # Hide assets")
 		fmt.Println("  codemap --importers scanner/types.go  # Check file impact")
-		fmt.Println("  echo '{...}' | codemap --deps --stdin  # Deps from file manifest")
 		fmt.Println()
 		fmt.Println("Remote repos (clones temporarily):")
 		fmt.Println("  codemap github.com/user/repo    # GitHub repo")
@@ -331,7 +328,7 @@ func main() {
 		if diffInfo != nil {
 			changedFiles = diffInfo.Changed
 		}
-		runDepsMode(absRoot, root, *jsonMode, *diffRef, changedFiles, *stdinMode)
+		runDepsMode(absRoot, root, *jsonMode, *diffRef, changedFiles)
 		return
 	}
 
@@ -380,43 +377,17 @@ func main() {
 	}
 }
 
-// stdinManifest is the JSON format accepted by --stdin.
-type stdinManifest struct {
-	Root  string `json:"root"`
-	Files []struct {
-		Path    string `json:"path"`
-		Content string `json:"content"`
-	} `json:"files"`
-}
-
-func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFiles map[string]bool, stdinMode bool) {
-	var analyses []FileAnalysis
-	var externalDeps map[string][]string
-	var err error
-
-	if stdinMode {
-		analyses, externalDeps, err = runDepsFromStdin()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading stdin manifest: %v\n", err)
-			os.Exit(1)
-		}
-		// Use the manifest root as absRoot if provided
-		if externalDeps == nil {
-			externalDeps = make(map[string][]string)
-		}
-	} else {
-		analyses, err = scanForDepsWithHint(root)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			fmt.Fprintln(os.Stderr, "")
-			fmt.Fprintln(os.Stderr, "The --deps feature requires ast-grep. Install it with:")
-			fmt.Fprintln(os.Stderr, "  brew install ast-grep    # macOS/Linux (installs as 'sg')")
-			fmt.Fprintln(os.Stderr, "  cargo install ast-grep   # via Rust (installs as 'ast-grep')")
-			fmt.Fprintln(os.Stderr, "  pipx install ast-grep    # via Python (installs as 'ast-grep')")
-			fmt.Fprintln(os.Stderr, "")
-			os.Exit(1)
-		}
-		externalDeps = scanner.ReadExternalDeps(absRoot)
+func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFiles map[string]bool) {
+	analyses, err := scanner.ScanForDeps(root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "The --deps feature requires ast-grep. Install it with:")
+		fmt.Fprintln(os.Stderr, "  brew install ast-grep    # macOS/Linux (installs as 'sg')")
+		fmt.Fprintln(os.Stderr, "  cargo install ast-grep   # via Rust (installs as 'ast-grep')")
+		fmt.Fprintln(os.Stderr, "  pipx install ast-grep    # via Python (installs as 'ast-grep')")
+		fmt.Fprintln(os.Stderr, "")
+		os.Exit(1)
 	}
 
 	// Filter to changed files if --diff specified
@@ -428,7 +399,7 @@ func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFil
 		Root:         absRoot,
 		Mode:         "deps",
 		Files:        analyses,
-		ExternalDeps: externalDeps,
+		ExternalDeps: scanner.ReadExternalDeps(absRoot),
 		DiffRef:      diffRef,
 	}
 
@@ -439,56 +410,6 @@ func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFil
 		render.Depgraph(os.Stdout, depsProject)
 	}
 }
-
-// scanForDepsWithHint wraps scanner.ScanForDeps (extracted for testability).
-func scanForDepsWithHint(root string) ([]FileAnalysis, error) {
-	return scanner.ScanForDeps(root)
-}
-
-// runDepsFromStdin reads a JSON manifest from stdin, writes files to a temp
-// directory, runs ast-grep on it, and returns the results with paths matching
-// the original manifest.
-func runDepsFromStdin() ([]FileAnalysis, map[string][]string, error) {
-	var manifest stdinManifest
-	if err := json.NewDecoder(os.Stdin).Decode(&manifest); err != nil {
-		return nil, nil, fmt.Errorf("invalid JSON: %w", err)
-	}
-
-	if len(manifest.Files) == 0 {
-		return nil, nil, nil
-	}
-
-	// Create temp directory and write manifest files
-	tempDir, err := os.MkdirTemp("", "codemap-stdin-*")
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create temp dir: %w", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	for _, f := range manifest.Files {
-		dest := filepath.Join(tempDir, f.Path)
-		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
-			return nil, nil, fmt.Errorf("mkdir %s: %w", filepath.Dir(dest), err)
-		}
-		if err := os.WriteFile(dest, []byte(f.Content), 0644); err != nil {
-			return nil, nil, fmt.Errorf("write %s: %w", f.Path, err)
-		}
-	}
-
-	// Run ast-grep on temp directory
-	analyses, err := scanner.ScanForDeps(tempDir)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// Read external deps from temp directory (manifest may include go.mod etc.)
-	externalDeps := scanner.ReadExternalDeps(tempDir)
-
-	return analyses, externalDeps, nil
-}
-
-// FileAnalysis is a type alias for use in main package.
-type FileAnalysis = scanner.FileAnalysis
 
 func runWatchMode(root string, verbose bool) {
 	fmt.Println("codemap watch - Live code graph daemon")
