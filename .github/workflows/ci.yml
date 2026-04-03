@@ -50,7 +50,7 @@ jobs:
         run: |
           total=$(go tool cover -func=coverage.out | awk '/^total:/ {gsub("%","",$3); print $3}')
           # Current enforced coverage floor. Codex PRs raise this incrementally toward 90%.
-          min=50.0
+          min=55.0
           awk -v t="$total" -v m="$min" 'BEGIN {
             if (t+0 < m+0) {
               printf "Coverage %.1f%% is below floor %.1f%%\n", t, m
