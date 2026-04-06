@@ -247,18 +247,20 @@ func RunHook(hookName, root string) error {
 
 // hookSessionStart shows project structure, starts daemon, and shows hub warnings
 func hookSessionStart(root string) error {
-	// Guard: require git repo
+	// Handle meta-repo: parent directory containing child git repos.
+	// Check this before the git guard so that non-repo parent directories
+	// still get multi-repo context.
+	childRepos := findChildRepos(root)
+	if len(childRepos) > 1 {
+		return hookSessionStartMultiRepo(root, childRepos)
+	}
+
+	// Guard: require git repo for single-repo analysis
 	gitDir := filepath.Join(root, ".git")
 	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
 		fmt.Println("📍 Not a git repository - skipping project context")
 		fmt.Println("   (codemap hooks work best in git repos)")
 		return nil
-	}
-
-	// Handle meta-repo: parent git repo containing child git repos
-	childRepos := findChildRepos(root)
-	if len(childRepos) > 1 {
-		return hookSessionStartMultiRepo(root, childRepos)
 	}
 
 	// Check for previous session context before starting new daemon
@@ -1453,15 +1455,18 @@ func findChildRepos(root string) []string {
 		return nil
 	}
 
-	// Use git check-ignore to filter out ignored directories
-	args := append([]string{"check-ignore", "--"}, candidates...)
-	cmd := exec.Command("git", args...)
-	cmd.Dir = root
-	out, _ := cmd.Output()
+	// Use git check-ignore to filter out ignored directories.
+	// Skip filtering if the root is not a git repo (e.g. a parent directory).
 	ignored := make(map[string]bool)
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line != "" {
-			ignored[line] = true
+	if _, err := os.Stat(filepath.Join(root, ".git")); err == nil {
+		args := append([]string{"check-ignore", "--"}, candidates...)
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		out, _ := cmd.Output()
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if line != "" {
+				ignored[line] = true
+			}
 		}
 	}
 
