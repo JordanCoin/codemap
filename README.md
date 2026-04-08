@@ -23,6 +23,40 @@ scoop install codemap
 
 > Other options: [Releases](https://github.com/JordanCoin/codemap/releases) | `go install` | Build from source
 
+## Tarball / CI Install
+
+If you install `codemap` from a release tarball, also install `ast-grep` separately for `--deps`.
+The tarball includes `codemap` and the bundled rules, but not the `ast-grep` executable.
+
+Example for Alpine-based CI:
+
+```bash
+apk add --no-cache curl jq bash python3 py3-pip
+
+ARCH=$(uname -m)
+if [ "$ARCH" = "x86_64" ]; then ARCH="amd64"; elif [ "$ARCH" = "aarch64" ]; then ARCH="arm64"; fi
+
+CODEMAP_VERSION=$(curl -fsSL https://api.github.com/repos/JordanCoin/codemap/releases/latest | jq -r '.tag_name' | tr -d 'v')
+curl -fsSL "https://github.com/JordanCoin/codemap/releases/download/v${CODEMAP_VERSION}/codemap_${CODEMAP_VERSION}_linux_${ARCH}.tar.gz" \
+  | tar xz -C /usr/local/bin/ codemap
+
+python3 -m pip install --no-cache-dir ast-grep-cli
+```
+
+If you want a self-contained archive for CI/CD, use the `codemap-full` release artifact instead.
+It includes `codemap`, `ast-grep`, and `sg` in one archive so `--deps` works after extraction.
+
+```bash
+apk add --no-cache curl jq bash
+
+ARCH=$(uname -m)
+if [ "$ARCH" = "x86_64" ]; then ARCH="amd64"; elif [ "$ARCH" = "aarch64" ]; then ARCH="arm64"; fi
+
+CODEMAP_VERSION=$(curl -fsSL https://api.github.com/repos/JordanCoin/codemap/releases/latest | jq -r '.tag_name' | tr -d 'v')
+curl -fsSL "https://github.com/JordanCoin/codemap/releases/download/v${CODEMAP_VERSION}/codemap-full_${CODEMAP_VERSION}_linux_${ARCH}.tar.gz" \
+  | tar xz -C /usr/local/bin/ codemap ast-grep sg
+```
+
 ## Recommended Setup (Hooks + Daemon + Config)
 
 No repo clone is required for normal users.
@@ -181,6 +215,23 @@ Uses a shallow clone to a temp directory (fast, no history, auto-cleanup). If yo
 18 languages for dependency analysis: Go, Python, JavaScript, TypeScript, Rust, Ruby, C, C++, Java, Swift, Kotlin, C#, PHP, Bash, Lua, Scala, Elixir, Solidity
 
 > Powered by [ast-grep](https://ast-grep.github.io/). Install via `brew install ast-grep` for `--deps` mode.
+
+## Blast Radius Bundle
+
+If you want a compact review bundle for another LLM, combine the three high-signal views:
+
+```bash
+codemap --json --diff --ref main .
+codemap --json --deps --diff --ref main .
+codemap --json --importers path/to/file .
+```
+
+For a reusable wrapper that emits either Markdown or a single JSON object:
+
+```bash
+bash scripts/codemap-blast-radius.sh --markdown --ref main .
+bash scripts/codemap-blast-radius.sh --json --ref main .
+```
 
 ## Claude Integration
 

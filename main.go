@@ -305,7 +305,7 @@ func main() {
 
 	// Importers mode - check file impact
 	if *importersMode != "" {
-		runImportersMode(absRoot, *importersMode)
+		runImportersMode(absRoot, *importersMode, *jsonMode)
 		return
 	}
 
@@ -407,13 +407,20 @@ func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFil
 	} else {
 		analyses, err = scanForDepsWithHint(root)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			fmt.Fprintln(os.Stderr, "")
-			fmt.Fprintln(os.Stderr, "The --deps feature requires ast-grep. Install it with:")
-			fmt.Fprintln(os.Stderr, "  brew install ast-grep    # macOS/Linux (installs as 'sg')")
-			fmt.Fprintln(os.Stderr, "  cargo install ast-grep   # via Rust (installs as 'ast-grep')")
-			fmt.Fprintln(os.Stderr, "  pipx install ast-grep    # via Python (installs as 'ast-grep')")
-			fmt.Fprintln(os.Stderr, "")
+			if errors.Is(err, scanner.ErrAstGrepNotFound) {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				fmt.Fprintln(os.Stderr, "")
+				fmt.Fprintln(os.Stderr, "The --deps feature requires ast-grep. Install it with:")
+				fmt.Fprintln(os.Stderr, "  brew install ast-grep         # macOS/Linux (installs as 'sg')")
+				fmt.Fprintln(os.Stderr, "  cargo install ast-grep        # installs as 'ast-grep'")
+				fmt.Fprintln(os.Stderr, "  pipx install ast-grep         # installs as 'ast-grep'")
+				fmt.Fprintln(os.Stderr, "  python3 -m pip install ast-grep-cli")
+				fmt.Fprintln(os.Stderr, "")
+				fmt.Fprintln(os.Stderr, "Standard release tarballs ship codemap without the ast-grep binary.")
+				fmt.Fprintln(os.Stderr, "Use a codemap-full archive for self-contained CI installs, or install ast-grep separately.")
+			} else {
+				fmt.Fprintf(os.Stderr, "Error scanning dependencies: %v\n", err)
+			}
 			os.Exit(1)
 		}
 		externalDeps = scanner.ReadExternalDeps(absRoot)
@@ -529,11 +536,10 @@ func runWatchMode(root string, verbose bool) {
 	fmt.Printf("  Events logged: %d\n", len(events))
 }
 
-func runImportersMode(root, file string) {
+func buildImportersReport(root, file string) (scanner.ImportersReport, error) {
 	fg, err := scanner.BuildFileGraph(root)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error building file graph: %v\n", err)
-		os.Exit(1)
+		return scanner.ImportersReport{}, err
 	}
 
 	// Handle absolute paths - convert to relative
@@ -544,8 +550,41 @@ func runImportersMode(root, file string) {
 	}
 
 	importers := fg.Importers[file]
+	imports := fg.Imports[file]
+	report := scanner.ImportersReport{
+		Root:          root,
+		Mode:          "importers",
+		File:          file,
+		Importers:     append([]string(nil), importers...),
+		Imports:       append([]string(nil), imports...),
+		ImporterCount: len(importers),
+		IsHub:         len(importers) >= 3,
+	}
+
+	for _, imp := range imports {
+		if fg.IsHub(imp) {
+			report.HubImports = append(report.HubImports, imp)
+		}
+	}
+
+	return report, nil
+}
+
+func runImportersMode(root, file string, jsonMode bool) {
+	report, err := buildImportersReport(root, file)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error building file graph: %v\n", err)
+		os.Exit(1)
+	}
+
+	if jsonMode {
+		_ = json.NewEncoder(os.Stdout).Encode(report)
+		return
+	}
+
+	importers := report.Importers
 	if len(importers) >= 3 {
-		fmt.Printf("⚠️  HUB FILE: %s\n", file)
+		fmt.Printf("⚠️  HUB FILE: %s\n", report.File)
 		fmt.Printf("   Imported by %d files - changes have wide impact!\n", len(importers))
 		fmt.Println()
 		fmt.Println("   Dependents:")
@@ -557,26 +596,18 @@ func runImportersMode(root, file string) {
 			fmt.Printf("   • %s\n", imp)
 		}
 	} else if len(importers) > 0 {
-		fmt.Printf("📍 File: %s\n", file)
+		fmt.Printf("📍 File: %s\n", report.File)
 		fmt.Printf("   Imported by %d file(s)\n", len(importers))
 		for _, imp := range importers {
 			fmt.Printf("   • %s\n", imp)
 		}
 	}
 
-	// Also check if this file imports any hubs
-	imports := fg.Imports[file]
-	var hubImports []string
-	for _, imp := range imports {
-		if fg.IsHub(imp) {
-			hubImports = append(hubImports, imp)
-		}
-	}
-	if len(hubImports) > 0 {
+	if len(report.HubImports) > 0 {
 		if len(importers) == 0 {
-			fmt.Printf("📍 File: %s\n", file)
+			fmt.Printf("📍 File: %s\n", report.File)
 		}
-		fmt.Printf("   Imports %d hub(s): %s\n", len(hubImports), strings.Join(hubImports, ", "))
+		fmt.Printf("   Imports %d hub(s): %s\n", len(report.HubImports), strings.Join(report.HubImports, ", "))
 	}
 }
 

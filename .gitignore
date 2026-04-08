@@ -12,6 +12,7 @@ __pycache__/
 .codemap/
 /codemap-dev
 /dev_codemap
+/bundled-tools/
 firebase-debug.log
 firebalse-debug.log
 coverage.out
