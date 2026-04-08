@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -18,6 +19,7 @@ import (
 var sgRules embed.FS
 
 var astGrepScanTimeout = 30 * time.Second
+var ErrAstGrepNotFound = errors.New("ast-grep not found (checked bundled tools and PATH)")
 
 // ScanMatch represents a match from sg scan JSON output
 type ScanMatch struct {
@@ -83,14 +85,90 @@ func extractJSONArray(data []byte) []byte {
 	return data[idx:]
 }
 
-// findAstGrepBinary checks for "ast-grep" first, then "sg"
-// Note: Linux has a system "sg" command (setgroups), so we check ast-grep first
-func findAstGrepBinary() string {
-	if _, err := exec.LookPath("ast-grep"); err == nil {
-		return "ast-grep"
+func isAstGrepBinary(path string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, path, "--version").CombinedOutput()
+	if err != nil && len(out) == 0 {
+		return false
 	}
-	if _, err := exec.LookPath("sg"); err == nil {
-		return "sg"
+
+	return strings.Contains(strings.ToLower(string(out)), "ast-grep")
+}
+
+func bundledAstGrepNames() []string {
+	if runtime.GOOS == "windows" {
+		return []string{"ast-grep.exe", "sg.exe"}
+	}
+	return []string{"ast-grep", "sg"}
+}
+
+func bundledAstGrepCandidates(executablePath string) []string {
+	if executablePath == "" {
+		return nil
+	}
+
+	seen := map[string]bool{}
+	dirs := make([]string, 0, 2)
+	addDir := func(dir string) {
+		if dir == "" {
+			return
+		}
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			dir = resolved
+		}
+		if seen[dir] {
+			return
+		}
+		seen[dir] = true
+		dirs = append(dirs, dir)
+	}
+
+	addDir(filepath.Dir(executablePath))
+	if resolved, err := filepath.EvalSymlinks(executablePath); err == nil {
+		addDir(filepath.Dir(resolved))
+	}
+
+	var candidates []string
+	for _, dir := range dirs {
+		for _, name := range bundledAstGrepNames() {
+			candidates = append(candidates, filepath.Join(dir, name))
+		}
+	}
+	return candidates
+}
+
+func findBundledAstGrepBinary() string {
+	executablePath, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+
+	for _, candidate := range bundledAstGrepCandidates(executablePath) {
+		if isAstGrepBinary(candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+// findAstGrepBinary checks for "ast-grep" first, then "sg".
+// Linux commonly ships a non-ast-grep "sg" binary, so candidates must
+// identify themselves as ast-grep before we accept them.
+func findAstGrepBinary() string {
+	if bundled := findBundledAstGrepBinary(); bundled != "" {
+		return bundled
+	}
+
+	for _, candidate := range []string{"ast-grep", "sg"} {
+		path, err := exec.LookPath(candidate)
+		if err != nil {
+			continue
+		}
+		if isAstGrepBinary(path) {
+			return path
+		}
 	}
 	return ""
 }

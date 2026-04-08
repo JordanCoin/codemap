@@ -2,7 +2,6 @@ package scanner
 
 import (
 	"bufio"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -297,7 +296,7 @@ func ScanForDeps(root string) ([]FileAnalysis, error) {
 	defer scanner.Close()
 
 	if !scanner.Available() {
-		return nil, fmt.Errorf("ast-grep not found in PATH (tried 'sg' and 'ast-grep')")
+		return nil, ErrAstGrepNotFound
 	}
 
 	return scanner.ScanDirectory(root)

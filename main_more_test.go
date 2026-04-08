@@ -290,7 +290,7 @@ func TestRunImportersMode(t *testing.T) {
 	writeImportersFixture(t, root)
 
 	stdout, _ := captureMainStreams(t, func() {
-		runImportersMode(root, filepath.Join(root, "pkg", "types", "types.go"))
+		runImportersMode(root, filepath.Join(root, "pkg", "types", "types.go"), false)
 	})
 
 	for _, check := range []string{"HUB FILE: pkg/types/types.go", "Imported by 4 files", "Dependents:"} {
@@ -340,6 +340,21 @@ func TestRunDepsModeJSONAndMainDispatchesDepsAndImporters(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "Imports 1 hub(s): pkg/types/types.go") {
 		t.Fatalf("expected hub import summary for main.go, got:\n%s", stdout)
+	}
+
+	stdout = runMainWithArgs(t, []string{"codemap", "--json", "--importers", "main.go", root})
+	var importersReport scanner.ImportersReport
+	if err := json.Unmarshal([]byte(stdout), &importersReport); err != nil {
+		t.Fatalf("expected importers JSON output, got error %v with body:\n%s", err, stdout)
+	}
+	if importersReport.Mode != "importers" || importersReport.File != "main.go" {
+		t.Fatalf("expected importers report for main.go, got %+v", importersReport)
+	}
+	if len(importersReport.Importers) != 0 {
+		t.Fatalf("expected main.go to have no importers in fixture, got %+v", importersReport.Importers)
+	}
+	if len(importersReport.HubImports) != 1 || importersReport.HubImports[0] != "pkg/types/types.go" {
+		t.Fatalf("expected hub import summary in JSON, got %+v", importersReport.HubImports)
 	}
 }
 
