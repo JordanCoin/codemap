@@ -127,3 +127,43 @@ func TestBlastRadiusSubcommandMarkdownAndJSON(t *testing.T) {
 		t.Fatalf("expected snippet match to target ComputeTotal, got %+v", bundle.Snippets[0])
 	}
 }
+
+func TestBlastRadiusSubcommandNoChanges(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	root := makeMainGitRepo(t, "main")
+
+	markdown, stderr, err := runCodemapWithInput("", "blast-radius", "--ref", "HEAD", root)
+	if err != nil {
+		t.Fatalf("blast-radius no-changes markdown failed: %v\nstderr=%s", err, stderr)
+	}
+	if !strings.Contains(markdown, "## No Changes") {
+		t.Fatalf("expected no-changes section in markdown output, got:\n%s", markdown)
+	}
+	if !strings.Contains(markdown, "No files changed vs `HEAD`.") {
+		t.Fatalf("expected no-changes message in markdown output, got:\n%s", markdown)
+	}
+	if strings.Contains(markdown, "## Diff") {
+		t.Fatalf("expected no diff section when there are no changes, got:\n%s", markdown)
+	}
+
+	jsonOut, stderr, err := runCodemapWithInput("", "blast-radius", "--json", "--ref", "HEAD", root)
+	if err != nil {
+		t.Fatalf("blast-radius no-changes json failed: %v\nstderr=%s", err, stderr)
+	}
+	var bundle blastRadiusBundle
+	if err := json.Unmarshal([]byte(jsonOut), &bundle); err != nil {
+		t.Fatalf("expected no-changes blast-radius JSON output, got error %v with body:\n%s", err, jsonOut)
+	}
+	if bundle.Summary.ChangedFiles != 0 || bundle.Summary.ChangedFilesTotal != 0 {
+		t.Fatalf("expected zero changed files in no-changes output, got %+v", bundle.Summary)
+	}
+	if bundle.Rendered.Diff != "No files changed vs HEAD\n" {
+		t.Fatalf("unexpected no-changes diff text: %q", bundle.Rendered.Diff)
+	}
+	if bundle.Rendered.Deps != "No changed source files to analyze.\n" {
+		t.Fatalf("unexpected no-changes deps text: %q", bundle.Rendered.Deps)
+	}
+}

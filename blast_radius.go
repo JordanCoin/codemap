@@ -160,6 +160,12 @@ type blastOutputBuilder struct {
 }
 
 func runBlastRadiusSubcommand(args []string) {
+	if code := executeBlastRadiusSubcommand(args); code != 0 {
+		os.Exit(code)
+	}
+}
+
+func executeBlastRadiusSubcommand(args []string) int {
 	limits := defaultBlastRadiusLimits()
 	fs := flag.NewFlagSet("blast-radius", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -170,8 +176,8 @@ func runBlastRadiusSubcommand(args []string) {
 	var help bool
 	ref := fs.String("ref", "main", "Branch/ref to compare against")
 	fs.BoolVar(&jsonMode, "json", false, "Emit a single JSON object")
-	fs.BoolVar(&markdownMode, "markdown", false, "Emit Markdown output (default)")
-	fs.BoolVar(&markdownMode, "md", false, "Emit Markdown output (default)")
+	fs.BoolVar(&markdownMode, "markdown", false, "Emit Markdown output")
+	fs.BoolVar(&markdownMode, "md", false, "Emit Markdown output")
 	fs.BoolVar(&textMode, "text", false, "Emit plain text output")
 	fs.BoolVar(&help, "help", false, "Show blast-radius help")
 	fs.BoolVar(&help, "h", false, "Show blast-radius help")
@@ -194,25 +200,25 @@ func runBlastRadiusSubcommand(args []string) {
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			return
+			return 0
 		}
-		os.Exit(2)
+		return 2
 	}
 
 	if help {
 		fs.Usage()
-		return
+		return 0
 	}
 
 	if fs.NArg() > 1 {
 		fmt.Fprintln(os.Stderr, "Usage: codemap blast-radius [--json|--markdown|--text] [--ref <base-ref>] [path]")
-		os.Exit(2)
+		return 2
 	}
 
 	format, err := chooseBlastRadiusFormat(jsonMode, markdownMode, textMode)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(2)
+		return 2
 	}
 
 	root := "."
@@ -224,7 +230,7 @@ func runBlastRadiusSubcommand(args []string) {
 	absRoot, cleanup, err := resolveBlastRadiusRoot(root)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error preparing root: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	defer cleanup()
 
@@ -235,7 +241,7 @@ func runBlastRadiusSubcommand(args []string) {
 		} else {
 			fmt.Fprintf(os.Stderr, "Error building blast radius: %v\n", err)
 		}
-		os.Exit(1)
+		return 1
 	}
 
 	switch format {
@@ -248,35 +254,41 @@ func runBlastRadiusSubcommand(args []string) {
 	default:
 		fmt.Print(renderBlastRadiusMarkdown(bundle))
 	}
+	return 0
 }
 
 func printBlastRadiusUsage(fs *flag.FlagSet) {
-	fmt.Println("codemap blast-radius - Build a compact, bounded blast-radius bundle")
-	fmt.Println()
-	fmt.Println("Usage:")
-	fmt.Println("  codemap blast-radius [--json|--markdown|--text] [--ref <base-ref>] [path]")
-	fmt.Println()
-	fmt.Println("Examples:")
-	fmt.Println("  codemap blast-radius --ref main .")
-	fmt.Println("  codemap blast-radius --json --ref develop /path/to/repo")
-	fmt.Println()
-	fmt.Println("Flags:")
+	out := fs.Output()
+	if out == nil {
+		out = os.Stderr
+	}
+
+	fmt.Fprintln(out, "codemap blast-radius - Build a compact, bounded blast-radius bundle")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Usage:")
+	fmt.Fprintln(out, "  codemap blast-radius [--json|--markdown|--text] [--ref <base-ref>] [path]")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Examples:")
+	fmt.Fprintln(out, "  codemap blast-radius --ref main .")
+	fmt.Fprintln(out, "  codemap blast-radius --json --ref develop /path/to/repo")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Flags:")
 	fs.PrintDefaults()
-	fmt.Println()
-	fmt.Println("Environment overrides:")
-	fmt.Println("  CODEMAP_BLAST_MAX_TOTAL_CHARS")
-	fmt.Println("  CODEMAP_BLAST_MAX_CHANGED_FILES")
-	fmt.Println("  CODEMAP_BLAST_MAX_AFFECTED")
-	fmt.Println("  CODEMAP_BLAST_MAX_CONTEXT")
-	fmt.Println("  CODEMAP_BLAST_MAX_SNIPPETS")
-	fmt.Println("  CODEMAP_BLAST_MAX_SNIPPETS_PER_CHANGED")
-	fmt.Println("  CODEMAP_BLAST_SNIPPET_RADIUS")
-	fmt.Println("  CODEMAP_BLAST_MAX_SNIPPET_CHARS")
-	fmt.Println("  CODEMAP_BLAST_MAX_DIFF_CHARS")
-	fmt.Println("  CODEMAP_BLAST_MAX_DEPS_CHARS")
-	fmt.Println("  CODEMAP_BLAST_MAX_IMPORTERS_CHARS")
-	fmt.Println("  CODEMAP_BLAST_MAX_IMPORTER_FILES")
-	fmt.Println("  CODEMAP_BLAST_MAX_IMPORTERS_PER_FILE")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Environment overrides:")
+	fmt.Fprintln(out, "  CODEMAP_BLAST_MAX_TOTAL_CHARS")
+	fmt.Fprintln(out, "  CODEMAP_BLAST_MAX_CHANGED_FILES")
+	fmt.Fprintln(out, "  CODEMAP_BLAST_MAX_AFFECTED")
+	fmt.Fprintln(out, "  CODEMAP_BLAST_MAX_CONTEXT")
+	fmt.Fprintln(out, "  CODEMAP_BLAST_MAX_SNIPPETS")
+	fmt.Fprintln(out, "  CODEMAP_BLAST_MAX_SNIPPETS_PER_CHANGED")
+	fmt.Fprintln(out, "  CODEMAP_BLAST_SNIPPET_RADIUS")
+	fmt.Fprintln(out, "  CODEMAP_BLAST_MAX_SNIPPET_CHARS")
+	fmt.Fprintln(out, "  CODEMAP_BLAST_MAX_DIFF_CHARS")
+	fmt.Fprintln(out, "  CODEMAP_BLAST_MAX_DEPS_CHARS")
+	fmt.Fprintln(out, "  CODEMAP_BLAST_MAX_IMPORTERS_CHARS")
+	fmt.Fprintln(out, "  CODEMAP_BLAST_MAX_IMPORTER_FILES")
+	fmt.Fprintln(out, "  CODEMAP_BLAST_MAX_IMPORTERS_PER_FILE")
 }
 
 func chooseBlastRadiusFormat(jsonMode, markdownMode, textMode bool) (blastRadiusFormat, error) {
@@ -379,14 +391,18 @@ func clampBlastRadiusLimits(limits blastRadiusLimits) blastRadiusLimits {
 func resolveBlastRadiusRoot(root string) (string, func(), error) {
 	cleanup := func() {}
 	_, localErr := os.Stat(root)
-	if isGitHubURL(root) && localErr != nil {
-		repoName := extractRepoName(root)
-		tempDir, err := cloneRepo(root, repoName)
-		if err != nil {
-			return "", cleanup, err
+	if isGitHubURL(root) {
+		if os.IsNotExist(localErr) {
+			repoName := extractRepoName(root)
+			tempDir, err := cloneRepo(root, repoName)
+			if err != nil {
+				return "", cleanup, err
+			}
+			cleanup = func() { _ = os.RemoveAll(tempDir) }
+			root = tempDir
+		} else if localErr != nil {
+			return "", cleanup, localErr
 		}
-		cleanup = func() { _ = os.RemoveAll(tempDir) }
-		root = tempDir
 	}
 
 	absRoot, err := filepath.Abs(root)
@@ -836,6 +852,7 @@ func findBlastRadiusSnippet(root, targetPath, via, category, reason string, chan
 type blastSnippetTerm struct {
 	Value string
 	Kind  string
+	Regex *regexp.Regexp
 }
 
 func blastSnippetTerms(meta blastChangedMeta) []blastSnippetTerm {
@@ -856,7 +873,11 @@ func blastSnippetTerms(meta blastChangedMeta) []blastSnippetTerm {
 			continue
 		}
 		seen[fn] = true
-		terms = append(terms, blastSnippetTerm{Value: fn, Kind: "symbol"})
+		terms = append(terms, blastSnippetTerm{
+			Value: fn,
+			Kind:  "symbol",
+			Regex: regexp.MustCompile(`\b` + regexp.QuoteMeta(fn) + `\b`),
+		})
 	}
 
 	for _, candidate := range []blastSnippetTerm{
@@ -879,8 +900,7 @@ func blastSnippetTerms(meta blastChangedMeta) []blastSnippetTerm {
 func blastLineMatchesTerm(line string, term blastSnippetTerm) bool {
 	switch term.Kind {
 	case "symbol":
-		pattern := regexp.MustCompile(`\b` + regexp.QuoteMeta(term.Value) + `\b`)
-		return pattern.MatchString(line)
+		return term.Regex != nil && term.Regex.MatchString(line)
 	default:
 		return strings.Contains(line, term.Value)
 	}
@@ -908,6 +928,17 @@ func buildBlastSnippetExcerpt(lines []string, index, radius, maxChars int) strin
 }
 
 func buildBlastRadiusRendered(diffProject scanner.Project, depsProject scanner.DepsProject, reports []scanner.ImportersReport, limits blastRadiusLimits) blastRadiusRendered {
+	if len(diffProject.Files) == 0 {
+		ref := diffProject.DiffRef
+		if ref == "" {
+			ref = "main"
+		}
+		return blastRadiusRendered{
+			Diff: fmt.Sprintf("No files changed vs %s\n", ref),
+			Deps: "No changed source files to analyze.\n",
+		}
+	}
+
 	rendered := blastRadiusRendered{
 		Diff: truncateBlastRadiusText(renderDiffProject(diffProject), limits.MaxDiffChars, "diff"),
 		Deps: truncateBlastRadiusText(renderDepsProject(depsProject), limits.MaxDepsChars, "deps"),
@@ -948,6 +979,12 @@ func renderBlastRadiusMarkdown(bundle blastRadiusBundle) string {
 	summary.WriteString(fmt.Sprintf("- Output budgets: total %d chars, diff %d, deps %d, importers %d\n", bundle.Limits.MaxTotalChars, bundle.Limits.MaxDiffChars, bundle.Limits.MaxDepsChars, bundle.Limits.MaxImportersChars))
 	summary.WriteString(fmt.Sprintf("- Snippet limits: %d total, %d per changed file, %d chars max\n\n", bundle.Limits.MaxSnippets, bundle.Limits.MaxSnippetsPerChanged, bundle.Limits.MaxSnippetChars))
 	if !builder.Append(summary.String(), "summary") {
+		return builder.String()
+	}
+
+	if bundle.Summary.ChangedFilesTotal == 0 {
+		empty := fmt.Sprintf("## No Changes\n\n- No files changed vs `%s`.\n- Dependency, snippet, and importer sections are omitted.\n", bundle.Ref)
+		builder.Append(empty, "no changes")
 		return builder.String()
 	}
 
@@ -1041,6 +1078,12 @@ func renderBlastRadiusText(bundle blastRadiusBundle) string {
 	summary.WriteString(fmt.Sprintf("output_budgets=%d_total,%d_diff,%d_deps,%d_importers\n", bundle.Limits.MaxTotalChars, bundle.Limits.MaxDiffChars, bundle.Limits.MaxDepsChars, bundle.Limits.MaxImportersChars))
 	summary.WriteString(fmt.Sprintf("snippet_limits=%d_total,%d_per_changed,%d_chars\n\n", bundle.Limits.MaxSnippets, bundle.Limits.MaxSnippetsPerChanged, bundle.Limits.MaxSnippetChars))
 	if !builder.Append(summary.String(), "summary") {
+		return builder.String()
+	}
+
+	if bundle.Summary.ChangedFilesTotal == 0 {
+		empty := fmt.Sprintf("[no_changes]\nNo files changed vs %s.\nDependency, snippet, and importer sections are omitted.\n", bundle.Ref)
+		builder.Append(empty, "no changes")
 		return builder.String()
 	}
 
