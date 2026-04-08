@@ -226,11 +226,12 @@ codemap --json --deps --diff --ref main .
 codemap --json --importers path/to/file .
 ```
 
-For a reusable wrapper that emits either Markdown or a single JSON object:
+For a reusable built-in command that emits either Markdown, text, or a single JSON object:
 
 ```bash
-bash scripts/codemap-blast-radius.sh --markdown --ref main .
-bash scripts/codemap-blast-radius.sh --json --ref main .
+codemap blast-radius --ref main .
+codemap blast-radius --json --ref main .
+codemap blast-radius --text --ref main .
 ```
 
 ## Claude Integration

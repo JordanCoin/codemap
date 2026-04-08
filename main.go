@@ -148,6 +148,12 @@ func main() {
 		return
 	}
 
+	// Handle "blast-radius" subcommand before global flag parsing
+	if len(os.Args) >= 2 && os.Args[1] == "blast-radius" {
+		runBlastRadiusSubcommand(os.Args[2:])
+		return
+	}
+
 	skylineMode := flag.Bool("skyline", false, "Enable skyline visualization mode")
 	animateMode := flag.Bool("animate", false, "Enable animation (use with --skyline)")
 	depsMode := flag.Bool("deps", false, "Enable dependency graph mode (function/import analysis)")
@@ -212,6 +218,7 @@ func main() {
 		fmt.Println("  codemap hook pre-compact        # Save state before compact")
 		fmt.Println("  codemap hook session-stop       # Session summary")
 		fmt.Println("  codemap handoff [path]          # Build handoff artifact for agent switching")
+		fmt.Println("  codemap blast-radius [path]     # Compact bounded blast-radius bundle")
 		fmt.Println()
 		fmt.Println("Project config:")
 		fmt.Println("  codemap config init             # Create .codemap/config.json (auto-detects extensions)")
@@ -408,16 +415,7 @@ func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFil
 		analyses, err = scanForDepsWithHint(root)
 		if err != nil {
 			if errors.Is(err, scanner.ErrAstGrepNotFound) {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				fmt.Fprintln(os.Stderr, "")
-				fmt.Fprintln(os.Stderr, "The --deps feature requires ast-grep. Install it with:")
-				fmt.Fprintln(os.Stderr, "  brew install ast-grep         # macOS/Linux (installs as 'sg')")
-				fmt.Fprintln(os.Stderr, "  cargo install ast-grep        # installs as 'ast-grep'")
-				fmt.Fprintln(os.Stderr, "  pipx install ast-grep         # installs as 'ast-grep'")
-				fmt.Fprintln(os.Stderr, "  python3 -m pip install ast-grep-cli")
-				fmt.Fprintln(os.Stderr, "")
-				fmt.Fprintln(os.Stderr, "Standard release tarballs ship codemap without the ast-grep binary.")
-				fmt.Fprintln(os.Stderr, "Use a codemap-full archive for self-contained CI installs, or install ast-grep separately.")
+				printAstGrepInstallHint(os.Stderr, err)
 			} else {
 				fmt.Fprintf(os.Stderr, "Error scanning dependencies: %v\n", err)
 			}
@@ -541,33 +539,7 @@ func buildImportersReport(root, file string) (scanner.ImportersReport, error) {
 	if err != nil {
 		return scanner.ImportersReport{}, err
 	}
-
-	// Handle absolute paths - convert to relative
-	if filepath.IsAbs(file) {
-		if rel, err := filepath.Rel(root, file); err == nil {
-			file = rel
-		}
-	}
-
-	importers := fg.Importers[file]
-	imports := fg.Imports[file]
-	report := scanner.ImportersReport{
-		Root:          root,
-		Mode:          "importers",
-		File:          file,
-		Importers:     append([]string(nil), importers...),
-		Imports:       append([]string(nil), imports...),
-		ImporterCount: len(importers),
-		IsHub:         len(importers) >= 3,
-	}
-
-	for _, imp := range imports {
-		if fg.IsHub(imp) {
-			report.HubImports = append(report.HubImports, imp)
-		}
-	}
-
-	return report, nil
+	return buildImportersReportFromGraph(root, file, fg), nil
 }
 
 func runImportersMode(root, file string, jsonMode bool) {
@@ -581,34 +553,7 @@ func runImportersMode(root, file string, jsonMode bool) {
 		_ = json.NewEncoder(os.Stdout).Encode(report)
 		return
 	}
-
-	importers := report.Importers
-	if len(importers) >= 3 {
-		fmt.Printf("⚠️  HUB FILE: %s\n", report.File)
-		fmt.Printf("   Imported by %d files - changes have wide impact!\n", len(importers))
-		fmt.Println()
-		fmt.Println("   Dependents:")
-		for i, imp := range importers {
-			if i >= 5 {
-				fmt.Printf("   ... and %d more\n", len(importers)-5)
-				break
-			}
-			fmt.Printf("   • %s\n", imp)
-		}
-	} else if len(importers) > 0 {
-		fmt.Printf("📍 File: %s\n", report.File)
-		fmt.Printf("   Imported by %d file(s)\n", len(importers))
-		for _, imp := range importers {
-			fmt.Printf("   • %s\n", imp)
-		}
-	}
-
-	if len(report.HubImports) > 0 {
-		if len(importers) == 0 {
-			fmt.Printf("📍 File: %s\n", report.File)
-		}
-		fmt.Printf("   Imports %d hub(s): %s\n", len(report.HubImports), strings.Join(report.HubImports, ", "))
-	}
+	renderImportersReport(os.Stdout, report)
 }
 
 func runWatchSubcommand(subCmd, root string) {
