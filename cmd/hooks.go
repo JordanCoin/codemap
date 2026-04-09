@@ -1456,17 +1456,16 @@ func findChildRepos(root string) []string {
 	}
 
 	// Use git check-ignore to filter out ignored directories.
-	// Skip filtering if the root is not a git repo (e.g. a parent directory).
+	// In non-git parents this silently fails and nothing is filtered,
+	// which is correct — .gitignore is a git concept.
+	args := append([]string{"check-ignore", "--"}, candidates...)
+	cmd := exec.Command("git", args...)
+	cmd.Dir = root
+	out, _ := cmd.Output()
 	ignored := make(map[string]bool)
-	if _, err := os.Stat(filepath.Join(root, ".git")); err == nil {
-		args := append([]string{"check-ignore", "--"}, candidates...)
-		cmd := exec.Command("git", args...)
-		cmd.Dir = root
-		out, _ := cmd.Output()
-		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-			if line != "" {
-				ignored[line] = true
-			}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line != "" {
+			ignored[line] = true
 		}
 	}
 
