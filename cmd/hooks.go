@@ -247,18 +247,20 @@ func RunHook(hookName, root string) error {
 
 // hookSessionStart shows project structure, starts daemon, and shows hub warnings
 func hookSessionStart(root string) error {
-	// Guard: require git repo
+	// Handle meta-repo: parent directory containing child git repos.
+	// Check this before the git guard so that non-repo parent directories
+	// still get multi-repo context.
+	childRepos := findChildRepos(root)
+	if len(childRepos) > 1 {
+		return hookSessionStartMultiRepo(root, childRepos)
+	}
+
+	// Guard: require git repo for single-repo analysis
 	gitDir := filepath.Join(root, ".git")
 	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
 		fmt.Println("📍 Not a git repository - skipping project context")
 		fmt.Println("   (codemap hooks work best in git repos)")
 		return nil
-	}
-
-	// Handle meta-repo: parent git repo containing child git repos
-	childRepos := findChildRepos(root)
-	if len(childRepos) > 1 {
-		return hookSessionStartMultiRepo(root, childRepos)
 	}
 
 	// Check for previous session context before starting new daemon
@@ -1453,7 +1455,9 @@ func findChildRepos(root string) []string {
 		return nil
 	}
 
-	// Use git check-ignore to filter out ignored directories
+	// Use git check-ignore to filter out ignored directories.
+	// In non-git parents this silently fails and nothing is filtered,
+	// which is correct — .gitignore is a git concept.
 	args := append([]string{"check-ignore", "--"}, candidates...)
 	cmd := exec.Command("git", args...)
 	cmd.Dir = root
