@@ -107,6 +107,13 @@ func (d *Daemon) eventLoop() {
 				}
 			}
 
+			// Skip build-tool temp files (e.g. vite's
+			// vite.config.ts.timestamp-*.mjs) so transient churn never
+			// reaches the event log or working set.
+			if isTransientFile(event.Name) {
+				continue
+			}
+
 			if debouncer.shouldSkip(event, time.Now()) {
 				continue
 			}
@@ -130,6 +137,20 @@ func (d *Daemon) eventLoop() {
 func (d *Daemon) isSourceFile(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
 	return scanner.IsSourceExt(ext)
+}
+
+// isTransientFile reports whether a path is a build-tool temp artifact that
+// happens to carry a source extension and so slips past isSourceFile. These
+// files flap CREATE/REMOVE within milliseconds and only add noise to the
+// timeline and working set.
+func isTransientFile(path string) bool {
+	base := filepath.Base(path)
+	// Vite/esbuild bundle the config to a sibling temp file named
+	// e.g. vite.config.ts.timestamp-1782838234865-c8aa76ee.mjs
+	if strings.Contains(base, ".timestamp-") {
+		return true
+	}
+	return false
 }
 
 // handleEvent processes a single file event

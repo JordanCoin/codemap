@@ -30,6 +30,18 @@ type fileIndex struct {
 // BuildFileGraph analyzes a project and returns file-level dependencies
 // Uses ast-grep for multi-language support with universal fuzzy resolution
 func BuildFileGraph(root string) (*FileGraph, error) {
+	// Use ast-grep to extract imports for all languages.
+	analyses, err := ScanForDeps(root)
+	if err != nil {
+		return nil, err
+	}
+	return BuildFileGraphFromAnalyses(root, analyses)
+}
+
+// BuildFileGraphFromAnalyses builds the file graph from a pre-computed ast-grep
+// scan, letting callers that already hold the analyses avoid a redundant
+// full-repo ScanForDeps. BuildFileGraph is the convenience wrapper that scans.
+func BuildFileGraphFromAnalyses(root string, analyses []FileAnalysis) (*FileGraph, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -59,12 +71,6 @@ func BuildFileGraph(root string) (*FileGraph, error) {
 	// Build file index for fast fuzzy matching
 	idx := buildFileIndex(files, fg.Module)
 	fg.Packages = idx.goPkgs
-
-	// Use ast-grep to extract imports for all languages
-	analyses, err := ScanForDeps(root)
-	if err != nil {
-		return nil, err
-	}
 
 	// Resolve imports to files using universal fuzzy matching
 	for _, a := range analyses {

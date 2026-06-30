@@ -167,6 +167,22 @@ func AnalyzeImpact(root string, changedFiles []FileInfo) []ImpactInfo {
 		return nil
 	}
 
+	// Scan all files to get their imports using ast-grep
+	analyses, err := ScanForDeps(root)
+	if err != nil {
+		return nil
+	}
+	return AnalyzeImpactFromAnalyses(changedFiles, analyses)
+}
+
+// AnalyzeImpactFromAnalyses computes impact using a pre-computed ast-grep scan,
+// so callers that already hold the analyses can avoid a redundant full-repo
+// ScanForDeps. AnalyzeImpact is the convenience wrapper that performs the scan.
+func AnalyzeImpactFromAnalyses(changedFiles []FileInfo, analyses []FileAnalysis) []ImpactInfo {
+	if len(changedFiles) == 0 {
+		return nil
+	}
+
 	// Build set of changed file base names and directories
 	changedBases := make(map[string]string) // base name -> full path
 	changedDirs := make(map[string]string)  // dir name -> representative file
@@ -182,12 +198,6 @@ func AnalyzeImpact(root string, changedFiles []FileInfo) []ImpactInfo {
 				changedDirs[dirBase] = f.Path
 			}
 		}
-	}
-
-	// Scan all files to get their imports using ast-grep
-	analyses, err := ScanForDeps(root)
-	if err != nil {
-		return nil
 	}
 
 	usageCounts := make(map[string]int)

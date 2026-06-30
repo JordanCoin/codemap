@@ -126,9 +126,10 @@ type blastRadiusRenderedImporter struct {
 }
 
 type blastRadiusRendered struct {
-	Diff      string                        `json:"diff"`
-	Deps      string                        `json:"deps"`
-	Importers []blastRadiusRenderedImporter `json:"importers"`
+	Diff               string                        `json:"diff"`
+	Deps               string                        `json:"deps"`
+	Importers          []blastRadiusRenderedImporter `json:"importers"`
+	ImportersTruncated bool                          `json:"importers_truncated,omitempty"`
 }
 
 type blastRadiusBundle struct {
@@ -170,15 +171,21 @@ func executeBlastRadiusSubcommand(args []string) int {
 	fs := flag.NewFlagSet("blast-radius", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
-	var jsonMode bool
-	var markdownMode bool
-	var textMode bool
+	// Format flags resolve last-wins: passing more than one simply uses the
+	// last one on the command line (matching the original shell wrapper).
+	format := blastRadiusFormatMarkdown
+	chooseFormat := func(f blastRadiusFormat) func(string) error {
+		return func(string) error {
+			format = f
+			return nil
+		}
+	}
 	var help bool
 	ref := fs.String("ref", "main", "Branch/ref to compare against")
-	fs.BoolVar(&jsonMode, "json", false, "Emit a single JSON object")
-	fs.BoolVar(&markdownMode, "markdown", false, "Emit Markdown output")
-	fs.BoolVar(&markdownMode, "md", false, "Emit Markdown output")
-	fs.BoolVar(&textMode, "text", false, "Emit plain text output")
+	fs.BoolFunc("json", "Emit a single JSON object", chooseFormat(blastRadiusFormatJSON))
+	fs.BoolFunc("markdown", "Emit Markdown output", chooseFormat(blastRadiusFormatMarkdown))
+	fs.BoolFunc("md", "Emit Markdown output", chooseFormat(blastRadiusFormatMarkdown))
+	fs.BoolFunc("text", "Emit plain text output", chooseFormat(blastRadiusFormatText))
 	fs.BoolVar(&help, "help", false, "Show blast-radius help")
 	fs.BoolVar(&help, "h", false, "Show blast-radius help")
 	fs.IntVar(&limits.MaxTotalChars, "max-total-chars", limits.MaxTotalChars, "Hard cap for markdown/text output")
@@ -198,7 +205,8 @@ func executeBlastRadiusSubcommand(args []string) int {
 		printBlastRadiusUsage(fs)
 	}
 
-	if err := fs.Parse(args); err != nil {
+	root, err := parseBlastRadiusArgs(fs, args)
+	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
@@ -208,22 +216,6 @@ func executeBlastRadiusSubcommand(args []string) int {
 	if help {
 		fs.Usage()
 		return 0
-	}
-
-	if fs.NArg() > 1 {
-		fmt.Fprintln(os.Stderr, "Usage: codemap blast-radius [--json|--markdown|--text] [--ref <base-ref>] [path]")
-		return 2
-	}
-
-	format, err := chooseBlastRadiusFormat(jsonMode, markdownMode, textMode)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		return 2
-	}
-
-	root := "."
-	if fs.NArg() == 1 {
-		root = fs.Arg(0)
 	}
 
 	limits = clampBlastRadiusLimits(limits)
@@ -236,9 +228,14 @@ func executeBlastRadiusSubcommand(args []string) int {
 
 	bundle, err := buildBlastRadiusBundle(absRoot, *ref, limits)
 	if err != nil {
-		if errors.Is(err, scanner.ErrAstGrepNotFound) {
+		var diffErr *blastRadiusDiffError
+		switch {
+		case errors.Is(err, scanner.ErrAstGrepNotFound):
 			printAstGrepInstallHint(os.Stderr, err)
-		} else {
+		case errors.As(err, &diffErr):
+			fmt.Fprintf(os.Stderr, "Error building blast radius: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Make sure '%s' is a valid branch/ref\n", diffErr.ref)
+		default:
 			fmt.Fprintf(os.Stderr, "Error building blast radius: %v\n", err)
 		}
 		return 1
@@ -291,29 +288,44 @@ func printBlastRadiusUsage(fs *flag.FlagSet) {
 	fmt.Fprintln(out, "  CODEMAP_BLAST_MAX_IMPORTERS_PER_FILE")
 }
 
-func chooseBlastRadiusFormat(jsonMode, markdownMode, textMode bool) (blastRadiusFormat, error) {
-	count := 0
-	if jsonMode {
-		count++
+// parseBlastRadiusArgs parses flags that may appear before or after the single
+// optional positional path. Go's flag package stops at the first non-flag
+// argument, so we re-parse the remainder after each positional to support
+// position-independent flags (e.g. `blast-radius . --json`).
+func parseBlastRadiusArgs(fs *flag.FlagSet, args []string) (string, error) {
+	var positionals []string
+	rest := args
+	for {
+		if err := fs.Parse(rest); err != nil {
+			return "", err
+		}
+		if fs.NArg() == 0 {
+			break
+		}
+		positionals = append(positionals, fs.Arg(0))
+		rest = fs.Args()[1:]
 	}
-	if markdownMode {
-		count++
+	if len(positionals) > 1 {
+		fmt.Fprintln(os.Stderr, "Usage: codemap blast-radius [--json|--markdown|--text] [--ref <base-ref>] [path]")
+		return "", fmt.Errorf("too many positional arguments")
 	}
-	if textMode {
-		count++
+	root := "."
+	if len(positionals) == 1 {
+		root = positionals[0]
 	}
-	if count > 1 {
-		return "", fmt.Errorf("choose only one of --json, --markdown, or --text")
-	}
-	switch {
-	case jsonMode:
-		return blastRadiusFormatJSON, nil
-	case textMode:
-		return blastRadiusFormatText, nil
-	default:
-		return blastRadiusFormatMarkdown, nil
-	}
+	return root, nil
 }
+
+// blastRadiusDiffError wraps a git-diff failure so the caller can surface the
+// actionable "valid branch/ref" hint for a bad --ref.
+type blastRadiusDiffError struct {
+	ref string
+	err error
+}
+
+func (e *blastRadiusDiffError) Error() string { return e.err.Error() }
+
+func (e *blastRadiusDiffError) Unwrap() error { return e.err }
 
 func defaultBlastRadiusLimits() blastRadiusLimits {
 	return blastRadiusLimits{
@@ -413,16 +425,47 @@ func resolveBlastRadiusRoot(root string) (string, func(), error) {
 }
 
 func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blastRadiusBundle, error) {
-	diffProject, err := buildBlastRadiusDiffProject(absRoot, ref)
+	diffInfo, err := scanner.GitDiffInfo(absRoot, ref)
+	if err != nil {
+		return blastRadiusBundle{}, &blastRadiusDiffError{ref: ref, err: err}
+	}
+
+	cfg := config.Load(absRoot)
+	gitCache := scanner.NewGitIgnoreCache(absRoot)
+	allFiles, err := scanner.ScanFiles(absRoot, gitCache, cfg.Only, cfg.Exclude)
 	if err != nil {
 		return blastRadiusBundle{}, err
 	}
-	diffTotal := len(diffProject.Files)
-	diffCapped := capBlastRadiusProject(diffProject, limits.MaxChangedFiles)
-	changedSet := make(map[string]bool, len(diffProject.Files))
-	for _, file := range diffProject.Files {
+	changedFiles := scanner.FilterToChangedWithInfo(allFiles, diffInfo)
+	diffTotal := len(changedFiles)
+
+	changedSet := make(map[string]bool, diffTotal)
+	for _, file := range changedFiles {
 		changedSet[filepath.ToSlash(file.Path)] = true
 	}
+
+	// Single ast-grep scan shared by impact analysis, the deps project, and the
+	// file graph below. Previously each of those triggered its own full-repo
+	// ScanForDeps, tripling latency on large repositories.
+	var analyses []scanner.FileAnalysis
+	if diffTotal > 0 {
+		analyses, err = scanForDepsWithHint(absRoot)
+		if err != nil {
+			return blastRadiusBundle{}, err
+		}
+	}
+
+	diffProject := scanner.Project{
+		Root:    absRoot,
+		Mode:    "tree",
+		Files:   changedFiles,
+		DiffRef: ref,
+		Impact:  scanner.AnalyzeImpactFromAnalyses(changedFiles, analyses),
+		Depth:   cfg.Depth,
+		Only:    cfg.Only,
+		Exclude: cfg.Exclude,
+	}
+	diffCapped := capBlastRadiusProject(diffProject, limits.MaxChangedFiles)
 
 	depsProject := scanner.DepsProject{
 		Root:         absRoot,
@@ -433,7 +476,8 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 	}
 	depsCapped := depsProject
 	depsTotal := 0
-	var fullReports []scanner.ImportersReport
+	var allReports []scanner.ImportersReport
+	var shownReports []scanner.ImportersReport
 	var jsonReports []blastRadiusImporters
 	var rawImpacted []blastRadiusRelation
 	var impacted []blastRadiusRelation
@@ -442,32 +486,37 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 	var snippets []blastRadiusSnippet
 
 	if diffTotal > 0 {
-		depsProject, err = buildBlastRadiusDepsProject(absRoot, ref, changedSet)
-		if err != nil {
-			return blastRadiusBundle{}, err
-		}
+		depsProject.Files = scanner.FilterAnalysisToChanged(analyses, changedSet)
+		depsProject.ExternalDeps = scanner.ReadExternalDeps(absRoot)
 		depsTotal = len(depsProject.Files)
 		depsCapped = capBlastRadiusDepsProject(depsProject, limits.MaxChangedFiles)
 
-		fg, err := scanner.BuildFileGraph(absRoot)
+		fg, err := scanner.BuildFileGraphFromAnalyses(absRoot, analyses)
 		if err != nil {
 			return blastRadiusBundle{}, err
 		}
 
-		for _, file := range diffCapped.Files {
-			report := buildImportersReportFromGraph(absRoot, file.Path, fg)
-			fullReports = append(fullReports, report)
+		// Analyze the FULL changed set; capping only limits what is displayed,
+		// it must not shrink blast-radius analysis or the summary stats.
+		for _, file := range changedFiles {
+			allReports = append(allReports, buildImportersReportFromGraph(absRoot, file.Path, fg))
+		}
+		shownReports = allReports
+		if len(diffCapped.Files) < len(allReports) {
+			shownReports = allReports[:len(diffCapped.Files)]
+		}
+		for _, report := range shownReports {
 			jsonReports = append(jsonReports, capBlastRadiusImportersReport(report, limits.MaxImportersPerFile))
 		}
 
-		rawImpacted = collectBlastRadiusImpacted(fullReports, changedSet)
-		rawContext = collectBlastRadiusContext(fullReports, changedSet)
+		rawImpacted = collectBlastRadiusImpacted(allReports, changedSet)
+		rawContext = collectBlastRadiusContext(allReports, changedSet)
 		impacted = capBlastRadiusRelations(rawImpacted, limits.MaxAffected)
 		context = capBlastRadiusRelations(rawContext, limits.MaxContext)
-		snippets = buildBlastRadiusSnippets(absRoot, diffProject.Files, depsProject.Files, impacted, context, limits)
+		snippets = buildBlastRadiusSnippets(absRoot, changedFiles, depsProject.Files, impacted, context, limits)
 	}
 
-	summary := buildBlastRadiusSummary(diffCapped.Files, diffTotal, impacted, rawImpacted, context, rawContext, fullReports)
+	summary := buildBlastRadiusSummary(diffCapped.Files, diffTotal, impacted, rawImpacted, context, rawContext, allReports)
 
 	bundle := blastRadiusBundle{
 		Root:    absRoot,
@@ -499,50 +548,8 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 		DependencyContextOutsideDiff: context,
 		Snippets:                     snippets,
 	}
-	bundle.Rendered = buildBlastRadiusRendered(diffCapped, depsCapped, fullReports, limits)
+	bundle.Rendered = buildBlastRadiusRendered(diffCapped, depsCapped, shownReports, diffTotal, limits)
 	return bundle, nil
-}
-
-func buildBlastRadiusDiffProject(absRoot, ref string) (scanner.Project, error) {
-	diffInfo, err := scanner.GitDiffInfo(absRoot, ref)
-	if err != nil {
-		return scanner.Project{}, err
-	}
-
-	cfg := config.Load(absRoot)
-	gitCache := scanner.NewGitIgnoreCache(absRoot)
-	files, err := scanner.ScanFiles(absRoot, gitCache, cfg.Only, cfg.Exclude)
-	if err != nil {
-		return scanner.Project{}, err
-	}
-	files = scanner.FilterToChangedWithInfo(files, diffInfo)
-	impact := scanner.AnalyzeImpact(absRoot, files)
-
-	return scanner.Project{
-		Root:    absRoot,
-		Mode:    "tree",
-		Files:   files,
-		DiffRef: ref,
-		Impact:  impact,
-		Depth:   cfg.Depth,
-		Only:    cfg.Only,
-		Exclude: cfg.Exclude,
-	}, nil
-}
-
-func buildBlastRadiusDepsProject(absRoot, ref string, changedSet map[string]bool) (scanner.DepsProject, error) {
-	analyses, err := scanForDepsWithHint(absRoot)
-	if err != nil {
-		return scanner.DepsProject{}, err
-	}
-	analyses = scanner.FilterAnalysisToChanged(analyses, changedSet)
-	return scanner.DepsProject{
-		Root:         absRoot,
-		Mode:         "deps",
-		Files:        analyses,
-		ExternalDeps: scanner.ReadExternalDeps(absRoot),
-		DiffRef:      ref,
-	}, nil
 }
 
 func capBlastRadiusProject(project scanner.Project, max int) scanner.Project {
@@ -550,10 +557,34 @@ func capBlastRadiusProject(project scanner.Project, max int) scanner.Project {
 		return project
 	}
 	project.Files = append([]scanner.FileInfo(nil), project.Files[:max]...)
-	if len(project.Impact) > max {
-		project.Impact = append([]scanner.ImpactInfo(nil), project.Impact[:max]...)
-	}
+	// Impact is an independent, usage-sorted list keyed by basename; filter it to
+	// the files actually shown rather than slicing it by the changed-file cap,
+	// which would drop or mis-attribute the diff impact footer.
+	project.Impact = filterImpactToShownFiles(project.Impact, project.Files)
 	return project
+}
+
+// filterImpactToShownFiles keeps only impact entries whose basename matches a
+// shown changed file (or its directory, for package-style imports).
+func filterImpactToShownFiles(impact []scanner.ImpactInfo, files []scanner.FileInfo) []scanner.ImpactInfo {
+	if len(impact) == 0 {
+		return impact
+	}
+	allowed := make(map[string]bool, len(files)*2)
+	for _, f := range files {
+		allowed[filepath.Base(f.Path)] = true
+		dir := filepath.Dir(f.Path)
+		if dir != "." && dir != "" {
+			allowed[filepath.Base(dir)] = true
+		}
+	}
+	var filtered []scanner.ImpactInfo
+	for _, imp := range impact {
+		if allowed[imp.File] {
+			filtered = append(filtered, imp)
+		}
+	}
+	return filtered
 }
 
 func capBlastRadiusDepsProject(project scanner.DepsProject, max int) scanner.DepsProject {
@@ -927,11 +958,19 @@ func buildBlastSnippetExcerpt(lines []string, index, radius, maxChars int) strin
 	return truncateRunes(text, maxChars, "\n... [truncated]")
 }
 
-func buildBlastRadiusRendered(diffProject scanner.Project, depsProject scanner.DepsProject, reports []scanner.ImportersReport, limits blastRadiusLimits) blastRadiusRendered {
+func buildBlastRadiusRendered(diffProject scanner.Project, depsProject scanner.DepsProject, reports []scanner.ImportersReport, diffTotal int, limits blastRadiusLimits) blastRadiusRendered {
 	if len(diffProject.Files) == 0 {
 		ref := diffProject.DiffRef
 		if ref == "" {
 			ref = "main"
+		}
+		// Distinguish "nothing changed" from "files changed but the display cap
+		// hid all of them" so the rendered output never contradicts the summary.
+		if diffTotal > 0 {
+			return blastRadiusRendered{
+				Diff: fmt.Sprintf("%d file(s) changed vs %s; none shown (raise --max-changed-files).\n", diffTotal, ref),
+				Deps: "Changed files omitted by --max-changed-files.\n",
+			}
 		}
 		return blastRadiusRendered{
 			Diff: fmt.Sprintf("No files changed vs %s\n", ref),
@@ -944,19 +983,35 @@ func buildBlastRadiusRendered(diffProject scanner.Project, depsProject scanner.D
 		Deps: truncateBlastRadiusText(renderDepsProject(depsProject), limits.MaxDepsChars, "deps"),
 	}
 
+	// Only render importer sections that actually have content; a changed file
+	// with no importers and no hub imports would otherwise emit an empty block.
+	type renderableImporter struct {
+		file string
+		text string
+	}
+	var renderable []renderableImporter
+	for _, report := range reports {
+		text := renderImportersReportString(report)
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		renderable = append(renderable, renderableImporter{file: report.File, text: text})
+	}
+
 	importerBudget := limits.MaxImportersChars
-	for idx, report := range reports {
-		if idx >= limits.MaxImporterFiles || importerBudget <= 0 {
+	for _, item := range renderable {
+		if len(rendered.Importers) >= limits.MaxImporterFiles || importerBudget <= 0 {
 			break
 		}
 		perFileBudget := minInt(importerBudget, 1200)
-		text := truncateBlastRadiusText(renderImportersReportString(report), perFileBudget, "importers:"+report.File)
+		text := truncateBlastRadiusText(item.text, perFileBudget, "importers:"+item.file)
 		rendered.Importers = append(rendered.Importers, blastRadiusRenderedImporter{
-			File: report.File,
+			File: item.file,
 			Text: text,
 		})
 		importerBudget -= runeLen(text)
 	}
+	rendered.ImportersTruncated = len(rendered.Importers) < len(renderable)
 
 	return rendered
 }
@@ -1054,7 +1109,7 @@ func renderBlastRadiusMarkdown(bundle blastRadiusBundle) string {
 		for _, importer := range bundle.Rendered.Importers {
 			section.WriteString(fmt.Sprintf("\n### `%s`\n\n```text\n%s\n```\n", importer.File, importer.Text))
 		}
-		if len(bundle.Importers) > len(bundle.Rendered.Importers) {
+		if bundle.Rendered.ImportersTruncated {
 			section.WriteString("\n... [additional importer sections omitted]\n")
 		}
 		builder.Append(section.String(), "importers section")
@@ -1141,7 +1196,7 @@ func renderBlastRadiusText(bundle blastRadiusBundle) string {
 		for _, importer := range bundle.Rendered.Importers {
 			section.WriteString(fmt.Sprintf("\n[importers] %s\n%s\n", importer.File, importer.Text))
 		}
-		if len(bundle.Importers) > len(bundle.Rendered.Importers) {
+		if bundle.Rendered.ImportersTruncated {
 			section.WriteString("\n... [additional importer sections omitted]\n")
 		}
 		builder.Append(section.String(), "importers section")
@@ -1164,11 +1219,22 @@ func (b *blastOutputBuilder) Append(text, label string) bool {
 		return true
 	}
 	marker := fmt.Sprintf("\n... [%s omitted after total budget %d chars]\n", label, b.total)
-	keep := b.remaining - runeLen(marker)
+	// Reserve room to close a code fence if truncation lands mid-block, so the
+	// emitted markdown never has a dangling ``` opener.
+	fenceClose := "\n```\n"
+	fenceReserve := 0
+	if strings.Contains(text, "```") {
+		fenceReserve = runeLen(fenceClose)
+	}
+	keep := b.remaining - runeLen(marker) - fenceReserve
 	if keep < 0 {
 		keep = 0
 	}
-	b.builder.WriteString(firstRunes(text, keep))
+	kept := firstRunes(text, keep)
+	b.builder.WriteString(kept)
+	if strings.Count(kept, "```")%2 == 1 {
+		b.builder.WriteString(fenceClose)
+	}
 	b.builder.WriteString(marker)
 	b.remaining = 0
 	return false
@@ -1248,10 +1314,10 @@ func buildImportersReportFromGraph(root, file string, fg *scanner.FileGraph) sca
 	}
 	file = filepath.ToSlash(file)
 
+	// Preserve scan order (do not sort): this helper also backs the pre-existing
+	// `codemap --importers` command, whose output ordering callers depend on.
 	importers := append([]string(nil), fg.Importers[file]...)
 	imports := append([]string(nil), fg.Imports[file]...)
-	sort.Strings(importers)
-	sort.Strings(imports)
 
 	report := scanner.ImportersReport{
 		Root:          root,
@@ -1268,7 +1334,6 @@ func buildImportersReportFromGraph(root, file string, fg *scanner.FileGraph) sca
 			report.HubImports = append(report.HubImports, imp)
 		}
 	}
-	sort.Strings(report.HubImports)
 	return report
 }
 
