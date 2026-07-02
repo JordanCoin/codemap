@@ -31,3 +31,11 @@ func processAlive(pid int) bool {
 	}
 	return proc.Signal(syscall.Signal(0)) == nil
 }
+
+// terminateDaemon stops the daemon on Unix with SIGTERM so it can shut down
+// gracefully. This matches long-standing behavior and does not gate on
+// ownership (unlike Windows, where the kill is destructive): the root argument
+// is accepted only to share a signature with the Windows implementation.
+func terminateDaemon(_ string, proc *os.Process) error {
+	return proc.Signal(syscall.SIGTERM)
+}

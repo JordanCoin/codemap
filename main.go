@@ -597,6 +597,10 @@ func runWatchSubcommand(subCmd, root string) {
 			return
 		}
 		if err := stopWatchDaemon(absRoot); err != nil {
+			if errors.Is(err, watch.ErrForeignDaemonPID) {
+				fmt.Println("Watch daemon not running (cleared stale PID file)")
+				return
+			}
 			fmt.Fprintf(os.Stderr, "Error stopping daemon: %v\n", err)
 			os.Exit(1)
 		}

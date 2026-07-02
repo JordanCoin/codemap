@@ -2,13 +2,19 @@ package watch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 )
+
+// ErrForeignDaemonPID is returned by Stop when the PID in watch.pid is alive but
+// cannot be confirmed to be this repo's watch daemon (e.g. a stale PID reused by
+// an unrelated process). Callers should treat it as "nothing of ours to stop"
+// rather than a hard failure.
+var ErrForeignDaemonPID = errors.New("watch.pid does not belong to a codemap watch daemon for this repo (stale or reused PID)")
 
 // ReadState reads the daemon state from disk (for hooks to use).
 // Returns nil if state doesn't exist or if it's stale and daemon is not running.
@@ -108,12 +114,16 @@ func Stop(root string) error {
 	if err != nil {
 		return err
 	}
-	// NOTE: Windows has no SIGTERM, so this returns an error there (as it always
-	// has). `watch stop` on Windows is intentionally left non-destructive: safely
-	// killing would require verifying the PID still belongs to this repo's daemon
-	// (guarding against PID reuse), which needs a Windows command-line lookup that
-	// processCommandLine does not yet implement. Tracked as follow-up.
-	if err := proc.Signal(syscall.SIGTERM); err != nil {
+	// terminateDaemon is platform-specific: SIGTERM on Unix; on Windows it
+	// verifies the PID belongs to this repo's daemon (guarding against a reused
+	// stale PID) before killing, returning ErrForeignDaemonPID otherwise.
+	if err := terminateDaemon(root, proc); err != nil {
+		if errors.Is(err, ErrForeignDaemonPID) {
+			// The recorded PID isn't our daemon (stale or reused). Clear the
+			// bogus pid file so status stops reporting it, but never kill a
+			// process we can't confirm is ours.
+			RemovePID(root)
+		}
 		return err
 	}
 	// Clean up PID file
