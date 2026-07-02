@@ -4,7 +4,6 @@ package watch
 
 import (
 	"errors"
-	"os"
 	"syscall"
 )
 
@@ -33,10 +32,4 @@ func processAlive(pid int) bool {
 		return false
 	}
 	return code == stillActive
-}
-
-// terminateProcess stops the daemon. Windows has no SIGTERM, so Kill (which
-// maps to TerminateProcess) is the correct mechanism.
-func terminateProcess(proc *os.Process) error {
-	return proc.Kill()
 }

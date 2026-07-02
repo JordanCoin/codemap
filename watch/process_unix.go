@@ -31,9 +31,3 @@ func processAlive(pid int) bool {
 	}
 	return proc.Signal(syscall.Signal(0)) == nil
 }
-
-// terminateProcess asks the daemon to shut down. On Unix SIGTERM lets it clean
-// up gracefully; its error (e.g. ESRCH/EPERM) is returned unchanged.
-func terminateProcess(proc *os.Process) error {
-	return proc.Signal(syscall.SIGTERM)
-}
