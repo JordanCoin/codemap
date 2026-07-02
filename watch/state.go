@@ -93,14 +93,9 @@ func IsRunning(root string) bool {
 	if err != nil {
 		return false
 	}
-	// Check if process exists by sending signal 0
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	// On Unix, FindProcess always succeeds, so send signal 0 to check
-	err = proc.Signal(syscall.Signal(0))
-	return err == nil
+	// Liveness is checked in a platform-specific way: Signal(0) on Unix is
+	// unsupported on Windows, so processAlive queries the OS directly there.
+	return processAlive(pid)
 }
 
 // Stop sends SIGTERM to the daemon process
@@ -113,6 +108,11 @@ func Stop(root string) error {
 	if err != nil {
 		return err
 	}
+	// NOTE: Windows has no SIGTERM, so this returns an error there (as it always
+	// has). `watch stop` on Windows is intentionally left non-destructive: safely
+	// killing would require verifying the PID still belongs to this repo's daemon
+	// (guarding against PID reuse), which needs a Windows command-line lookup that
+	// processCommandLine does not yet implement. Tracked as follow-up.
 	if err := proc.Signal(syscall.SIGTERM); err != nil {
 		return err
 	}
