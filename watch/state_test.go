@@ -154,7 +154,9 @@ func TestProcessAliveDetectsLiveAndDeadPIDs(t *testing.T) {
 		t.Fatal("pid 0 should not be reported alive")
 	}
 	// Spawn a short-lived process, wait for it to exit, then confirm it is dead.
-	cmd := exec.Command("go", "version")
+	// Re-exec this test binary with a run filter that matches nothing so it
+	// exits immediately — self-contained, no dependency on an external tool.
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
 	if err := cmd.Start(); err != nil {
 		t.Skipf("cannot spawn helper process: %v", err)
 	}

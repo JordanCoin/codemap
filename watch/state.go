@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -108,12 +107,9 @@ func Stop(root string) error {
 	if err != nil {
 		return err
 	}
-	if err := proc.Signal(syscall.SIGTERM); err != nil {
-		// Windows does not support SIGTERM; fall back to a hard kill so
-		// `watch stop` actually terminates the daemon there.
-		if killErr := proc.Kill(); killErr != nil {
-			return killErr
-		}
+	// terminateProcess is platform-specific: SIGTERM on Unix, Kill on Windows.
+	if err := terminateProcess(proc); err != nil {
+		return err
 	}
 	// Clean up PID file
 	RemovePID(root)
