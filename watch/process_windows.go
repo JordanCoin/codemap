@@ -48,13 +48,18 @@ func processAlive(pid int) bool {
 }
 
 // terminateDaemon stops the daemon on Windows. Windows has no SIGTERM, so it
-// terminates with Kill — but only after confirming the PID actually belongs to
-// this repo's watch daemon. A stale watch.pid may point to a PID the OS reused
-// for an unrelated process, and killing that would be destructive; when
-// ownership cannot be confirmed we refuse (ErrForeignDaemonPID) instead.
+// terminates with Kill — but only after confirming proc is actually this repo's
+// watch daemon. Ownership is checked against proc.Pid (not by re-reading
+// watch.pid) so we validate the exact process we are about to kill. A stale
+// watch.pid may point to a PID the OS reused for an unrelated process; killing
+// that would be destructive, so we refuse when ownership is foreign or unknown.
 func terminateDaemon(root string, proc *os.Process) error {
-	if !IsOwnedDaemon(root) {
+	switch daemonOwnershipForPID(root, proc.Pid) {
+	case ownershipOwned:
+		return proc.Kill()
+	case ownershipForeign:
 		return ErrForeignDaemonPID
+	default:
+		return ErrDaemonOwnershipUnknown
 	}
-	return proc.Kill()
 }
