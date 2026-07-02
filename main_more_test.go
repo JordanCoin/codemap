@@ -758,3 +758,24 @@ func TestSubcommandDispatchViaBinary(t *testing.T) {
 		}
 	})
 }
+
+func TestRunWatchSubcommandStopForeignPID(t *testing.T) {
+	root := t.TempDir()
+
+	origRunning := watchIsRunning
+	origStop := stopWatchDaemon
+	defer func() {
+		watchIsRunning = origRunning
+		stopWatchDaemon = origStop
+	}()
+	watchIsRunning = func(string) bool { return true }
+	stopWatchDaemon = func(string) error { return watch.ErrForeignDaemonPID }
+
+	stdout, _ := captureMainStreams(t, func() { runWatchSubcommand("stop", root) })
+	if !strings.Contains(stdout, "cleared stale PID file") {
+		t.Fatalf("expected stale-PID message on foreign PID, got:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "Watch daemon stopped") {
+		t.Fatalf("should not claim the daemon was stopped for a foreign PID:\n%s", stdout)
+	}
+}
