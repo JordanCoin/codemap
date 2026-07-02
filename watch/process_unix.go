@@ -3,9 +3,11 @@
 package watch
 
 import (
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 func processCommandLine(pid int) (string, error) {
@@ -14,4 +16,18 @@ func processCommandLine(pid int) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// processAlive reports whether a process with the given PID is currently
+// running. FindProcess always succeeds on Unix, so liveness is probed with
+// signal 0.
+func processAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return proc.Signal(syscall.Signal(0)) == nil
 }

@@ -3,6 +3,7 @@ package watch
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -142,5 +143,24 @@ func TestWriteInitialStateWritesReadableState(t *testing.T) {
 	}
 	if len(got.RecentEvents) != 1 || got.RecentEvents[0].Path != "main.go" {
 		t.Fatalf("unexpected recent events in state: %#v", got.RecentEvents)
+	}
+}
+
+func TestProcessAliveDetectsLiveAndDeadPIDs(t *testing.T) {
+	if !processAlive(os.Getpid()) {
+		t.Fatal("current process should be reported alive")
+	}
+	if processAlive(0) {
+		t.Fatal("pid 0 should not be reported alive")
+	}
+	// Spawn a short-lived process, wait for it to exit, then confirm it is dead.
+	cmd := exec.Command("go", "version")
+	if err := cmd.Start(); err != nil {
+		t.Skipf("cannot spawn helper process: %v", err)
+	}
+	pid := cmd.Process.Pid
+	_ = cmd.Wait()
+	if processAlive(pid) {
+		t.Fatalf("exited process %d should not be reported alive", pid)
 	}
 }
