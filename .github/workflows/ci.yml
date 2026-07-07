@@ -63,6 +63,9 @@ jobs:
 
       - name: Update coverage badge
         if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23' && github.ref == 'refs/heads/main'
+        # Cosmetic gist badge update; a bad/expired GIST_TOKEN must not red-fail
+        # the whole main build. Rotate GIST_TOKEN (PAT with gist scope) to restore.
+        continue-on-error: true
         uses: schneegans/dynamic-badges-action@v1.7.0
         with:
           auth: ${{ secrets.GIST_TOKEN }}
