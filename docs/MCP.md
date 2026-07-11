@@ -1,10 +1,24 @@
 # Codemap MCP Server
 
-Run codemap as an MCP (Model Context Protocol) server for deep Claude integration.
+Run codemap as an MCP server for Claude Code, Codex, or another MCP client.
 
 ## Setup
 
 Preferred when `codemap` is already installed:
+
+```bash
+codemap setup                 # Configure Claude Code and Codex
+codemap setup --agent claude  # Configure only Claude Code
+codemap setup --agent codex   # Configure only Codex
+```
+
+Setup writes a managed, versioned absolute executable path. After upgrading or
+moving Codemap, Codex plugin users should run `codemap plugin install` first,
+then rerun setup in each configured project. Claude users skip plugin
+installation but still rerun setup. Use `codemap doctor` for strict validation;
+it reports Codex CLI and Desktop runtimes independently. Agent integrations do
+not automatically refresh the generated local plugin or per-project setup.
+For a manual, PATH-dependent Claude definition:
 
 ```bash
 claude mcp add --transport stdio codemap -- codemap mcp
