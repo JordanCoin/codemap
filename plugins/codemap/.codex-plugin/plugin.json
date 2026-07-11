@@ -1,6 +1,6 @@
 {
   "name": "codemap",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Analyze codebase structure, dependencies, changes, risk, matched skills, and cross-agent handoffs.",
   "author": {
     "name": "JordanCoin",

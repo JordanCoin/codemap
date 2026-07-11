@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	if err := codemapmcp.Run(context.Background()); err != nil {
+	if err := codemapmcp.Run(context.Background(), codemapmcp.RuntimeOptions{}); err != nil {
 		fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
 		os.Exit(1)
 	}

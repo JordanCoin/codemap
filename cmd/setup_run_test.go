@@ -33,7 +33,6 @@ func TestRunSetupNoConfigNoHooks(t *testing.T) {
 	out := captureOutput(func() { RunSetup([]string{"--no-config", "--no-hooks", root}, ".") })
 
 	checks := []string{
-		"codemap setup",
 		"Config: skipped (--no-config)",
 		"Hooks: skipped (--no-hooks)",
 		"Next:",
@@ -58,7 +57,7 @@ func TestRunSetupCreatesConfigAndHooks(t *testing.T) {
 	}
 
 	first := captureOutput(func() { RunSetup([]string{root}, ".") })
-	if !strings.Contains(first, "Config: created") || !strings.Contains(first, "Hooks: created") {
+	if !strings.Contains(first, "Config: created") || !strings.Contains(first, "Claude hooks: created") || !strings.Contains(first, "Codex hooks: created") {
 		t.Fatalf("unexpected first setup output:\n%s", first)
 	}
 
@@ -72,7 +71,7 @@ func TestRunSetupCreatesConfigAndHooks(t *testing.T) {
 	}
 
 	second := captureOutput(func() { RunSetup([]string{root}, ".") })
-	if !strings.Contains(second, "Config: already exists") || !strings.Contains(second, "Hooks: already configured") {
+	if !strings.Contains(second, "Config: already exists") || !strings.Contains(second, "Claude hooks: already configured") || !strings.Contains(second, "Codex hooks: already configured") {
 		t.Fatalf("unexpected second setup output:\n%s", second)
 	}
 

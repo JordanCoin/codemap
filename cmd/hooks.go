@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +35,9 @@ const (
 	DefaultHookTimeout      = 8 * time.Second
 	daemonRestartStaleAfter = 2 * time.Hour
 	diffCaptureSlackBytes   = 4 * 1024
+	sessionLeaseTTL         = 24 * time.Hour
+	sessionLockStaleAfter   = 30 * time.Second
+	sessionLockWait         = time.Second
 )
 
 var isOwnedDaemonProcess = watch.IsOwnedDaemon
@@ -227,22 +231,62 @@ func waitForDaemonState(root string, timeout time.Duration) *watch.State {
 
 // RunHook executes the named hook with the given project root
 func RunHook(hookName, root string) error {
+	var fn func() error
 	switch hookName {
 	case "session-start":
-		return hookSessionStart(root)
+		fn = func() error { return hookSessionStart(root) }
 	case "pre-edit":
-		return hookPreEdit(root)
+		fn = func() error { return hookPreEdit(root) }
 	case "post-edit":
-		return hookPostEdit(root)
+		fn = func() error { return hookPostEdit(root) }
 	case "prompt-submit":
-		return hookPromptSubmit(root)
+		fn = func() error { return hookPromptSubmit(root) }
 	case "pre-compact":
-		return hookPreCompact(root)
+		fn = func() error { return hookPreCompact(root) }
 	case "session-stop":
-		return hookSessionStop(root)
+		fn = func() error { return hookSessionStop(root) }
 	default:
 		return fmt.Errorf("unknown hook: %s\nAvailable: session-start, pre-edit, post-edit, prompt-submit, pre-compact, session-stop", hookName)
 	}
+	return runHookOutput(hookName, fn)
+}
+
+func runHookOutput(hookName string, fn func() error) error {
+	if os.Getenv("CODEX") != "1" {
+		return fn()
+	}
+	if hookName == "session-stop" {
+		return runHookWithoutStdout(fn)
+	}
+
+	event := ""
+	switch hookName {
+	case "session-start":
+		event = "SessionStart"
+	case "prompt-submit":
+		event = "UserPromptSubmit"
+	case "pre-compact":
+		event = "PreCompact"
+	case "pre-edit":
+		event = "PreToolUse"
+	case "post-edit":
+		event = "PostToolUse"
+	default:
+		return fn()
+	}
+	return emitCodexHookContext(event, fn)
+}
+
+func runHookWithoutStdout(fn func() error) error {
+	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer devNull.Close()
+	original := os.Stdout
+	os.Stdout = devNull
+	defer func() { os.Stdout = original }()
+	return fn()
 }
 
 // hookSessionStart shows project structure, starts daemon, and shows hub warnings
@@ -266,15 +310,7 @@ func hookSessionStart(root string) error {
 	// Check for previous session context before starting new daemon
 	lastSessionEvents := getLastSessionEvents(root)
 
-	// Restart stale daemons so long-lived background processes do not drift.
-	if shouldRestartDaemon(root, time.Now()) {
-		stopDaemon(root)
-	}
-
-	// Start the watch daemon in background (if not already running)
-	if !watch.IsRunning(root) {
-		startDaemon(root)
-	}
+	ensureSessionDaemon(root, hookSessionIDFromStdin())
 
 	fmt.Println("📍 Project Context:")
 	fmt.Println()
@@ -648,22 +684,72 @@ func startDaemon(root string) {
 
 // hookPreEdit warns before editing hub files (reads JSON from stdin)
 func hookPreEdit(root string) error {
-	filePath, err := extractFilePathFromStdin()
-	if err != nil || filePath == "" {
+	filePaths, err := extractFilePathsFromStdin()
+	if err != nil || len(filePaths) == 0 {
 		return nil // silently skip if no file path
 	}
-
-	return checkFileImporters(root, filePath)
+	for _, filePath := range filePaths {
+		if err := checkFileImporters(root, filePath); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // hookPostEdit shows impact after editing (reads JSON from stdin)
 func hookPostEdit(root string) error {
-	filePath, err := extractFilePathFromStdin()
-	if err != nil || filePath == "" {
+	filePaths, err := extractFilePathsFromStdin()
+	if err != nil || len(filePaths) == 0 {
 		return nil
 	}
 
-	return checkFileImporters(root, filePath)
+	for _, filePath := range filePaths {
+		if err := checkFileImporters(root, filePath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func emitCodexHookContext(event string, fn func() error) error {
+	if os.Getenv("CODEX") != "1" {
+		return fn()
+	}
+	original := os.Stdout
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		return err
+	}
+	type readResult struct {
+		output []byte
+		err    error
+	}
+	readDone := make(chan readResult, 1)
+	go func() {
+		output, readErr := io.ReadAll(reader)
+		readDone <- readResult{output: output, err: readErr}
+	}()
+	os.Stdout = writer
+	callErr := fn()
+	closeErr := writer.Close()
+	os.Stdout = original
+	result := <-readDone
+	_ = reader.Close()
+	if callErr != nil {
+		return callErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if result.err != nil || len(strings.TrimSpace(string(result.output))) == 0 {
+		return result.err
+	}
+	return json.NewEncoder(original).Encode(map[string]any{
+		"hookSpecificOutput": map[string]any{
+			"hookEventName":     event,
+			"additionalContext": string(result.output),
+		},
+	})
 }
 
 // hookPromptSubmit analyzes user prompt with code intelligence and shows context
@@ -1113,11 +1199,11 @@ func hookPreCompact(root string) error {
 
 // hookSessionStop summarizes what changed in the session and stops the daemon
 func hookSessionStop(root string) error {
+	sessionID := hookSessionIDFromStdin()
 	// Read state BEFORE stopping daemon (includes timeline)
 	state := watch.ReadState(root)
 
-	// Stop the watch daemon
-	stopDaemon(root)
+	finishSessionDaemon(root, sessionID)
 
 	fmt.Println()
 	fmt.Println("📊 Session Summary")
@@ -1334,6 +1420,145 @@ func gitSymbolicRef(root, ref string) (string, bool) {
 	return value, true
 }
 
+func hookSessionIDFromStdin() string {
+	info, err := os.Stdin.Stat()
+	if err == nil && info.Mode()&os.ModeCharDevice != 0 {
+		return ""
+	}
+	input, err := io.ReadAll(os.Stdin)
+	if err != nil || len(strings.TrimSpace(string(input))) == 0 {
+		return ""
+	}
+	var payload map[string]any
+	if json.Unmarshal(input, &payload) != nil {
+		return ""
+	}
+	for _, key := range []string{"session_id", "sessionId"} {
+		if value, ok := payload[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func ensureSessionDaemon(root, sessionID string) {
+	manage := func(_ int) {
+		if shouldRestartDaemon(root, time.Now()) {
+			stopDaemon(root)
+		}
+		if !hookWatchIsRunning(root) {
+			startDaemon(root)
+		}
+	}
+	if sessionID == "" || updateSessionLease(root, sessionID, true, time.Now(), manage) != nil {
+		manage(0)
+	}
+}
+
+func finishSessionDaemon(root, sessionID string) {
+	if sessionID == "" {
+		stopDaemon(root)
+		return
+	}
+	if err := updateSessionLease(root, sessionID, false, time.Now(), func(active int) {
+		if active == 0 {
+			stopDaemon(root)
+		}
+	}); err != nil {
+		stopDaemon(root)
+	}
+}
+
+func updateSessionLease(root, sessionID string, active bool, now time.Time, action func(int)) error {
+	if strings.TrimSpace(sessionID) == "" {
+		if action != nil {
+			action(0)
+		}
+		return nil
+	}
+	codemapDir := filepath.Join(root, ".codemap")
+	if err := os.MkdirAll(codemapDir, 0o755); err != nil {
+		return err
+	}
+	lockPath := filepath.Join(codemapDir, "sessions.lock")
+	if err := acquireSessionLock(lockPath); err != nil {
+		return err
+	}
+	defer os.Remove(lockPath)
+
+	leaseDir := filepath.Join(codemapDir, "sessions")
+	if err := os.MkdirAll(leaseDir, 0o755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(leaseDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(leaseDir, entry.Name())
+		info, infoErr := entry.Info()
+		if infoErr == nil && now.Sub(info.ModTime()) > sessionLeaseTTL {
+			_ = os.Remove(path)
+		}
+	}
+
+	leaseName := fmt.Sprintf("%x.json", sha256.Sum256([]byte(detectAgentID()+"\x00"+sessionID)))
+	leasePath := filepath.Join(leaseDir, leaseName)
+	if active {
+		payload, err := json.Marshal(map[string]any{
+			"agent":      detectAgentID(),
+			"updated_at": now.UTC().Format(time.RFC3339Nano),
+		})
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(leasePath, append(payload, '\n'), 0o600); err != nil {
+			return err
+		}
+	} else if err := os.Remove(leasePath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	entries, err = os.ReadDir(leaseDir)
+	if err != nil {
+		return err
+	}
+	count := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			count++
+		}
+	}
+	if action != nil {
+		action(count)
+	}
+	return nil
+}
+
+func acquireSessionLock(lockPath string) error {
+	deadline := time.Now().Add(sessionLockWait)
+	for {
+		err := os.Mkdir(lockPath, 0o700)
+		if err == nil {
+			return nil
+		}
+		if !os.IsExist(err) {
+			return err
+		}
+		if info, statErr := os.Stat(lockPath); statErr == nil && time.Since(info.ModTime()) > sessionLockStaleAfter {
+			_ = os.RemoveAll(lockPath)
+			continue
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for session lock %s", lockPath)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // stopDaemon stops the watch daemon
 func stopDaemon(root string) {
 	if !hookWatchIsRunning(root) {
@@ -1347,30 +1572,71 @@ func stopDaemon(root string) {
 	cmd.Run()
 }
 
-// extractFilePathFromStdin reads JSON from stdin and extracts file_path
-func extractFilePathFromStdin() (string, error) {
+// extractFilePathsFromStdin reads Claude or Codex hook JSON from stdin and
+// returns every edited file once, preserving patch order.
+func extractFilePathsFromStdin() ([]string, error) {
 	input, err := io.ReadAll(os.Stdin)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	var data map[string]interface{}
 	if err := json.Unmarshal(input, &data); err != nil {
 		// Try regex fallback for non-JSON or partial JSON
 		re := regexp.MustCompile(`"file_path"\s*:\s*"([^"]+)"`)
-		matches := re.FindSubmatch(input)
-		if len(matches) >= 2 {
-			return string(matches[1]), nil
+		matches := re.FindAllSubmatch(input, -1)
+		paths := make([]string, 0, len(matches))
+		for _, match := range matches {
+			if len(match) >= 2 {
+				paths = appendUniquePath(paths, string(match[1]))
+			}
 		}
+		if len(paths) > 0 {
+			return paths, nil
+		}
+		return nil, err
+	}
+
+	if filePath, ok := data["file_path"].(string); ok {
+		return []string{filePath}, nil
+	}
+	// Codex applies file edits through apply_patch. Its hook payload stores the
+	// patch text under tool_input.command rather than a Claude-style file_path.
+	if toolInput, ok := data["tool_input"].(map[string]interface{}); ok {
+		if command, ok := toolInput["command"].(string); ok {
+			matches := regexp.MustCompile(`(?m)^\*\*\* (?:Update|Add|Delete) File: (.+)$`).FindAllStringSubmatch(command, -1)
+			paths := make([]string, 0, len(matches))
+			for _, match := range matches {
+				if len(match) == 2 {
+					paths = appendUniquePath(paths, strings.TrimSpace(match[1]))
+				}
+			}
+			return paths, nil
+		}
+	}
+
+	return nil, nil
+}
+
+func extractFilePathFromStdin() (string, error) {
+	paths, err := extractFilePathsFromStdin()
+	if err != nil || len(paths) == 0 {
 		return "", err
 	}
+	return paths[0], nil
+}
 
-	filePath, ok := data["file_path"].(string)
-	if !ok {
-		return "", nil
+func appendUniquePath(paths []string, path string) []string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return paths
 	}
-
-	return filePath, nil
+	for _, existing := range paths {
+		if existing == path {
+			return paths
+		}
+	}
+	return append(paths, path)
 }
 
 // checkFileImporters checks if a file is a hub and shows its importers

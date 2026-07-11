@@ -1,9 +1,13 @@
 {
   "mcpServers": {
     "codemap": {
-      "command": "/bin/bash",
+      "command": "codemap",
       "args": [
-        "./scripts/run-codemap-mcp.sh"
+        "mcp",
+        "--configured-version",
+        "dev",
+        "--integration",
+        "codex-plugin"
       ]
     }
   }
