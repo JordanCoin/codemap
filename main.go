@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -19,7 +18,6 @@ import (
 	"codemap/handoff"
 	"codemap/internal/buildinfo"
 	"codemap/limits"
-	codemapmcp "codemap/mcp"
 	"codemap/render"
 	"codemap/scanner"
 	"codemap/watch"
@@ -145,14 +143,8 @@ func main() {
 
 	// Handle "mcp" subcommand before global flag parsing
 	if len(os.Args) >= 2 && os.Args[1] == "mcp" {
-		options, err := codemapmcp.ParseRuntimeOptions(os.Args[2:])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Invalid MCP options: %v\n", err)
-			os.Exit(2)
-		}
-		if err := codemapmcp.Run(context.Background(), options); err != nil {
-			fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
-			os.Exit(1)
+		if code := cmd.RunMCP(os.Args[2:]); code != 0 {
+			os.Exit(code)
 		}
 		return
 	}
