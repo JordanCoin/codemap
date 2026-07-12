@@ -120,6 +120,73 @@ func TestHandleFindFileAndStatus(t *testing.T) {
 	}
 }
 
+func TestHandleFindFileExplainsOnlyFilteredMatches(t *testing.T) {
+	tests := []struct {
+		name     string
+		config   string
+		wantHint bool
+		wantPath bool
+	}{
+		{
+			name:     "default guidance",
+			config:   `{"only":["go"]}`,
+			wantHint: true,
+			wantPath: true,
+		},
+		{
+			name:   "guidance disabled",
+			config: `{"only":["go"],"guidance":{"missing_extension_hints":false}}`,
+		},
+		{
+			name:   "extension ignored",
+			config: `{"only":["go"],"guidance":{"ignored_extensions":["proto"]}}`,
+		},
+		{
+			name:   "explicitly excluded",
+			config: `{"only":["go"],"exclude":["schema.proto"]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			configPath := filepath.Join(root, ".codemap", "config.json")
+			if err := os.WriteFile(configPath, []byte(tt.config), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "schema.proto"), []byte("syntax = \"proto3\";\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			res, _, err := handleFindFile(context.Background(), nil, FindInput{Path: root, Pattern: "schema"})
+			if err != nil {
+				t.Fatalf("handleFindFile error: %v", err)
+			}
+			out := resultText(t, res)
+			hasHint := strings.Contains(out, "by `only` config:")
+			if hasHint != tt.wantHint {
+				t.Fatalf("hint presence = %v, want %v:\n%s", hasHint, tt.wantHint, out)
+			}
+			if strings.Contains(out, "schema.proto") != tt.wantPath {
+				t.Fatalf("path presence = %v, want %v:\n%s", strings.Contains(out, "schema.proto"), tt.wantPath, out)
+			}
+			if !tt.wantHint && out != "No files found matching 'schema'" {
+				t.Fatalf("unexpected plain miss output: %s", out)
+			}
+			gotConfig, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(gotConfig) != tt.config {
+				t.Fatalf("config changed: got %q, want %q", gotConfig, tt.config)
+			}
+		})
+	}
+}
+
 func TestHandleGetStructureUsesStateHubs(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {

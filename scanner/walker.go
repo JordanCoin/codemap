@@ -201,6 +201,11 @@ func shouldIncludeFile(relPath string, ext string, only []string, exclude []stri
 	return true
 }
 
+// MatchesFilters reports whether a file passes project only/exclude filters.
+func MatchesFilters(relPath string, ext string, only []string, exclude []string) bool {
+	return shouldIncludeFile(relPath, ext, only, exclude)
+}
+
 // LoadGitignore loads .gitignore from root if it exists
 // Deprecated: Use NewGitIgnoreCache for nested gitignore support
 func LoadGitignore(root string) *ignore.GitIgnore {
