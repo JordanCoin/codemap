@@ -156,7 +156,7 @@ func TestDaemonStartTracksWriteEventsAndState(t *testing.T) {
 
 	waitForWatchCondition(t, 2*time.Second, func() bool {
 		events := d.GetEvents(0)
-		return len(events) > 0
+		return len(events) > 0 && events[len(events)-1].Path == "main.go" && events[len(events)-1].Delta > 0
 	})
 
 	events := d.GetEvents(0)
