@@ -47,12 +47,15 @@ func formatOnlyFilterHint(pattern string, matches []scanner.FileInfo) string {
 	}
 	sort.Strings(exts)
 
-	output := fmt.Sprintf("No configured files found matching '%s'.\n\nPotential matches excluded by `only` config:\n%s", pattern, strings.Join(paths, "\n"))
+	output := fmt.Sprintf("No configured files found matching '%s'.\n\nMatches excluded by `only` config:\n%s", pattern, strings.Join(paths, "\n"))
 	if remaining := len(matches) - len(paths); remaining > 0 {
 		output += fmt.Sprintf("\n... and %d more", remaining)
 	}
 	if len(exts) > 0 {
-		output += fmt.Sprintf("\n\nConsider adding %s to `.codemap/config.json` `only`.", strings.Join(exts, ", "))
+		extList := strings.Join(exts, ", ")
+		output += fmt.Sprintf("\n\nTell your agent: “include suggestions for %s”, “ignore suggestions for %s”, or “disable suggestions for this repo”.", extList, extList)
+	} else {
+		output += "\n\nTell your agent: “disable suggestions for this repo”."
 	}
-	return output + " No configuration was changed. Set `guidance.missing_extension_hints` to false or add an extension to `guidance.ignored_extensions` to suppress this guidance."
+	return output + "\n\nNo config changed."
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"codemap/handoff"
+	"codemap/scanner"
 	"codemap/watch"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -184,6 +185,22 @@ func TestHandleFindFileExplainsOnlyFilteredMatches(t *testing.T) {
 				t.Fatalf("config changed: got %q, want %q", gotConfig, tt.config)
 			}
 		})
+	}
+}
+
+func TestFormatOnlyFilterHintOffersSortedAgentChoices(t *testing.T) {
+	matches := []scanner.FileInfo{
+		{Path: "schema.sum", Ext: ".sum"},
+		{Path: "schema.proto", Ext: ".proto"},
+	}
+
+	out := formatOnlyFilterHint("schema", matches)
+	want := "Tell your agent: “include suggestions for proto, sum”, “ignore suggestions for proto, sum”, or “disable suggestions for this repo”."
+	if !strings.Contains(out, want) {
+		t.Fatalf("missing concise agent choices:\n%s", out)
+	}
+	if strings.Contains(out, ".codemap/config.json") || strings.Contains(out, "guidance.") {
+		t.Fatalf("response exposes config implementation details:\n%s", out)
 	}
 }
 
