@@ -97,17 +97,18 @@ func RunSetup(args []string, defaultRoot string) int {
 	agent := fs.String("agent", "", "Install hooks for only claude or codex (default: both)")
 	skipConfig := fs.Bool("no-config", false, "Skip creating .codemap/config.json")
 	skipHooks := fs.Bool("no-hooks", false, "Skip writing agent hook settings")
+	skipMCP := fs.Bool("no-mcp", false, "Skip writing agent MCP settings")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			fmt.Println("Usage: codemap setup [--global] [--agent claude|codex] [--no-config] [--no-hooks] [path]")
+			fmt.Println("Usage: codemap setup [--global] [--agent claude|codex] [--no-config] [--no-hooks] [--no-mcp] [path]")
 			return 0
 		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		fmt.Fprintln(os.Stderr, "Usage: codemap setup [--global] [--agent claude|codex] [--no-config] [--no-hooks] [path]")
+		fmt.Fprintln(os.Stderr, "Usage: codemap setup [--global] [--agent claude|codex] [--no-config] [--no-hooks] [--no-mcp] [path]")
 		return 2
 	}
 	if fs.NArg() > 1 {
-		fmt.Fprintln(os.Stderr, "Usage: codemap setup [--global] [--agent claude|codex] [--no-config] [--no-hooks] [path]")
+		fmt.Fprintln(os.Stderr, "Usage: codemap setup [--global] [--agent claude|codex] [--no-config] [--no-hooks] [--no-mcp] [path]")
 		return 2
 	}
 	selectedAgent := setupAgentBoth
@@ -165,6 +166,9 @@ func RunSetup(args []string, defaultRoot string) int {
 	if *skipHooks {
 		fmt.Println("Hooks: skipped (--no-hooks)")
 	}
+	if *skipMCP {
+		fmt.Println("MCP: skipped (--no-mcp)")
+	}
 	failed := false
 	if selectedAgent == setupAgentBoth || selectedAgent == setupAgentClaude {
 		if !*skipHooks && configureHooks("Claude", claudeSettingsPath, func(path string, global bool) (ensureHooksResult, error) {
@@ -172,7 +176,7 @@ func RunSetup(args []string, defaultRoot string) int {
 		}, absRoot, *useGlobalHooks) != nil {
 			failed = true
 		}
-		if configureMCP("Claude", claudeMCPPath, func(path string) (bool, error) {
+		if !*skipMCP && configureMCP("Claude", claudeMCPPath, func(path string) (bool, error) {
 			return ensureClaudeMCPWithExecutable(path, executable)
 		}, absRoot, *useGlobalHooks) != nil {
 			failed = true
@@ -184,7 +188,7 @@ func RunSetup(args []string, defaultRoot string) int {
 		}, absRoot, *useGlobalHooks) != nil {
 			failed = true
 		}
-		if configureMCP("Codex", codexConfigPath, func(path string) (bool, error) {
+		if !*skipMCP && configureMCP("Codex", codexConfigPath, func(path string) (bool, error) {
 			return ensureCodexMCPWithExecutable(path, executable)
 		}, absRoot, *useGlobalHooks) != nil {
 			failed = true

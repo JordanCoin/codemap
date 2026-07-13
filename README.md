@@ -246,6 +246,7 @@ codemap blast-radius --text --ref main .
 
 Plain `codemap setup` already configures Claude Code and Codex. Use
 `codemap setup --agent codex` to configure only Codex project hooks and MCP.
+Add `--no-config --no-mcp` when the Codex plugin owns MCP and only hooks are needed.
 Use `codemap plugin install` to install/update the bundled MCP and skills and
 activate them through Codex CLI. Both commands are
 idempotent and report when a new Codex task/session is needed. Use

@@ -44,6 +44,26 @@ func TestRunSetupNoConfigNoHooks(t *testing.T) {
 	}
 }
 
+func TestRunSetupNoMCP(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureOutput(func() {
+		RunSetup([]string{"--agent", "codex", "--no-config", "--no-mcp", root}, ".")
+	})
+	if !strings.Contains(out, "MCP: skipped (--no-mcp)") {
+		t.Fatalf("expected MCP skip output, got:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".codex", "hooks.json")); err != nil {
+		t.Fatalf("expected Codex hooks to exist: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".codex", "config.toml")); !os.IsNotExist(err) {
+		t.Fatalf("expected Codex MCP config to be absent, got err=%v", err)
+	}
+}
+
 func TestRunSetupCreatesConfigAndHooks(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
