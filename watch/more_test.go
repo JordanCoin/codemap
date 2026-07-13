@@ -2,6 +2,7 @@ package watch
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,7 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"codemap/limits"
 	"codemap/scanner"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 func waitForWatchCondition(t *testing.T, timeout time.Duration, cond func() bool) {
@@ -118,6 +122,257 @@ func TestIsFileDirty(t *testing.T) {
 	}
 	if !isFileDirty(root, "main.go") {
 		t.Fatal("expected modified file to be dirty")
+	}
+}
+
+func TestConfiguredFileCountTracksConfiguredFilesAcrossEvents(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".codemap", "config.json"), []byte(`{"only":["go"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	goFile := filepath.Join(root, "main.go")
+	textFile := filepath.Join(root, "notes.txt")
+	if err := os.WriteFile(goFile, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(textFile, []byte("not source\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err := NewDaemon(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Stop()
+	if err := d.fullScan(); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := d.FileCount(); got <= 1 {
+		t.Fatalf("tracked file count = %d, want it to remain broader than configured files", got)
+	}
+	if got := d.ConfiguredFileCount(); got != 1 {
+		t.Fatalf("configured file count = %d, want 1", got)
+	}
+
+	addedGo := filepath.Join(root, "added.go")
+	if err := os.WriteFile(addedGo, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d.handleEvent(fsnotify.Event{Name: addedGo, Op: fsnotify.Create})
+	if got := d.ConfiguredFileCount(); got != 2 {
+		t.Fatalf("configured file count after Go create = %d, want 2", got)
+	}
+
+	addedText := filepath.Join(root, "added.txt")
+	if err := os.WriteFile(addedText, []byte("not source\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d.handleEvent(fsnotify.Event{Name: addedText, Op: fsnotify.Create})
+	if got := d.ConfiguredFileCount(); got != 2 {
+		t.Fatalf("configured file count after text create = %d, want 2", got)
+	}
+
+	if err := os.Remove(addedGo); err != nil {
+		t.Fatal(err)
+	}
+	d.handleEvent(fsnotify.Event{Name: addedGo, Op: fsnotify.Remove})
+	if got := d.ConfiguredFileCount(); got != 1 {
+		t.Fatalf("configured file count after Go remove = %d, want 1", got)
+	}
+}
+
+func TestConfiguredFileCountTracksLiveFilterChanges(t *testing.T) {
+	root := t.TempDir()
+	codemapDir := filepath.Join(root, ".codemap")
+	if err := os.MkdirAll(codemapDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(codemapDir, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"only":["go"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "query.sql"), []byte("select 1;\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err := NewDaemon(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer d.Stop()
+	configured := func(path string) bool {
+		d.graph.mu.RLock()
+		defer d.graph.mu.RUnlock()
+		_, ok := d.graph.ConfiguredFiles[path]
+		return ok
+	}
+	if got := d.ConfiguredFileCount(); got != 1 {
+		t.Fatalf("initial configured count = %d, want 1", got)
+	}
+
+	if err := os.WriteFile(configPath, []byte(`{"only":["sql"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitForWatchCondition(t, 2*time.Second, func() bool {
+		d.graph.mu.RLock()
+		defer d.graph.mu.RUnlock()
+		_, configured := d.graph.ConfiguredFiles["query.sql"]
+		return configured
+	})
+	if err := os.WriteFile(filepath.Join(root, "second.sql"), []byte("select 2;\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitForWatchCondition(t, 2*time.Second, func() bool { return d.ConfiguredFileCount() == 2 })
+
+	if err := os.WriteFile(configPath, []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitForWatchCondition(t, 2*time.Second, func() bool { return configured("main.go") })
+	notesPath := filepath.Join(root, "notes.txt")
+	if err := os.WriteFile(notesPath, []byte("notes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitForWatchCondition(t, 2*time.Second, func() bool { return configured("notes.txt") })
+	if err := os.Remove(notesPath); err != nil {
+		t.Fatal(err)
+	}
+	waitForWatchCondition(t, 2*time.Second, func() bool { return !configured("notes.txt") })
+
+	if err := os.WriteFile(configPath, []byte(`{"exclude":["*.tmp"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitForWatchCondition(t, 2*time.Second, func() bool { return !configured("ignored.tmp") })
+	if err := os.WriteFile(filepath.Join(root, "included.txt"), []byte("included\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "ignored.tmp"), []byte("ignored\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitForWatchCondition(t, 2*time.Second, func() bool { return configured("included.txt") && !configured("ignored.tmp") })
+	if err := os.Remove(filepath.Join(root, "included.txt")); err != nil {
+		t.Fatal(err)
+	}
+	waitForWatchCondition(t, 2*time.Second, func() bool { return !configured("included.txt") })
+
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("second.sql\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitForWatchCondition(t, 2*time.Second, func() bool { return !configured("second.sql") })
+	if err := os.Remove(filepath.Join(root, ".gitignore")); err != nil {
+		t.Fatal(err)
+	}
+	waitForWatchCondition(t, 2*time.Second, func() bool { return configured("second.sql") })
+}
+
+func TestConfiguredFilterChangeInvalidatesDependencyState(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, ".codemap", "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"only":["go"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d, err := NewDaemon(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer d.Stop()
+	d.graph.mu.Lock()
+	d.graph.FileGraph = &scanner.FileGraph{Importers: map[string][]string{"old.go": {"a.go", "b.go", "c.go"}}}
+	d.graph.DepCtx = map[string]*DepContext{"old.go": {Importers: []string{"a.go"}}}
+	d.graph.HasDeps = true
+	d.graph.mu.Unlock()
+	if err := os.WriteFile(configPath, []byte(`{"only":["sql"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitForWatchCondition(t, 2*time.Second, func() bool {
+		d.graph.mu.RLock()
+		defer d.graph.mu.RUnlock()
+		return !d.graph.HasDeps && d.graph.FileGraph == nil && len(d.graph.DepCtx) == 0
+	})
+	state := ReadState(root)
+	if state == nil || len(state.Hubs) != 0 || len(state.Imports) != 0 || len(state.Importers) != 0 {
+		t.Fatalf("stale dependency state persisted: %#v", state)
+	}
+}
+
+func TestConfiguredFileCountExcludesDaemonState(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".codemap", "config.json"), []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("notes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d, err := NewDaemon(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer d.Stop()
+	waitForWatchCondition(t, 2*time.Second, func() bool { return d.ConfiguredFileCount() == 1 })
+}
+
+func TestConfiguredFileCountDrivesDependencyGraphLimit(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".codemap", "config.json"), []byte(`{"only":["go"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i <= limits.LargeRepoFileCount; i++ {
+		path := filepath.Join(root, fmt.Sprintf("fixture-%04d.txt", i))
+		if err := os.WriteFile(path, []byte("not source\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	d, err := NewDaemon(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Stop()
+	if err := d.fullScan(); err != nil {
+		t.Fatal(err)
+	}
+
+	if d.FileCount() <= limits.LargeRepoFileCount {
+		t.Fatalf("tracked file count = %d, want a large repo", d.FileCount())
+	}
+	if got := d.ConfiguredFileCount(); got != 1 {
+		t.Fatalf("configured file count = %d, want 1", got)
+	}
+	if !shouldComputeDependencyGraph(d.ConfiguredFileCount()) {
+		t.Fatal("expected dependency graph to use the configured source count")
+	}
+	if shouldComputeDependencyGraph(d.FileCount()) {
+		t.Fatal("expected tracked file count alone to exceed the dependency graph limit")
 	}
 }
 

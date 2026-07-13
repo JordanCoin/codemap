@@ -333,10 +333,7 @@ func hookSessionStart(root string) error {
 	if state == nil && watch.IsRunning(root) {
 		state = waitForDaemonState(root, 2*time.Second)
 	}
-	if state != nil {
-		fileCount = state.FileCount
-		fileCountKnown = true
-	}
+	fileCount, fileCountKnown = configuredStateFileCount(root, state)
 	projCfg := config.Load(root)
 	structureBudget := projCfg.SessionStartOutputBytes()
 	maxHubs := projCfg.HubDisplayLimit()
@@ -395,7 +392,7 @@ func hookSessionStart(root string) error {
 			importers := len(info.Importers[hub])
 			fmt.Printf("   ⚠️  HUB FILE: %s (imported by %d files)\n", hub, importers)
 		}
-	} else if fileCountKnown && fileCount > limits.LargeRepoFileCount {
+	} else if shouldSkipHubAnalysis(fileCount, fileCountKnown) {
 		fmt.Printf("ℹ️  Hub analysis skipped for large repo (%d files)\n", fileCount)
 	}
 
@@ -446,7 +443,7 @@ func showDiffVsMain(root string, fileCount int, fileCountKnown bool, projCfg con
 
 	// Unknown file count typically means daemon state is not ready.
 	// Use cheap git-based output in that case to avoid startup blowups.
-	if !fileCountKnown || fileCount > limits.LargeRepoFileCount {
+	if shouldUseLightweightDiff(fileCount, fileCountKnown) {
 		showLightweightDiffVsMain(root)
 		return
 	}
@@ -480,6 +477,28 @@ func showDiffVsMain(root string, fileCount int, fileCountKnown bool, projCfg con
 		)
 	}
 	fmt.Print(output)
+}
+
+func configuredStateFileCount(root string, state *watch.State) (int, bool) {
+	if count, ok := state.ConfiguredCount(); ok {
+		return count, true
+	}
+	if state == nil {
+		return 0, false
+	}
+	files, err := scanner.ScanConfiguredFiles(root, scanner.NewGitIgnoreCache(root))
+	if err != nil {
+		return 0, false
+	}
+	return len(files), true
+}
+
+func shouldSkipHubAnalysis(fileCount int, fileCountKnown bool) bool {
+	return fileCountKnown && fileCount > limits.LargeRepoFileCount
+}
+
+func shouldUseLightweightDiff(fileCount int, fileCountKnown bool) bool {
+	return !fileCountKnown || fileCount > limits.LargeRepoFileCount
 }
 
 func showLightweightDiffVsMain(root string) {
