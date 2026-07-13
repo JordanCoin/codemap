@@ -221,7 +221,7 @@ func handleGetStructure(ctx context.Context, req *mcp.CallToolRequest, input Pat
 	}
 
 	gitCache := scanner.NewGitIgnoreCache(input.Path)
-	files, err := scanner.ScanFiles(input.Path, gitCache, nil, nil)
+	files, err := scanner.ScanConfiguredFiles(input.Path, gitCache)
 	if err != nil {
 		return errorResult("Scan error: " + err.Error()), nil, nil
 	}
@@ -331,7 +331,7 @@ func handleGetDiff(ctx context.Context, req *mcp.CallToolRequest, input DiffInpu
 	}
 
 	gitCache := scanner.NewGitIgnoreCache(input.Path)
-	files, err := scanner.ScanFiles(input.Path, gitCache, nil, nil)
+	files, err := scanner.ScanConfiguredFiles(input.Path, gitCache)
 	if err != nil {
 		return errorResult("Scan error: " + err.Error()), nil, nil
 	}
@@ -480,7 +480,7 @@ func handleListProjects(ctx context.Context, req *mcp.CallToolRequest, input Lis
 // Uses the same scanner logic as the main codemap command (respects nested .gitignore files)
 func getProjectStats(path string) string {
 	gitCache := scanner.NewGitIgnoreCache(path)
-	files, err := scanner.ScanFiles(path, gitCache, nil, nil)
+	files, err := scanner.ScanConfiguredFiles(path, gitCache)
 	if err != nil {
 		return "(error scanning)"
 	}

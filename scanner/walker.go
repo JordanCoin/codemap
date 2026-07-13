@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"codemap/config"
+
 	ignore "github.com/sabhiram/go-gitignore"
 )
 
@@ -292,17 +294,43 @@ func ScanFiles(root string, cache *GitIgnoreCache, only []string, exclude []stri
 	return files, err
 }
 
+// ScanConfiguredFiles scans using the active setup root's project filters.
+func ScanConfiguredFiles(root string, cache *GitIgnoreCache) ([]FileInfo, error) {
+	cfg := config.Load(root)
+	return ScanFiles(root, cache, cfg.Only, cfg.Exclude)
+}
+
+func filterConfiguredAnalyses(root string, analyses []FileAnalysis) []FileAnalysis {
+	cfg := config.Load(root)
+	if len(cfg.Only) == 0 && len(cfg.Exclude) == 0 {
+		return analyses
+	}
+
+	filtered := make([]FileAnalysis, 0, len(analyses))
+	for _, analysis := range analyses {
+		path := filepath.ToSlash(analysis.Path)
+		if MatchesFilters(path, filepath.Ext(path), cfg.Only, cfg.Exclude) {
+			filtered = append(filtered, analysis)
+		}
+	}
+	return filtered
+}
+
 // ScanForDeps uses ast-grep for batched dependency analysis.
 func ScanForDeps(root string) ([]FileAnalysis, error) {
-	scanner, err := NewAstGrepScanner()
+	astScanner, err := NewAstGrepScanner()
 	if err != nil {
 		return nil, err
 	}
-	defer scanner.Close()
+	defer astScanner.Close()
 
-	if !scanner.Available() {
+	if !astScanner.Available() {
 		return nil, ErrAstGrepNotFound
 	}
 
-	return scanner.ScanDirectory(root)
+	analyses, err := astScanner.ScanDirectory(root)
+	if err != nil {
+		return nil, err
+	}
+	return filterConfiguredAnalyses(root, analyses), nil
 }

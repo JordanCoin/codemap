@@ -3,6 +3,7 @@ package scanner
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -78,5 +79,56 @@ func TestScanForDepsBuildFileGraphAndAnalyzeImpact(t *testing.T) {
 	}
 	if maxUsedBy < 4 {
 		t.Fatalf("expected impacted file usage count >= 4, got %+v", impacts)
+	}
+}
+
+func TestDependencyAndGraphScansRespectConfiguredFilters(t *testing.T) {
+	if !NewAstGrepAnalyzer().Available() {
+		t.Skip("ast-grep not available")
+	}
+
+	root := t.TempDir()
+	files := map[string]string{
+		".codemap/config.json": `{"only":["go"],"exclude":["excluded"]}`,
+		"go.mod":               "module example.com/filtered\n\ngo 1.22\n",
+		"pkg/types/types.go":   "package types\n\ntype Item struct{}\n",
+		"a/a.go":               "package a\n\nimport _ \"example.com/filtered/pkg/types\"\n",
+		"b/b.go":               "package b\n\nimport _ \"example.com/filtered/pkg/types\"\n",
+		"c/c.go":               "package c\n\nimport _ \"example.com/filtered/pkg/types\"\n",
+		"schema.ts":            "import './blocked'\n",
+		"excluded/d/d.go":      "package d\n\nimport _ \"example.com/filtered/pkg/types\"\n",
+	}
+	for path, content := range files {
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	analyses, err := ScanForDeps(root)
+	if err != nil {
+		t.Fatalf("ScanForDeps() error: %v", err)
+	}
+	for _, analysis := range analyses {
+		if analysis.Path == "schema.ts" || strings.HasPrefix(analysis.Path, "excluded/") {
+			t.Fatalf("configured-out dependency analysis returned: %s", analysis.Path)
+		}
+	}
+
+	fg, err := BuildFileGraph(root)
+	if err != nil {
+		t.Fatalf("BuildFileGraph() error: %v", err)
+	}
+	if got := fg.Importers["pkg/types/types.go"]; len(got) != 3 {
+		t.Fatalf("filtered hub importers = %#v, want exactly 3", got)
+	}
+	if _, ok := fg.Imports["excluded/d/d.go"]; ok {
+		t.Fatal("excluded Go file remains in graph")
+	}
+	if _, ok := fg.Imports["schema.ts"]; ok {
+		t.Fatal("extension-filtered file remains in graph")
 	}
 }
