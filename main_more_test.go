@@ -57,7 +57,7 @@ func TestApplyGlobalRootOptions(t *testing.T) {
 	projectpath.ResetSetupRoot()
 	t.Cleanup(projectpath.ResetSetupRoot)
 
-	args, err := applyGlobalRootOptions([]string{
+	args, projectRootExplicit, err := applyGlobalRootOptions([]string{
 		"context", "--project-root", projectNested,
 		"--setup-root", setupNested, "--compact",
 	})
@@ -66,6 +66,9 @@ func TestApplyGlobalRootOptions(t *testing.T) {
 	}
 	if got := strings.Join(args, "|"); got != "context|--compact" {
 		t.Fatalf("args = %q, want context|--compact", got)
+	}
+	if !projectRootExplicit {
+		t.Fatal("expected explicit project root")
 	}
 	gotDir, err := os.Getwd()
 	if err != nil {
@@ -116,7 +119,7 @@ func TestApplyGlobalRootOptionsDirectoryKeepsAutomaticLinkedSelection(t *testing
 	projectpath.ResetSetupRoot()
 	t.Cleanup(projectpath.ResetSetupRoot)
 
-	if _, err := applyGlobalRootOptions([]string{"-C", filepath.Join(linked, "pkg"), "context"}); err != nil {
+	if _, _, err := applyGlobalRootOptions([]string{"-C", filepath.Join(linked, "pkg"), "context"}); err != nil {
 		t.Fatalf("applyGlobalRootOptions() error: %v", err)
 	}
 	if got := projectpath.ConfiguredSetupRoot(); got != "" {
@@ -146,7 +149,7 @@ func TestApplyGlobalRootOptionsRejectsMalformedLinkedMetadataWithoutFlags(t *tes
 	}
 	t.Cleanup(func() { _ = os.Chdir(originalDir) })
 
-	if _, err := applyGlobalRootOptions([]string{"context"}); err == nil || !strings.Contains(err.Error(), "resolve linked worktree setup") {
+	if _, _, err := applyGlobalRootOptions([]string{"context"}); err == nil || !strings.Contains(err.Error(), "resolve linked worktree setup") {
 		t.Fatalf("applyGlobalRootOptions() error = %v, want bounded linked-worktree error", err)
 	}
 }
@@ -617,6 +620,99 @@ func TestRunImportersMode(t *testing.T) {
 		if !strings.Contains(stdout, check) {
 			t.Fatalf("expected %q in output, got:\n%s", check, stdout)
 		}
+	}
+}
+
+func TestResolveImportersProjectRoot(t *testing.T) {
+	repo := makeMainGitRepo(t, "main")
+	absoluteFile := filepath.Join(repo, "main.go")
+	canonicalRepo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("infers repository from absolute importer", func(t *testing.T) {
+		gotRoot, gotFile, err := resolveImportersInvocation("", absoluteFile, false)
+		if err != nil {
+			t.Fatalf("resolveImportersInvocation() error: %v", err)
+		}
+		if gotRoot != canonicalRepo {
+			t.Fatalf("root = %q, want %q", gotRoot, canonicalRepo)
+		}
+		canonicalFile, err := filepath.EvalSymlinks(absoluteFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotFile != canonicalFile {
+			t.Fatalf("file = %q, want %q", gotFile, canonicalFile)
+		}
+	})
+
+	t.Run("explicit roots win", func(t *testing.T) {
+		for _, test := range []struct {
+			name                string
+			positionalRoot      string
+			projectRootExplicit bool
+			want                string
+		}{
+			{name: "positional", positionalRoot: "/explicit/positional", want: "/explicit/positional"},
+			{name: "project flag", projectRootExplicit: true, want: ""},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				gotRoot, gotFile, err := resolveImportersInvocation(test.positionalRoot, absoluteFile, test.projectRootExplicit)
+				if err != nil {
+					t.Fatalf("resolveImportersInvocation() error: %v", err)
+				}
+				if gotRoot != test.want {
+					t.Fatalf("root = %q, want %q", gotRoot, test.want)
+				}
+				if gotFile != absoluteFile {
+					t.Fatalf("file = %q, want unchanged %q", gotFile, absoluteFile)
+				}
+			})
+		}
+	})
+
+	t.Run("absolute importer outside repository fails", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), "outside.go")
+		if err := os.WriteFile(file, []byte("package outside\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := resolveImportersInvocation("", file, false); err == nil ||
+			!strings.Contains(err.Error(), "is not inside a Git repository") {
+			t.Fatalf("resolveImportersInvocation() error = %v, want repository error", err)
+		}
+	})
+}
+
+func TestAbsoluteImporterInfersProjectRootFromUnrelatedDirectory(t *testing.T) {
+	if !scanner.NewAstGrepAnalyzer().Available() {
+		t.Skip("ast-grep not available")
+	}
+
+	repo := makeMainGitRepo(t, "main")
+	canonicalRepo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := runRootOptionsBinary(
+		t.TempDir(),
+		"--json",
+		"--importers", filepath.Join(repo, "main.go"),
+	)
+	if err != nil {
+		t.Fatalf("codemap failed: %v\n%s", err, out)
+	}
+
+	var report scanner.ImportersReport
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("decode importers report: %v\n%s", err, out)
+	}
+	if report.Root != canonicalRepo {
+		t.Fatalf("report root = %q, want %q", report.Root, canonicalRepo)
+	}
+	if report.File != "main.go" {
+		t.Fatalf("report file = %q, want main.go", report.File)
 	}
 }
 
