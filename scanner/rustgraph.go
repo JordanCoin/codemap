@@ -2,15 +2,17 @@ package scanner
 
 import (
 	"bufio"
+	"context"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
-	rustCoverageNote = "Rust macro-generated, string-routed, and #[path] module edges may be unresolved"
+	rustCoverageNote = "Rust macro-generated, dynamically string-routed, inline #[path], and conditional path edges may be unresolved"
 
 	rustTargetLib         = "lib"
 	rustTargetBin         = "bin"
@@ -41,12 +43,29 @@ type rustPackage struct {
 	authoritative bool
 }
 
+type rustModuleDeclaration struct {
+	name           string
+	explicitTarget string
+	unsupported    bool
+}
+
+type rustModuleLocation struct {
+	file        string
+	parent      string
+	name        string
+	childBase   string
+	packageRoot string
+	target      rustTarget
+}
+
 type rustWorkspaceIndex struct {
-	byCrateID   map[string][]rustPackage
-	byRoot      map[string]rustPackage
-	packages    []rustPackage
-	moduleDecls map[string]map[string]bool
-	moduleNames map[string]map[string]bool
+	byCrateID        map[string][]rustPackage
+	byRoot           map[string]rustPackage
+	packages         []rustPackage
+	moduleDecls      map[string]map[string][]rustModuleDeclaration
+	moduleChildren   map[string]map[string]string
+	moduleLocations  map[string]rustModuleLocation
+	ambiguousModules map[string]bool
 }
 
 type cargoManifest struct {
@@ -64,31 +83,18 @@ type cargoManifest struct {
 
 func buildRustFallbackWorkspaceIndex(root string, analyses []FileAnalysis) *rustWorkspaceIndex {
 	index := &rustWorkspaceIndex{
-		byCrateID:   make(map[string][]rustPackage),
-		byRoot:      make(map[string]rustPackage),
-		moduleDecls: make(map[string]map[string]bool),
-		moduleNames: make(map[string]map[string]bool),
+		byCrateID:        make(map[string][]rustPackage),
+		byRoot:           make(map[string]rustPackage),
+		moduleDecls:      make(map[string]map[string][]rustModuleDeclaration),
+		moduleChildren:   make(map[string]map[string]string),
+		moduleLocations:  make(map[string]rustModuleLocation),
+		ambiguousModules: make(map[string]bool),
 	}
 	for _, analysis := range analyses {
 		if analysis.Language != "rust" {
 			continue
 		}
-		for _, ref := range analysis.References {
-			if ref.Kind != "rust-module" {
-				continue
-			}
-			if index.moduleNames[analysis.Path] == nil {
-				index.moduleNames[analysis.Path] = make(map[string]bool)
-			}
-			index.moduleNames[analysis.Path][ref.Path] = true
-			if rustModuleUsesPathAttribute(root, analysis.Path, ref.Line) {
-				continue
-			}
-			if index.moduleDecls[analysis.Path] == nil {
-				index.moduleDecls[analysis.Path] = make(map[string]bool)
-			}
-			index.moduleDecls[analysis.Path][ref.Path] = true
-		}
+		index.addRustModuleDeclarations(root, analysis)
 	}
 	rootManifest, ok := readCargoManifest(filepath.Join(root, "Cargo.toml"))
 	if !ok {
@@ -155,6 +161,53 @@ func buildRustFallbackWorkspaceIndex(root string, analyses []FileAnalysis) *rust
 		return len(index.packages[i].root) > len(index.packages[j].root)
 	})
 	return index
+}
+
+func (index *rustWorkspaceIndex) addRustModuleDeclarations(root string, analysis FileAnalysis) {
+	if index.moduleDecls[analysis.Path] == nil {
+		index.moduleDecls[analysis.Path] = make(map[string][]rustModuleDeclaration)
+	}
+	for _, ref := range analysis.References {
+		if ref.Kind != "rust-module" && ref.Kind != "rust-path-module" {
+			continue
+		}
+		declaration := rustModuleDeclaration{name: ref.Path}
+		switch ref.Kind {
+		case "rust-path-module":
+			declaration.explicitTarget = ref.ExplicitTarget
+		case "rust-module":
+			declaration.unsupported = rustModuleAttributeKind(root, analysis.Path, ref.Line) != ""
+		}
+		index.moduleDecls[analysis.Path][ref.Path] = append(index.moduleDecls[analysis.Path][ref.Path], declaration)
+	}
+	for name, declarations := range index.moduleDecls[analysis.Path] {
+		var explicit []rustModuleDeclaration
+		unsupported := false
+		for _, declaration := range declarations {
+			if declaration.explicitTarget != "" {
+				explicit = appendUniqueRustDeclaration(explicit, declaration)
+			} else if declaration.unsupported {
+				unsupported = true
+			}
+		}
+		switch {
+		case len(explicit) > 0:
+			index.moduleDecls[analysis.Path][name] = explicit
+		case unsupported:
+			index.moduleDecls[analysis.Path][name] = []rustModuleDeclaration{{name: name, unsupported: true}}
+		default:
+			index.moduleDecls[analysis.Path][name] = []rustModuleDeclaration{{name: name}}
+		}
+	}
+}
+
+func appendUniqueRustDeclaration(declarations []rustModuleDeclaration, candidate rustModuleDeclaration) []rustModuleDeclaration {
+	for _, declaration := range declarations {
+		if declaration == candidate {
+			return declarations
+		}
+	}
+	return append(declarations, candidate)
 }
 
 func readCargoManifest(path string) (cargoManifest, bool) {
@@ -263,12 +316,297 @@ func parseCargoStringArray(value string) []string {
 	return result
 }
 
+type rustModuleEdgeCandidate struct {
+	parent      string
+	name        string
+	child       string
+	locationKey string
+}
+
+func (index *rustWorkspaceIndex) buildRustModuleLocations(ctx context.Context, root string, files []FileInfo) error {
+	fileCounts := make(map[string]int)
+	for _, file := range files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if strings.EqualFold(filepath.Ext(file.Path), ".rs") {
+			fileCounts[filepath.Clean(file.Path)]++
+		}
+	}
+
+	candidates := make(map[string]map[string]rustModuleLocation)
+	var edges []rustModuleEdgeCandidate
+	visited := make(map[string]bool)
+	var walk func(rustModuleLocation, map[string]bool) error
+	walk = func(location rustModuleLocation, stack map[string]bool) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		location.file = filepath.Clean(location.file)
+		key := rustModuleLocationKey(location)
+		if candidates[location.file] == nil {
+			candidates[location.file] = make(map[string]rustModuleLocation)
+		}
+		candidates[location.file][key] = location
+		if stack[location.file] || visited[key] {
+			return nil
+		}
+		visited[key] = true
+		nextStack := make(map[string]bool, len(stack)+1)
+		for path := range stack {
+			nextStack[path] = true
+		}
+		nextStack[location.file] = true
+
+		for name, declarations := range index.moduleDecls[location.file] {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			resolved := make(map[string]rustModuleLocation)
+			for _, declaration := range declarations {
+				if declaration.unsupported {
+					continue
+				}
+				child, childBase := resolveRustModuleDeclaration(root, location, declaration, fileCounts)
+				if child == "" {
+					continue
+				}
+				resolved[child] = rustModuleLocation{
+					file: child, parent: location.file, name: name, childBase: childBase,
+					packageRoot: location.packageRoot, target: location.target,
+				}
+			}
+			if len(resolved) != 1 {
+				continue
+			}
+			for child, childLocation := range resolved {
+				childKey := rustModuleLocationKey(childLocation)
+				edges = append(edges, rustModuleEdgeCandidate{parent: location.file, name: name, child: child, locationKey: childKey})
+				if err := walk(childLocation, nextStack); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+
+	for _, pkg := range index.packages {
+		for _, target := range pkg.targets {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			rootFile := filepath.Clean(target.rootFile)
+			if fileCounts[rootFile] != 1 {
+				continue
+			}
+			location := rustModuleLocation{
+				file: rootFile, childBase: filepath.Dir(rootFile), packageRoot: pkg.root, target: target,
+			}
+			if err := walk(location, nil); err != nil {
+				return err
+			}
+		}
+	}
+
+	index.moduleLocations = make(map[string]rustModuleLocation)
+	index.ambiguousModules = make(map[string]bool)
+	for file, fileCandidates := range candidates {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if len(fileCandidates) != 1 {
+			index.ambiguousModules[file] = true
+			continue
+		}
+		for _, location := range fileCandidates {
+			index.moduleLocations[file] = location
+		}
+	}
+
+	index.moduleChildren = make(map[string]map[string]string)
+	ambiguousEdges := make(map[string]bool)
+	for _, edge := range edges {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		parent, parentOK := index.moduleLocations[edge.parent]
+		child, childOK := index.moduleLocations[edge.child]
+		if !parentOK || !childOK || rustModuleLocationKey(child) != edge.locationKey || child.parent != parent.file {
+			continue
+		}
+		edgeKey := edge.parent + "\x00" + edge.name
+		if existing := index.moduleChildren[edge.parent][edge.name]; existing != "" && existing != edge.child {
+			ambiguousEdges[edgeKey] = true
+			delete(index.moduleChildren[edge.parent], edge.name)
+			continue
+		}
+		if ambiguousEdges[edgeKey] {
+			continue
+		}
+		if index.moduleChildren[edge.parent] == nil {
+			index.moduleChildren[edge.parent] = make(map[string]string)
+		}
+		index.moduleChildren[edge.parent][edge.name] = edge.child
+	}
+	return ctx.Err()
+}
+
+func rustModuleLocationKey(location rustModuleLocation) string {
+	return strings.Join([]string{
+		location.file, location.parent, location.name, location.childBase,
+		location.packageRoot, location.target.rootFile, location.target.kind,
+	}, "\x00")
+}
+
+func resolveRustModuleDeclaration(root string, parent rustModuleLocation, declaration rustModuleDeclaration, fileCounts map[string]int) (string, string) {
+	if declaration.explicitTarget != "" {
+		target := resolveRustExplicitModule(root, parent.file, declaration.explicitTarget)
+		if target == "" || fileCounts[target] != 1 {
+			return "", ""
+		}
+		return target, filepath.Dir(target)
+	}
+	var resolved string
+	for _, candidate := range []string{
+		filepath.Join(parent.childBase, declaration.name+".rs"),
+		filepath.Join(parent.childBase, declaration.name, "mod.rs"),
+	} {
+		candidate = filepath.Clean(candidate)
+		if fileCounts[candidate] == 1 {
+			if resolved != "" {
+				return "", ""
+			}
+			resolved = candidate
+		}
+	}
+	if resolved == "" {
+		return "", ""
+	}
+	return resolved, filepath.Clean(filepath.Join(parent.childBase, declaration.name))
+}
+
+func resolveRustExplicitModule(root, declaringFile, literal string) string {
+	value, ok := parseRustStringLiteral(literal)
+	if !ok || value == "" {
+		return ""
+	}
+	path := filepath.FromSlash(value)
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(root, filepath.Dir(declaringFile), path)
+	}
+	rel, ok := projectRelativePath(root, path)
+	if !ok || !strings.EqualFold(filepath.Ext(rel), ".rs") {
+		return ""
+	}
+	return filepath.Clean(rel)
+}
+
+func parseRustStringLiteral(literal string) (string, bool) {
+	literal = strings.TrimSpace(literal)
+	if strings.HasPrefix(literal, "r") {
+		quote := strings.IndexByte(literal, '"')
+		if quote < 1 {
+			return "", false
+		}
+		hashes := literal[1:quote]
+		if strings.Trim(hashes, "#") != "" {
+			return "", false
+		}
+		suffix := "\"" + hashes
+		if !strings.HasSuffix(literal, suffix) || len(literal) < quote+1+len(suffix) {
+			return "", false
+		}
+		return literal[quote+1 : len(literal)-len(suffix)], true
+	}
+	return parseRustCookedString(literal)
+}
+
+func parseRustCookedString(literal string) (string, bool) {
+	if len(literal) < 2 || literal[0] != '"' || literal[len(literal)-1] != '"' {
+		return "", false
+	}
+	var value strings.Builder
+	for i := 1; i < len(literal)-1; i++ {
+		if literal[i] != '\\' {
+			if literal[i] == '"' {
+				return "", false
+			}
+			value.WriteByte(literal[i])
+			continue
+		}
+		i++
+		if i >= len(literal)-1 {
+			return "", false
+		}
+		switch literal[i] {
+		case '0':
+			value.WriteByte(0)
+		case 't':
+			value.WriteByte('\t')
+		case 'n':
+			value.WriteByte('\n')
+		case 'r':
+			value.WriteByte('\r')
+		case '\'', '"', '\\':
+			value.WriteByte(literal[i])
+		case 'x':
+			if i+2 >= len(literal)-1 {
+				return "", false
+			}
+			escaped, err := strconv.ParseUint(literal[i+1:i+3], 16, 8)
+			if err != nil || escaped > 0x7f {
+				return "", false
+			}
+			value.WriteByte(byte(escaped))
+			i += 2
+		case 'u':
+			if i+1 >= len(literal)-1 || literal[i+1] != '{' {
+				return "", false
+			}
+			end := strings.IndexByte(literal[i+2:len(literal)-1], '}')
+			if end < 0 {
+				return "", false
+			}
+			end += i + 2
+			digits := strings.ReplaceAll(literal[i+2:end], "_", "")
+			if len(digits) == 0 || len(digits) > 6 {
+				return "", false
+			}
+			escaped, err := strconv.ParseUint(digits, 16, 32)
+			if err != nil || !utf8.ValidRune(rune(escaped)) {
+				return "", false
+			}
+			value.WriteRune(rune(escaped))
+			i = end
+		case '\n':
+			for i+1 < len(literal)-1 && (literal[i+1] == ' ' || literal[i+1] == '\t' || literal[i+1] == '\n' || literal[i+1] == '\r') {
+				i++
+			}
+		case '\r':
+			if i+1 >= len(literal)-1 || literal[i+1] != '\n' {
+				return "", false
+			}
+			i++
+			for i+1 < len(literal)-1 && (literal[i+1] == ' ' || literal[i+1] == '\t' || literal[i+1] == '\n' || literal[i+1] == '\r') {
+				i++
+			}
+		default:
+			return "", false
+		}
+	}
+	return value.String(), true
+}
+
 func resolveRustReferences(root string, analysis FileAnalysis, idx *fileIndex, workspace *rustWorkspaceIndex) []string {
 	var resolved []string
 	for _, ref := range analysis.References {
 		switch ref.Kind {
+		case "rust-path-module":
+			if target := workspace.moduleChildren[analysis.Path][ref.Path]; target != "" && target != analysis.Path {
+				resolved = append(resolved, target)
+			}
 		case "rust-module":
-			if rustModuleUsesPathAttribute(root, analysis.Path, ref.Line) {
+			if rustModuleAttributeKind(root, analysis.Path, ref.Line) != "" {
 				continue
 			}
 			if target := resolveRustModule(ref.Path, analysis.Path, idx, workspace); target != "" && target != analysis.Path {
@@ -284,6 +622,14 @@ func resolveRustReferences(root string, analysis FileAnalysis, idx *fileIndex, w
 }
 
 func resolveRustModule(name, fromFile string, idx *fileIndex, workspace *rustWorkspaceIndex) string {
+	fromFile = filepath.Clean(fromFile)
+	if target := workspace.moduleChildren[fromFile][name]; target != "" {
+		return target
+	}
+	_, owned := workspace.moduleLocations[fromFile]
+	if len(workspace.moduleDecls[fromFile][name]) > 0 && (owned || workspace.ambiguousModules[fromFile]) {
+		return ""
+	}
 	dir := rustModuleDir(fromFile, idx, workspace)
 	if dir == "" {
 		return ""
@@ -300,6 +646,12 @@ func resolveRustModule(name, fromFile string, idx *fileIndex, workspace *rustWor
 }
 
 func rustModuleDir(fromFile string, idx *fileIndex, workspace *rustWorkspaceIndex) string {
+	if location, ok := workspace.moduleLocations[filepath.Clean(fromFile)]; ok {
+		return location.childBase
+	}
+	if workspace.ambiguousModules[filepath.Clean(fromFile)] {
+		return ""
+	}
 	if pkg, ok := workspace.packageForFile(fromFile); ok && pkg.authoritative {
 		target, ok := workspace.targetForFile(fromFile, idx)
 		if !ok {
@@ -329,42 +681,53 @@ func resolveRustPath(path, fromFile string, idx *fileIndex, workspace *rustWorks
 	if len(parts) < 2 {
 		return ""
 	}
+	if (parts[0] == "self" || parts[0] == "super") && !workspace.hasLogicalLocation(fromFile) {
+		base := rustModuleDir(fromFile, idx, workspace)
+		if base == "" {
+			return ""
+		}
+		if parts[0] == "self" {
+			parts = parts[1:]
+		} else {
+			for len(parts) > 0 && parts[0] == "super" {
+				base = filepath.Dir(base)
+				parts = parts[1:]
+			}
+		}
+		return resolveRustPathFromDirectory(base, parts, idx)
+	}
 
-	var base string
-	rootFile := ""
+	var current string
+	rootFallback := false
 	switch parts[0] {
 	case "crate":
 		target, ok := workspace.targetForFile(fromFile, idx)
 		if !ok {
 			return ""
 		}
-		base = target.sourceDir
-		rootFile = target.rootFile
+		current = target.rootFile
+		rootFallback = true
 		parts = parts[1:]
 	case "self":
-		base = rustModuleDir(fromFile, idx, workspace)
-		if base == "" {
+		current = filepath.Clean(fromFile)
+		if _, ok := workspace.moduleLocations[current]; !ok {
 			return ""
 		}
 		parts = parts[1:]
 	case "super":
-		base = rustModuleDir(fromFile, idx, workspace)
-		if base == "" {
-			return ""
-		}
+		current = filepath.Clean(fromFile)
 		for len(parts) > 0 && parts[0] == "super" {
-			base = filepath.Dir(base)
+			location, ok := workspace.moduleLocations[current]
+			if !ok || location.parent == "" {
+				return ""
+			}
+			current = location.parent
 			parts = parts[1:]
 		}
 	default:
-		if workspace.moduleNames[fromFile][parts[0]] {
-			if !workspace.moduleDecls[fromFile][parts[0]] {
-				return ""
-			}
-			base = rustModuleDir(fromFile, idx, workspace)
-			if base == "" {
-				return ""
-			}
+		if child := resolveRustModule(parts[0], fromFile, idx, workspace); child != "" {
+			current = child
+			parts = parts[1:]
 			break
 		}
 		packages := workspace.externalPackagesForPath(parts[0], fromFile, idx)
@@ -374,22 +737,38 @@ func resolveRustPath(path, fromFile string, idx *fileIndex, workspace *rustWorks
 		if packages[0].lib == nil || !rustTargetIndexed(*packages[0].lib, idx) {
 			return ""
 		}
-		base = packages[0].lib.sourceDir
-		rootFile = packages[0].lib.rootFile
+		current = packages[0].lib.rootFile
+		rootFallback = true
 		parts = parts[1:]
 	}
 
+	resolvedChild := false
+	for _, part := range parts {
+		child := resolveRustModule(part, current, idx, workspace)
+		if child == "" {
+			break
+		}
+		current = child
+		resolvedChild = true
+	}
+	if resolvedChild || rootFallback {
+		return current
+	}
+	return ""
+}
+
+func (index *rustWorkspaceIndex) hasLogicalLocation(path string) bool {
+	_, ok := index.moduleLocations[filepath.Clean(path)]
+	return ok
+}
+
+func resolveRustPathFromDirectory(base string, parts []string, idx *fileIndex) string {
 	for i := len(parts); i > 0; i-- {
 		modulePath := filepath.Join(append([]string{base}, parts[:i]...)...)
 		for _, candidate := range []string{modulePath + ".rs", filepath.Join(modulePath, "mod.rs")} {
 			if files := idx.byExact[candidate]; len(files) == 1 {
 				return files[0]
 			}
-		}
-	}
-	if rootFile != "" {
-		if files := idx.byExact[rootFile]; len(files) == 1 {
-			return files[0]
 		}
 	}
 	return ""
@@ -430,11 +809,17 @@ func rustDependencyEligible(dependencyKind, targetKind string) bool {
 }
 
 func (index *rustWorkspaceIndex) targetForFile(path string, idx *fileIndex) (rustTarget, bool) {
+	path = filepath.Clean(path)
+	if location, ok := index.moduleLocations[path]; ok {
+		return location.target, true
+	}
+	if index.ambiguousModules[path] {
+		return rustTarget{}, false
+	}
 	pkg, ok := index.packageForFile(path)
 	if !ok {
 		return rustTarget{}, false
 	}
-	path = filepath.Clean(path)
 	for _, target := range pkg.targets {
 		if rustTargetIndexed(target, idx) && path == target.rootFile {
 			return target, true
@@ -478,6 +863,13 @@ func pathWithin(path, dir string) bool {
 }
 
 func (index *rustWorkspaceIndex) targetContainsFile(target rustTarget, path string, idx *fileIndex) bool {
+	path = filepath.Clean(path)
+	if location, ok := index.moduleLocations[path]; ok {
+		return location.target.rootFile == target.rootFile && location.target.kind == target.kind
+	}
+	if index.ambiguousModules[path] {
+		return false
+	}
 	if !pathWithin(path, target.sourceDir) {
 		return false
 	}
@@ -500,7 +892,7 @@ func (index *rustWorkspaceIndex) targetContainsFile(target rustTarget, path stri
 
 	parent := target.rootFile
 	for i, name := range parts {
-		if !index.moduleDecls[parent][name] {
+		if len(index.moduleDecls[parent][name]) == 0 {
 			return false
 		}
 		modulePath := filepath.Join(append([]string{target.sourceDir}, parts[:i+1]...)...)
@@ -531,6 +923,13 @@ func pathDepth(path string) int {
 
 func (index *rustWorkspaceIndex) packageForFile(path string) (rustPackage, bool) {
 	path = filepath.Clean(path)
+	if location, ok := index.moduleLocations[path]; ok {
+		pkg, ok := index.byRoot[location.packageRoot]
+		return pkg, ok
+	}
+	if index.ambiguousModules[path] {
+		return rustPackage{}, false
+	}
 	var rootPackage *rustPackage
 	for _, pkg := range index.packages {
 		if pkg.root == "." {
@@ -548,23 +947,96 @@ func (index *rustWorkspaceIndex) packageForFile(path string) (rustPackage, bool)
 	return rustPackage{}, false
 }
 
-func rustModuleUsesPathAttribute(root, file string, line int) bool {
+func rustModuleAttributeKind(root, file string, line int) string {
 	data, err := os.ReadFile(filepath.Join(root, file))
 	if err != nil {
-		return false
+		return ""
 	}
 	lines := strings.Split(string(data), "\n")
-	for i := line - 1; i >= 0; i-- {
-		trimmed := strings.TrimSpace(lines[i])
-		if trimmed == "" {
+	if line > len(lines) {
+		line = len(lines)
+	}
+	for i := line - 1; i >= 0; {
+		if next, skipped := skipRustTriviaBackward(lines, i); skipped {
+			i = next
 			continue
 		}
-		if strings.HasPrefix(trimmed, "#[path") {
-			return true
+		trimmed := strings.TrimSpace(lines[i])
+		if !strings.HasSuffix(trimmed, "]") {
+			break
 		}
-		if !strings.HasPrefix(trimmed, "#[") {
-			return false
+		end := i
+		depth := 0
+		start := -1
+		for ; i >= 0; i-- {
+			if next, skipped := skipRustTriviaBackward(lines, i); skipped {
+				i = next + 1
+				continue
+			}
+			part := strings.TrimSpace(lines[i])
+			depth += strings.Count(part, "]") - strings.Count(part, "[")
+			if strings.HasPrefix(part, "#[") && depth == 0 {
+				start = i
+				break
+			}
+		}
+		if start < 0 {
+			break
+		}
+		attribute := strings.Join(lines[start:end+1], " ")
+		switch {
+		case strings.HasPrefix(strings.TrimSpace(attribute), "#[path") && rustAttributeAssignsPath(attribute):
+			return "direct"
+		case strings.HasPrefix(strings.TrimSpace(attribute), "#[cfg_attr") && rustAttributeAssignsPath(attribute):
+			return "conditional"
+		}
+		i = start - 1
+	}
+	return ""
+}
+
+func skipRustTriviaBackward(lines []string, line int) (int, bool) {
+	trimmed := strings.TrimSpace(lines[line])
+	if trimmed == "" || strings.HasPrefix(trimmed, "//") {
+		return line - 1, true
+	}
+	if !strings.HasSuffix(trimmed, "*/") {
+		return line, false
+	}
+	depth := 0
+	for i := line; i >= 0; i-- {
+		part := lines[i]
+		depth += strings.Count(part, "*/") - strings.Count(part, "/*")
+		if depth <= 0 {
+			return i - 1, true
 		}
 	}
+	return -1, true
+}
+
+func rustAttributeAssignsPath(attribute string) bool {
+	for offset := 0; offset < len(attribute); {
+		relative := strings.Index(attribute[offset:], "path")
+		if relative < 0 {
+			return false
+		}
+		i := offset + relative
+		beforeOK := i == 0 || !isRustIdentifierByte(attribute[i-1])
+		j := i + len("path")
+		afterOK := j == len(attribute) || !isRustIdentifierByte(attribute[j])
+		if beforeOK && afterOK {
+			for j < len(attribute) && (attribute[j] == ' ' || attribute[j] == '\t' || attribute[j] == '\n' || attribute[j] == '\r') {
+				j++
+			}
+			if j < len(attribute) && attribute[j] == '=' {
+				return true
+			}
+		}
+		offset = i + len("path")
+	}
 	return false
+}
+
+func isRustIdentifierByte(value byte) bool {
+	return value == '_' || value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9'
 }

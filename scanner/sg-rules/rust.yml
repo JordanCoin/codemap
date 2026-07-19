@@ -12,6 +12,27 @@ rule:
     - pattern: mod $PATH;
     - pattern: pub mod $PATH;
 ---
+id: rust-path-module-imports
+language: rust
+rule:
+  all:
+    - pattern:
+        context: |
+          #[path = $TARGET]
+          mod __CONTEXT__;
+        selector: attribute_item
+    - precedes:
+        stopBy:
+          not:
+            kind: attribute_item
+        any:
+          - pattern: mod $PATH;
+          - pattern: pub mod $PATH;
+    - not:
+        inside:
+          kind: mod_item
+          stopBy: end
+---
 id: rust-path-imports
 language: rust
 rule:
