@@ -204,6 +204,55 @@ func TestFormatOnlyFilterHintOffersSortedAgentChoices(t *testing.T) {
 	}
 }
 
+func TestFindConfiguredMatchesSeparatesVisibleAndHintableFiles(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configJSON := `{"only":["go"],"exclude":["schema-excluded.proto"],"guidance":{"ignored_extensions":["sum"]}}`
+	if err := os.WriteFile(filepath.Join(root, ".codemap", "config.json"), []byte(configJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	files := []scanner.FileInfo{
+		{Path: "notes.txt", Ext: ".txt"},
+		{Path: "schema.go", Ext: ".go"},
+		{Path: "schema.proto", Ext: ".proto"},
+		{Path: "schema-excluded.proto", Ext: ".proto"},
+		{Path: "schema.sum", Ext: ".sum"},
+	}
+	visible, filtered, hintsEnabled := findConfiguredMatches(root, "SCHEMA", files)
+	if strings.Join(visible, ",") != "schema.go" {
+		t.Fatalf("visible matches = %v, want [schema.go]", visible)
+	}
+	if len(filtered) != 1 || filtered[0].Path != "schema.proto" {
+		t.Fatalf("filtered matches = %+v, want only schema.proto", filtered)
+	}
+	if !hintsEnabled {
+		t.Fatal("expected hints to remain enabled by default")
+	}
+}
+
+func TestFormatOnlyFilterHintBoundsExtensionlessMatches(t *testing.T) {
+	matches := []scanner.FileInfo{
+		{Path: "schema-1"},
+		{Path: "schema-2"},
+		{Path: "schema-3"},
+		{Path: "schema-4"},
+		{Path: "schema-5"},
+		{Path: "schema-6"},
+	}
+	out := formatOnlyFilterHint("schema", matches)
+	for _, want := range []string{"schema-1", "schema-5", "... and 1 more", "disable suggestions for this repo", "No config changed."} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q from bounded hint:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "schema-6") {
+		t.Fatalf("bounded hint exposed sixth path:\n%s", out)
+	}
+}
+
 func TestHandleGetStructureUsesStateHubs(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {

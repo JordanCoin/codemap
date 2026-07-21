@@ -61,6 +61,16 @@ func TestBuildContextEnvelopeRespectsConfiguredFilters(t *testing.T) {
 	}
 }
 
+func TestCountSourceFilesReturnsZeroWhenConfiguredScanFails(t *testing.T) {
+	cachedFileCount = -1
+	t.Cleanup(func() { cachedFileCount = -1 })
+
+	missingRoot := filepath.Join(t.TempDir(), "missing")
+	if got := countSourceFiles(missingRoot); got != 0 {
+		t.Fatalf("countSourceFiles(missing root) = %d, want 0", got)
+	}
+}
+
 func mustWriteFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

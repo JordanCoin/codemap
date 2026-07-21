@@ -3,6 +3,7 @@ package scanner
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -130,5 +131,57 @@ func TestDependencyAndGraphScansRespectConfiguredFilters(t *testing.T) {
 	}
 	if _, ok := fg.Imports["schema.ts"]; ok {
 		t.Fatal("extension-filtered file remains in graph")
+	}
+}
+
+func TestConfiguredScanHelpers(t *testing.T) {
+	if !MatchesFilters("main.go", ".go", []string{"go"}, nil) {
+		t.Fatal("expected exported filter helper to accept configured extension")
+	}
+	if MatchesFilters("main.ts", ".ts", []string{"go"}, nil) {
+		t.Fatal("expected exported filter helper to reject unconfigured extension")
+	}
+
+	root := t.TempDir()
+	analyses := []FileAnalysis{{Path: "schema.ts"}}
+	got := filterConfiguredAnalyses(root, analyses)
+	if len(got) != 1 || got[0].Path != "schema.ts" {
+		t.Fatalf("unconfigured analysis filter = %+v, want original analysis", got)
+	}
+
+	if _, err := ScanConfiguredFiles(filepath.Join(root, "missing"), nil); err == nil {
+		t.Fatal("expected configured scan of missing root to fail")
+	}
+}
+
+func TestScanForDepsPropagatesScanError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires shell script execution")
+	}
+
+	binDir := t.TempDir()
+	fakeBinary := filepath.Join(binDir, "ast-grep")
+	script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'ast-grep 0.40.0'; exit 0; fi\nprintf '[invalid'\n"
+	if err := os.WriteFile(fakeBinary, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+
+	if _, err := ScanForDeps(t.TempDir()); err == nil {
+		t.Fatal("expected malformed ast-grep output to propagate a scan error")
+	}
+}
+
+func TestScanForDepsPropagatesSetupError(t *testing.T) {
+	invalidTemp := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(invalidTemp, []byte("occupied"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", invalidTemp)
+	t.Setenv("TMP", invalidTemp)
+	t.Setenv("TEMP", invalidTemp)
+
+	if _, err := ScanForDeps(t.TempDir()); err == nil {
+		t.Fatal("expected invalid temporary directory to propagate a scanner setup error")
 	}
 }
