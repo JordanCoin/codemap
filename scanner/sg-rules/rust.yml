@@ -38,6 +38,21 @@ language: rust
 rule:
   pattern: $PATH::$$$REST
 ---
+id: rust-askama-template-imports
+language: rust
+rule:
+  any:
+    - pattern:
+        context: |
+          #[template(path = $TARGET)]
+          struct __CONTEXT__;
+        selector: attribute_item
+    - pattern:
+        context: |
+          #[template(path = $TARGET, $$$REST)]
+          struct __CONTEXT__;
+        selector: attribute_item
+---
 id: rust-functions
 language: rust
 rule:
