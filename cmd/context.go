@@ -15,7 +15,6 @@ import (
 	"codemap/handoff"
 	"codemap/scanner"
 	"codemap/skills"
-	"codemap/watch"
 )
 
 // ContextEnvelope is the standardized output format that any AI tool can consume.
@@ -145,8 +144,7 @@ func buildContextEnvelope(root, prompt string, compact bool) ContextEnvelope {
 	}
 
 	// Working set from daemon
-	if state := watch.ReadState(root); state != nil && state.WorkingSet != nil {
-		ws := state.WorkingSet
+	if ws := loadWorkingSet(root); ws != nil {
 		wsCtx := &WorkingSetContext{
 			FileCount: ws.Size(),
 			HubCount:  ws.HubCount(),
@@ -197,13 +195,13 @@ func buildProjectContext(root string, info *hubInfo) ProjectContext {
 	}
 
 	// Count files and detect languages from daemon state
-	if state := watch.ReadState(root); state != nil {
-		ctx.FileCount = state.FileCount
-		ctx.HubCount = len(state.Hubs)
-		if len(state.Hubs) > 5 {
-			ctx.TopHubs = state.Hubs[:5]
+	if stats, ok := loadProjectStats(root); ok {
+		ctx.FileCount = stats.FileCount
+		ctx.HubCount = len(stats.Hubs)
+		if len(stats.Hubs) > 5 {
+			ctx.TopHubs = stats.Hubs[:5]
 		} else {
-			ctx.TopHubs = state.Hubs
+			ctx.TopHubs = stats.Hubs
 		}
 	}
 

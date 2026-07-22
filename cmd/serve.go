@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"codemap/skills"
-	"codemap/watch"
 )
 
 // RunServe starts a lightweight HTTP server exposing codemap's intelligence.
@@ -112,12 +111,12 @@ func RunServe(args []string, root string) {
 
 	// GET /api/working-set — current session working set
 	mux.HandleFunc("/api/working-set", func(w http.ResponseWriter, r *http.Request) {
-		state := watch.ReadState(absRoot)
-		if state == nil || state.WorkingSet == nil {
+		workingSet := loadWorkingSet(absRoot)
+		if workingSet == nil {
 			writeJSON(w, map[string]string{"status": "no working set available"})
 			return
 		}
-		writeJSON(w, state.WorkingSet)
+		writeJSON(w, workingSet)
 	})
 
 	// GET /api/health — simple health check
