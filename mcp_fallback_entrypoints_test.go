@@ -35,6 +35,12 @@ func TestMCPEntrypointsMatchConfigFallback(t *testing.T) {
 	if !strings.Contains(cliResult, "Matches excluded by `only` config:") {
 		t.Fatalf("fallback guidance missing: %s", cliResult)
 	}
+
+	cliResult = probeFallbackTestBinary(t, cli, []string{"mcp", "ignored"}, root)
+	standaloneResult = probeFallbackTestBinary(t, standalone, []string{"ignored"}, root)
+	if cliResult != standaloneResult {
+		t.Fatalf("legacy argument handling differs:\ncodemap mcp: %s\ncodemap-mcp: %s", cliResult, standaloneResult)
+	}
 }
 
 func buildFallbackTestBinary(t *testing.T, output, pkg string) string {
