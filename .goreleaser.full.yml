@@ -15,6 +15,7 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w
+      - -X codemap/internal/buildinfo.version={{.Version}}
     goos:
       - darwin
       - linux

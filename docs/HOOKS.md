@@ -1,6 +1,6 @@
-# Codemap Hooks for Claude Code
+# Codemap Hooks
 
-Turn Claude into a codebase-aware assistant. These hooks give Claude automatic context at every step - like GPS navigation for your code.
+Hooks give Claude Code and Codex automatic codebase context throughout a session or task.
 
 ## The Full Experience
 
@@ -28,7 +28,7 @@ cd /path/to/your/project
 codemap setup
 ```
 
-Global Claude settings instead of project-local:
+Global settings instead of project-local:
 
 ```bash
 codemap setup --global
@@ -36,8 +36,12 @@ codemap setup --global
 
 This command:
 - creates `.codemap/config.json` when missing
-- inserts codemap hook commands into Claude settings (without removing existing hooks)
+- merges codemap hooks into Claude and Codex settings without removing existing hooks
 - keeps hook setup idempotent (safe to run more than once)
+
+Use `--agent claude` or `--agent codex` to configure only one integration.
+Managed commands use the verified absolute path of the running `codemap`; rerun
+setup if that path changes. `codemap doctor` validates without rewriting.
 
 Important: run `codemap setup` from the git repo root. Hook commands run relative to the current working directory; starting Claude from a nested folder can prevent codemap from finding `.git` and `.codemap`.
 
@@ -410,7 +414,8 @@ The 8-second hook timeout prevents any single hook from blocking Claude.
 ## Verify It Works
 
 1. Run `codemap setup` in your project
-2. Restart Claude Code (or start a new session)
-3. You should see project structure at the top
-4. Ask Claude to edit a core file - watch for hub warnings
-5. End your session and see the summary
+2. For Codex, trust project hooks from `/hooks` in CLI or Settings > Hooks in Desktop
+3. Start a new Claude Code or Codex session/task
+4. You should see project structure at the top
+5. Ask the agent to edit a core file - watch for hub warnings
+6. End your session and see the summary

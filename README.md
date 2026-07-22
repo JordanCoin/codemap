@@ -71,14 +71,20 @@ cd /path/to/your/project
 codemap setup
 ```
 
-`codemap setup` is the default onboarding path and configures the pieces that make codemap most useful with Claude:
+`codemap setup` configures Claude Code and Codex by default:
 - creates `.codemap/config.json` (if missing) with auto-detected language filters
-- installs codemap hooks into `.claude/settings.local.json` (project-local by default)
+- merges hooks into `.claude/settings.local.json` and `.codex/hooks.json`
+- configures MCP in `.mcp.json` and `.codex/config.toml`
 - hooks automatically start/read daemon state on session start
 
-Use global Claude settings instead of project-local settings:
+Managed entries use the verified absolute path of the running `codemap`, so
+agents do not depend on your shell `PATH`. Rerun setup if that path changes.
+
+Configure one agent only, or use global settings:
 
 ```bash
+codemap setup --agent claude
+codemap setup --agent codex
 codemap setup --global
 ```
 
@@ -97,9 +103,9 @@ Optional helper scripts (mainly for contributors running from this repo):
 
 ## Verify Setup
 
-1. Restart Claude Code or open a new session.
-2. At session start, you should see codemap project context.
-3. Edit a file and confirm pre/post edit hook context appears.
+1. Run `codemap doctor` (or select `--agent claude|codex`).
+2. Trust Codex project hooks from `/hooks` in CLI or Settings > Hooks in Desktop, then start a new session/task.
+3. Confirm Codemap appears in `/mcp`, then edit a file and verify hook context.
 
 ## Daily Commands
 
@@ -111,7 +117,9 @@ codemap --deps .   # Dependency flow (requires ast-grep)
 codemap skill list # Show available skills
 codemap context    # Universal JSON context for any AI tool
 codemap mcp        # Run Codemap MCP server on stdio
-codemap plugin install # Install the Codemap Codex plugin
+codemap --version  # Show the installed build version
+codemap plugin install # Install/update and activate the Codemap plugin through Codex CLI
+codemap doctor     # Validate installed Claude/Codex integrations
 codemap serve      # HTTP API for non-MCP integrations
 ```
 
@@ -233,6 +241,50 @@ codemap blast-radius --ref main .
 codemap blast-radius --json --ref main .
 codemap blast-radius --text --ref main .
 ```
+
+## Codex Integration
+
+Plain `codemap setup` already configures Claude Code and Codex. Use
+`codemap setup --agent codex` to configure only Codex project hooks and MCP.
+Add `--no-config --no-mcp` when the Codex plugin owns MCP and only hooks are needed.
+Use `codemap plugin install` to install/update the bundled MCP and skills and
+activate them through Codex CLI. Both commands are
+idempotent and report when a new Codex task/session is needed. Use
+`--no-activate` only for staging; legacy `--activate` is deprecated because
+activation is now the default. Use `codemap doctor --agent codex` to validate
+the shared project integration and report CLI/Desktop runtimes independently.
+
+Managed MCP entries record the Codemap build version. After an upgrade, rerun
+setup or plugin installation if MCP reports a mismatch. Codex CLI and Desktop
+may use different runtime releases; doctor reports them independently.
+
+### After a Codemap upgrade
+
+Agent integrations do not update themselves. Codex users should refresh the
+global plugin first; all users should then refresh each project's managed hooks
+and MCP entries:
+
+```bash
+# After upgrading the codemap binary
+# Codex only, once for each Codex environment:
+codemap plugin install
+
+# Claude and Codex: repeat in each configured project
+cd /path/to/project
+codemap setup
+codemap doctor
+```
+
+`codemap plugin install` updates the global plugin and migrates the current
+project when run inside one, but it does not discover every configured project.
+One installation refreshes the plugin for CLI and Desktop when they share the
+same Codex environment. Repeat it for another host or `CODEX_HOME`; it does not
+upgrade the Codex applications themselves.
+Claude users skip that command but still rerun `codemap setup --agent claude`
+and `codemap doctor --agent claude` in each configured project.
+Rerun `codemap setup --global` separately if you use global agent settings.
+After plugin or managed command changes, start a new task in Desktop or a new
+session in CLI, and review hook trust again if Codex asks.
 
 ## Claude Integration
 

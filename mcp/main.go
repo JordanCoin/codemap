@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	"codemap/handoff"
+	"codemap/internal/buildinfo"
 	"codemap/limits"
 	"codemap/render"
 	"codemap/scanner"
@@ -29,6 +32,68 @@ var (
 	watchers   = make(map[string]*watch.Daemon)
 	watchersMu sync.RWMutex
 )
+
+const (
+	IntegrationClaudeSetup = "claude-setup"
+	IntegrationCodexSetup  = "codex-setup"
+	IntegrationCodexPlugin = "codex-plugin"
+)
+
+type RuntimeOptions struct {
+	ConfiguredVersion string
+	Integration       string
+}
+
+func ParseRuntimeOptions(args []string) (RuntimeOptions, error) {
+	var options RuntimeOptions
+	flags := flag.NewFlagSet("mcp", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flags.StringVar(&options.ConfiguredVersion, "configured-version", "", "version recorded by the managed integration")
+	flags.StringVar(&options.Integration, "integration", "", "managed integration kind")
+	if err := flags.Parse(args); err != nil {
+		return RuntimeOptions{}, err
+	}
+	if flags.NArg() != 0 {
+		return RuntimeOptions{}, fmt.Errorf("unexpected MCP arguments: %s", strings.Join(flags.Args(), " "))
+	}
+	if options.ConfiguredVersion == "" && options.Integration == "" {
+		return options, nil
+	}
+	if options.ConfiguredVersion == "" || options.Integration == "" {
+		return RuntimeOptions{}, fmt.Errorf("--configured-version and --integration must be provided together")
+	}
+	switch options.Integration {
+	case IntegrationClaudeSetup, IntegrationCodexSetup, IntegrationCodexPlugin:
+		return options, nil
+	default:
+		return RuntimeOptions{}, fmt.Errorf("unsupported integration %q", options.Integration)
+	}
+}
+
+func (options RuntimeOptions) upgradeGuidance() string {
+	if options.ConfiguredVersion == "" || options.Integration == "" || buildinfo.Equal(options.ConfiguredVersion, buildinfo.Current()) {
+		return ""
+	}
+
+	var repairCommand string
+	switch options.Integration {
+	case IntegrationClaudeSetup:
+		repairCommand = "codemap setup --agent claude"
+	case IntegrationCodexSetup:
+		repairCommand = "codemap setup --agent codex"
+	case IntegrationCodexPlugin:
+		repairCommand = "codemap plugin install"
+	default:
+		return ""
+	}
+
+	return fmt.Sprintf(
+		"Upgrade guidance: this Codemap integration was configured for version %s, but the running server is version %s. Run `%s` to refresh it.",
+		options.ConfiguredVersion,
+		buildinfo.Current(),
+		repairCommand,
+	)
+}
 
 // Input types for tools
 type PathInput struct {
@@ -82,11 +147,13 @@ type HandoffInput struct {
 	File   string `json:"file,omitempty" jsonschema:"Load detailed context for one changed file path from handoff delta"`
 }
 
-func NewServer() *mcp.Server {
+func NewServer(options RuntimeOptions) *mcp.Server {
+	guidance := options.upgradeGuidance()
+
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "codemap",
-		Version: "2.0.0",
-	}, nil)
+		Version: buildinfo.Current(),
+	}, &mcp.ServerOptions{Instructions: guidance})
 
 	// Tool: get_structure - Get project tree view
 	mcp.AddTool(server, &mcp.Tool{
@@ -122,7 +189,7 @@ func NewServer() *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "status",
 		Description: "Check codemap MCP server status. Returns version and confirms local filesystem access is available.",
-	}, handleStatus)
+	}, statusHandler(guidance))
 
 	// Tool: list_projects - Discover projects in a directory
 	mcp.AddTool(server, &mcp.Tool{
@@ -193,8 +260,8 @@ func NewServer() *mcp.Server {
 	return server
 }
 
-func Run(ctx context.Context) error {
-	return NewServer().Run(ctx, &mcp.StdioTransport{})
+func Run(ctx context.Context, options RuntimeOptions) error {
+	return NewServer(options).Run(ctx, &mcp.StdioTransport{})
 }
 
 func textResult(text string) *mcp.CallToolResult {
@@ -395,7 +462,7 @@ func handleStatus(ctx context.Context, req *mcp.CallToolRequest, input EmptyInpu
 		watchStatus = fmt.Sprintf("%d active: %s", activeWatchers, strings.Join(watchedPaths, ", "))
 	}
 
-	return textResult(fmt.Sprintf(`codemap MCP server v2.1.0
+	return textResult(fmt.Sprintf(`codemap MCP server v%s
 Status: connected
 Local filesystem access: enabled
 Working directory: %s
@@ -414,7 +481,21 @@ Available tools:
 Live watch tools:
   start_watch      - Start watching a project for changes
   stop_watch       - Stop watching a project
-  get_activity     - See recent coding activity (hot files, edits, timeline)`, cwd, home, watchStatus)), nil, nil
+  get_activity     - See recent coding activity (hot files, edits, timeline)`, buildinfo.Current(), cwd, home, watchStatus)), nil, nil
+}
+
+func statusHandler(guidance string) func(context.Context, *mcp.CallToolRequest, EmptyInput) (*mcp.CallToolResult, any, error) {
+	return func(ctx context.Context, req *mcp.CallToolRequest, input EmptyInput) (*mcp.CallToolResult, any, error) {
+		result, output, err := handleStatus(ctx, req, input)
+		if err != nil || guidance == "" {
+			return result, output, err
+		}
+		content, ok := result.Content[0].(*mcp.TextContent)
+		if ok {
+			content.Text += "\n\n" + guidance
+		}
+		return result, output, nil
+	}
 }
 
 func handleListProjects(ctx context.Context, req *mcp.CallToolRequest, input ListProjectsInput) (*mcp.CallToolResult, any, error) {
