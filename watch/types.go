@@ -26,8 +26,9 @@ type Event struct {
 
 // FileState tracks lightweight per-file state for delta calculations
 type FileState struct {
-	Lines int
-	Size  int64
+	Lines   int
+	Size    int64
+	ModTime int64
 }
 
 // DepContext holds pre-computed dependency context for a file
@@ -43,7 +44,7 @@ type Graph struct {
 	Files      map[string]*scanner.FileInfo // path -> file info
 	FileGraph  *scanner.FileGraph           // internal file-to-file dependencies
 	DepCtx     map[string]*DepContext       // path -> dependency context (precomputed)
-	State      map[string]*FileState        // path -> line/size cache for deltas
+	State      map[string]*FileState        // path -> line/size/mtime cache for deltas
 	Events     []Event
 	WorkingSet *WorkingSet // session working set
 	LastScan   time.Time
