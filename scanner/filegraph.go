@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"codemap/config"
 )
 
 // FileGraph represents internal file-to-file dependencies within a project
@@ -27,27 +29,36 @@ type fileIndex struct {
 	goPkgs   map[string][]string // Go package path -> files
 }
 
-// BuildFileGraph analyzes a project and returns file-level dependencies
-// Uses ast-grep for multi-language support with universal fuzzy resolution
+// BuildFileGraph analyzes a project with its configured filters.
 func BuildFileGraph(root string) (*FileGraph, error) {
-	// Use ast-grep to extract imports for all languages.
-	analyses, err := ScanForDeps(root)
+	cfg := config.Load(root)
+	return BuildFileGraphWithFilters(root, Filters{Only: cfg.Only, Exclude: cfg.Exclude})
+}
+
+// BuildFileGraphWithFilters analyzes a project with explicit filters.
+func BuildFileGraphWithFilters(root string, filters Filters) (*FileGraph, error) {
+	analyses, err := ScanForDepsWithFilters(root, filters)
 	if err != nil {
 		return nil, err
 	}
-	return BuildFileGraphFromAnalyses(root, analyses)
+	return BuildFileGraphFromFilteredAnalyses(root, analyses, filters)
 }
 
-// BuildFileGraphFromAnalyses builds the file graph from a pre-computed ast-grep
-// scan, letting callers that already hold the analyses avoid a redundant
-// full-repo ScanForDeps. BuildFileGraph is the convenience wrapper that scans.
+// BuildFileGraphFromAnalyses builds a file graph from pre-computed analyses
+// using the configured project filters.
 func BuildFileGraphFromAnalyses(root string, analyses []FileAnalysis) (*FileGraph, error) {
+	cfg := config.Load(root)
+	filters := Filters{Only: cfg.Only, Exclude: cfg.Exclude}
+	return BuildFileGraphFromFilteredAnalyses(root, filterAnalyses(analyses, filters), filters)
+}
+
+// BuildFileGraphFromFilteredAnalyses builds a file graph from analyses that
+// already match the supplied filters.
+func BuildFileGraphFromFilteredAnalyses(root string, analyses []FileAnalysis, filters Filters) (*FileGraph, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
 	}
-
-	analyses = filterConfiguredAnalyses(root, analyses)
 
 	fg := &FileGraph{
 		Root:        absRoot,
@@ -63,9 +74,9 @@ func BuildFileGraphFromAnalyses(root string, analyses []FileAnalysis) (*FileGrap
 	// Detect path aliases from tsconfig.json (for TS/JS import resolution)
 	fg.PathAliases, fg.BaseURL = detectPathAliases(absRoot)
 
-	// Scan all files
+	// Scan all files with the same filters used for the analyses.
 	gitCache := NewGitIgnoreCache(root)
-	files, err := ScanConfiguredFiles(root, gitCache)
+	files, err := ScanFiles(root, gitCache, filters.Only, filters.Exclude)
 	if err != nil {
 		return nil, err
 	}
