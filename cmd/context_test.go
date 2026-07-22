@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -38,6 +39,35 @@ func TestDetectLanguagesFromFiles_SubdirectorySources(t *testing.T) {
 	}
 	if !langs["go"] {
 		t.Fatalf("expected go from subdirectory source, got %#v", langs)
+	}
+}
+
+func TestBuildContextEnvelopeRespectsConfiguredFilters(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, ".codemap", "config.json"), `{"only":["go"],"exclude":["generated"]}`)
+	mustWriteFile(t, filepath.Join(root, "main.go"), "package main\n")
+	mustWriteFile(t, filepath.Join(root, "schema.ts"), "export const schema = 1\n")
+	mustWriteFile(t, filepath.Join(root, "generated", "hidden.go"), "package generated\n")
+
+	cachedFileCount = -1
+	t.Cleanup(func() { cachedFileCount = -1 })
+	envelope := buildContextEnvelope(root, "", true)
+
+	if envelope.Project.FileCount != 1 {
+		t.Fatalf("file count = %d, want 1", envelope.Project.FileCount)
+	}
+	if !reflect.DeepEqual(envelope.Project.Languages, []string{"go"}) {
+		t.Fatalf("languages = %#v, want [go]", envelope.Project.Languages)
+	}
+}
+
+func TestCountSourceFilesReturnsZeroWhenConfiguredScanFails(t *testing.T) {
+	cachedFileCount = -1
+	t.Cleanup(func() { cachedFileCount = -1 })
+
+	missingRoot := filepath.Join(t.TempDir(), "missing")
+	if got := countSourceFiles(missingRoot); got != 0 {
+		t.Fatalf("countSourceFiles(missing root) = %d, want 0", got)
 	}
 }
 

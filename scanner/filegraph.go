@@ -47,6 +47,8 @@ func BuildFileGraphFromAnalyses(root string, analyses []FileAnalysis) (*FileGrap
 		return nil, err
 	}
 
+	analyses = filterConfiguredAnalyses(root, analyses)
+
 	fg := &FileGraph{
 		Root:        absRoot,
 		Imports:     make(map[string][]string),
@@ -63,7 +65,7 @@ func BuildFileGraphFromAnalyses(root string, analyses []FileAnalysis) (*FileGrap
 
 	// Scan all files
 	gitCache := NewGitIgnoreCache(root)
-	files, err := ScanFiles(root, gitCache, nil, nil)
+	files, err := ScanConfiguredFiles(root, gitCache)
 	if err != nil {
 		return nil, err
 	}

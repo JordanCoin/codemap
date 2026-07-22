@@ -154,13 +154,20 @@ func TestDaemonStartTracksWriteEventsAndState(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	var last Event
 	waitForWatchCondition(t, 2*time.Second, func() bool {
 		events := d.GetEvents(0)
-		return len(events) > 0 && events[len(events)-1].Path == "main.go" && events[len(events)-1].Delta > 0
+		for i := len(events) - 1; i >= 0; i-- {
+			event := events[i]
+			if event.Path == "main.go" &&
+				(event.Op == "WRITE" || event.Op == "CREATE") &&
+				event.Dirty && event.Delta > 0 {
+				last = event
+				return true
+			}
+		}
+		return false
 	})
-
-	events := d.GetEvents(0)
-	last := events[len(events)-1]
 	if last.Path != "main.go" {
 		t.Fatalf("last event path = %q, want main.go", last.Path)
 	}
