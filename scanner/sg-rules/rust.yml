@@ -53,6 +53,11 @@ rule:
           struct __CONTEXT__;
         selector: attribute_item
 ---
+id: rust-include-imports
+language: rust
+rule:
+  pattern: include!($PATH)
+---
 id: rust-functions
 language: rust
 rule:
