@@ -485,7 +485,7 @@ func resolveRustModuleDeclaration(root string, parent rustModuleLocation, declar
 	return resolved, filepath.Clean(filepath.Join(parent.childBase, declaration.name))
 }
 
-func resolveRustExplicitModule(root, declaringFile, literal string) string {
+func resolveRustLiteralPath(root, declaringFile, literal string) string {
 	value, ok := parseRustStringLiteral(literal)
 	if !ok || value == "" {
 		return ""
@@ -495,10 +495,18 @@ func resolveRustExplicitModule(root, declaringFile, literal string) string {
 		path = filepath.Join(root, filepath.Dir(declaringFile), path)
 	}
 	rel, ok := projectRelativePath(root, path)
-	if !ok || !strings.EqualFold(filepath.Ext(rel), ".rs") {
+	if !ok {
 		return ""
 	}
 	return filepath.Clean(rel)
+}
+
+func resolveRustExplicitModule(root, declaringFile, literal string) string {
+	target := resolveRustLiteralPath(root, declaringFile, literal)
+	if !strings.EqualFold(filepath.Ext(target), ".rs") {
+		return ""
+	}
+	return target
 }
 
 // resolveRustInclude resolves include!(...) relative to the declaring file.
@@ -516,6 +524,14 @@ func resolveRustInclude(root, declaringFile, literal string, idx *fileIndex) str
 		}
 	}
 	if exact != 1 {
+		return ""
+	}
+	return target
+}
+
+func resolveRustEmbeddedFile(root, declaringFile, literal string, idx *fileIndex) string {
+	target := resolveRustLiteralPath(root, declaringFile, literal)
+	if target == "" || len(idx.byExact[target]) != 1 {
 		return ""
 	}
 	return target
@@ -679,6 +695,10 @@ func resolveRustReferences(root string, analysis FileAnalysis, idx *fileIndex, w
 			}
 		case "rust-include":
 			if target := resolveRustInclude(root, analysis.Path, ref.ExplicitTarget, idx); target != "" && target != analysis.Path {
+				resolved = append(resolved, target)
+			}
+		case "rust-embedded-file":
+			if target := resolveRustEmbeddedFile(root, analysis.Path, ref.ExplicitTarget, idx); target != "" && target != analysis.Path {
 				resolved = append(resolved, target)
 			}
 		case "rust-build-input":
