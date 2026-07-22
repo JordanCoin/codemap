@@ -297,6 +297,7 @@ func main() {
 	if *depthLimit == 0 && projCfg.Depth > 0 {
 		*depthLimit = projCfg.Depth
 	}
+	filters := scanner.Filters{Only: only, Exclude: exclude}
 
 	if *debugMode {
 		fmt.Fprintf(os.Stderr, "[debug] Root path: %s\n", root)
@@ -312,7 +313,7 @@ func main() {
 
 	// Importers mode - check file impact
 	if *importersMode != "" {
-		runImportersMode(absRoot, *importersMode, *jsonMode)
+		runImportersMode(absRoot, *importersMode, *jsonMode, filters)
 		return
 	}
 
@@ -338,7 +339,7 @@ func main() {
 		if diffInfo != nil {
 			changedFiles = diffInfo.Changed
 		}
-		runDepsMode(absRoot, root, *jsonMode, *diffRef, changedFiles, *stdinMode)
+		runDepsMode(absRoot, root, *jsonMode, *diffRef, changedFiles, *stdinMode, filters)
 		return
 	}
 
@@ -396,13 +397,13 @@ type stdinManifest struct {
 	} `json:"files"`
 }
 
-func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFiles map[string]bool, stdinMode bool) {
+func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFiles map[string]bool, stdinMode bool, filters scanner.Filters) {
 	var analyses []FileAnalysis
 	var externalDeps map[string][]string
 	var err error
 
 	if stdinMode {
-		analyses, externalDeps, err = runDepsFromStdin()
+		analyses, externalDeps, err = runDepsFromStdin(filters)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading stdin manifest: %v\n", err)
 			os.Exit(1)
@@ -412,7 +413,7 @@ func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFil
 			externalDeps = make(map[string][]string)
 		}
 	} else {
-		analyses, err = scanForDepsWithHint(root)
+		analyses, err = scanForDepsWithHint(root, filters)
 		if err != nil {
 			if errors.Is(err, scanner.ErrAstGrepNotFound) {
 				printAstGrepInstallHint(os.Stderr, err)
@@ -445,15 +446,15 @@ func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFil
 	}
 }
 
-// scanForDepsWithHint wraps scanner.ScanForDeps (extracted for testability).
-func scanForDepsWithHint(root string) ([]FileAnalysis, error) {
-	return scanner.ScanForDeps(root)
+// scanForDepsWithHint wraps scanner.ScanForDepsWithFilters (extracted for testability).
+func scanForDepsWithHint(root string, filters scanner.Filters) ([]FileAnalysis, error) {
+	return scanner.ScanForDepsWithFilters(root, filters)
 }
 
 // runDepsFromStdin reads a JSON manifest from stdin, writes files to a temp
 // directory, runs ast-grep on it, and returns the results with paths matching
 // the original manifest.
-func runDepsFromStdin() ([]FileAnalysis, map[string][]string, error) {
+func runDepsFromStdin(filters scanner.Filters) ([]FileAnalysis, map[string][]string, error) {
 	var manifest stdinManifest
 	if err := json.NewDecoder(os.Stdin).Decode(&manifest); err != nil {
 		return nil, nil, fmt.Errorf("invalid JSON: %w", err)
@@ -481,7 +482,7 @@ func runDepsFromStdin() ([]FileAnalysis, map[string][]string, error) {
 	}
 
 	// Run ast-grep on temp directory
-	analyses, err := scanner.ScanForDeps(tempDir)
+	analyses, err := scanner.ScanForDepsWithFilters(tempDir, filters)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -534,16 +535,16 @@ func runWatchMode(root string, verbose bool) {
 	fmt.Printf("  Events logged: %d\n", len(events))
 }
 
-func buildImportersReport(root, file string) (scanner.ImportersReport, error) {
-	fg, err := scanner.BuildFileGraph(root)
+func buildImportersReport(root, file string, filters scanner.Filters) (scanner.ImportersReport, error) {
+	fg, err := scanner.BuildFileGraphWithFilters(root, filters)
 	if err != nil {
 		return scanner.ImportersReport{}, err
 	}
 	return buildImportersReportFromGraph(root, file, fg), nil
 }
 
-func runImportersMode(root, file string, jsonMode bool) {
-	report, err := buildImportersReport(root, file)
+func runImportersMode(root, file string, jsonMode bool, filters scanner.Filters) {
+	report, err := buildImportersReport(root, file, filters)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error building file graph: %v\n", err)
 		os.Exit(1)
