@@ -114,7 +114,7 @@ func (d *Daemon) eventLoop() {
 				continue
 			}
 
-			if debouncer.shouldSkip(event, time.Now()) {
+			if d.shouldSkipEvent(debouncer, event, time.Now()) {
 				continue
 			}
 
@@ -130,6 +130,26 @@ func (d *Daemon) eventLoop() {
 			}
 		}
 	}
+}
+
+func (d *Daemon) shouldSkipEvent(debouncer *eventDebouncer, event fsnotify.Event, now time.Time) bool {
+	if !debouncer.shouldSkip(event, now) {
+		return false
+	}
+	info, err := os.Stat(event.Name)
+	if err != nil {
+		return false
+	}
+	relPath, err := filepath.Rel(d.root, event.Name)
+	if err != nil {
+		return false
+	}
+
+	d.graph.mu.RLock()
+	cached := d.graph.State[relPath]
+	matches := cached != nil && cached.Size == info.Size()
+	d.graph.mu.RUnlock()
+	return matches
 }
 
 // isSourceFile checks if a file should be tracked.
