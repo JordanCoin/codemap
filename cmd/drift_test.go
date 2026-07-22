@@ -88,3 +88,46 @@ func TestDriftWarning_Fields(t *testing.T) {
 		t.Error("unexpected commits behind")
 	}
 }
+
+func TestResolveCodePaths(t *testing.T) {
+	tests := []struct {
+		name       string
+		subsystem  string
+		paths      map[string][]string
+		wantPrefix string
+	}{
+		{
+			name:      "configured path strips globs",
+			subsystem: "watching",
+			paths: map[string][]string{
+				"watching": {"watch/**", "cmd/hooks.go"},
+			},
+			wantPrefix: "watch/",
+		},
+		{
+			name:       "fallback to guessed paths",
+			subsystem:  "scanning",
+			paths:      map[string][]string{},
+			wantPrefix: "scanner/",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveCodePaths(tt.subsystem, tt.paths)
+			if len(got) == 0 {
+				t.Fatal("expected at least one path")
+			}
+			found := false
+			for _, p := range got {
+				if p == tt.wantPrefix {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("expected %q in paths %v", tt.wantPrefix, got)
+			}
+		})
+	}
+}
