@@ -450,13 +450,14 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 	// Single ast-grep scan shared by impact analysis, the deps project, and the
 	// file graph below. Previously each of those triggered its own full-repo
 	// ScanForDeps, tripling latency on large repositories.
-	var analyses []scanner.FileAnalysis
+	var scanOutcome scanner.ScanOutcome
 	if diffTotal > 0 {
-		analyses, err = scanForDepsWithHint(absRoot, filters)
+		scanOutcome, err = scanForDepsOutcomeWithHint(absRoot, filters)
 		if err != nil {
 			return blastRadiusBundle{}, err
 		}
 	}
+	analyses := scanOutcome.Analyses
 
 	diffProject := scanner.Project{
 		Root:    absRoot,
@@ -494,7 +495,7 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 		depsTotal = len(depsProject.Files)
 		depsCapped = capBlastRadiusDepsProject(depsProject, limits.MaxChangedFiles)
 
-		fg, err := scanner.BuildFileGraphFromFilteredAnalyses(absRoot, analyses, filters)
+		fg, err := scanner.BuildFileGraphFromOutcomeWithFilters(absRoot, scanOutcome, filters)
 		if err != nil {
 			return blastRadiusBundle{}, err
 		}

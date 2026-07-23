@@ -204,10 +204,10 @@ func findNestedGitRepos(root string) []string {
 	return repos
 }
 
-// ScanDirectory analyzes all files in a directory using sg scan
+// ScanDirectory analyzes all files in a directory using sg scan.
 func (s *AstGrepScanner) ScanDirectory(root string) ([]FileAnalysis, error) {
 	if !s.Available() {
-		return nil, nil
+		return nil, newIncompleteScanError("ast-grep", ScanSourceUnavailable, ErrAstGrepNotFound.Error(), ErrAstGrepNotFound)
 	}
 
 	inlineRules := s.inlineRules
@@ -241,33 +241,28 @@ func (s *AstGrepScanner) ScanDirectory(root string) ([]FileAnalysis, error) {
 	out, err := cmd.Output()
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
-			fmt.Fprintf(os.Stderr, "warning: ast-grep timed out after %s in %s; skipping ast-grep results\n", astGrepScanTimeout, root)
-			return nil, nil
+			return nil, newIncompleteScanError("ast-grep", ScanSourceTimeout, fmt.Sprintf("ast-grep timed out after %s", astGrepScanTimeout), err)
 		}
 
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
-				fmt.Fprintf(os.Stderr, "warning: ast-grep exited with signal %d in %s; skipping ast-grep results\n", status.Signal(), root)
-				return nil, nil
+				return nil, newIncompleteScanError("ast-grep", ScanSourceFailed, fmt.Sprintf("ast-grep terminated by signal %d", status.Signal()), err)
 			}
 		}
 
-		// sg scan returns non-zero if no matches, check if output contains JSON
-		if len(out) == 0 {
-			return nil, nil
-		}
+		return nil, newIncompleteScanError("ast-grep", ScanSourceFailed, "ast-grep exited unsuccessfully", err)
 	}
 
 	// Extract JSON array from output (handles debug output before JSON, e.g. ast-grep 0.40.2 bug)
 	jsonData := extractJSONArray(out)
 	if jsonData == nil {
-		return nil, nil
+		return nil, newIncompleteScanError("ast-grep", ScanSourceFailed, "ast-grep produced no JSON results", err)
 	}
 
 	var matches []ScanMatch
-	if err := json.Unmarshal(jsonData, &matches); err != nil {
-		return nil, err
+	if decodeErr := json.Unmarshal(jsonData, &matches); decodeErr != nil {
+		return nil, newIncompleteScanError("ast-grep", ScanSourceFailed, "ast-grep produced invalid JSON results", decodeErr)
 	}
 
 	// Group matches by file
@@ -343,6 +338,18 @@ func (s *AstGrepScanner) ScanDirectory(root string) ([]FileAnalysis, error) {
 	}
 
 	return results, nil
+}
+
+// ScanDirectoryOutcome analyzes a directory and records ast-grep provenance.
+func (s *AstGrepScanner) ScanDirectoryOutcome(root string) (ScanOutcome, error) {
+	analyses, err := s.ScanDirectory(root)
+	if err != nil {
+		return ScanOutcome{}, err
+	}
+	return ScanOutcome{
+		Analyses: analyses,
+		Sources:  []ScanSourceOutcome{{Source: "ast-grep", Status: ScanSourceAuthoritative}},
+	}, nil
 }
 
 func dedupeImportReferences(refs []ImportReference) []ImportReference {

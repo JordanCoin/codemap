@@ -228,7 +228,7 @@ namespace TestApp
 	}
 }
 
-func TestAstGrepScanDirectoryTimeout(t *testing.T) {
+func TestAstGrepScanDirectoryTimeoutIsIncomplete(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires shell script execution")
 	}
@@ -239,23 +239,79 @@ func TestAstGrepScanDirectoryTimeout(t *testing.T) {
 		t.Fatalf("failed to create fake ast-grep binary: %v", err)
 	}
 
-	scanner := &AstGrepScanner{
-		rulesDir: tmpDir,
-		binary:   fakeBinary,
-	}
-
+	scanner := &AstGrepScanner{rulesDir: tmpDir, binary: fakeBinary}
 	prevTimeout := astGrepScanTimeout
 	astGrepScanTimeout = 20 * time.Millisecond
-	t.Cleanup(func() {
-		astGrepScanTimeout = prevTimeout
-	})
+	t.Cleanup(func() { astGrepScanTimeout = prevTimeout })
 
-	results, err := scanner.ScanDirectory(tmpDir)
-	if err != nil {
-		t.Fatalf("expected graceful timeout handling, got error: %v", err)
+	_, err := scanner.ScanDirectory(tmpDir)
+	var incomplete *IncompleteScanError
+	if !errors.As(err, &incomplete) {
+		t.Fatalf("error = %v, want IncompleteScanError", err)
 	}
-	if results != nil {
-		t.Fatalf("expected nil results on timeout, got: %v", results)
+	if got, want := incomplete.Outcome.Status, ScanSourceTimeout; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+}
+
+func TestAstGrepScanDirectoryOutcomeDistinguishesEmptyFromFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires shell script execution")
+	}
+
+	for _, tt := range []struct {
+		name       string
+		script     string
+		wantStatus ScanSourceStatus
+		wantOK     bool
+	}{
+		{name: "valid empty result", script: "#!/bin/sh\nprintf '[]\\n'\n", wantStatus: ScanSourceAuthoritative, wantOK: true},
+		{name: "nonzero JSON output", script: "#!/bin/sh\nprintf '[]\\n'\nexit 2\n", wantStatus: ScanSourceFailed},
+		{name: "malformed JSON", script: "#!/bin/sh\nprintf '[{'\n", wantStatus: ScanSourceFailed},
+		{name: "terminated by signal", script: "#!/bin/sh\nkill -TERM $$\n", wantStatus: ScanSourceFailed},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			fakeBinary := filepath.Join(tmpDir, "fake-sg.sh")
+			if err := os.WriteFile(fakeBinary, []byte(tt.script), 0755); err != nil {
+				t.Fatal(err)
+			}
+			scanner := &AstGrepScanner{rulesDir: tmpDir, binary: fakeBinary}
+
+			outcome, err := scanner.ScanDirectoryOutcome(tmpDir)
+			if tt.wantOK {
+				if err != nil {
+					t.Fatalf("ScanDirectoryOutcome() error = %v", err)
+				}
+				if len(outcome.Analyses) != 0 {
+					t.Fatalf("analyses = %#v, want empty", outcome.Analyses)
+				}
+				if got := outcome.Sources[0].Status; got != tt.wantStatus {
+					t.Fatalf("status = %q, want %q", got, tt.wantStatus)
+				}
+				return
+			}
+
+			var incomplete *IncompleteScanError
+			if !errors.As(err, &incomplete) {
+				t.Fatalf("error = %v, want IncompleteScanError", err)
+			}
+			if got := incomplete.Outcome.Status; got != tt.wantStatus {
+				t.Fatalf("status = %q, want %q", got, tt.wantStatus)
+			}
+		})
+	}
+}
+
+func TestAstGrepScanDirectoryUnavailableIsIncomplete(t *testing.T) {
+	scanner := &AstGrepScanner{}
+	_, err := scanner.ScanDirectoryOutcome(t.TempDir())
+	var incomplete *IncompleteScanError
+	if !errors.As(err, &incomplete) {
+		t.Fatalf("error = %v, want IncompleteScanError", err)
+	}
+	if got, want := incomplete.Outcome.Status, ScanSourceUnavailable; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
 	}
 }
 

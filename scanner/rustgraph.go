@@ -21,12 +21,6 @@ const (
 	rustTargetCustomBuild = "custom-build"
 )
 
-// GraphCoverage describes known dependency-graph blind spots.
-type GraphCoverage struct {
-	Status string   `json:"status,omitempty"`
-	Notes  []string `json:"notes,omitempty"`
-}
-
 type rustTarget struct {
 	rootFile  string
 	sourceDir string

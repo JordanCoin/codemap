@@ -39,11 +39,25 @@ func BuildFileGraph(root string) (*FileGraph, error) {
 
 // BuildFileGraphWithFilters analyzes a project with explicit filters.
 func BuildFileGraphWithFilters(root string, filters Filters) (*FileGraph, error) {
-	analyses, err := ScanForDepsWithFilters(root, filters)
+	outcome, err := ScanForDepsOutcomeWithFilters(root, filters)
 	if err != nil {
 		return nil, err
 	}
-	return BuildFileGraphFromFilteredAnalyses(root, analyses, filters)
+	return BuildFileGraphFromOutcomeWithFilters(root, outcome, filters)
+}
+
+// BuildFileGraphFromOutcome builds a graph without dropping scanner provenance.
+func BuildFileGraphFromOutcome(root string, outcome ScanOutcome) (*FileGraph, error) {
+	cfg := config.Load(root)
+	filters := Filters{Only: cfg.Only, Exclude: cfg.Exclude}
+	outcome.Analyses = filterAnalyses(outcome.Analyses, filters)
+	return BuildFileGraphFromOutcomeWithFilters(root, outcome, filters)
+}
+
+// BuildFileGraphFromOutcomeWithFilters builds a graph from an outcome that
+// already matches the supplied filters.
+func BuildFileGraphFromOutcomeWithFilters(root string, outcome ScanOutcome, filters Filters) (*FileGraph, error) {
+	return buildFileGraphFromAnalysesWithCargoMetadataAndFilters(context.Background(), root, outcome.Analyses, filters, loadCargoMetadata, outcome.Sources...)
 }
 
 // BuildFileGraphFromAnalyses builds a file graph from pre-computed analyses
@@ -51,24 +65,22 @@ func BuildFileGraphWithFilters(root string, filters Filters) (*FileGraph, error)
 func BuildFileGraphFromAnalyses(root string, analyses []FileAnalysis) (*FileGraph, error) {
 	cfg := config.Load(root)
 	filters := Filters{Only: cfg.Only, Exclude: cfg.Exclude}
-	return buildFileGraphFromFilteredAnalysesWithCargoMetadata(context.Background(), root, filterAnalyses(analyses, filters), filters, loadCargoMetadata)
+	return BuildFileGraphFromFilteredAnalyses(root, filterAnalyses(analyses, filters), filters)
 }
 
 // BuildFileGraphFromFilteredAnalyses builds a file graph from analyses that
 // already match the supplied filters.
 func BuildFileGraphFromFilteredAnalyses(root string, analyses []FileAnalysis, filters Filters) (*FileGraph, error) {
-	return buildFileGraphFromFilteredAnalysesWithCargoMetadata(context.Background(), root, analyses, filters, loadCargoMetadata)
+	return buildFileGraphFromAnalysesWithCargoMetadataAndFilters(context.Background(), root, analyses, filters, loadCargoMetadata)
 }
 
-// buildFileGraphFromAnalysesWithCargoMetadata is the testable configuration
-// aware variant of BuildFileGraphFromAnalyses.
 func buildFileGraphFromAnalysesWithCargoMetadata(ctx context.Context, root string, analyses []FileAnalysis, loader cargoMetadataLoader) (*FileGraph, error) {
 	cfg := config.Load(root)
 	filters := Filters{Only: cfg.Only, Exclude: cfg.Exclude}
-	return buildFileGraphFromFilteredAnalysesWithCargoMetadata(ctx, root, filterAnalyses(analyses, filters), filters, loader)
+	return buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx, root, filterAnalyses(analyses, filters), filters, loader)
 }
 
-func buildFileGraphFromFilteredAnalysesWithCargoMetadata(ctx context.Context, root string, analyses []FileAnalysis, filters Filters, loader cargoMetadataLoader) (*FileGraph, error) {
+func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, root string, analyses []FileAnalysis, filters Filters, loader cargoMetadataLoader, sources ...ScanSourceOutcome) (*FileGraph, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -84,6 +96,9 @@ func buildFileGraphFromFilteredAnalysesWithCargoMetadata(ctx context.Context, ro
 		Packages:    make(map[string][]string),
 		PathAliases: make(map[string][]string),
 	}
+	for _, source := range sources {
+		fg.Coverage.AddSource(source)
+	}
 
 	// Detect module name from go.mod (for Go import resolution)
 	fg.Module = detectModule(absRoot)
@@ -97,7 +112,10 @@ func buildFileGraphFromFilteredAnalysesWithCargoMetadata(ctx context.Context, ro
 	if err != nil {
 		return nil, err
 	}
-	rustWorkspace := buildRustWorkspaceIndex(ctx, absRoot, analyses, files, loader)
+	rustWorkspace, cargoOutcome := buildRustWorkspaceIndex(ctx, absRoot, analyses, files, loader)
+	if cargoOutcome != nil {
+		fg.Coverage.AddSource(*cargoOutcome)
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -107,7 +125,8 @@ func buildFileGraphFromFilteredAnalysesWithCargoMetadata(ctx context.Context, ro
 	fg.Packages = idx.goPkgs
 	for _, file := range files {
 		if strings.EqualFold(filepath.Ext(file.Path), ".rs") {
-			fg.Coverage = GraphCoverage{Status: rustCoverageStatus, Notes: []string{rustCoverageNote}}
+			fg.Coverage.Status = rustCoverageStatus
+			fg.Coverage.Notes = append(fg.Coverage.Notes, rustCoverageNote)
 			break
 		}
 	}
@@ -438,8 +457,6 @@ const HubThreshold = 3
 
 // IsTestFile reports whether a path names a test file across the supported
 // languages (Go _test files, JS/TS .test/.spec files, Python test_ modules).
-// Test importers are real graph edges but shouldn't confer hub status: a file
-// imported only by its own tests doesn't have blast radius.
 func IsTestFile(path string) bool {
 	base := strings.ToLower(filepath.Base(filepath.FromSlash(path)))
 	if strings.HasSuffix(base, "_test.go") {

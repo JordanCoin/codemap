@@ -326,7 +326,7 @@ func filterConfiguredAnalyses(root string, analyses []FileAnalysis) []FileAnalys
 	return filterAnalyses(analyses, Filters{Only: cfg.Only, Exclude: cfg.Exclude})
 }
 
-// ScanForDeps uses the configured project filters for batched dependency analysis.
+// ScanForDeps uses ast-grep for batched dependency analysis with configured filters.
 func ScanForDeps(root string) ([]FileAnalysis, error) {
 	cfg := config.Load(root)
 	return ScanForDepsWithFilters(root, Filters{Only: cfg.Only, Exclude: cfg.Exclude})
@@ -334,19 +334,29 @@ func ScanForDeps(root string) ([]FileAnalysis, error) {
 
 // ScanForDepsWithFilters uses ast-grep for batched dependency analysis with explicit filters.
 func ScanForDepsWithFilters(root string, filters Filters) ([]FileAnalysis, error) {
+	outcome, err := ScanForDepsOutcomeWithFilters(root, filters)
+	return outcome.Analyses, err
+}
+
+// ScanForDepsOutcome returns dependency analyses with configured filters and provenance.
+func ScanForDepsOutcome(root string) (ScanOutcome, error) {
+	cfg := config.Load(root)
+	return ScanForDepsOutcomeWithFilters(root, Filters{Only: cfg.Only, Exclude: cfg.Exclude})
+}
+
+// ScanForDepsOutcomeWithFilters returns dependency analyses with explicit filters
+// and scanner provenance.
+func ScanForDepsOutcomeWithFilters(root string, filters Filters) (ScanOutcome, error) {
 	astScanner, err := NewAstGrepScanner()
 	if err != nil {
-		return nil, err
+		return ScanOutcome{}, err
 	}
 	defer astScanner.Close()
 
-	if !astScanner.Available() {
-		return nil, ErrAstGrepNotFound
-	}
-
-	analyses, err := astScanner.ScanDirectory(root)
+	outcome, err := astScanner.ScanDirectoryOutcome(root)
 	if err != nil {
-		return nil, err
+		return ScanOutcome{}, err
 	}
-	return filterAnalyses(analyses, filters), nil
+	outcome.Analyses = filterAnalyses(outcome.Analyses, filters)
+	return outcome, nil
 }

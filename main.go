@@ -503,7 +503,12 @@ func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFil
 
 // scanForDepsWithHint wraps scanner.ScanForDepsWithFilters (extracted for testability).
 func scanForDepsWithHint(root string, filters scanner.Filters) ([]FileAnalysis, error) {
-	return scanner.ScanForDepsWithFilters(root, filters)
+	outcome, err := scanForDepsOutcomeWithHint(root, filters)
+	return outcome.Analyses, err
+}
+
+func scanForDepsOutcomeWithHint(root string, filters scanner.Filters) (scanner.ScanOutcome, error) {
+	return scanner.ScanForDepsOutcomeWithFilters(root, filters)
 }
 
 // runDepsFromStdin reads a JSON manifest from stdin, writes files to a temp
