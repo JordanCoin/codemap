@@ -3,8 +3,10 @@ package scanner
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 )
 
@@ -79,6 +81,7 @@ func TestScanForGraphOutcomeUsesGoFallbackWithoutCargo(t *testing.T) {
 			loads++
 			return nil, errors.New("unexpected Cargo fallback")
 		},
+		false,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -101,7 +104,7 @@ func TestScanForGraphOutcomeUsesGoFallbackWithoutCargo(t *testing.T) {
 	if len(outcome.Sources) != 2 {
 		t.Fatalf("sources = %#v, want ast-grep and Go parser", outcome.Sources)
 	}
-	if outcome.Sources[0].Source != "ast-grep" || outcome.Sources[1].Source != "go-parser" {
+	if outcome.Sources[0].Name != "ast-grep" || outcome.Sources[1].Name != "go-parser" {
 		t.Fatalf("sources = %#v, want ast-grep then Go parser", outcome.Sources)
 	}
 }
@@ -123,6 +126,7 @@ func TestScanForGraphOutcomeCombinesGoAndCargoFallbacks(t *testing.T) {
 		func(context.Context, string) ([]byte, error) {
 			return metadata, nil
 		},
+		false,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -142,10 +146,85 @@ func TestScanForGraphOutcomeCombinesGoAndCargoFallbacks(t *testing.T) {
 		t.Fatalf("edges = %#v, want %#v", got, want)
 	}
 	if len(outcome.Sources) != 3 ||
-		outcome.Sources[0].Source != "ast-grep" ||
-		outcome.Sources[1].Source != "go-parser" ||
-		outcome.Sources[2].Source != "cargo-metadata" {
+		outcome.Sources[0].Name != "ast-grep" ||
+		outcome.Sources[1].Name != "go-parser" ||
+		outcome.Sources[2].Name != "cargo-metadata" {
 		t.Fatalf("sources = %#v, want ast-grep, Go parser, and Cargo metadata", outcome.Sources)
+	}
+}
+
+func TestBuildFileGraphFromFallbackOutcomePreservesCargoEdgesWithoutReload(t *testing.T) {
+	root, metadata := cargoFallbackFixture(t, map[string]any{
+		"name": "core", "path": "core", "kind": nil,
+	})
+	writeRustCargoFixture(t, root, map[string]string{
+		"main.go": "package main\n\nfunc main() {}\n",
+	})
+	outcome, _, err := scanForGraphOutcome(
+		context.Background(),
+		root,
+		func(string) (ScanOutcome, error) {
+			return ScanOutcome{}, newIncompleteScanError("ast-grep", ScanSourceUnavailable, "ast-grep unavailable", ErrAstGrepNotFound)
+		},
+		func(context.Context, string) ([]byte, error) {
+			return metadata, nil
+		},
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	loads := 0
+	graph, err := buildFileGraphFromOutcomeWithCargoMetadataAndFilters(
+		context.Background(),
+		root,
+		outcome,
+		Filters{},
+		func(context.Context, string) ([]byte, error) {
+			loads++
+			return metadata, nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loads != 0 {
+		t.Fatalf("Cargo metadata reloads = %d, want 0", loads)
+	}
+	if got, want := graph.Imports["app/src/lib.rs"], []string{"core/src/lib.rs"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("fallback imports = %#v, want %#v", got, want)
+	}
+}
+
+func TestScanForDepsOutcomeRejectsCargoOnlyEmptyRecovery(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires shell script execution")
+	}
+
+	root, metadata := cargoFallbackFixture(t, map[string]any{
+		"name": "core", "path": "core", "kind": nil,
+	})
+	binDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(binDir, "sg"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "cargo"), []byte("#!/bin/sh\n/bin/cat \"$CODEMAP_TEST_CARGO_METADATA\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	metadataPath := filepath.Join(t.TempDir(), "metadata.json")
+	if err := os.WriteFile(metadataPath, metadata, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	t.Setenv("CODEMAP_TEST_CARGO_METADATA", metadataPath)
+
+	outcome, err := ScanForDeps(context.Background(), root, Filters{})
+	if !errors.Is(err, ErrAstGrepNotFound) {
+		t.Fatalf("error = %v, want %v", err, ErrAstGrepNotFound)
+	}
+	if len(outcome.Analyses) != 0 {
+		t.Fatalf("analyses = %#v, want no false successful analyses", outcome.Analyses)
 	}
 }
 
@@ -168,6 +247,7 @@ func TestScanForGraphOutcomeHonorsCancellationDuringFallback(t *testing.T) {
 			cancel()
 			return nil, errors.New("metadata canceled")
 		},
+		false,
 	)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v, want %v", err, context.Canceled)
@@ -189,6 +269,7 @@ func TestScanForGraphOutcomeHonorsPreCanceledContext(t *testing.T) {
 			return ScanOutcome{}, newIncompleteScanError("ast-grep", ScanSourceFailed, "ast-grep failed", errors.New("scan failure"))
 		},
 		nil,
+		false,
 	)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v, want %v", err, context.Canceled)
@@ -206,6 +287,7 @@ func TestScanForGraphOutcomePreservesPrimaryErrorWhenFileScanFails(t *testing.T)
 			return ScanOutcome{}, primaryErr
 		},
 		nil,
+		false,
 	)
 	if err != primaryErr {
 		t.Fatalf("error = %v, want original %v", err, primaryErr)

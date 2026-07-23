@@ -71,7 +71,7 @@ func buildGoFallbackOutcome(ctx context.Context, root string, files []FileInfo) 
 	return ScanOutcome{
 		Analyses: analyses,
 		Sources: []ScanSourceOutcome{{
-			Source: "go-parser",
+			Name:   "go-parser",
 			Status: ScanSourceFallback,
 			Detail: detail,
 		}},

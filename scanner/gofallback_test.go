@@ -3,8 +3,10 @@ package scanner
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -62,11 +64,49 @@ func TestFeature(t *testing.T) {}
 	if !reflect.DeepEqual(outcome.Analyses, want) {
 		t.Fatalf("analyses = %#v, want %#v", outcome.Analyses, want)
 	}
-	if len(outcome.Sources) != 1 || outcome.Sources[0].Source != "go-parser" || outcome.Sources[0].Status != ScanSourceFallback {
+	if len(outcome.Sources) != 1 || outcome.Sources[0].Name != "go-parser" || outcome.Sources[0].Status != ScanSourceFallback {
 		t.Fatalf("sources = %#v, want Go parser fallback", outcome.Sources)
 	}
 	if !strings.Contains(outcome.Sources[0].Detail, "2 of 3 Go files") || !strings.Contains(outcome.Sources[0].Detail, "skipped 1") {
 		t.Fatalf("detail = %q, want recovered and skipped counts", outcome.Sources[0].Detail)
+	}
+}
+
+func TestScanForDepsOutcomeUsesGoFallbackWithoutAstGrep(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires shell script execution")
+	}
+
+	binDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(binDir, "sg"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+
+	root := t.TempDir()
+	writeRustCargoFixture(t, root, map[string]string{
+		"cmd/main.go": "package main\n\nimport \"example.com/lib\"\n\nfunc main() {}\n",
+	})
+
+	outcome, err := ScanForDeps(context.Background(), root, Filters{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []FileAnalysis{{
+		Path:      filepath.FromSlash("cmd/main.go"),
+		Language:  "go",
+		Functions: []string{"main"},
+		Imports:   []string{"example.com/lib"},
+	}}
+	if !reflect.DeepEqual(outcome.Analyses, want) {
+		t.Fatalf("analyses = %#v, want %#v", outcome.Analyses, want)
+	}
+	if len(outcome.Sources) != 2 ||
+		outcome.Sources[0].Name != "ast-grep" ||
+		outcome.Sources[0].Status != ScanSourceUnavailable ||
+		outcome.Sources[1].Name != "go-parser" ||
+		outcome.Sources[1].Status != ScanSourceFallback {
+		t.Fatalf("sources = %#v, want unavailable ast-grep followed by Go parser fallback", outcome.Sources)
 	}
 }
 

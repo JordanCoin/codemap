@@ -23,6 +23,12 @@ func buildFileGraphWithFallback(ctx context.Context, root string, scan dependenc
 }
 
 func buildFileGraphFromOutcomeWithCargoMetadataAndFilters(ctx context.Context, root string, outcome ScanOutcome, filters Filters, loader cargoMetadataLoader) (*FileGraph, error) {
+	for _, source := range outcome.Sources {
+		if source.Name == "cargo-metadata" && source.Status == ScanSourceFallback {
+			loader = nil
+			break
+		}
+	}
 	fg, err := buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx, root, outcome.Analyses, filters, loader, outcome.Sources...)
 	if err != nil {
 		return nil, err
@@ -32,7 +38,7 @@ func buildFileGraphFromOutcomeWithCargoMetadataAndFilters(ctx context.Context, r
 }
 
 func buildFileGraphWithFallbackWithFilters(ctx context.Context, root string, filters Filters, scan dependencyOutcomeScanner, loader cargoMetadataLoader) (*FileGraph, error) {
-	outcome, usedFallback, err := scanForGraphOutcomeWithFilters(ctx, root, filters, scan, loader)
+	outcome, usedFallback, err := scanForGraphOutcomeWithFilters(ctx, root, filters, scan, loader, true)
 	if err != nil {
 		return nil, err
 	}
@@ -43,9 +49,21 @@ func buildFileGraphWithFallbackWithFilters(ctx context.Context, root string, fil
 	return buildFileGraphFromOutcomeWithCargoMetadataAndFilters(ctx, root, outcome, filters, graphLoader)
 }
 
-func scanForGraphOutcomeWithFilters(ctx context.Context, root string, filters Filters, scan dependencyOutcomeScanner, loader cargoMetadataLoader) (ScanOutcome, bool, error) {
+func scanForGraphOutcome(ctx context.Context, root string, scan dependencyOutcomeScanner, loader cargoMetadataLoader, allowCargoOnly ...bool) (ScanOutcome, bool, error) {
+	allow := true
+	if len(allowCargoOnly) > 0 {
+		allow = allowCargoOnly[0]
+	}
+	return scanForGraphOutcomeWithFilters(ctx, root, Filters{}, scan, loader, allow)
+}
+
+func scanForGraphOutcomeWithFilters(ctx context.Context, root string, filters Filters, scan dependencyOutcomeScanner, loader cargoMetadataLoader, allowCargoOnly bool) (ScanOutcome, bool, error) {
 	outcome, err := scan(root)
 	if err == nil {
+		outcome.Analyses, err = filterAnalysesContext(ctx, outcome.Analyses, filters)
+		if err != nil {
+			return ScanOutcome{}, false, err
+		}
 		return outcome, false, nil
 	}
 
@@ -73,10 +91,11 @@ func scanForGraphOutcomeWithFilters(ctx context.Context, root string, filters Fi
 	if err := ctx.Err(); err != nil {
 		return ScanOutcome{}, false, err
 	}
-
-	if cargoFallback, fallbackErr := buildCargoFallbackOutcome(ctx, root, files, loader); fallbackErr == nil {
-		mergeFallbackOutcome(&fallback, cargoFallback)
-		recovered = true
+	if recovered || allowCargoOnly {
+		if cargoFallback, fallbackErr := buildCargoFallbackOutcome(ctx, root, files, loader); fallbackErr == nil {
+			mergeFallbackOutcome(&fallback, cargoFallback)
+			recovered = true
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return ScanOutcome{}, false, err
