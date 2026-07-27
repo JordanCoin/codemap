@@ -286,6 +286,12 @@ Rerun `codemap setup --global` separately if you use global agent settings.
 After plugin or managed command changes, start a new task in Desktop or a new
 session in CLI, and review hook trust again if Codex asks.
 
+Note: `codemap doctor` probes the executables recorded in project-local
+configuration (`.codex/config.toml`, `.mcp.json`), so running it inside a
+repository you don't trust executes a repo-chosen path. Doctor bounds this by
+requiring absolute paths and a recognized argument shape, but treat doctor like
+any other command that honors project-local config.
+
 ## Claude Integration
 
 **Hooks (Recommended)** — Automatic context at session start, before/after edits, and more.

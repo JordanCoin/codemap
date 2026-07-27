@@ -11,6 +11,41 @@ import (
 	"strings"
 )
 
+// decodeJSONObject parses data as a JSON object while preserving number
+// precision (integers beyond 2^53 stay json.Number instead of float64).
+func decodeJSONObject(data []byte) (map[string]any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var payload map[string]any
+	if err := decoder.Decode(&payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
+// writeFileAtomic writes data via temp file + rename so a crash mid-write can
+// never truncate a config file another process may be reading.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
 const (
 	CodemapPluginName           = "codemap"
 	defaultMarketplaceName      = "codemap"
@@ -114,7 +149,9 @@ func writeGeneratedMCP(pluginPath, executablePath, binaryVersion string, result 
 	existing, readErr := os.ReadFile(targetPath)
 	switch {
 	case readErr == nil:
-		if err := json.Unmarshal(existing, &payload); err != nil {
+		var err error
+		payload, err = decodeJSONObject(existing)
+		if err != nil {
 			return fmt.Errorf("parse installed MCP configuration %s: %w", targetPath, err)
 		}
 		if payload == nil {
@@ -162,7 +199,7 @@ func writeGeneratedMCP(pluginPath, executablePath, binaryVersion string, result 
 		result.FilesUnchanged++
 		return nil
 	}
-	if err := os.WriteFile(targetPath, data, 0o644); err != nil {
+	if err := writeFileAtomic(targetPath, data, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", targetPath, err)
 	}
 	result.FilesWritten++
@@ -288,8 +325,12 @@ func ensureMarketplaceEntry(marketplacePath string, pluginPath string) (created 
 	data, readErr := os.ReadFile(marketplacePath)
 	switch {
 	case readErr == nil:
-		if err := json.Unmarshal(data, &payload); err != nil {
+		payload, err = decodeJSONObject(data)
+		if err != nil {
 			return false, false, fmt.Errorf("parse %s: %w", marketplacePath, err)
+		}
+		if payload == nil {
+			return false, false, fmt.Errorf("parse %s: root must be an object", marketplacePath)
 		}
 	case os.IsNotExist(readErr):
 		created = true
@@ -386,7 +427,7 @@ func ensureMarketplaceEntry(marketplacePath string, pluginPath string) (created 
 		return created, updated, fmt.Errorf("encode %s: %w", marketplacePath, err)
 	}
 	out = append(out, '\n')
-	if err := os.WriteFile(marketplacePath, out, 0o644); err != nil {
+	if err := writeFileAtomic(marketplacePath, out, 0o644); err != nil {
 		return created, updated, fmt.Errorf("write %s: %w", marketplacePath, err)
 	}
 	return created, updated, nil

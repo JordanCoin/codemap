@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -15,6 +17,43 @@ import (
 	"codemap/internal/buildinfo"
 	"github.com/pelletier/go-toml/v2"
 )
+
+// decodeJSONObject parses data as a JSON object while preserving number
+// precision: integers beyond 2^53 survive the round-trip as json.Number
+// instead of being mangled through float64.
+func decodeJSONObject(data []byte) (map[string]any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var payload map[string]any
+	if err := decoder.Decode(&payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
+// writeFileAtomic writes data to path via a temp file + rename so a crash or
+// concurrent reader can never observe a truncated file. These files (Claude's
+// ~/.claude.json in particular) may be open in a running agent session.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
 
 type claudeHookSpec struct {
 	Event   string
@@ -83,6 +122,34 @@ func generatedCodexHooks(executable string) []claudeHookSpec {
 	}
 }
 
+// detectInstalledAgents reports which coding agents appear installed on this
+// machine, so plain `codemap setup` only configures agents the user has
+// instead of unconditionally writing config for both.
+func detectInstalledAgents() (claude, codex bool) {
+	if home, err := os.UserHomeDir(); err == nil {
+		for _, probe := range []string{".claude", ".claude.json"} {
+			if _, statErr := os.Stat(filepath.Join(home, probe)); statErr == nil {
+				claude = true
+				break
+			}
+		}
+		if _, statErr := os.Stat(filepath.Join(home, ".codex")); statErr == nil {
+			codex = true
+		}
+	}
+	if !claude {
+		if _, err := exec.LookPath("claude"); err == nil {
+			claude = true
+		}
+	}
+	if !codex {
+		if _, err := exec.LookPath("codex"); err == nil {
+			codex = true
+		}
+	}
+	return claude, codex
+}
+
 // RunSetup configures codemap for the recommended hooks-first workflow.
 //
 // By default it creates:
@@ -94,30 +161,45 @@ func RunSetup(args []string, defaultRoot string) int {
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	useGlobalHooks := fs.Bool("global", false, "Install hooks into global agent settings instead of project-local settings")
-	agent := fs.String("agent", "", "Install hooks for only claude or codex (default: both)")
+	agent := fs.String("agent", "", "Install hooks for claude, codex, or both (default: detected agents)")
 	skipConfig := fs.Bool("no-config", false, "Skip creating .codemap/config.json")
 	skipHooks := fs.Bool("no-hooks", false, "Skip writing agent hook settings")
 	skipMCP := fs.Bool("no-mcp", false, "Skip writing agent MCP settings")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			fmt.Println("Usage: codemap setup [--global] [--agent claude|codex] [--no-config] [--no-hooks] [--no-mcp] [path]")
+			fmt.Println("Usage: codemap setup [--global] [--agent claude|codex|both] [--no-config] [--no-hooks] [--no-mcp] [path]")
 			return 0
 		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		fmt.Fprintln(os.Stderr, "Usage: codemap setup [--global] [--agent claude|codex] [--no-config] [--no-hooks] [--no-mcp] [path]")
+		fmt.Fprintln(os.Stderr, "Usage: codemap setup [--global] [--agent claude|codex|both] [--no-config] [--no-hooks] [--no-mcp] [path]")
 		return 2
 	}
 	if fs.NArg() > 1 {
-		fmt.Fprintln(os.Stderr, "Usage: codemap setup [--global] [--agent claude|codex] [--no-config] [--no-hooks] [--no-mcp] [path]")
+		fmt.Fprintln(os.Stderr, "Usage: codemap setup [--global] [--agent claude|codex|both] [--no-config] [--no-hooks] [--no-mcp] [path]")
 		return 2
 	}
 	selectedAgent := setupAgentBoth
+	agentNote := ""
 	if value := strings.ToLower(strings.TrimSpace(*agent)); value != "" {
 		selectedAgent = setupAgent(value)
-	}
-	if selectedAgent != setupAgentClaude && selectedAgent != setupAgentCodex && strings.TrimSpace(*agent) != "" {
-		fmt.Fprintln(os.Stderr, "Error: --agent must be claude or codex")
-		return 2
+		if selectedAgent != setupAgentClaude && selectedAgent != setupAgentCodex && selectedAgent != setupAgentBoth {
+			fmt.Fprintln(os.Stderr, "Error: --agent must be claude, codex, or both")
+			return 2
+		}
+	} else {
+		claudeDetected, codexDetected := detectInstalledAgents()
+		switch {
+		case claudeDetected && codexDetected:
+			agentNote = "Agents: claude + codex (both detected; use --agent to narrow)"
+		case claudeDetected:
+			selectedAgent = setupAgentClaude
+			agentNote = "Agents: claude (detected; use --agent codex or --agent both to add Codex)"
+		case codexDetected:
+			selectedAgent = setupAgentCodex
+			agentNote = "Agents: codex (detected; use --agent claude or --agent both to add Claude)"
+		default:
+			agentNote = "Agents: none detected; configuring both (use --agent to narrow)"
+		}
 	}
 
 	root := defaultRoot
@@ -142,6 +224,9 @@ func RunSetup(args []string, defaultRoot string) int {
 	}
 
 	fmt.Printf("Project: %s\n", absRoot)
+	if agentNote != "" {
+		fmt.Println(agentNote)
+	}
 	fmt.Println()
 
 	if *skipConfig {
@@ -178,10 +263,14 @@ func RunSetup(args []string, defaultRoot string) int {
 		}, absRoot, *useGlobalHooks) != nil {
 			failed = true
 		}
-		if !*skipMCP && configureMCP("Claude", claudeMCPPath, func(path string) (bool, error) {
-			return ensureClaudeMCPWithExecutable(path, executable)
-		}, absRoot, *useGlobalHooks) != nil {
-			failed = true
+		if !*skipMCP {
+			if configureMCP("Claude", claudeMCPPath, func(path string) (bool, error) {
+				return ensureClaudeMCPWithExecutable(path, executable)
+			}, absRoot, *useGlobalHooks) != nil {
+				failed = true
+			} else if !*useGlobalHooks {
+				fmt.Println("  Note: .mcp.json references this machine's codemap path; if the file is committed, teammates should run `codemap setup` after pulling.")
+			}
 		}
 	}
 	if selectedAgent == setupAgentBoth || selectedAgent == setupAgentCodex {
@@ -317,7 +406,8 @@ func ensureClaudeMCPWithExecutable(path, executable string) (bool, error) {
 	switch {
 	case err == nil:
 		if len(strings.TrimSpace(string(data))) > 0 {
-			if err := json.Unmarshal(data, &payload); err != nil {
+			payload, err = decodeJSONObject(data)
+			if err != nil {
 				return false, fmt.Errorf("parse %s: %w", path, err)
 			}
 			if payload == nil {
@@ -360,7 +450,7 @@ func ensureClaudeMCPWithExecutable(path, executable string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return true, os.WriteFile(path, append(out, '\n'), 0o644)
+	return true, writeFileAtomic(path, append(out, '\n'), 0o644)
 }
 
 func ensureCodexMCPWithExecutable(path, executable string) (bool, error) {
@@ -414,7 +504,7 @@ func writeValidatedTOML(path string, data []byte) error {
 	if err := toml.Unmarshal(data, &parsed); err != nil {
 		return fmt.Errorf("refuse to write invalid TOML: %w", err)
 	}
-	return os.WriteFile(path, data, 0o644)
+	return writeFileAtomic(path, data, 0o644)
 }
 
 func isOwnedCodemapMCPServer(raw any, integration string) bool {
@@ -479,7 +569,8 @@ func ensureHooks(settingsPath string, global bool, specs []claudeHookSpec, comma
 	case err == nil:
 		settingsExisted = true
 		if len(strings.TrimSpace(string(data))) > 0 {
-			if err := json.Unmarshal(data, &root); err != nil {
+			root, err = decodeJSONObject(data)
+			if err != nil {
 				return result, fmt.Errorf("parse %s: %w", settingsPath, err)
 			}
 			if root == nil {
@@ -541,7 +632,7 @@ func ensureHooks(settingsPath string, global bool, specs []claudeHookSpec, comma
 	}
 	out = append(out, '\n')
 
-	if err := os.WriteFile(settingsPath, out, 0644); err != nil {
+	if err := writeFileAtomic(settingsPath, out, 0o644); err != nil {
 		return result, fmt.Errorf("write %s: %w", settingsPath, err)
 	}
 	result.WroteFile = true
