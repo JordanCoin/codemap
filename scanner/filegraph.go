@@ -153,11 +153,12 @@ func buildFileIndex(files []FileInfo, goModule string) *fileIndex {
 			idx.bySuffix[noExt] = append(idx.bySuffix[noExt], path)
 		}
 
-		// Go package index
+		// Go package index. Import paths always use forward slashes, so the
+		// key must be slash-normalized or lookups fail on Windows.
 		if strings.HasSuffix(path, ".go") && goModule != "" {
 			pkgPath := goModule
 			if dir != "" {
-				pkgPath = goModule + "/" + dir
+				pkgPath = goModule + "/" + filepath.ToSlash(dir)
 			}
 			idx.goPkgs[pkgPath] = append(idx.goPkgs[pkgPath], path)
 		}
@@ -187,6 +188,16 @@ func fuzzyResolve(imp, fromFile string, idx *fileIndex, goModule string, pathAli
 	// Strategy 2: Relative path resolution (./foo, ../bar)
 	if strings.HasPrefix(imp, ".") {
 		return resolveRelative(imp, fromDir, idx)
+	}
+
+	// Go imports are always full package paths, so a non-relative import from
+	// a .go file that isn't under the module path is the standard library or a
+	// third-party module. Fuzzy matching those creates false edges — e.g. the
+	// stdlib "context" import resolving to a local cmd/context.go — which
+	// inflate hub counts everywhere downstream. Without a go.mod we can't
+	// resolve Go imports at all, so we return none rather than guess wrong.
+	if strings.HasSuffix(fromFile, ".go") {
+		return nil
 	}
 
 	// Strategy 3: TypeScript/JavaScript path alias resolution (@modules/auth, @shared/utils)
@@ -355,16 +366,52 @@ func detectModule(root string) string {
 	return ""
 }
 
-// IsHub returns true if a file has 3+ importers
-func (fg *FileGraph) IsHub(path string) bool {
-	return len(fg.Importers[path]) >= 3
+// HubThreshold is the number of non-test importers at which a file counts as
+// a hub.
+const HubThreshold = 3
+
+// IsTestFile reports whether a path names a test file across the supported
+// languages (Go _test files, JS/TS .test/.spec files, Python test_ modules).
+// Test importers are real graph edges but shouldn't confer hub status: a file
+// imported only by its own tests doesn't have blast radius.
+func IsTestFile(path string) bool {
+	base := strings.ToLower(filepath.Base(filepath.FromSlash(path)))
+	if strings.HasSuffix(base, "_test.go") {
+		return true
+	}
+	if strings.HasPrefix(base, "test_") && strings.HasSuffix(base, ".py") {
+		return true
+	}
+	noExt := strings.TrimSuffix(base, filepath.Ext(base))
+	return strings.HasSuffix(noExt, ".test") || strings.HasSuffix(noExt, ".spec")
 }
 
-// HubFiles returns all files that are imported by 3+ other files
+// CountHubImporters returns how many of the given importers count toward hub
+// status (i.e. excluding test files).
+func CountHubImporters(importers []string) int {
+	count := 0
+	for _, imp := range importers {
+		if !IsTestFile(imp) {
+			count++
+		}
+	}
+	return count
+}
+
+// IsHub returns true if a file has HubThreshold+ non-test importers.
+// Test files themselves never rank as hubs.
+func (fg *FileGraph) IsHub(path string) bool {
+	if IsTestFile(path) {
+		return false
+	}
+	return CountHubImporters(fg.Importers[path]) >= HubThreshold
+}
+
+// HubFiles returns all files that qualify as hubs under IsHub.
 func (fg *FileGraph) HubFiles() []string {
 	var hubs []string
-	for path, importers := range fg.Importers {
-		if len(importers) >= 3 {
+	for path := range fg.Importers {
+		if fg.IsHub(path) {
 			hubs = append(hubs, path)
 		}
 	}

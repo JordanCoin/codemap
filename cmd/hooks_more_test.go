@@ -449,8 +449,16 @@ func TestHookPromptSubmitShowsContextAndProgress(t *testing.T) {
 		},
 	})
 
+	if err := recordAgentEdit(root, "prompt-session", "pkg/types.go", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordAgentEdit(root, "prompt-session", "cmd/run.go", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
 	withStdinInput(t, mustJSONInput(t, map[string]string{
-		"prompt": "please inspect pkg/types.go because hook daemon events are noisy",
+		"prompt":     "please inspect pkg/types.go because hook daemon events are noisy",
+		"session_id": "prompt-session",
 	}), func() {
 		var hookErr error
 		out := captureOutput(func() { hookErr = hookPromptSubmit(root) })

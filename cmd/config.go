@@ -31,6 +31,11 @@ var nonCodeExtensions = map[string]bool{
 	"svg": true, "png": true, "jpg": true, "jpeg": true,
 	"gif": true, "ico": true, "woff": true, "woff2": true,
 	"ttf": true, "eot": true, "map": true, "license": true,
+	// Runtime and build residue: never worth an `only` slot even when a repo
+	// has many of them (codemap's own repo once auto-detected "log").
+	"log": true, "jsonl": true, "pid": true, "tmp": true,
+	"bak": true, "out": true, "cache": true, "swp": true,
+	"gitignore": true, "gitattributes": true, "editorconfig": true,
 }
 
 // RunConfig dispatches the "config" subcommand.
