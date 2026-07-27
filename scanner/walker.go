@@ -2,10 +2,11 @@ package scanner
 
 import (
 	"bufio"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"codemap/config"
 
 	ignore "github.com/sabhiram/go-gitignore"
 )
@@ -202,6 +203,11 @@ func shouldIncludeFile(relPath string, ext string, only []string, exclude []stri
 	return true
 }
 
+// MatchesFilters reports whether a file passes project only/exclude filters.
+func MatchesFilters(relPath string, ext string, only []string, exclude []string) bool {
+	return shouldIncludeFile(relPath, ext, only, exclude)
+}
+
 // LoadGitignore loads .gitignore from root if it exists
 // Deprecated: Use NewGitIgnoreCache for nested gitignore support
 func LoadGitignore(root string) *ignore.GitIgnore {
@@ -288,17 +294,59 @@ func ScanFiles(root string, cache *GitIgnoreCache, only []string, exclude []stri
 	return files, err
 }
 
-// ScanForDeps uses ast-grep for batched dependency analysis.
+// Filters controls which files scanner operations include.
+type Filters struct {
+	Only    []string
+	Exclude []string
+}
+
+// ScanConfiguredFiles scans using the active setup root's project filters.
+func ScanConfiguredFiles(root string, cache *GitIgnoreCache) ([]FileInfo, error) {
+	cfg := config.Load(root)
+	return ScanFiles(root, cache, cfg.Only, cfg.Exclude)
+}
+
+func filterAnalyses(analyses []FileAnalysis, filters Filters) []FileAnalysis {
+	if len(filters.Only) == 0 && len(filters.Exclude) == 0 {
+		return analyses
+	}
+
+	filtered := make([]FileAnalysis, 0, len(analyses))
+	for _, analysis := range analyses {
+		path := filepath.ToSlash(analysis.Path)
+		if MatchesFilters(path, filepath.Ext(path), filters.Only, filters.Exclude) {
+			filtered = append(filtered, analysis)
+		}
+	}
+	return filtered
+}
+
+func filterConfiguredAnalyses(root string, analyses []FileAnalysis) []FileAnalysis {
+	cfg := config.Load(root)
+	return filterAnalyses(analyses, Filters{Only: cfg.Only, Exclude: cfg.Exclude})
+}
+
+// ScanForDeps uses the configured project filters for batched dependency analysis.
 func ScanForDeps(root string) ([]FileAnalysis, error) {
-	scanner, err := NewAstGrepScanner()
+	cfg := config.Load(root)
+	return ScanForDepsWithFilters(root, Filters{Only: cfg.Only, Exclude: cfg.Exclude})
+}
+
+// ScanForDepsWithFilters uses ast-grep for batched dependency analysis with explicit filters.
+func ScanForDepsWithFilters(root string, filters Filters) ([]FileAnalysis, error) {
+	astScanner, err := NewAstGrepScanner()
 	if err != nil {
 		return nil, err
 	}
-	defer scanner.Close()
+	defer astScanner.Close()
 
-	if !scanner.Available() {
-		return nil, fmt.Errorf("ast-grep not found in PATH (tried 'sg' and 'ast-grep')")
+	if !astScanner.Available() {
+		return nil, ErrAstGrepNotFound
 	}
 
-	return scanner.ScanDirectory(root)
+	analyses, err := astScanner.ScanDirectory(root)
+	if err != nil {
+		return nil, err
+	}
+	return filterAnalyses(analyses, filters), nil
 }

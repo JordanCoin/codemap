@@ -204,6 +204,51 @@ func writeImportersFixture(t *testing.T, root string) {
 	}
 }
 
+func writeCLIFilterPrecedenceFixture(t *testing.T, root string) {
+	t.Helper()
+
+	files := map[string]string{
+		"go.mod":               "module example.com/precedence\n\ngo 1.22\n",
+		"pkg/shared/shared.go": "package shared\n\nfunc Value() int { return 1 }\n",
+		"a/a.go":               "package a\n\nimport \"example.com/precedence/pkg/shared\"\n\nfunc Use() int { return shared.Value() }\n",
+		"c/c.go":               "package c\n\nimport \"example.com/precedence/pkg/shared\"\n\nfunc Use() int { return shared.Value() }\n",
+		"ts/ignored.ts":        "import { Value } from '../pkg/shared/shared';\n\nexport const use = Value;\n",
+		".codemap/config.json": "{\n  \"only\": [\"ts\"],\n  \"exclude\": [\"a\"]\n}\n",
+	}
+	for path, content := range files {
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func analysisPaths(analyses []scanner.FileAnalysis) []string {
+	paths := make([]string, 0, len(analyses))
+	for _, analysis := range analyses {
+		paths = append(paths, filepath.ToSlash(analysis.Path))
+	}
+	return paths
+}
+
+func requirePaths(t *testing.T, paths []string, present, absent []string) {
+	t.Helper()
+	joined := "\n" + strings.Join(paths, "\n") + "\n"
+	for _, path := range present {
+		if !strings.Contains(joined, "\n"+path+"\n") {
+			t.Fatalf("expected %q in paths %v", path, paths)
+		}
+	}
+	for _, path := range absent {
+		if strings.Contains(joined, "\n"+path+"\n") {
+			t.Fatalf("did not expect %q in paths %v", path, paths)
+		}
+	}
+}
+
 func makeMainGitRepo(t *testing.T, branch string) string {
 	t.Helper()
 
@@ -290,7 +335,7 @@ func TestRunImportersMode(t *testing.T) {
 	writeImportersFixture(t, root)
 
 	stdout, _ := captureMainStreams(t, func() {
-		runImportersMode(root, filepath.Join(root, "pkg", "types", "types.go"))
+		runImportersMode(root, filepath.Join(root, "pkg", "types", "types.go"), false, scanner.Filters{})
 	})
 
 	for _, check := range []string{"HUB FILE: pkg/types/types.go", "Imported by 4 files", "Dependents:"} {
@@ -309,7 +354,7 @@ func TestRunDepsModeJSONAndMainDispatchesDepsAndImporters(t *testing.T) {
 	writeImportersFixture(t, root)
 
 	stdout, _ := captureMainStreams(t, func() {
-		runDepsMode(root, root, true, "main", map[string]bool{"a/a.go": true})
+		runDepsMode(root, root, true, "main", map[string]bool{"a/a.go": true}, false, scanner.Filters{})
 	})
 
 	var depsProject scanner.DepsProject
@@ -340,6 +385,129 @@ func TestRunDepsModeJSONAndMainDispatchesDepsAndImporters(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "Imports 1 hub(s): pkg/types/types.go") {
 		t.Fatalf("expected hub import summary for main.go, got:\n%s", stdout)
+	}
+
+	stdout = runMainWithArgs(t, []string{"codemap", "--json", "--importers", "main.go", root})
+	var importersReport scanner.ImportersReport
+	if err := json.Unmarshal([]byte(stdout), &importersReport); err != nil {
+		t.Fatalf("expected importers JSON output, got error %v with body:\n%s", err, stdout)
+	}
+	if importersReport.Mode != "importers" || importersReport.File != "main.go" {
+		t.Fatalf("expected importers report for main.go, got %+v", importersReport)
+	}
+	if len(importersReport.Importers) != 0 {
+		t.Fatalf("expected main.go to have no importers in fixture, got %+v", importersReport.Importers)
+	}
+	if len(importersReport.HubImports) != 1 || importersReport.HubImports[0] != "pkg/types/types.go" {
+		t.Fatalf("expected hub import summary in JSON, got %+v", importersReport.HubImports)
+	}
+}
+
+func TestBinaryDependencyModesHonorCLIFiltersOverConfig(t *testing.T) {
+	if !scanner.NewAstGrepAnalyzer().Available() {
+		t.Skip("ast-grep not available")
+	}
+
+	root := t.TempDir()
+	writeCLIFilterPrecedenceFixture(t, root)
+
+	tests := []struct {
+		name  string
+		input string
+		args  []string
+		check func(t *testing.T, output string)
+	}{
+		{
+			name: "deps",
+			args: []string{"--deps", "--json", "--only", "go", "--exclude", "c", root},
+			check: func(t *testing.T, output string) {
+				t.Helper()
+				var project scanner.DepsProject
+				if err := json.Unmarshal([]byte(output), &project); err != nil {
+					t.Fatalf("decode deps JSON: %v\n%s", err, output)
+				}
+				requirePaths(t, analysisPaths(project.Files),
+					[]string{"a/a.go", "pkg/shared/shared.go"},
+					[]string{"c/c.go", "ts/ignored.ts"})
+			},
+		},
+		{
+			name: "importers",
+			args: []string{"--importers", "pkg/shared/shared.go", "--json", "--only", "go", "--exclude", "c", root},
+			check: func(t *testing.T, output string) {
+				t.Helper()
+				var report scanner.ImportersReport
+				if err := json.Unmarshal([]byte(output), &report); err != nil {
+					t.Fatalf("decode importers JSON: %v\n%s", err, output)
+				}
+				requirePaths(t, report.Importers, []string{"a/a.go"}, []string{"c/c.go", "ts/ignored.ts"})
+			},
+		},
+		{
+			name:  "deps stdin",
+			input: `{"files":[{"path":"go/main.go","content":"package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println(1) }\n"},{"path":"ts/ignored.ts","content":"import { ignored } from \"example\";\n\nexport const value = ignored;\n"}]}`,
+			args:  []string{"--deps", "--stdin", "--json", "--only", "go"},
+			check: func(t *testing.T, output string) {
+				t.Helper()
+				var project scanner.DepsProject
+				if err := json.Unmarshal([]byte(output), &project); err != nil {
+					t.Fatalf("decode stdin deps JSON: %v\n%s", err, output)
+				}
+				requirePaths(t, analysisPaths(project.Files), []string{"go/main.go"}, []string{"ts/ignored.ts"})
+				if len(project.Files) != 1 || len(project.Files[0].Imports) == 0 {
+					t.Fatalf("expected parsed Go import, got %+v", project.Files)
+				}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			output, stderr, err := runCodemapWithInput(test.input, test.args...)
+			if err != nil {
+				t.Fatalf("codemap %s failed: %v\nstderr=%s", test.name, err, stderr)
+			}
+			test.check(t, output)
+		})
+	}
+}
+
+func TestRunDepsModeFromStdinHonorsFilters(t *testing.T) {
+	if !scanner.NewAstGrepAnalyzer().Available() {
+		t.Skip("ast-grep not available")
+	}
+
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStdin := os.Stdin
+	os.Stdin = reader
+	t.Cleanup(func() {
+		os.Stdin = oldStdin
+		_ = reader.Close()
+	})
+	manifest := `{"files":[{"path":"go.mod","content":"module example.com/stdin\n\nrequire (\n\texample.com/external v1.0.0\n)\n"},{"path":"go/main.go","content":"package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println(1) }\n"},{"path":"ts/ignored.ts","content":"import { ignored } from \"example\";\n\nexport const value = ignored;\n"}]}`
+	if _, err := writer.WriteString(manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _ := captureMainStreams(t, func() {
+		runDepsMode("stdin-root", "stdin-root", true, "main", nil, true, scanner.Filters{Only: []string{"go"}})
+	})
+	var project scanner.DepsProject
+	if err := json.Unmarshal([]byte(stdout), &project); err != nil {
+		t.Fatalf("decode stdin deps JSON: %v\n%s", err, stdout)
+	}
+	requirePaths(t, analysisPaths(project.Files), []string{"go/main.go"}, []string{"ts/ignored.ts"})
+	if len(project.Files) != 1 || len(project.Files[0].Imports) == 0 {
+		t.Fatalf("expected parsed Go import, got %+v", project.Files)
+	}
+	if !strings.Contains(strings.Join(project.ExternalDeps["go"], "\n"), "example.com/external") {
+		t.Fatalf("expected manifest external dependency, got %+v", project.ExternalDeps)
 	}
 }
 
@@ -661,7 +829,7 @@ func TestRunDepsModeRenderedOutputAndMainTreeModes(t *testing.T) {
 	writeImportersFixture(t, root)
 
 	stdout, _ := captureMainStreams(t, func() {
-		runDepsMode(root, root, false, "main", nil)
+		runDepsMode(root, root, false, "main", nil, false, scanner.Filters{})
 	})
 	if !strings.Contains(stdout, "Dependency Flow") {
 		t.Fatalf("expected rendered dependency graph output, got:\n%s", stdout)
@@ -742,4 +910,25 @@ func TestSubcommandDispatchViaBinary(t *testing.T) {
 			t.Fatalf("unexpected handoff output:\n%s", stdout)
 		}
 	})
+}
+
+func TestRunWatchSubcommandStopForeignPID(t *testing.T) {
+	root := t.TempDir()
+
+	origRunning := watchIsRunning
+	origStop := stopWatchDaemon
+	defer func() {
+		watchIsRunning = origRunning
+		stopWatchDaemon = origStop
+	}()
+	watchIsRunning = func(string) bool { return true }
+	stopWatchDaemon = func(string) error { return watch.ErrForeignDaemonPID }
+
+	stdout, _ := captureMainStreams(t, func() { runWatchSubcommand("stop", root) })
+	if !strings.Contains(stdout, "cleared stale PID file") {
+		t.Fatalf("expected stale-PID message on foreign PID, got:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "Watch daemon stopped") {
+		t.Fatalf("should not claim the daemon was stopped for a foreign PID:\n%s", stdout)
+	}
 }

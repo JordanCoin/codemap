@@ -14,7 +14,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        go-version: ['1.21', '1.22', '1.23']
+        go-version: ['1.24', '1.25', '1.26']
 
     steps:
       - uses: actions/checkout@v4
@@ -50,7 +50,7 @@ jobs:
         run: |
           total=$(go tool cover -func=coverage.out | awk '/^total:/ {gsub("%","",$3); print $3}')
           # Current enforced coverage floor. Codex PRs raise this incrementally toward 90%.
-          min=50.0
+          min=55.0
           awk -v t="$total" -v m="$min" 'BEGIN {
             if (t+0 < m+0) {
               printf "Coverage %.1f%% is below floor %.1f%%\n", t, m
@@ -63,6 +63,9 @@ jobs:
 
       - name: Update coverage badge
         if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23' && github.ref == 'refs/heads/main'
+        # Cosmetic gist badge update; a bad/expired GIST_TOKEN must not red-fail
+        # the whole main build. Rotate GIST_TOKEN (PAT with gist scope) to restore.
+        continue-on-error: true
         uses: schneegans/dynamic-badges-action@v1.7.0
         with:
           auth: ${{ secrets.GIST_TOKEN }}

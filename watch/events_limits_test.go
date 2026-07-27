@@ -116,3 +116,26 @@ func TestTrimEventLogToBytesNoopCases(t *testing.T) {
 		t.Fatalf("expected noop trim cases to keep log unchanged; got %q", string(data))
 	}
 }
+
+func TestIsTransientFile(t *testing.T) {
+	transient := []string{
+		"vite.config.ts.timestamp-1782838234865-c8aa76eef25878.mjs",
+		"sub/dir/vite.config.ts.timestamp-1.mjs",
+	}
+	for _, p := range transient {
+		if !isTransientFile(p) {
+			t.Errorf("expected %q to be transient", p)
+		}
+	}
+	real := []string{
+		"vite.config.ts",
+		"src/index.mjs",
+		"main.go",
+		"timestamp.go",
+	}
+	for _, p := range real {
+		if isTransientFile(p) {
+			t.Errorf("expected %q to NOT be transient", p)
+		}
+	}
+}

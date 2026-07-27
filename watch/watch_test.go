@@ -281,7 +281,7 @@ func TestDebounce(t *testing.T) {
 
 	// Rapid fire writes (within debounce window)
 	for i := 0; i < 5; i++ {
-		content := []byte("package rapid\n// line " + string(rune('a'+i)) + "\n")
+		content := []byte("package rapid\n" + strings.Repeat("// line\n", i+1))
 		if err := os.WriteFile(testFile, content, 0644); err != nil {
 			t.Fatalf("Failed to modify file: %v", err)
 		}
@@ -292,15 +292,21 @@ func TestDebounce(t *testing.T) {
 
 	events := daemon.GetEvents(100)
 	writeCount := 0
+	lastWriteLines := 0
 	for _, e := range events {
 		if e.Op == "WRITE" && e.Path == "rapid.go" {
 			writeCount++
+			lastWriteLines = e.Lines
 		}
 	}
 
-	// Should have fewer events than writes due to debouncing
-	if writeCount >= 5 {
-		t.Errorf("Expected debounced events (< 5), got %d", writeCount)
+	// The first write may be processed immediately; the changed-size burst must
+	// collapse to at most one trailing event with the latest contents.
+	if writeCount == 0 || writeCount > 2 {
+		t.Errorf("Expected 1-2 debounced events, got %d", writeCount)
+	}
+	if lastWriteLines != 6 {
+		t.Errorf("Expected trailing event with 6 lines, got %d", lastWriteLines)
 	}
 }
 

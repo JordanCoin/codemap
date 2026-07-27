@@ -101,7 +101,7 @@ jobs:
         with:
           distribution: goreleaser
           version: latest
-          args: release ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '--snapshot --clean' || '--clean' }}
+          args: release --config .goreleaser.full.yml ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '--snapshot --clean' || '--clean' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.SCOOP_TOKEN }}

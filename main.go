@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -18,7 +17,6 @@ import (
 	"codemap/config"
 	"codemap/handoff"
 	"codemap/limits"
-	codemapmcp "codemap/mcp"
 	"codemap/render"
 	"codemap/scanner"
 	"codemap/watch"
@@ -108,9 +106,8 @@ func main() {
 
 	// Handle "mcp" subcommand before global flag parsing
 	if len(os.Args) >= 2 && os.Args[1] == "mcp" {
-		if err := codemapmcp.Run(context.Background()); err != nil {
-			fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
-			os.Exit(1)
+		if code := cmd.RunMCP(); code != 0 {
+			os.Exit(code)
 		}
 		return
 	}
@@ -148,6 +145,12 @@ func main() {
 		return
 	}
 
+	// Handle "blast-radius" subcommand before global flag parsing
+	if len(os.Args) >= 2 && os.Args[1] == "blast-radius" {
+		runBlastRadiusSubcommand(os.Args[2:])
+		return
+	}
+
 	skylineMode := flag.Bool("skyline", false, "Enable skyline visualization mode")
 	animateMode := flag.Bool("animate", false, "Enable animation (use with --skyline)")
 	depsMode := flag.Bool("deps", false, "Enable dependency graph mode (function/import analysis)")
@@ -159,6 +162,7 @@ func main() {
 	jsonMode := flag.Bool("json", false, "Output JSON (for Python renderer compatibility)")
 	debugMode := flag.Bool("debug", false, "Show debug info (gitignore loading, paths, etc.)")
 	watchMode := flag.Bool("watch", false, "Live file watcher daemon (experimental)")
+	stdinMode := flag.Bool("stdin", false, "Read file manifest from stdin (use with --deps)")
 	importersMode := flag.String("importers", "", "Check file impact: who imports it, is it a hub?")
 	helpMode := flag.Bool("help", false, "Show help")
 	// Short flag aliases
@@ -180,6 +184,7 @@ func main() {
 		fmt.Println("  --depth, -d <n>     Limit tree depth (0 = unlimited)")
 		fmt.Println("  --only <exts>       Only show files with these extensions (e.g., 'swift,go')")
 		fmt.Println("  --exclude <patterns> Exclude paths matching patterns (e.g., '.xcassets,Fonts')")
+		fmt.Println("  --stdin             Read JSON file manifest from stdin (use with --deps)")
 		fmt.Println("  --importers <file>  Check file impact (who imports it, hub status)")
 		fmt.Println()
 		fmt.Println("Examples:")
@@ -193,6 +198,7 @@ func main() {
 		fmt.Println("  codemap --only swift .          # Just Swift files")
 		fmt.Println("  codemap --exclude .xcassets,Fonts,.png  # Hide assets")
 		fmt.Println("  codemap --importers scanner/types.go  # Check file impact")
+		fmt.Println("  echo '{...}' | codemap --deps --stdin  # Deps from file manifest")
 		fmt.Println()
 		fmt.Println("Remote repos (clones temporarily):")
 		fmt.Println("  codemap github.com/user/repo    # GitHub repo")
@@ -209,6 +215,7 @@ func main() {
 		fmt.Println("  codemap hook pre-compact        # Save state before compact")
 		fmt.Println("  codemap hook session-stop       # Session summary")
 		fmt.Println("  codemap handoff [path]          # Build handoff artifact for agent switching")
+		fmt.Println("  codemap blast-radius [path]     # Compact bounded blast-radius bundle")
 		fmt.Println()
 		fmt.Println("Project config:")
 		fmt.Println("  codemap config init             # Create .codemap/config.json (auto-detects extensions)")
@@ -287,6 +294,7 @@ func main() {
 	if *depthLimit == 0 && projCfg.Depth > 0 {
 		*depthLimit = projCfg.Depth
 	}
+	filters := scanner.Filters{Only: only, Exclude: exclude}
 
 	if *debugMode {
 		fmt.Fprintf(os.Stderr, "[debug] Root path: %s\n", root)
@@ -302,7 +310,7 @@ func main() {
 
 	// Importers mode - check file impact
 	if *importersMode != "" {
-		runImportersMode(absRoot, *importersMode)
+		runImportersMode(absRoot, *importersMode, *jsonMode, filters)
 		return
 	}
 
@@ -328,7 +336,7 @@ func main() {
 		if diffInfo != nil {
 			changedFiles = diffInfo.Changed
 		}
-		runDepsMode(absRoot, root, *jsonMode, *diffRef, changedFiles)
+		runDepsMode(absRoot, root, *jsonMode, *diffRef, changedFiles, *stdinMode, filters)
 		return
 	}
 
@@ -377,17 +385,41 @@ func main() {
 	}
 }
 
-func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFiles map[string]bool) {
-	analyses, err := scanner.ScanForDeps(root)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "The --deps feature requires ast-grep. Install it with:")
-		fmt.Fprintln(os.Stderr, "  brew install ast-grep    # macOS/Linux (installs as 'sg')")
-		fmt.Fprintln(os.Stderr, "  cargo install ast-grep   # via Rust (installs as 'ast-grep')")
-		fmt.Fprintln(os.Stderr, "  pipx install ast-grep    # via Python (installs as 'ast-grep')")
-		fmt.Fprintln(os.Stderr, "")
-		os.Exit(1)
+// stdinManifest is the JSON format accepted by --stdin.
+type stdinManifest struct {
+	Root  string `json:"root"`
+	Files []struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	} `json:"files"`
+}
+
+func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFiles map[string]bool, stdinMode bool, filters scanner.Filters) {
+	var analyses []FileAnalysis
+	var externalDeps map[string][]string
+	var err error
+
+	if stdinMode {
+		analyses, externalDeps, err = runDepsFromStdin(filters)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading stdin manifest: %v\n", err)
+			os.Exit(1)
+		}
+		// Use the manifest root as absRoot if provided
+		if externalDeps == nil {
+			externalDeps = make(map[string][]string)
+		}
+	} else {
+		analyses, err = scanForDepsWithHint(root, filters)
+		if err != nil {
+			if errors.Is(err, scanner.ErrAstGrepNotFound) {
+				printAstGrepInstallHint(os.Stderr, err)
+			} else {
+				fmt.Fprintf(os.Stderr, "Error scanning dependencies: %v\n", err)
+			}
+			os.Exit(1)
+		}
+		externalDeps = scanner.ReadExternalDeps(absRoot)
 	}
 
 	// Filter to changed files if --diff specified
@@ -399,7 +431,7 @@ func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFil
 		Root:         absRoot,
 		Mode:         "deps",
 		Files:        analyses,
-		ExternalDeps: scanner.ReadExternalDeps(absRoot),
+		ExternalDeps: externalDeps,
 		DiffRef:      diffRef,
 	}
 
@@ -410,6 +442,56 @@ func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFil
 		render.Depgraph(os.Stdout, depsProject)
 	}
 }
+
+// scanForDepsWithHint wraps scanner.ScanForDepsWithFilters (extracted for testability).
+func scanForDepsWithHint(root string, filters scanner.Filters) ([]FileAnalysis, error) {
+	return scanner.ScanForDepsWithFilters(root, filters)
+}
+
+// runDepsFromStdin reads a JSON manifest from stdin, writes files to a temp
+// directory, runs ast-grep on it, and returns the results with paths matching
+// the original manifest.
+func runDepsFromStdin(filters scanner.Filters) ([]FileAnalysis, map[string][]string, error) {
+	var manifest stdinManifest
+	if err := json.NewDecoder(os.Stdin).Decode(&manifest); err != nil {
+		return nil, nil, fmt.Errorf("invalid JSON: %w", err)
+	}
+
+	if len(manifest.Files) == 0 {
+		return nil, nil, nil
+	}
+
+	// Create temp directory and write manifest files
+	tempDir, err := os.MkdirTemp("", "codemap-stdin-*")
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	for _, f := range manifest.Files {
+		dest := filepath.Join(tempDir, f.Path)
+		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+			return nil, nil, fmt.Errorf("mkdir %s: %w", filepath.Dir(dest), err)
+		}
+		if err := os.WriteFile(dest, []byte(f.Content), 0644); err != nil {
+			return nil, nil, fmt.Errorf("write %s: %w", f.Path, err)
+		}
+	}
+
+	// Run ast-grep on temp directory
+	analyses, err := scanner.ScanForDepsWithFilters(tempDir, filters)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Read external deps from temp directory (manifest may include go.mod etc.)
+	externalDeps := scanner.ReadExternalDeps(tempDir)
+
+	return analyses, externalDeps, nil
+}
+
+// FileAnalysis is a type alias for use in main package.
+type FileAnalysis = scanner.FileAnalysis
 
 func runWatchMode(root string, verbose bool) {
 	fmt.Println("codemap watch - Live code graph daemon")
@@ -450,55 +532,26 @@ func runWatchMode(root string, verbose bool) {
 	fmt.Printf("  Events logged: %d\n", len(events))
 }
 
-func runImportersMode(root, file string) {
-	fg, err := scanner.BuildFileGraph(root)
+func buildImportersReport(root, file string, filters scanner.Filters) (scanner.ImportersReport, error) {
+	fg, err := scanner.BuildFileGraphWithFilters(root, filters)
+	if err != nil {
+		return scanner.ImportersReport{}, err
+	}
+	return buildImportersReportFromGraph(root, file, fg), nil
+}
+
+func runImportersMode(root, file string, jsonMode bool, filters scanner.Filters) {
+	report, err := buildImportersReport(root, file, filters)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error building file graph: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Handle absolute paths - convert to relative
-	if filepath.IsAbs(file) {
-		if rel, err := filepath.Rel(root, file); err == nil {
-			file = rel
-		}
+	if jsonMode {
+		_ = json.NewEncoder(os.Stdout).Encode(report)
+		return
 	}
-
-	importers := fg.Importers[file]
-	if len(importers) >= 3 {
-		fmt.Printf("⚠️  HUB FILE: %s\n", file)
-		fmt.Printf("   Imported by %d files - changes have wide impact!\n", len(importers))
-		fmt.Println()
-		fmt.Println("   Dependents:")
-		for i, imp := range importers {
-			if i >= 5 {
-				fmt.Printf("   ... and %d more\n", len(importers)-5)
-				break
-			}
-			fmt.Printf("   • %s\n", imp)
-		}
-	} else if len(importers) > 0 {
-		fmt.Printf("📍 File: %s\n", file)
-		fmt.Printf("   Imported by %d file(s)\n", len(importers))
-		for _, imp := range importers {
-			fmt.Printf("   • %s\n", imp)
-		}
-	}
-
-	// Also check if this file imports any hubs
-	imports := fg.Imports[file]
-	var hubImports []string
-	for _, imp := range imports {
-		if fg.IsHub(imp) {
-			hubImports = append(hubImports, imp)
-		}
-	}
-	if len(hubImports) > 0 {
-		if len(importers) == 0 {
-			fmt.Printf("📍 File: %s\n", file)
-		}
-		fmt.Printf("   Imports %d hub(s): %s\n", len(hubImports), strings.Join(hubImports, ", "))
-	}
+	renderImportersReport(os.Stdout, report)
 }
 
 func runWatchSubcommand(subCmd, root string) {
@@ -542,6 +595,10 @@ func runWatchSubcommand(subCmd, root string) {
 			return
 		}
 		if err := stopWatchDaemon(absRoot); err != nil {
+			if errors.Is(err, watch.ErrForeignDaemonPID) {
+				fmt.Println("Watch daemon not running (cleared stale PID file)")
+				return
+			}
 			fmt.Fprintf(os.Stderr, "Error stopping daemon: %v\n", err)
 			os.Exit(1)
 		}

@@ -59,6 +59,7 @@ func TestHelpFlag(t *testing.T) {
 		"--deps",
 		"--diff",
 		"--ref",
+		"blast-radius",
 	}
 
 	for _, expected := range expectedStrings {

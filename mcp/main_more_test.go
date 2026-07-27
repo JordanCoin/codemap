@@ -109,6 +109,95 @@ func TestHandleGetDependenciesAndDiff(t *testing.T) {
 	}
 }
 
+func TestMCPScansRespectConfiguredFilters(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	if !scanner.NewAstGrepAnalyzer().Available() {
+		t.Skip("ast-grep not available")
+	}
+
+	root := makeMCPGitRepo(t, "main")
+	files := map[string]string{
+		".codemap/config.json": `{"only":["go"],"exclude":["excluded"]}`,
+		"go.mod":               "module example.com/mcpfiltered\n\ngo 1.22\n",
+		"pkg/types/types.go":   "package types\n\ntype Item struct{}\n",
+		"a/a.go":               "package a\n\nimport _ \"example.com/mcpfiltered/pkg/types\"\n",
+		"b/b.go":               "package b\n\nimport _ \"example.com/mcpfiltered/pkg/types\"\n",
+		"c/c.go":               "package c\n\nimport _ \"example.com/mcpfiltered/pkg/types\"\n",
+		"schema.ts":            "export const schema = 1\n",
+		"excluded/d/d.go":      "package d\n\nimport _ \"example.com/mcpfiltered/pkg/types\"\n",
+	}
+	for path, content := range files {
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runGitMCPTestCmd(t, root, "add", ".")
+	runGitMCPTestCmd(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "fixture")
+
+	for path, content := range map[string]string{
+		"a/a.go":          "package a\n\nimport _ \"example.com/mcpfiltered/pkg/types\"\n\nfunc Changed() {}\n",
+		"schema.ts":       "export const schema = 2\n",
+		"excluded/d/d.go": "package d\n\nimport _ \"example.com/mcpfiltered/pkg/types\"\n\nfunc Changed() {}\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, path), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	structure, _, err := handleGetStructure(context.Background(), nil, PathInput{Path: root})
+	if err != nil {
+		t.Fatalf("handleGetStructure error: %v", err)
+	}
+	structureOut := resultText(t, structure)
+	for _, want := range []string{"main.go", "types.go", "a.go"} {
+		if !strings.Contains(structureOut, want) {
+			t.Fatalf("structure missing %q:\n%s", want, structureOut)
+		}
+	}
+	for _, unwanted := range []string{"schema.ts", "excluded"} {
+		if strings.Contains(structureOut, unwanted) {
+			t.Fatalf("structure contains configured-out %q:\n%s", unwanted, structureOut)
+		}
+	}
+
+	diff, _, err := handleGetDiff(context.Background(), nil, DiffInput{Path: root, Ref: "main"})
+	if err != nil {
+		t.Fatalf("handleGetDiff error: %v", err)
+	}
+	diffOut := resultText(t, diff)
+	if !strings.Contains(diffOut, "a.go") || strings.Contains(diffOut, "schema.ts") || strings.Contains(diffOut, "excluded") {
+		t.Fatalf("unexpected filtered diff:\n%s", diffOut)
+	}
+
+	deps, _, err := handleGetDependencies(context.Background(), nil, PathInput{Path: root})
+	if err != nil {
+		t.Fatalf("handleGetDependencies error: %v", err)
+	}
+	depsOut := resultText(t, deps)
+	if strings.Contains(depsOut, "schema.ts") || strings.Contains(depsOut, "excluded/d/d.go") {
+		t.Fatalf("dependencies contain configured-out files:\n%s", depsOut)
+	}
+
+	hubs, _, err := handleGetHubs(context.Background(), nil, PathInput{Path: root})
+	if err != nil {
+		t.Fatalf("handleGetHubs error: %v", err)
+	}
+	hubsOut := resultText(t, hubs)
+	if !strings.Contains(hubsOut, "pkg/types/types.go (3 importers)") || strings.Contains(hubsOut, "excluded/d/d.go") {
+		t.Fatalf("unexpected filtered hubs:\n%s", hubsOut)
+	}
+
+	if got := getProjectStats(root); !strings.Contains(got, "(5 files, Go") {
+		t.Fatalf("project stats = %q, want 5 filtered Go files", got)
+	}
+}
+
 func TestHandleWatchLifecycleAndActivity(t *testing.T) {
 	withWatcherRegistry(t)
 

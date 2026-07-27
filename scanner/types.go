@@ -48,6 +48,18 @@ type DepsProject struct {
 	DiffRef      string              `json:"diff_ref,omitempty"`
 }
 
+// ImportersReport is the JSON output for --importers mode.
+type ImportersReport struct {
+	Root          string   `json:"root"`
+	Mode          string   `json:"mode"`
+	File          string   `json:"file"`
+	Importers     []string `json:"importers"`
+	Imports       []string `json:"imports,omitempty"`
+	HubImports    []string `json:"hub_imports,omitempty"`
+	ImporterCount int      `json:"importer_count"`
+	IsHub         bool     `json:"is_hub"`
+}
+
 // extToLang maps file extensions to language names
 var extToLang = map[string]string{
 	".go":    "go",

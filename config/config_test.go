@@ -258,6 +258,38 @@ func TestProjectConfigStateHelpers(t *testing.T) {
 	})
 }
 
+func TestGuidanceConfigHelpers(t *testing.T) {
+	var zero ProjectConfig
+	if !zero.MissingExtensionHintsEnabled() {
+		t.Fatal("expected missing-extension hints to default to enabled")
+	}
+
+	enabled, disabled := true, false
+	if !(ProjectConfig{Guidance: GuidanceConfig{MissingExtensionHints: &enabled}}).MissingExtensionHintsEnabled() {
+		t.Fatal("expected explicitly enabled missing-extension hints")
+	}
+	if (ProjectConfig{Guidance: GuidanceConfig{MissingExtensionHints: &disabled}}).MissingExtensionHintsEnabled() {
+		t.Fatal("expected explicitly disabled missing-extension hints")
+	}
+
+	cfg := ProjectConfig{Guidance: GuidanceConfig{IgnoredExtensions: []string{" .Proto ", "SUM"}}}
+	for _, ext := range []string{".proto", " PROTO", ".sum"} {
+		if !cfg.IgnoresGuidanceForExtension(ext) {
+			t.Fatalf("expected extension %q to be ignored", ext)
+		}
+	}
+	if cfg.IgnoresGuidanceForExtension(".rs") {
+		t.Fatal("did not expect rs guidance to be ignored")
+	}
+
+	if (ProjectConfig{Guidance: GuidanceConfig{MissingExtensionHints: &enabled}}).IsZero() {
+		t.Fatal("config with missing-extension policy must not be zero")
+	}
+	if (ProjectConfig{Guidance: GuidanceConfig{IgnoredExtensions: []string{"proto"}}}).IsZero() {
+		t.Fatal("config with ignored guidance extensions must not be zero")
+	}
+}
+
 func TestAssessSetup(t *testing.T) {
 	t.Run("missing config needs setup", func(t *testing.T) {
 		assessment := AssessSetup(t.TempDir())

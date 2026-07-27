@@ -5,6 +5,7 @@ project_name: codemap
 before:
   hooks:
     - go mod tidy
+    - ./scripts/download-bundled-astgrep.sh
 
 builds:
   - id: codemap
@@ -40,6 +41,25 @@ archives:
       - LICENSE*
       - src: scanner/sg-rules/*
         dst: sg-rules
+  - id: full
+    ids:
+      - codemap
+    name_template: '{{ .ProjectName }}-full_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}{{ with .Mips }}_{{ . }}{{ end }}{{ if not (eq .Amd64 "v1") }}{{ .Amd64 }}{{ end }}'
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - README.md
+      - LICENSE*
+      - src: scanner/sg-rules/*
+        dst: sg-rules
+      - src: bundled-tools/{{ .Os }}_{{ .Arch }}/ast-grep{{ if eq .Os "windows" }}.exe{{ end }}
+        strip_parent: true
+      - src: bundled-tools/{{ .Os }}_{{ .Arch }}/sg{{ if eq .Os "windows" }}.exe{{ end }}
+        strip_parent: true
 
 checksum:
   name_template: 'checksums.txt'
@@ -62,6 +82,8 @@ brews:
       owner: JordanCoin
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    ids:
+      - default
     directory: .
     homepage: https://github.com/JordanCoin/codemap
     description: Generate a brain map of your codebase for LLM context
@@ -81,6 +103,8 @@ scoops:
       owner: JordanCoin
       name: scoop-codemap
       token: "{{ .Env.SCOOP_TOKEN }}"
+    ids:
+      - default
     homepage: https://github.com/JordanCoin/codemap
     description: Generate a brain map of your codebase for LLM context
     license: MIT
@@ -89,6 +113,8 @@ scoops:
 
 winget:
   - name: codemap
+    ids:
+      - default
     publisher: JordanCoin
     short_description: Generate a brain map of your codebase for LLM context
     license: MIT

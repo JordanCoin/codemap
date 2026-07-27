@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"codemap/limits"
@@ -23,6 +24,8 @@ type Daemon struct {
 	eventLog string // path to event log file
 	verbose  bool
 	done     chan struct{}
+
+	eventLoopWG sync.WaitGroup
 }
 
 // NewDaemon creates a new watch daemon for the given root
@@ -97,7 +100,11 @@ func (d *Daemon) Start() error {
 	d.writeState()
 
 	// Start event loop
-	go d.eventLoop()
+	d.eventLoopWG.Add(1)
+	go func() {
+		defer d.eventLoopWG.Done()
+		d.eventLoop()
+	}()
 
 	return nil
 }
@@ -106,6 +113,7 @@ func (d *Daemon) Start() error {
 func (d *Daemon) Stop() {
 	close(d.done)
 	d.watcher.Close()
+	d.eventLoopWG.Wait()
 }
 
 // GetGraph returns the current graph (thread-safe)

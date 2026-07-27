@@ -6,6 +6,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -15,8 +16,14 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+var skylineANSIPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
 func resetSkylineRNG() {
 	rng = rand.New(rand.NewPCG(42, 0))
+}
+
+func stripSkylineANSI(s string) string {
+	return skylineANSIPattern.ReplaceAllString(s, "")
 }
 
 func TestSkylineFilterCodeFiles(t *testing.T) {
@@ -212,6 +219,26 @@ func TestSkylineRenderStaticIncludesTitleAndStats(t *testing.T) {
 	}
 }
 
+func TestSkylineUsesRootBaseNameWhenNameMissing(t *testing.T) {
+	resetSkylineRNG()
+
+	root := t.TempDir()
+	project := scanner.Project{
+		Root: root,
+		Files: []scanner.FileInfo{
+			{Path: "src/main.go", Ext: ".go", Size: 256},
+		},
+	}
+
+	var buf bytes.Buffer
+	Skyline(&buf, project, true)
+
+	out := stripSkylineANSI(buf.String())
+	if !strings.Contains(out, "─── "+filepath.Base(root)+" ───") {
+		t.Fatalf("expected skyline title to use root basename, got:\n%s", out)
+	}
+}
+
 func TestSkylineAnimationModelUpdateAndView(t *testing.T) {
 	resetSkylineRNG()
 
@@ -253,175 +280,144 @@ func TestSkylineAnimationModelUpdateAndView(t *testing.T) {
 	}
 }
 
-func TestSkylineAnimationModelInitAndPhase2Transitions(t *testing.T) {
-	resetSkylineRNG()
-
-	tests := []struct {
-		name     string
-		model    animationModel
-		msg      tea.Msg
-		assertFn func(t *testing.T, before animationModel, after animationModel, cmd tea.Cmd)
-	}{
-		{
-			name:  "init returns tick command",
-			model: animationModel{},
-			msg:   nil,
-			assertFn: func(t *testing.T, before animationModel, _ animationModel, cmd tea.Cmd) {
-				t.Helper()
-				if before.Init() == nil {
-					t.Fatal("expected non-nil init command")
-				}
-				if cmd != nil {
-					t.Fatal("expected nil command for nil update message")
-				}
-			},
-		},
-		{
-			name: "phase 2 activates shooting star at frame 10",
-			model: animationModel{
-				phase:      2,
-				frame:      9,
-				sceneLeft:  2,
-				sceneRight: 20,
-			},
-			msg: tickMsg(time.Now()),
-			assertFn: func(t *testing.T, before animationModel, after animationModel, cmd tea.Cmd) {
-				t.Helper()
-				if cmd == nil {
-					t.Fatal("expected tick command")
-				}
-				if after.frame != before.frame+1 {
-					t.Fatalf("frame = %d, want %d", after.frame, before.frame+1)
-				}
-				if !after.shootingStarActive {
-					t.Fatal("expected shooting star to activate")
-				}
-				if after.shootingStarCol != before.sceneLeft {
-					t.Fatalf("shootingStarCol = %d, want %d", after.shootingStarCol, before.sceneLeft)
-				}
-				if after.shootingStarRow < 0 || after.shootingStarRow > 2 {
-					t.Fatalf("shootingStarRow out of range: %d", after.shootingStarRow)
-				}
-			},
-		},
-		{
-			name: "active shooting star advances and can deactivate",
-			model: animationModel{
-				phase:              2,
-				frame:              25,
-				sceneRight:         10,
-				shootingStarActive: true,
-				shootingStarCol:    9,
-			},
-			msg: tickMsg(time.Now()),
-			assertFn: func(t *testing.T, _ animationModel, after animationModel, cmd tea.Cmd) {
-				t.Helper()
-				if cmd == nil {
-					t.Fatal("expected tick command")
-				}
-				if after.shootingStarActive {
-					t.Fatal("expected shooting star to deactivate after leaving scene")
-				}
-			},
-		},
-		{
-			name: "phase 2 quits after frame 40",
-			model: animationModel{
-				phase: 2,
-				frame: 39,
-			},
-			msg: tickMsg(time.Now()),
-			assertFn: func(t *testing.T, _ animationModel, after animationModel, cmd tea.Cmd) {
-				t.Helper()
-				if cmd == nil {
-					t.Fatal("expected quit command")
-				}
-				if !after.done {
-					t.Fatal("expected model to be marked done")
-				}
-			},
-		},
-		{
-			name: "non tick message returns nil command",
-			model: animationModel{
-				phase: 1,
-			},
-			msg: struct{}{},
-			assertFn: func(t *testing.T, _ animationModel, _ animationModel, cmd tea.Cmd) {
-				t.Helper()
-				if cmd != nil {
-					t.Fatal("expected nil command for unknown message type")
-				}
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			before := tt.model
-			updated, cmd := tt.model.Update(tt.msg)
-			after := updated.(animationModel)
-			tt.assertFn(t, before, after, cmd)
-		})
-	}
-}
-
-func TestSkylineAnimationModelViewPhase2ShootingStar(t *testing.T) {
+func TestAnimationModelInitAndPhaseTransitions(t *testing.T) {
 	resetSkylineRNG()
 
 	m := animationModel{
-		arranged: []building{{height: 4, char: '▓', color: Cyan, extLabel: ".go", gap: 1}},
-		width:    24,
-		phase:    2,
+		arranged:          []building{{height: 3, char: '▓', color: Cyan, extLabel: ".go", gap: 1}},
+		width:             20,
+		leftMargin:        2,
+		sceneLeft:         1,
+		sceneRight:        12,
+		sceneWidth:        11,
+		maxBuildingHeight: 3,
+		phase:             1,
+		visibleRows:       5,
+	}
 
+	if cmd := m.Init(); cmd == nil {
+		t.Fatal("expected Init to return a tick command")
+	}
+
+	updated, cmd := m.Update(tickMsg(time.Now()))
+	if cmd == nil {
+		t.Fatal("expected tick command during rising phase")
+	}
+
+	m1 := updated.(animationModel)
+	if m1.phase != 2 {
+		t.Fatalf("expected phase transition to 2, got %d", m1.phase)
+	}
+	if m1.frame != 0 {
+		t.Fatalf("expected frame reset after phase transition, got %d", m1.frame)
+	}
+
+	m1.frame = 39
+	updated, cmd = m1.Update(tickMsg(time.Now()))
+	if cmd == nil {
+		t.Fatal("expected quit command when animation completes")
+	}
+
+	m2 := updated.(animationModel)
+	if !m2.done {
+		t.Fatal("expected animation model to be marked done")
+	}
+}
+
+func TestAnimationModelUpdateShootingStarLifecycle(t *testing.T) {
+	resetSkylineRNG()
+
+	m := animationModel{
+		arranged:           []building{{height: 4, char: '▓', color: Cyan, extLabel: ".go", gap: 1}},
+		width:              20,
+		leftMargin:         2,
+		sceneLeft:          3,
+		sceneRight:         10,
+		sceneWidth:         7,
+		maxBuildingHeight:  4,
+		phase:              2,
+		frame:              9,
+		shootingStarActive: false,
+	}
+
+	updated, cmd := m.Update(tickMsg(time.Now()))
+	if cmd == nil {
+		t.Fatal("expected tick command in twinkling phase")
+	}
+
+	m1 := updated.(animationModel)
+	if !m1.shootingStarActive {
+		t.Fatal("expected shooting star to activate on frame 10")
+	}
+	if m1.shootingStarCol != m.sceneLeft {
+		t.Fatalf("expected shooting star to start at scene left %d, got %d", m.sceneLeft, m1.shootingStarCol)
+	}
+
+	m1.shootingStarCol = m1.sceneRight + 1
+	updated, cmd = m1.Update(tickMsg(time.Now()))
+	if cmd == nil {
+		t.Fatal("expected tick command when advancing active shooting star")
+	}
+
+	m2 := updated.(animationModel)
+	if m2.shootingStarActive {
+		t.Fatal("expected shooting star to deactivate after leaving the scene")
+	}
+}
+
+func TestAnimationModelViewRendersLabelsAndShootingStar(t *testing.T) {
+	resetSkylineRNG()
+
+	m := animationModel{
+		arranged: []building{
+			{height: 4, char: '▓', color: Cyan, extLabel: ".go", gap: 1},
+			{height: 4, char: '▒', color: Yellow, extLabel: "A-1", gap: 1},
+		},
+		width:              24,
 		leftMargin:         2,
 		sceneLeft:          1,
 		sceneRight:         20,
 		sceneWidth:         19,
-		starPositions:      [][2]int{{0, 3}},
-		moonCol:            8,
+		starPositions:      [][2]int{{0, 2}},
+		moonCol:            12,
 		maxBuildingHeight:  4,
-		visibleRows:        4,
-		shootingStarRow:    0,
-		shootingStarCol:    5,
+		phase:              2,
+		visibleRows:        6,
 		shootingStarActive: true,
+		shootingStarRow:    0,
+		shootingStarCol:    4,
 	}
 
-	view := m.View()
-	checks := []string{"★", "◐", "▀"}
-	for _, check := range checks {
-		if !strings.Contains(view, check) {
-			t.Fatalf("expected view to contain %q, got:\n%s", check, view)
+	out := stripSkylineANSI(m.View())
+	for _, want := range []string{".go", "A-1", "★", "◐", "▀"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected view to contain %q, got:\n%s", want, out)
 		}
 	}
 }
 
-func TestSkylineUsesRootBasenameWhenProjectNameMissing(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "example-project")
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatal(err)
+func TestSkylineMinMax(t *testing.T) {
+	tests := []struct {
+		name    string
+		a       int
+		b       int
+		wantMax int
+		wantMin int
+	}{
+		{name: "a greater", a: 8, b: 3, wantMax: 8, wantMin: 3},
+		{name: "b greater", a: 2, b: 9, wantMax: 9, wantMin: 2},
+		{name: "equal", a: 5, b: 5, wantMax: 5, wantMin: 5},
 	}
 
-	project := scanner.Project{
-		Root: root,
-		Files: []scanner.FileInfo{
-			{Path: "main.go", Ext: ".go", Size: 200},
-			{Path: "utils.ts", Ext: ".ts", Size: 100},
-		},
-	}
-
-	var buf bytes.Buffer
-	Skyline(&buf, project, true)
-
-	out := buf.String()
-	if strings.Contains(out, "No source files to display") {
-		t.Fatalf("expected skyline output, got:\n%s", out)
-	}
-	if !strings.Contains(out, "example-project") {
-		t.Fatalf("expected output to include fallback project name, got:\n%s", out)
-	}
-	if !strings.Contains(out, "languages") {
-		t.Fatalf("expected summary line in output, got:\n%s", out)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := max(tt.a, tt.b); got != tt.wantMax {
+				t.Fatalf("max(%d, %d) = %d, want %d", tt.a, tt.b, got, tt.wantMax)
+			}
+			if got := min(tt.a, tt.b); got != tt.wantMin {
+				t.Fatalf("min(%d, %d) = %d, want %d", tt.a, tt.b, got, tt.wantMin)
+			}
+		})
 	}
 }
 
@@ -458,30 +454,5 @@ func TestSkylineAnimatePathCallsRenderAnimatedForStdout(t *testing.T) {
 	out := <-done
 	if !strings.Contains(out, "Demo") {
 		t.Fatalf("expected skyline output to include project name, got:\n%s", out)
-	}
-}
-
-func TestSkylineMinMax(t *testing.T) {
-	tests := []struct {
-		name    string
-		a       int
-		b       int
-		wantMax int
-		wantMin int
-	}{
-		{name: "a greater", a: 8, b: 3, wantMax: 8, wantMin: 3},
-		{name: "b greater", a: 2, b: 9, wantMax: 9, wantMin: 2},
-		{name: "equal", a: 5, b: 5, wantMax: 5, wantMin: 5},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := max(tt.a, tt.b); got != tt.wantMax {
-				t.Fatalf("max(%d, %d) = %d, want %d", tt.a, tt.b, got, tt.wantMax)
-			}
-			if got := min(tt.a, tt.b); got != tt.wantMin {
-				t.Fatalf("min(%d, %d) = %d, want %d", tt.a, tt.b, got, tt.wantMin)
-			}
-		})
 	}
 }

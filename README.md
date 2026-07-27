@@ -23,6 +23,40 @@ scoop install codemap
 
 > Other options: [Releases](https://github.com/JordanCoin/codemap/releases) | `go install` | Build from source
 
+## Tarball / CI Install
+
+If you install `codemap` from a release tarball, also install `ast-grep` separately for `--deps`.
+The tarball includes `codemap` and the bundled rules, but not the `ast-grep` executable.
+
+Example for Alpine-based CI:
+
+```bash
+apk add --no-cache curl jq bash python3 py3-pip
+
+ARCH=$(uname -m)
+if [ "$ARCH" = "x86_64" ]; then ARCH="amd64"; elif [ "$ARCH" = "aarch64" ]; then ARCH="arm64"; fi
+
+CODEMAP_VERSION=$(curl -fsSL https://api.github.com/repos/JordanCoin/codemap/releases/latest | jq -r '.tag_name' | tr -d 'v')
+curl -fsSL "https://github.com/JordanCoin/codemap/releases/download/v${CODEMAP_VERSION}/codemap_${CODEMAP_VERSION}_linux_${ARCH}.tar.gz" \
+  | tar xz -C /usr/local/bin/ codemap
+
+python3 -m pip install --no-cache-dir ast-grep-cli
+```
+
+If you want a self-contained archive for CI/CD, use the `codemap-full` release artifact instead.
+It includes `codemap`, `ast-grep`, and `sg` in one archive so `--deps` works after extraction.
+
+```bash
+apk add --no-cache curl jq bash
+
+ARCH=$(uname -m)
+if [ "$ARCH" = "x86_64" ]; then ARCH="amd64"; elif [ "$ARCH" = "aarch64" ]; then ARCH="arm64"; fi
+
+CODEMAP_VERSION=$(curl -fsSL https://api.github.com/repos/JordanCoin/codemap/releases/latest | jq -r '.tag_name' | tr -d 'v')
+curl -fsSL "https://github.com/JordanCoin/codemap/releases/download/v${CODEMAP_VERSION}/codemap-full_${CODEMAP_VERSION}_linux_${ARCH}.tar.gz" \
+  | tar xz -C /usr/local/bin/ codemap ast-grep sg
+```
+
 ## Recommended Setup (Hooks + Daemon + Config)
 
 No repo clone is required for normal users.
@@ -182,6 +216,24 @@ Uses a shallow clone to a temp directory (fast, no history, auto-cleanup). If yo
 
 > Powered by [ast-grep](https://ast-grep.github.io/). Install via `brew install ast-grep` for `--deps` mode.
 
+## Blast Radius Bundle
+
+If you want a compact review bundle for another LLM, combine the three high-signal views:
+
+```bash
+codemap --json --diff --ref main .
+codemap --json --deps --diff --ref main .
+codemap --json --importers path/to/file .
+```
+
+For a reusable built-in command that emits either Markdown, text, or a single JSON object:
+
+```bash
+codemap blast-radius --ref main .
+codemap blast-radius --json --ref main .
+codemap blast-radius --text --ref main .
+```
+
 ## Claude Integration
 
 **Hooks (Recommended)** — Automatic context at session start, before/after edits, and more.
@@ -252,6 +304,10 @@ Example `.codemap/config.json`:
 {
   "only": ["rs", "sh", "sql", "toml", "yml"],
   "exclude": ["docs/reference", "docs/research"],
+  "guidance": {
+    "missing_extension_hints": true,
+    "ignored_extensions": []
+  },
   "depth": 4,
   "mode": "auto",
   "budgets": {
@@ -278,6 +334,8 @@ Example `.codemap/config.json`:
   }
 }
 ```
+
+When an MCP file search has no visible results but finds real matches hidden by `only`, Codemap reports the matching paths and suggests which extensions to include. These hints still respect `exclude` and never modify project config. Set `guidance.missing_extension_hints` to `false` to disable all hints, or list extensions in `guidance.ignored_extensions` to suppress only those suggestions.
 
 All fields are optional. CLI flags always override config values.
 Hook-specific policy fields are optional and bounded by safe defaults.
