@@ -188,19 +188,43 @@ func TestHandleFindFileExplainsOnlyFilteredMatches(t *testing.T) {
 	}
 }
 
-func TestFormatOnlyFilterHintOffersSortedAgentChoices(t *testing.T) {
+func TestFormatOnlyFilterHintOffersDirectConfigActionsForExtensions(t *testing.T) {
 	matches := []scanner.FileInfo{
 		{Path: "schema.sum", Ext: ".sum"},
 		{Path: "schema.proto", Ext: ".proto"},
 	}
 
 	out := formatOnlyFilterHint("schema", matches)
-	want := "Tell your agent: “include suggestions for proto, sum”, “ignore suggestions for proto, sum”, or “disable suggestions for this repo”."
-	if !strings.Contains(out, want) {
-		t.Fatalf("missing concise agent choices:\n%s", out)
+	for _, want := range []string{
+		"Update `.codemap/config.json`:",
+		"Add \"proto\", \"sum\" to `only`",
+		"Add \"proto\", \"sum\" to `guidance.ignored_extensions`",
+		"Set `guidance.missing_extension_hints` to false",
+		"No config changed.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing direct config action %q:\n%s", want, out)
+		}
 	}
-	if strings.Contains(out, ".codemap/config.json") || strings.Contains(out, "guidance.") {
-		t.Fatalf("response exposes config implementation details:\n%s", out)
+	if strings.Contains(out, "Tell your agent") {
+		t.Fatalf("response retains indirect agent language:\n%s", out)
+	}
+}
+
+func TestFormatOnlyFilterHintUsesJSONCompatibleExtensionQuoting(t *testing.T) {
+	out := formatOnlyFilterHint("schema", []scanner.FileInfo{{Path: "schema.proto\a", Ext: ".proto\a"}})
+	for _, want := range []string{
+		"Add \"proto\\u0007\" to `only`",
+		"Add \"proto\\u0007\" to `guidance.ignored_extensions`",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing JSON-compatible extension quoting %q:\n%s", want, out)
+		}
+	}
+	for _, unwanted := range []string{"\\a", "\\x"} {
+		if strings.Contains(out, unwanted) {
+			t.Fatalf("response contains Go-only escape %q:\n%s", unwanted, out)
+		}
 	}
 }
 
@@ -233,7 +257,7 @@ func TestFindConfiguredMatchesSeparatesVisibleAndHintableFiles(t *testing.T) {
 	}
 }
 
-func TestFormatOnlyFilterHintBoundsExtensionlessMatches(t *testing.T) {
+func TestFormatOnlyFilterHintOffersDirectConfigActionForExtensionlessMatches(t *testing.T) {
 	matches := []scanner.FileInfo{
 		{Path: "schema-1"},
 		{Path: "schema-2"},
@@ -243,13 +267,16 @@ func TestFormatOnlyFilterHintBoundsExtensionlessMatches(t *testing.T) {
 		{Path: "schema-6"},
 	}
 	out := formatOnlyFilterHint("schema", matches)
-	for _, want := range []string{"schema-1", "schema-5", "... and 1 more", "disable suggestions for this repo", "No config changed."} {
+	for _, want := range []string{"schema-1", "schema-5", "... and 1 more", "Update `.codemap/config.json`:", "Set `guidance.missing_extension_hints` to false", "No config changed."} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q from bounded hint:\n%s", want, out)
 		}
 	}
 	if strings.Contains(out, "schema-6") {
 		t.Fatalf("bounded hint exposed sixth path:\n%s", out)
+	}
+	if strings.Contains(out, "Tell your agent") {
+		t.Fatalf("response retains indirect agent language:\n%s", out)
 	}
 }
 

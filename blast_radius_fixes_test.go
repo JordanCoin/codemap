@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"codemap/config"
 	"codemap/scanner"
 )
 
@@ -274,19 +275,27 @@ func TestBlastRadiusOmitsEmptyImporterSections(t *testing.T) {
 func TestBlastRadiusSingleScanParity(t *testing.T) {
 	requireBlastRadiusTools(t)
 	root := makeBlastRadiusHubRepo(t)
+	if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".codemap", "config.json"), []byte(`{"only":["go"],"exclude":["c"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Load(root)
+	filters := scanner.Filters{Only: cfg.Only, Exclude: cfg.Exclude}
 
-	analyses, err := scanner.ScanForDeps(root)
+	analyses, err := scanner.ScanForDepsWithFilters(root, filters)
 	if err != nil {
-		t.Fatalf("ScanForDeps: %v", err)
+		t.Fatalf("ScanForDepsWithFilters: %v", err)
 	}
 
 	fgWrap, err := scanner.BuildFileGraph(root)
 	if err != nil {
 		t.Fatalf("BuildFileGraph: %v", err)
 	}
-	fgInjected, err := scanner.BuildFileGraphFromAnalyses(root, analyses)
+	fgInjected, err := scanner.BuildFileGraphFromFilteredAnalyses(root, analyses, filters)
 	if err != nil {
-		t.Fatalf("BuildFileGraphFromAnalyses: %v", err)
+		t.Fatalf("BuildFileGraphFromFilteredAnalyses: %v", err)
 	}
 	if len(fgWrap.Importers["pkg/hub/hub.go"]) != len(fgInjected.Importers["pkg/hub/hub.go"]) {
 		t.Fatalf("file graph importer parity mismatch: %v vs %v",
@@ -298,6 +307,23 @@ func TestBlastRadiusSingleScanParity(t *testing.T) {
 	impInjected := scanner.AnalyzeImpactFromAnalyses(changed, analyses)
 	if len(impWrap) != len(impInjected) {
 		t.Fatalf("impact parity mismatch: %v vs %v", impWrap, impInjected)
+	}
+	for _, importer := range fgInjected.Importers["pkg/hub/hub.go"] {
+		if importer == "c/c.go" {
+			t.Fatalf("filtered graph retained excluded importer: %v", fgInjected.Importers["pkg/hub/hub.go"])
+		}
+	}
+
+	bundle, err := buildBlastRadiusBundle(root, "HEAD", defaultBlastRadiusLimits())
+	if err != nil {
+		t.Fatalf("buildBlastRadiusBundle: %v", err)
+	}
+	for _, report := range bundle.Importers {
+		for _, importer := range report.Importers {
+			if importer == "c/c.go" {
+				t.Fatalf("blast radius retained excluded importer: %+v", bundle.Importers)
+			}
+		}
 	}
 }
 

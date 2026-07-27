@@ -1,6 +1,7 @@
 package codemapmcp
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -52,10 +53,15 @@ func formatOnlyFilterHint(pattern string, matches []scanner.FileInfo) string {
 		output += fmt.Sprintf("\n... and %d more", remaining)
 	}
 	if len(exts) > 0 {
-		extList := strings.Join(exts, ", ")
-		output += fmt.Sprintf("\n\nTell your agent: “include suggestions for %s”, “ignore suggestions for %s”, or “disable suggestions for this repo”.", extList, extList)
+		quotedExts := make([]string, len(exts))
+		for i, ext := range exts {
+			quoted, _ := json.Marshal(ext)
+			quotedExts[i] = string(quoted)
+		}
+		extList := strings.Join(quotedExts, ", ")
+		output += fmt.Sprintf("\n\nUpdate `.codemap/config.json`:\n- Add %s to `only` to include these files.\n- Add %s to `guidance.ignored_extensions` to hide this guidance.\n- Set `guidance.missing_extension_hints` to false to disable missing-extension guidance.", extList, extList)
 	} else {
-		output += "\n\nTell your agent: “disable suggestions for this repo”."
+		output += "\n\nUpdate `.codemap/config.json`:\n- Set `guidance.missing_extension_hints` to false to disable missing-extension guidance."
 	}
 	return output + "\n\nNo config changed."
 }
