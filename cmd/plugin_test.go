@@ -11,11 +11,10 @@ func TestRunPluginInstall(t *testing.T) {
 	home := t.TempDir()
 
 	out := captureOutput(func() {
-		RunPlugin([]string{"install", "--home", home})
+		RunPlugin([]string{"install", "--home", home, "--no-activate"})
 	})
 
 	checks := []string{
-		"codemap plugin install",
 		"Plugin:",
 		"Marketplace:",
 		"Marketplace entry: created",
@@ -26,7 +25,7 @@ func TestRunPluginInstall(t *testing.T) {
 		}
 	}
 
-	pluginJSON := filepath.Join(home, "plugins", "codemap", ".codex-plugin", "plugin.json")
+	pluginJSON := filepath.Join(home, ".codex", "plugins", "codemap", ".codex-plugin", "plugin.json")
 	if _, err := os.Stat(pluginJSON); err != nil {
 		t.Fatalf("expected installed plugin manifest to exist: %v", err)
 	}

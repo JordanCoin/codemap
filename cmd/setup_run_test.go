@@ -33,7 +33,6 @@ func TestRunSetupNoConfigNoHooks(t *testing.T) {
 	out := captureOutput(func() { RunSetup([]string{"--no-config", "--no-hooks", root}, ".") })
 
 	checks := []string{
-		"codemap setup",
 		"Config: skipped (--no-config)",
 		"Hooks: skipped (--no-hooks)",
 		"Next:",
@@ -42,6 +41,26 @@ func TestRunSetupNoConfigNoHooks(t *testing.T) {
 		if !strings.Contains(out, check) {
 			t.Fatalf("expected output to contain %q, got:\n%s", check, out)
 		}
+	}
+}
+
+func TestRunSetupNoMCP(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureOutput(func() {
+		RunSetup([]string{"--agent", "codex", "--no-config", "--no-mcp", root}, ".")
+	})
+	if !strings.Contains(out, "MCP: skipped (--no-mcp)") {
+		t.Fatalf("expected MCP skip output, got:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".codex", "hooks.json")); err != nil {
+		t.Fatalf("expected Codex hooks to exist: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".codex", "config.toml")); !os.IsNotExist(err) {
+		t.Fatalf("expected Codex MCP config to be absent, got err=%v", err)
 	}
 }
 
@@ -58,7 +77,7 @@ func TestRunSetupCreatesConfigAndHooks(t *testing.T) {
 	}
 
 	first := captureOutput(func() { RunSetup([]string{root}, ".") })
-	if !strings.Contains(first, "Config: created") || !strings.Contains(first, "Hooks: created") {
+	if !strings.Contains(first, "Config: created") || !strings.Contains(first, "Claude hooks: created") || !strings.Contains(first, "Codex hooks: created") {
 		t.Fatalf("unexpected first setup output:\n%s", first)
 	}
 
@@ -72,7 +91,7 @@ func TestRunSetupCreatesConfigAndHooks(t *testing.T) {
 	}
 
 	second := captureOutput(func() { RunSetup([]string{root}, ".") })
-	if !strings.Contains(second, "Config: already exists") || !strings.Contains(second, "Hooks: already configured") {
+	if !strings.Contains(second, "Config: already exists") || !strings.Contains(second, "Claude hooks: already configured") || !strings.Contains(second, "Codex hooks: already configured") {
 		t.Fatalf("unexpected second setup output:\n%s", second)
 	}
 

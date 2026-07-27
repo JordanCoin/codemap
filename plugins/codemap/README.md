@@ -5,15 +5,13 @@ This is a Codex plugin bundle for Codemap.
 It bundles:
 
 - the Codemap skill under `./skills/`
-- a local MCP configuration in [`.mcp.json`](./.mcp.json)
-- a launcher script that prefers `codemap mcp` and falls back to `codemap-mcp`
+- an MCP configuration generated at install time
 - packaged logo/icon assets under `./assets/`
 
 Install/runtime expectations:
 
-- `codemap` should be installed on `PATH`
-- preferred runtime is a Codemap build that supports `codemap mcp`
-- fallback runtime is a separate `codemap-mcp` binary on `PATH`
+- the installer records the absolute path and version of the running `codemap`
+- rerun installation after upgrades if the recorded path or version changes
 
 Install globally with:
 
@@ -21,6 +19,18 @@ Install globally with:
 codemap plugin install
 ```
 
-That writes the plugin bundle to `~/plugins/codemap` and updates `~/.agents/plugins/marketplace.json`.
+Run the same command after upgrading the Codemap binary. It refreshes the
+global plugin and migrates managed Codex files in the current project only;
+run `codemap setup` and `codemap doctor` in each configured project afterward.
+Codex does not automatically update this generated local plugin. After
+installation, start a new task in Desktop or a new session in CLI.
+
+That writes the plugin to `~/.codex/plugins/codemap`, updates the personal
+marketplace, and installs or refreshes it through Codex CLI. The installed
+plugin is available to CLI and Desktop when they share that Codex environment.
+Repeat installation for another host or `CODEX_HOME`; this does not upgrade the
+Codex applications or other projects. Use `--no-activate` only when preparing
+files without invoking Codex CLI. Legacy `--activate` is deprecated because
+activation is now the default.
 
 For repo-local discovery while developing, pair this plugin with `.agents/plugins/marketplace.json` in the repo root.

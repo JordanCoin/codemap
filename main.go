@@ -16,6 +16,7 @@ import (
 	"codemap/cmd"
 	"codemap/config"
 	"codemap/handoff"
+	"codemap/internal/buildinfo"
 	"codemap/limits"
 	"codemap/render"
 	"codemap/scanner"
@@ -44,6 +45,11 @@ var (
 )
 
 func main() {
+	if len(os.Args) >= 2 && (os.Args[1] == "version" || os.Args[1] == "--version" || os.Args[1] == "-version") {
+		fmt.Printf("codemap %s\n", buildinfo.Current())
+		return
+	}
+
 	// Handle "watch" subcommand before flag parsing
 	if len(os.Args) >= 2 && os.Args[1] == "watch" {
 		subCmd := "status"
@@ -67,8 +73,29 @@ func main() {
 		}
 		hookName := os.Args[2]
 		root, _ := os.Getwd()
-		if len(os.Args) >= 4 {
-			root = os.Args[3]
+		hookAgent := "claude"
+		hookIntegration := ""
+		for _, arg := range os.Args[3:] {
+			switch {
+			case arg == "--agent=codex":
+				hookAgent = "codex"
+				_ = os.Setenv("CODEX", "1")
+			case strings.HasPrefix(arg, "--agent="):
+				fmt.Fprintf(os.Stderr, "Unsupported hook agent: %s\n", strings.TrimPrefix(arg, "--agent="))
+				os.Exit(2)
+			case strings.HasPrefix(arg, "--integration="):
+				hookIntegration = strings.TrimPrefix(arg, "--integration=")
+			default:
+				root = arg
+			}
+		}
+		if hookIntegration != "" {
+			valid := (hookIntegration == "claude-setup" && hookAgent == "claude") ||
+				(hookIntegration == "codex-setup" && hookAgent == "codex")
+			if !valid {
+				fmt.Fprintf(os.Stderr, "Unsupported hook integration: %s for agent %s\n", hookIntegration, hookAgent)
+				os.Exit(2)
+			}
 		}
 		if err := cmd.RunHookWithTimeout(hookName, root, cmd.HookTimeoutFromEnv(os.Getenv)); err != nil {
 			var timeoutErr *cmd.HookTimeoutError
@@ -100,13 +127,23 @@ func main() {
 	// Handle "setup" subcommand before global flag parsing
 	if len(os.Args) >= 2 && os.Args[1] == "setup" {
 		root, _ := os.Getwd()
-		cmd.RunSetup(os.Args[2:], root)
+		if code := cmd.RunSetup(os.Args[2:], root); code != 0 {
+			os.Exit(code)
+		}
+		return
+	}
+
+	if len(os.Args) >= 2 && os.Args[1] == "doctor" {
+		root, _ := os.Getwd()
+		if code := cmd.RunDoctor(os.Args[2:], root); code != 0 {
+			os.Exit(code)
+		}
 		return
 	}
 
 	// Handle "mcp" subcommand before global flag parsing
 	if len(os.Args) >= 2 && os.Args[1] == "mcp" {
-		if code := cmd.RunMCP(); code != 0 {
+		if code := cmd.RunMCP(os.Args[2:]); code != 0 {
 			os.Exit(code)
 		}
 		return
@@ -176,6 +213,7 @@ func main() {
 		fmt.Println()
 		fmt.Println("Options:")
 		fmt.Println("  --help              Show this help message")
+		fmt.Println("  --version           Show build version")
 		fmt.Println("  --skyline           City skyline visualization")
 		fmt.Println("  --animate           Animated skyline (use with --skyline)")
 		fmt.Println("  --deps              Dependency flow map (functions & imports)")
@@ -222,7 +260,8 @@ func main() {
 		fmt.Println("  codemap config show             # Show current project config")
 		fmt.Println()
 		fmt.Println("Plugin management:")
-		fmt.Println("  codemap plugin install          # Install the Codemap plugin into your home plugin marketplace")
+		fmt.Println("  codemap plugin install          # Install/update and activate the Codemap plugin")
+		fmt.Println("  codemap doctor                  # Check Codex or Claude integration prerequisites")
 		fmt.Println()
 		fmt.Println("MCP server:")
 		fmt.Println("  codemap mcp                     # Run Codemap MCP server on stdio")

@@ -11,7 +11,7 @@ import (
 func TestInstallCodemapPluginCreatesBundleAndMarketplace(t *testing.T) {
 	home := t.TempDir()
 
-	result, err := InstallCodemapPlugin(InstallOptions{HomeDir: home})
+	result, err := InstallCodemapPlugin(testInstallOptions(t, home))
 	if err != nil {
 		t.Fatalf("InstallCodemapPlugin returned error: %v", err)
 	}
@@ -24,11 +24,10 @@ func TestInstallCodemapPluginCreatesBundleAndMarketplace(t *testing.T) {
 	}
 
 	checks := []string{
-		filepath.Join(home, "plugins", "codemap", ".codex-plugin", "plugin.json"),
-		filepath.Join(home, "plugins", "codemap", ".mcp.json"),
-		filepath.Join(home, "plugins", "codemap", "README.md"),
-		filepath.Join(home, "plugins", "codemap", "assets", "icon.png"),
-		filepath.Join(home, "plugins", "codemap", "scripts", "run-codemap-mcp.sh"),
+		filepath.Join(home, ".codex", "plugins", "codemap", ".codex-plugin", "plugin.json"),
+		filepath.Join(home, ".codex", "plugins", "codemap", ".mcp.json"),
+		filepath.Join(home, ".codex", "plugins", "codemap", "README.md"),
+		filepath.Join(home, ".codex", "plugins", "codemap", "assets", "icon.png"),
 		filepath.Join(home, ".agents", "plugins", "marketplace.json"),
 	}
 	for _, path := range checks {
@@ -37,15 +36,7 @@ func TestInstallCodemapPluginCreatesBundleAndMarketplace(t *testing.T) {
 		}
 	}
 
-	scriptInfo, err := os.Stat(filepath.Join(home, "plugins", "codemap", "scripts", "run-codemap-mcp.sh"))
-	if err != nil {
-		t.Fatalf("stat plugin script: %v", err)
-	}
-	if scriptInfo.Mode().Perm() != 0o755 {
-		t.Fatalf("expected script mode 0755, got %o", scriptInfo.Mode().Perm())
-	}
-
-	pluginData, err := os.ReadFile(filepath.Join(home, "plugins", "codemap", ".codex-plugin", "plugin.json"))
+	pluginData, err := os.ReadFile(filepath.Join(home, ".codex", "plugins", "codemap", ".codex-plugin", "plugin.json"))
 	if err != nil {
 		t.Fatalf("read plugin.json: %v", err)
 	}
@@ -70,8 +61,8 @@ func TestInstallCodemapPluginCreatesBundleAndMarketplace(t *testing.T) {
 		t.Fatalf("marketplace entry name = %#v, want codemap", entry["name"])
 	}
 	source := entry["source"].(map[string]any)
-	if source["path"] != "./plugins/codemap" {
-		t.Fatalf("marketplace source path = %#v, want ./plugins/codemap", source["path"])
+	if source["path"] != "./.codex/plugins/codemap" {
+		t.Fatalf("marketplace source path = %#v, want ./.codex/plugins/codemap", source["path"])
 	}
 }
 
@@ -106,7 +97,8 @@ func TestInstallCodemapPluginIsIdempotentAndPreservesMarketplaceMetadata(t *test
 		t.Fatal(err)
 	}
 
-	first, err := InstallCodemapPlugin(InstallOptions{HomeDir: home})
+	opts := testInstallOptions(t, home)
+	first, err := InstallCodemapPlugin(opts)
 	if err != nil {
 		t.Fatalf("first install error: %v", err)
 	}
@@ -114,7 +106,7 @@ func TestInstallCodemapPluginIsIdempotentAndPreservesMarketplaceMetadata(t *test
 		t.Fatal("expected first install to update marketplace")
 	}
 
-	second, err := InstallCodemapPlugin(InstallOptions{HomeDir: home})
+	second, err := InstallCodemapPlugin(opts)
 	if err != nil {
 		t.Fatalf("second install error: %v", err)
 	}
@@ -152,10 +144,9 @@ func TestInstallCodemapPluginUsesInstalledPluginPathInMarketplace(t *testing.T) 
 	home := t.TempDir()
 	pluginPath := filepath.Join(home, "custom-plugins", "codemap")
 
-	result, err := InstallCodemapPlugin(InstallOptions{
-		HomeDir:    home,
-		PluginPath: pluginPath,
-	})
+	opts := testInstallOptions(t, home)
+	opts.PluginPath = pluginPath
+	result, err := InstallCodemapPlugin(opts)
 	if err != nil {
 		t.Fatalf("InstallCodemapPlugin returned error: %v", err)
 	}
@@ -177,5 +168,18 @@ func TestInstallCodemapPluginUsesInstalledPluginPathInMarketplace(t *testing.T) 
 	source := entry["source"].(map[string]any)
 	if source["path"] != "./custom-plugins/codemap" {
 		t.Fatalf("marketplace source path = %#v, want ./custom-plugins/codemap", source["path"])
+	}
+}
+
+func testInstallOptions(t *testing.T, home string) InstallOptions {
+	t.Helper()
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return InstallOptions{
+		HomeDir:        home,
+		ExecutablePath: executable,
+		BinaryVersion:  "test",
 	}
 }

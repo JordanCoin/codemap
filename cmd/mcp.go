@@ -8,9 +8,14 @@ import (
 	codemapmcp "codemap/mcp"
 )
 
-// RunMCP runs the shared stdio server and returns its process exit status.
-func RunMCP() int {
-	return runMCP(codemapmcp.Run)
+// RunMCP parses MCP runtime options and runs the shared stdio server.
+func RunMCP(args []string) int {
+	options, err := codemapmcp.ParseRuntimeOptions(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid MCP options: %v\n", err)
+		return 2
+	}
+	return runMCP(func(ctx context.Context) error { return codemapmcp.Run(ctx, options) })
 }
 
 func runMCP(runner func(context.Context) error) int {

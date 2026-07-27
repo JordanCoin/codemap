@@ -11,6 +11,41 @@ import (
 	"strings"
 )
 
+// decodeJSONObject parses data as a JSON object while preserving number
+// precision (integers beyond 2^53 stay json.Number instead of float64).
+func decodeJSONObject(data []byte) (map[string]any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var payload map[string]any
+	if err := decoder.Decode(&payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
+// writeFileAtomic writes data via temp file + rename so a crash mid-write can
+// never truncate a config file another process may be reading.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
 const (
 	CodemapPluginName           = "codemap"
 	defaultMarketplaceName      = "codemap"
@@ -27,12 +62,16 @@ type InstallOptions struct {
 	HomeDir         string
 	PluginPath      string
 	MarketplacePath string
+	ExecutablePath  string
+	BinaryVersion   string
 }
 
 type InstallResult struct {
 	PluginPath         string
 	MarketplacePath    string
+	MarketplaceName    string
 	FilesWritten       int
+	FilesRemoved       int
 	FilesUnchanged     int
 	CreatedMarketplace bool
 	UpdatedMarketplace bool
@@ -47,10 +86,16 @@ func InstallCodemapPlugin(opts InstallOptions) (InstallResult, error) {
 		opts.HomeDir = homeDir
 	}
 	if opts.PluginPath == "" {
-		opts.PluginPath = filepath.Join(opts.HomeDir, "plugins", CodemapPluginName)
+		opts.PluginPath = filepath.Join(opts.HomeDir, ".codex", "plugins", CodemapPluginName)
 	}
 	if opts.MarketplacePath == "" {
 		opts.MarketplacePath = filepath.Join(opts.HomeDir, ".agents", "plugins", "marketplace.json")
+	}
+	if !filepath.IsAbs(opts.ExecutablePath) {
+		return InstallResult{}, fmt.Errorf("codemap executable path is not absolute: %q", opts.ExecutablePath)
+	}
+	if strings.TrimSpace(opts.BinaryVersion) == "" {
+		return InstallResult{}, fmt.Errorf("codemap binary version is empty")
 	}
 
 	result := InstallResult{
@@ -65,6 +110,12 @@ func InstallCodemapPlugin(opts InstallOptions) (InstallResult, error) {
 	if err := writeBundle(bundleRoot, opts.PluginPath, &result); err != nil {
 		return result, err
 	}
+	if err := removeRetiredLauncher(opts.PluginPath, &result); err != nil {
+		return result, err
+	}
+	if err := writeGeneratedMCP(opts.PluginPath, opts.ExecutablePath, opts.BinaryVersion, &result); err != nil {
+		return result, err
+	}
 
 	created, updated, err := ensureMarketplaceEntry(opts.MarketplacePath, opts.PluginPath)
 	if err != nil {
@@ -72,8 +123,148 @@ func InstallCodemapPlugin(opts InstallOptions) (InstallResult, error) {
 	}
 	result.CreatedMarketplace = created
 	result.UpdatedMarketplace = updated
+	result.MarketplaceName, err = marketplaceName(opts.MarketplacePath)
+	if err != nil {
+		return result, err
+	}
 
 	return result, nil
+}
+
+func removeRetiredLauncher(pluginPath string, result *InstallResult) error {
+	path := filepath.Join(pluginPath, "scripts", "run-codemap-mcp.sh")
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("remove retired launcher %s: %w", path, err)
+	}
+	result.FilesRemoved++
+	return nil
+}
+
+func writeGeneratedMCP(pluginPath, executablePath, binaryVersion string, result *InstallResult) error {
+	targetPath := filepath.Join(pluginPath, ".mcp.json")
+	payload := map[string]any{}
+	existing, readErr := os.ReadFile(targetPath)
+	switch {
+	case readErr == nil:
+		var err error
+		payload, err = decodeJSONObject(existing)
+		if err != nil {
+			return fmt.Errorf("parse installed MCP configuration %s: %w", targetPath, err)
+		}
+		if payload == nil {
+			return fmt.Errorf("parse installed MCP configuration %s: root must be an object", targetPath)
+		}
+	case os.IsNotExist(readErr):
+		existing = nil
+	default:
+		return fmt.Errorf("read installed MCP configuration %s: %w", targetPath, readErr)
+	}
+	servers := map[string]any{}
+	if raw, exists := payload["mcpServers"]; exists {
+		var ok bool
+		servers, ok = raw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s field mcpServers must be an object", targetPath)
+		}
+	} else if _, legacy := payload[CodemapPluginName]; legacy {
+		// Releases before Codex adopted the companion-file schema wrote server
+		// entries at the root. Migrate that owned shape without dropping peers.
+		servers = payload
+		payload = map[string]any{"mcpServers": servers}
+	} else if len(payload) != 0 {
+		return fmt.Errorf("%s is not a Codex MCP companion configuration", targetPath)
+	} else {
+		payload["mcpServers"] = servers
+	}
+	server := map[string]any{}
+	if raw, exists := servers[CodemapPluginName]; exists {
+		var ok bool
+		server, ok = raw.(map[string]any)
+		if !ok || !isOwnedCodemapPluginMCP(server) {
+			return fmt.Errorf("%s defines a conflicting codemap MCP server", targetPath)
+		}
+	}
+	server["command"] = executablePath
+	server["args"] = []string{"mcp", "--configured-version", binaryVersion, "--integration", "codex-plugin"}
+	servers[CodemapPluginName] = server
+	data, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode installed MCP configuration: %w", err)
+	}
+	data = append(data, '\n')
+	if bytes.Equal(existing, data) {
+		result.FilesUnchanged++
+		return nil
+	}
+	if err := writeFileAtomic(targetPath, data, 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", targetPath, err)
+	}
+	result.FilesWritten++
+	return nil
+}
+
+func isOwnedCodemapPluginMCP(server map[string]any) bool {
+	command, ok := server["command"].(string)
+	if !ok || strings.TrimSpace(command) == "" {
+		return false
+	}
+	args := stringArray(server["args"])
+	if command == "codemap" && stringSlicesEqual(args, []string{"mcp"}) {
+		return true
+	}
+	return len(args) == 5 && args[0] == "mcp" && args[1] == "--configured-version" && args[2] != "" && args[3] == "--integration" && args[4] == "codex-plugin"
+}
+
+func stringArray(raw any) []string {
+	values, ok := raw.([]any)
+	if !ok {
+		valuesAsStrings, ok := raw.([]string)
+		if !ok {
+			return nil
+		}
+		return valuesAsStrings
+	}
+	result := make([]string, len(values))
+	for i, value := range values {
+		var ok bool
+		result[i], ok = value.(string)
+		if !ok {
+			return nil
+		}
+	}
+	return result
+}
+
+func stringSlicesEqual(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func marketplaceName(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read marketplace name from %s: %w", path, err)
+	}
+	var payload struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return "", fmt.Errorf("parse marketplace name from %s: %w", path, err)
+	}
+	if strings.TrimSpace(payload.Name) == "" {
+		return "", fmt.Errorf("marketplace %s has no name", path)
+	}
+	return payload.Name, nil
 }
 
 func writeBundle(bundleRoot fs.FS, targetRoot string, result *InstallResult) error {
@@ -83,6 +274,9 @@ func writeBundle(bundleRoot fs.FS, targetRoot string, result *InstallResult) err
 		}
 		if path == "." {
 			return os.MkdirAll(targetRoot, 0o755)
+		}
+		if path == ".mcp.json" {
+			return nil
 		}
 
 		targetPath := filepath.Join(targetRoot, filepath.FromSlash(path))
@@ -131,8 +325,12 @@ func ensureMarketplaceEntry(marketplacePath string, pluginPath string) (created 
 	data, readErr := os.ReadFile(marketplacePath)
 	switch {
 	case readErr == nil:
-		if err := json.Unmarshal(data, &payload); err != nil {
+		payload, err = decodeJSONObject(data)
+		if err != nil {
 			return false, false, fmt.Errorf("parse %s: %w", marketplacePath, err)
+		}
+		if payload == nil {
+			return false, false, fmt.Errorf("parse %s: root must be an object", marketplacePath)
 		}
 	case os.IsNotExist(readErr):
 		created = true
@@ -229,7 +427,7 @@ func ensureMarketplaceEntry(marketplacePath string, pluginPath string) (created 
 		return created, updated, fmt.Errorf("encode %s: %w", marketplacePath, err)
 	}
 	out = append(out, '\n')
-	if err := os.WriteFile(marketplacePath, out, 0o644); err != nil {
+	if err := writeFileAtomic(marketplacePath, out, 0o644); err != nil {
 		return created, updated, fmt.Errorf("write %s: %w", marketplacePath, err)
 	}
 	return created, updated, nil

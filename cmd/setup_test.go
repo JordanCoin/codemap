@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -96,10 +95,11 @@ func TestEnsureClaudeHooksPreservesFieldsAndAvoidsDuplicates(t *testing.T) {
 	if len(hooks["SessionStart"]) == 0 {
 		t.Fatal("expected SessionStart hooks to exist")
 	}
+	want := recommendedClaudeHooks[0].Command
 	count := 0
 	for _, entry := range hooks["SessionStart"] {
 		for _, hook := range entry.Hooks {
-			if hook.Command == "codemap hook session-start" {
+			if hook.Command == want {
 				count++
 			}
 		}
@@ -158,15 +158,17 @@ func TestEnsureClaudeHooksAddsMatcherScopedHookWhenMatcherMissing(t *testing.T) 
 	hooks := readHooksMap(t, settings)
 	preToolUseEntries := hooks["PreToolUse"]
 
+	var recommended claudeHookSpec
+	for _, spec := range recommendedClaudeHooks {
+		if spec.Event == "PreToolUse" {
+			recommended = spec
+			break
+		}
+	}
 	foundRecommended := false
 	for _, entry := range preToolUseEntries {
-		if strings.TrimSpace(entry.Matcher) != "Edit|Write" {
-			continue
-		}
-		for _, hook := range entry.Hooks {
-			if strings.TrimSpace(hook.Command) == "codemap hook pre-edit" && strings.EqualFold(strings.TrimSpace(hook.Type), "command") {
-				foundRecommended = true
-			}
+		if hasHookSpec([]claudeHookEntry{entry}, recommended) {
+			foundRecommended = true
 		}
 	}
 	if !foundRecommended {
