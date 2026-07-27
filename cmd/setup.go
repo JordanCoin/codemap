@@ -163,6 +163,8 @@ func RunSetup(args []string, defaultRoot string) int {
 		}
 	}
 
+	reportEnsureIgnored(os.Stdout, absRoot, ignoreTracked)
+
 	if *skipHooks {
 		fmt.Println("Hooks: skipped (--no-hooks)")
 	}

@@ -13,13 +13,37 @@ import (
 // ProjectConfig holds per-project defaults from .codemap/config.json.
 // All fields are optional; zero values mean "no preference".
 type ProjectConfig struct {
-	Only    []string      `json:"only,omitempty"`
-	Exclude []string      `json:"exclude,omitempty"`
-	Depth   int           `json:"depth,omitempty"`
-	Mode    string        `json:"mode,omitempty"`
-	Budgets HookBudgets   `json:"budgets,omitempty"`
-	Routing RoutingConfig `json:"routing,omitempty"`
-	Drift   DriftConfig   `json:"drift,omitempty"`
+	Only     []string       `json:"only,omitempty"`
+	Exclude  []string       `json:"exclude,omitempty"`
+	Depth    int            `json:"depth,omitempty"`
+	Mode     string         `json:"mode,omitempty"`
+	Budgets  HookBudgets    `json:"budgets,omitempty"`
+	Routing  RoutingConfig  `json:"routing,omitempty"`
+	Drift    DriftConfig    `json:"drift,omitempty"`
+	Guidance GuidanceConfig `json:"guidance,omitempty"`
+}
+
+// GuidanceConfig controls optional suggestions without changing project config.
+type GuidanceConfig struct {
+	MissingExtensionHints *bool    `json:"missing_extension_hints,omitempty"`
+	IgnoredExtensions     []string `json:"ignored_extensions,omitempty"`
+}
+
+// MissingExtensionHintsEnabled defaults missing-extension guidance to on.
+func (c ProjectConfig) MissingExtensionHintsEnabled() bool {
+	return c.Guidance.MissingExtensionHints == nil || *c.Guidance.MissingExtensionHints
+}
+
+// IgnoresGuidanceForExtension reports whether guidance is disabled for ext.
+func (c ProjectConfig) IgnoresGuidanceForExtension(ext string) bool {
+	ext = strings.TrimPrefix(strings.TrimSpace(ext), ".")
+	for _, ignored := range c.Guidance.IgnoredExtensions {
+		ignored = strings.TrimPrefix(strings.TrimSpace(ignored), ".")
+		if strings.EqualFold(ext, ignored) {
+			return true
+		}
+	}
+	return false
 }
 
 // HookBudgets configures per-hook output constraints.
@@ -127,6 +151,9 @@ func (c ProjectConfig) IsZero() bool {
 		return false
 	}
 	if c.Drift.Enabled || c.Drift.RecentCommits > 0 || len(c.Drift.RequireDocsFor) > 0 {
+		return false
+	}
+	if c.Guidance.MissingExtensionHints != nil || len(c.Guidance.IgnoredExtensions) > 0 {
 		return false
 	}
 	return true

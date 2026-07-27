@@ -15,7 +15,11 @@ func RunMCP(args []string) int {
 		fmt.Fprintf(os.Stderr, "Invalid MCP options: %v\n", err)
 		return 2
 	}
-	if err := codemapmcp.Run(context.Background(), options); err != nil {
+	return runMCP(func(ctx context.Context) error { return codemapmcp.Run(ctx, options) })
+}
+
+func runMCP(runner func(context.Context) error) int {
+	if err := runner(context.Background()); err != nil {
 		fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
 		return 1
 	}

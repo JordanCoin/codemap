@@ -356,6 +356,10 @@ Example `.codemap/config.json`:
 {
   "only": ["rs", "sh", "sql", "toml", "yml"],
   "exclude": ["docs/reference", "docs/research"],
+  "guidance": {
+    "missing_extension_hints": true,
+    "ignored_extensions": []
+  },
   "depth": 4,
   "mode": "auto",
   "budgets": {
@@ -382,6 +386,8 @@ Example `.codemap/config.json`:
   }
 }
 ```
+
+When an MCP file search has no visible results but finds real matches hidden by `only`, Codemap reports the matching paths and suggests which extensions to include. These hints still respect `exclude` and never modify project config. Set `guidance.missing_extension_hints` to `false` to disable all hints, or list extensions in `guidance.ignored_extensions` to suppress only those suggestions.
 
 All fields are optional. CLI flags always override config values.
 Hook-specific policy fields are optional and bounded by safe defaults.
@@ -432,6 +438,7 @@ Skills are also available via MCP: `list_skills` (metadata) and `get_skill` (ful
 The prompt-submit hook performs **intent classification** on every prompt — detecting whether you're refactoring, fixing a bug, exploring, testing, or building a feature. It then:
 
 - Surfaces **risk analysis** based on hub file involvement
+- Emits **exact next-step codemap commands** at transition points like “before editing” and “before refactoring”
 - Shows your **working set** (files edited this session)
 - Emits **structured JSON markers** (`<!-- codemap:intent -->`) for tool consumption
 - Matches **relevant skills** and tells you which to pull (`codemap skill show <name>`)
