@@ -25,7 +25,21 @@ type eventDebouncer struct {
 	pruneAfter time.Duration
 	lastSeen   map[string]time.Time
 	lastPruned time.Time
+	pending    map[string]pendingWrite
 }
+
+type pendingWrite struct {
+	event fsnotify.Event
+	due   time.Time
+}
+
+type debounceAction uint8
+
+const (
+	debounceProcess debounceAction = iota
+	debounceSkip
+	debounceDefer
+)
 
 func newEventDebouncer(window time.Duration) *eventDebouncer {
 	pruneAfter := 10 * window
@@ -36,6 +50,7 @@ func newEventDebouncer(window time.Duration) *eventDebouncer {
 		window:     window,
 		pruneAfter: pruneAfter,
 		lastSeen:   make(map[string]time.Time),
+		pending:    make(map[string]pendingWrite),
 	}
 }
 
@@ -55,9 +70,7 @@ func (d *eventDebouncer) shouldSkip(event fsnotify.Event, now time.Time) bool {
 		return false
 	}
 
-	if last, exists := d.lastSeen[event.Name]; exists && now.Sub(last) < d.window {
-		return true
-	}
+	last, exists := d.lastSeen[event.Name]
 	d.lastSeen[event.Name] = now
 
 	if d.lastPruned.IsZero() || now.Sub(d.lastPruned) >= d.pruneAfter {
@@ -65,7 +78,7 @@ func (d *eventDebouncer) shouldSkip(event fsnotify.Event, now time.Time) bool {
 		d.lastPruned = now
 	}
 
-	return false
+	return exists && now.Sub(last) < d.window
 }
 
 func (d *eventDebouncer) prune(now time.Time) {
@@ -77,18 +90,110 @@ func (d *eventDebouncer) prune(now time.Time) {
 	}
 }
 
+func (d *eventDebouncer) deferEvent(event fsnotify.Event, now time.Time) {
+	d.pending[event.Name] = pendingWrite{event: event, due: now.Add(d.window)}
+}
+
+func (d *eventDebouncer) cancelPending(path string) {
+	delete(d.pending, path)
+}
+
+func (d *eventDebouncer) takeDue(now time.Time) []fsnotify.Event {
+	var events []fsnotify.Event
+	for path, pending := range d.pending {
+		if pending.due.After(now) {
+			continue
+		}
+		events = append(events, pending.event)
+		delete(d.pending, path)
+	}
+	return events
+}
+
+func (d *eventDebouncer) takeDueBeforeEvent(event fsnotify.Event, now time.Time) []fsnotify.Event {
+	if event.Op&(fsnotify.Create|fsnotify.Remove|fsnotify.Rename) != 0 {
+		d.cancelPending(event.Name)
+	}
+	return d.takeDue(now)
+}
+
+func (d *eventDebouncer) takeAll() []fsnotify.Event {
+	events := make([]fsnotify.Event, 0, len(d.pending))
+	for path, pending := range d.pending {
+		events = append(events, pending.event)
+		delete(d.pending, path)
+	}
+	return events
+}
+
+func (d *eventDebouncer) nextDelay(now time.Time) (time.Duration, bool) {
+	var earliest time.Time
+	for _, pending := range d.pending {
+		if earliest.IsZero() || pending.due.Before(earliest) {
+			earliest = pending.due
+		}
+	}
+	if earliest.IsZero() {
+		return 0, false
+	}
+	delay := earliest.Sub(now)
+	if delay < 0 {
+		delay = 0
+	}
+	return delay, true
+}
+
 // eventLoop processes file system events
 func (d *Daemon) eventLoop() {
 	debouncer := newEventDebouncer(100 * time.Millisecond)
+	timer := time.NewTimer(time.Hour)
+	timer.Stop()
+	defer timer.Stop()
+
+	var timerC <-chan time.Time
+	armTimer := func(now time.Time) {
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		delay, ok := debouncer.nextDelay(now)
+		if !ok {
+			timerC = nil
+			return
+		}
+		timer.Reset(delay)
+		timerC = timer.C
+	}
+	flushDue := func(now time.Time) {
+		for _, event := range debouncer.takeDue(now) {
+			d.handleEvent(event)
+		}
+	}
+	defer func() {
+		for _, event := range debouncer.takeAll() {
+			d.handleEvent(event)
+		}
+	}()
 
 	for {
 		select {
 		case <-d.done:
 			return
 
+		case <-timerC:
+			now := time.Now()
+			flushDue(now)
+			armTimer(time.Now())
+
 		case event, ok := <-d.watcher.Events:
 			if !ok {
 				return
+			}
+			now := time.Now()
+			for _, pending := range debouncer.takeDueBeforeEvent(event, now) {
+				d.handleEvent(pending)
 			}
 
 			// Allow directory creates through (to add new dirs to watcher)
@@ -114,12 +219,15 @@ func (d *Daemon) eventLoop() {
 				continue
 			}
 
-			if d.shouldSkipEvent(debouncer, event, time.Now()) {
-				continue
+			switch d.debounceAction(debouncer, event, now) {
+			case debounceSkip:
+				debouncer.cancelPending(event.Name)
+			case debounceDefer:
+				debouncer.deferEvent(event, now)
+			case debounceProcess:
+				d.handleEvent(event)
 			}
-
-			// Process the event
-			d.handleEvent(event)
+			armTimer(time.Now())
 
 		case err, ok := <-d.watcher.Errors:
 			if !ok {
@@ -132,24 +240,35 @@ func (d *Daemon) eventLoop() {
 	}
 }
 
-func (d *Daemon) shouldSkipEvent(debouncer *eventDebouncer, event fsnotify.Event, now time.Time) bool {
+func (d *Daemon) debounceAction(debouncer *eventDebouncer, event fsnotify.Event, now time.Time) debounceAction {
 	if !debouncer.shouldSkip(event, now) {
-		return false
-	}
-	info, err := os.Stat(event.Name)
-	if err != nil {
-		return false
+		return debounceProcess
 	}
 	relPath, err := filepath.Rel(d.root, event.Name)
 	if err != nil {
-		return false
+		return debounceProcess
 	}
 
 	d.graph.mu.RLock()
 	cached := d.graph.State[relPath]
-	matches := cached != nil && cached.Size == info.Size()
+	var cachedSize, cachedModTime int64
+	if cached != nil {
+		cachedSize = cached.Size
+		cachedModTime = cached.ModTime
+	}
 	d.graph.mu.RUnlock()
-	return matches
+	if cached == nil {
+		return debounceProcess
+	}
+
+	info, err := os.Stat(event.Name)
+	if err != nil {
+		return debounceProcess
+	}
+	if cachedModTime != 0 && cachedSize == info.Size() && cachedModTime == info.ModTime().UnixNano() {
+		return debounceSkip
+	}
+	return debounceDefer
 }
 
 // isSourceFile checks if a file should be tracked.
@@ -262,7 +381,11 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 		}
 
 		// Update cached state
-		d.graph.State[relPath] = &FileState{Lines: newLines, Size: info.Size()}
+		d.graph.State[relPath] = &FileState{
+			Lines:   newLines,
+			Size:    info.Size(),
+			ModTime: info.ModTime().UnixNano(),
+		}
 
 		// Update file info
 		d.graph.Files[relPath] = &scanner.FileInfo{
