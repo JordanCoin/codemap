@@ -2,7 +2,9 @@ package render
 
 import (
 	"bytes"
+	"io"
 	"math/rand/v2"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -416,5 +418,41 @@ func TestSkylineMinMax(t *testing.T) {
 				t.Fatalf("min(%d, %d) = %d, want %d", tt.a, tt.b, got, tt.wantMin)
 			}
 		})
+	}
+}
+
+func TestSkylineAnimatePathCallsRenderAnimatedForStdout(t *testing.T) {
+	project := scanner.Project{
+		Root: t.TempDir(),
+		Name: "Demo",
+		Files: []scanner.FileInfo{
+			{Path: "main.go", Ext: ".go", Size: 100},
+		},
+	}
+
+	origStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	t.Cleanup(func() {
+		os.Stdout = origStdout
+	})
+
+	done := make(chan string, 1)
+	go func() {
+		data, _ := io.ReadAll(r)
+		done <- string(data)
+	}()
+
+	Skyline(w, project, true)
+
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out := <-done
+	if !strings.Contains(out, "Demo") {
+		t.Fatalf("expected skyline output to include project name, got:\n%s", out)
 	}
 }
