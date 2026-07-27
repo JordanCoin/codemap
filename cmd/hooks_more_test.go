@@ -323,20 +323,43 @@ func TestExtractFilePathAndEditHooks(t *testing.T) {
 		}
 	})
 
-	checkOutput := func(fn func(string) error) {
-		withStdinInput(t, mustJSONInput(t, map[string]string{"file_path": target}), func() {
-			var hookErr error
-			out := captureOutput(func() { hookErr = fn(root) })
-			if hookErr != nil {
-				t.Fatalf("hook returned error: %v", hookErr)
+	withStdinInput(t, mustJSONInput(t, map[string]string{"file_path": target}), func() {
+		var hookErr error
+		out := captureOutput(func() { hookErr = hookPreEdit(root) })
+		if hookErr != nil {
+			t.Fatalf("hookPreEdit() error: %v", hookErr)
+		}
+		checks := []string{
+			"Before editing: pkg/types.go is a hub with 3 importers.",
+			"Run now:",
+			"codemap --importers pkg/types.go",
+			"codemap --deps",
+		}
+		for _, check := range checks {
+			if !strings.Contains(out, check) {
+				t.Fatalf("expected %q in output, got:\n%s", check, out)
 			}
-			if !strings.Contains(out, "HUB FILE: pkg/types.go") {
-				t.Fatalf("expected hub warning, got:\n%s", out)
+		}
+	})
+
+	withStdinInput(t, mustJSONInput(t, map[string]string{"file_path": target}), func() {
+		var hookErr error
+		out := captureOutput(func() { hookErr = hookPostEdit(root) })
+		if hookErr != nil {
+			t.Fatalf("hookPostEdit() error: %v", hookErr)
+		}
+		checks := []string{
+			"After editing: pkg/types.go still fans out to 3 importers.",
+			"Re-check with:",
+			"codemap --importers pkg/types.go",
+			"codemap --deps",
+		}
+		for _, check := range checks {
+			if !strings.Contains(out, check) {
+				t.Fatalf("expected %q in output, got:\n%s", check, out)
 			}
-		})
-	}
-	checkOutput(hookPreEdit)
-	checkOutput(hookPostEdit)
+		}
+	})
 }
 
 func TestCheckFileImportersAndRouteSuggestions(t *testing.T) {
@@ -371,6 +394,12 @@ func TestCheckFileImportersAndRouteSuggestions(t *testing.T) {
 	}
 	if !strings.Contains(out, "Imports 1 hub(s): shared/hub.go") {
 		t.Fatalf("expected hub import summary, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Next codemap:") || !strings.Contains(out, "codemap --importers pkg/types.go") {
+		t.Fatalf("expected actionable codemap guidance, got:\n%s", out)
+	}
+	if !strings.Contains(out, "codemap --deps") {
+		t.Fatalf("expected dependency guidance, got:\n%s", out)
 	}
 
 	cfg := config.ProjectConfig{
@@ -431,6 +460,9 @@ func TestHookPromptSubmitShowsContextAndProgress(t *testing.T) {
 		checks := []string{
 			"Context for mentioned files",
 			"pkg/types.go is a HUB",
+			"Next codemap:",
+			"codemap --importers pkg/types.go",
+			"codemap --deps",
 			"Suggested context routes",
 			"watching",
 			"Session so far: 2 files edited, 1 hub edits",
