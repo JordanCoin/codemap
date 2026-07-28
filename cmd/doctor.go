@@ -33,7 +33,8 @@ var (
 		"/Applications/ChatGPT.app/Contents/Resources/codex",
 		"/Applications/Codex.app/Contents/Resources/codex",
 	}
-	doctorRuntimeVersionProbe = probeDoctorCodexRuntimeVersion
+	doctorWindowsBundledCodexCLICandidates = discoverWindowsBundledCodexCLICandidates
+	doctorRuntimeVersionProbe              = probeDoctorCodexRuntimeVersion
 )
 
 const doctorProbeOutputLimit = 8 * 1024
@@ -158,30 +159,34 @@ func RunDoctor(args []string, defaultRoot string) int {
 }
 
 func reportCodexRuntimeVersions(cliPath string) bool {
-	if doctorRuntimeGOOS != "darwin" {
+	var desktopPaths []string
+	switch doctorRuntimeGOOS {
+	case "darwin":
+		desktopPaths = validatedDoctorDesktopCodexCandidates(doctorDesktopCodexCandidates, "darwin")
+	case "windows":
+		desktopPaths = validatedDoctorDesktopCodexCandidates(doctorWindowsBundledCodexCLICandidates(), "windows")
+	default:
 		return false
-	}
-	desktopPaths := make([]string, 0, len(doctorDesktopCodexCandidates))
-	for _, candidate := range doctorDesktopCodexCandidates {
-		if _, err := validateIntegrationExecutable(candidate, "darwin"); err == nil {
-			desktopPaths = append(desktopPaths, candidate)
-		}
 	}
 	if len(desktopPaths) == 0 {
 		return false
 	}
 
-	cliVersion := ""
-	var cliErr error
 	if cliPath != "" {
-		cliVersion, cliErr = doctorRuntimeVersionProbe(cliPath)
-		if cliErr != nil {
-			fmt.Printf("WARN Codex CLI runtime: %s (%v)\n", cliPath, cliErr)
+		cliVersion, err := doctorRuntimeVersionProbe(cliPath)
+		if err != nil {
+			fmt.Printf("WARN Codex CLI runtime: %s (%v)\n", cliPath, err)
 		} else {
 			fmt.Printf("OK   Codex CLI runtime: %s (%s)\n", cliPath, cliVersion)
 		}
 	}
 	for _, desktopPath := range desktopPaths {
+		if doctorRuntimeGOOS == "windows" {
+			appPath := filepath.Join(filepath.Dir(filepath.Dir(desktopPath)), "ChatGPT.exe")
+			if _, err := validateIntegrationExecutable(appPath, "windows"); err == nil {
+				fmt.Printf("OK   Codex Desktop app: %s\n", appPath)
+			}
+		}
 		desktopVersion, err := doctorRuntimeVersionProbe(desktopPath)
 		if err != nil {
 			fmt.Printf("WARN Codex Desktop runtime: %s (%v)\n", desktopPath, err)
@@ -190,6 +195,29 @@ func reportCodexRuntimeVersions(cliPath string) bool {
 		fmt.Printf("OK   Codex Desktop runtime: %s (%s)\n", desktopPath, desktopVersion)
 	}
 	return true
+}
+
+func validatedDoctorDesktopCodexCandidates(candidates []string, goos string) []string {
+	desktopPaths := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if _, err := validateIntegrationExecutable(candidate, goos); err == nil {
+			desktopPaths = append(desktopPaths, candidate)
+		}
+	}
+	return desktopPaths
+}
+
+func discoverWindowsBundledCodexCLICandidates() []string {
+	programFiles := os.Getenv("ProgramFiles")
+	if programFiles == "" {
+		return nil
+	}
+	pattern := filepath.Join(programFiles, "WindowsApps", "OpenAI.Codex_*", "app", "resources", "codex.exe")
+	candidates, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil
+	}
+	return candidates
 }
 
 func activeCodexPluginMCPPath() (string, bool) {
