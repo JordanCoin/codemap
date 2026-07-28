@@ -341,3 +341,48 @@ func TestHandleGraphContextHandlers(t *testing.T) {
 		}
 	}
 }
+
+func TestRustGraphContextHandlersDisclosePartialCoverage(t *testing.T) {
+	if !scanner.NewAstGrepAnalyzer().Available() {
+		t.Skip("ast-grep not available")
+	}
+
+	root := t.TempDir()
+	files := map[string]string{
+		"Cargo.toml":          "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+		"src/lib.rs":          "mod workspace;\n",
+		"src/workspace.rs":    "pub fn run() {}\n",
+		"src/string_route.rs": "const COMMAND: &str = \"run\";\n",
+	}
+	for path, content := range files {
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	importers, _, err := handleGetImporters(context.Background(), nil, ImportersInput{Path: root, File: "src/workspace.rs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hubs, _, err := handleGetHubs(context.Background(), nil, PathInput{Path: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileContext, _, err := handleGetFileContext(context.Background(), nil, ImportersInput{Path: root, File: "src/workspace.rs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, result := range map[string]string{
+		"importers":    resultText(t, importers),
+		"hubs":         resultText(t, hubs),
+		"file context": resultText(t, fileContext),
+	} {
+		if !strings.Contains(result, "Coverage: partial") {
+			t.Fatalf("%s MCP output omits partial coverage:\n%s", name, result)
+		}
+	}
+}

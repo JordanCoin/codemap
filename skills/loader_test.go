@@ -3,6 +3,7 @@ package skills
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -101,6 +102,38 @@ func TestLoadBuiltinSkills(t *testing.T) {
 		if s.Source != "builtin" {
 			t.Errorf("expected source 'builtin', got %q", s.Source)
 		}
+	}
+}
+
+func TestConfigSetupSkillIncludesCargoWorkspaceCoverageGuidance(t *testing.T) {
+	skills, err := loadBuiltinSkills()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body string
+	for _, skill := range skills {
+		if skill.Meta.Name == "config-setup" {
+			body = skill.Body
+			break
+		}
+	}
+
+	// Builtin skills are embedded runtime guidance. Keep these behavior
+	// requirements explicit without coupling the test to the document layout.
+	for _, check := range []struct {
+		name     string
+		guidance string
+	}{
+		{name: "reads agent instructions", guidance: "AGENTS.md"},
+		{name: "reads Cargo workspace manifests", guidance: "Cargo.toml"},
+		{name: "keeps workspace members", guidance: "workspace members"},
+		{name: "checks cross-layer dependencies", guidance: "cross-layer dependency"},
+	} {
+		t.Run(check.name, func(t *testing.T) {
+			if !strings.Contains(body, check.guidance) {
+				t.Fatalf("config-setup skill omits %q", check.guidance)
+			}
+		})
 	}
 }
 
