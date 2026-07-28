@@ -565,6 +565,7 @@ func (d *Daemon) writeState() {
 		state.Hubs = d.graph.FileGraph.HubFiles()
 		state.Importers = d.graph.FileGraph.Importers
 		state.Imports = d.graph.FileGraph.Imports
+		state.Coverage = d.graph.FileGraph.Coverage
 	}
 
 	data, err := json.MarshalIndent(state, "", "  ")

@@ -287,7 +287,33 @@ func (s *AstGrepScanner) ScanDirectory(root string) ([]FileAnalysis, error) {
 			}
 		}
 
-		if strings.HasSuffix(m.RuleID, "-imports") {
+		if m.RuleID == "rust-mod-imports" || m.RuleID == "rust-path-imports" || m.RuleID == "rust-use-imports" {
+			var path string
+			kind := "rust-path"
+			switch m.RuleID {
+			case "rust-mod-imports":
+				kind = "rust-module"
+				if pathVar, ok := m.MetaVariables.Single["PATH"]; ok {
+					path = pathVar.Text
+				}
+			case "rust-path-imports":
+				path = m.Text
+			case "rust-use-imports":
+				if pathVar, ok := m.MetaVariables.Single["PATH"]; ok {
+					path = pathVar.Text
+				}
+			}
+			if path != "" {
+				if m.RuleID != "rust-path-imports" {
+					fileMap[relPath].Imports = append(fileMap[relPath].Imports, path)
+				}
+				fileMap[relPath].References = append(fileMap[relPath].References, ImportReference{
+					Path: path,
+					Kind: kind,
+					Line: m.Range.Start.Line,
+				})
+			}
+		} else if strings.HasSuffix(m.RuleID, "-imports") {
 			// Use metaVariable PATH if available, otherwise fall back to text extraction
 			var mod string
 			if pathVar, ok := m.MetaVariables.Single["PATH"]; ok && pathVar.Text != "" {
@@ -312,10 +338,24 @@ func (s *AstGrepScanner) ScanDirectory(root string) ([]FileAnalysis, error) {
 	for _, a := range fileMap {
 		a.Functions = dedupe(a.Functions)
 		a.Imports = dedupe(a.Imports)
+		a.References = dedupeImportReferences(a.References)
 		results = append(results, *a)
 	}
 
 	return results, nil
+}
+
+func dedupeImportReferences(refs []ImportReference) []ImportReference {
+	seen := make(map[ImportReference]bool)
+	result := make([]ImportReference, 0, len(refs))
+	for _, ref := range refs {
+		if seen[ref] {
+			continue
+		}
+		seen[ref] = true
+		result = append(result, ref)
+	}
+	return result
 }
 
 // ruleIDToLang maps ast-grep rule ID prefixes to language names.
