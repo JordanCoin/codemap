@@ -155,6 +155,35 @@ func ResolverExtensions() []string {
 	return exts
 }
 
+var resolverLanguageFamilies = map[string]string{
+	"javascript": "js",
+	"typescript": "js",
+	"c":          "c-cpp",
+	"cpp":        "c-cpp",
+	"java":       "jvm",
+	"kotlin":     "jvm",
+	"scala":      "jvm",
+	"python":     "python",
+	"csharp":     "csharp",
+	"go":         "go",
+	"rust":       "rust",
+	"swift":      "swift",
+	"ruby":       "ruby",
+	"php":        "php",
+	"lua":        "lua",
+	"elixir":     "elixir",
+	"solidity":   "solidity",
+	"bash":       "bash",
+}
+
+// languagesCompatible reports whether an import may resolve across the two
+// source languages. Unknown languages are deliberately incompatible.
+func languagesCompatible(importer, candidate string) bool {
+	importerFamily, importerKnown := resolverLanguageFamilies[importer]
+	candidateFamily, candidateKnown := resolverLanguageFamilies[candidate]
+	return importerKnown && candidateKnown && importerFamily == candidateFamily
+}
+
 // LangDisplay maps internal language names to display names
 var LangDisplay = map[string]string{
 	"go":         "Go",

@@ -460,7 +460,7 @@ func TestResolvePathAlias(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := resolvePathAlias(tt.imp, pathAliases, ".", idx)
+			result := resolvePathAlias(tt.imp, pathAliases, ".", idx, "typescript")
 			if len(result) == 0 {
 				t.Errorf("Expected to resolve %q, got no results", tt.imp)
 				return
@@ -483,13 +483,13 @@ func TestResolvePathAliasNoMatch(t *testing.T) {
 	}
 
 	// Import that doesn't match any alias
-	result := resolvePathAlias("lodash", pathAliases, ".", idx)
+	result := resolvePathAlias("lodash", pathAliases, ".", idx, "typescript")
 	if len(result) != 0 {
 		t.Errorf("Expected no results for non-alias import, got %v", result)
 	}
 
 	// Import that matches alias but file doesn't exist
-	result = resolvePathAlias("@modules/nonexistent", pathAliases, ".", idx)
+	result = resolvePathAlias("@modules/nonexistent", pathAliases, ".", idx, "typescript")
 	if len(result) != 0 {
 		t.Errorf("Expected no results for non-existent file, got %v", result)
 	}
@@ -571,7 +571,7 @@ func TestDepsResolveRelative(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := resolveRelative(tt.imp, tt.fromDir, idx)
+			got := resolveRelative(tt.imp, tt.fromDir, idx, "go")
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("resolveRelative(%q, %q): want %v, got %v", tt.imp, tt.fromDir, tt.want, got)
 			}
@@ -633,13 +633,13 @@ func TestDepsFuzzyResolve(t *testing.T) {
 			want:      []string{tsLogin},
 		},
 		{
-			name:      "exact import",
+			name:      "bare typescript import remains external",
 			imp:       "src/shared/utils/helpers",
 			fromFile:  filepath.FromSlash("src/app.ts"),
 			goModule:  "example.com/project",
 			pathAlias: nil,
 			baseURL:   "",
-			want:      []string{tsHelper},
+			want:      nil,
 		},
 		{
 			name:      "suffix import",
