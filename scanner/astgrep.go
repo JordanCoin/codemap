@@ -41,37 +41,34 @@ type ScanMatch struct {
 
 // AstGrepScanner uses ast-grep with YAML rules for code analysis
 type AstGrepScanner struct {
-	rulesDir string
-	binary   string // "sg" or "ast-grep", whichever is available
+	rulesDir    string
+	inlineRules string
+	binary      string // "sg" or "ast-grep", whichever is available
 }
 
-// NewAstGrepScanner creates a scanner, extracting rules to temp dir
+// NewAstGrepScanner creates a scanner using the embedded rules.
 func NewAstGrepScanner() (*AstGrepScanner, error) {
 	// Find ast-grep binary (installed as "sg" via brew, "ast-grep" via cargo/pipx)
 	binary := findAstGrepBinary()
 
-	// Create temp directory for rules
-	rulesDir, err := os.MkdirTemp("", "codemap-sg-rules-*")
-	if err != nil {
-		return nil, err
-	}
-
-	// Extract embedded rules
 	entries, err := sgRules.ReadDir("sg-rules")
 	if err != nil {
-		os.RemoveAll(rulesDir)
 		return nil, err
 	}
 
+	var rules []string
 	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".yml") || entry.Name() == "sgconfig.yml" {
+			continue
+		}
 		content, err := sgRules.ReadFile("sg-rules/" + entry.Name())
 		if err != nil {
 			continue
 		}
-		os.WriteFile(filepath.Join(rulesDir, entry.Name()), content, 0644)
+		rules = append(rules, string(content))
 	}
 
-	return &AstGrepScanner{rulesDir: rulesDir, binary: binary}, nil
+	return &AstGrepScanner{inlineRules: strings.Join(rules, "\n---\n"), binary: binary}, nil
 }
 
 // extractJSONArray finds and extracts a JSON array from output that may have garbage before it
@@ -213,18 +210,21 @@ func (s *AstGrepScanner) ScanDirectory(root string) ([]FileAnalysis, error) {
 		return nil, nil
 	}
 
-	// Combine all rules into one string with --- separators
-	var rules []string
-	entries, _ := os.ReadDir(s.rulesDir)
-	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".yml") && e.Name() != "sgconfig.yml" {
-			content, err := os.ReadFile(filepath.Join(s.rulesDir, e.Name()))
-			if err == nil {
-				rules = append(rules, string(content))
+	inlineRules := s.inlineRules
+	if inlineRules == "" && s.rulesDir != "" {
+		// Preserve support for manually constructed scanners backed by a rule directory.
+		var rules []string
+		entries, _ := os.ReadDir(s.rulesDir)
+		for _, e := range entries {
+			if strings.HasSuffix(e.Name(), ".yml") && e.Name() != "sgconfig.yml" {
+				content, err := os.ReadFile(filepath.Join(s.rulesDir, e.Name()))
+				if err == nil {
+					rules = append(rules, string(content))
+				}
 			}
 		}
+		inlineRules = strings.Join(rules, "\n---\n")
 	}
-	inlineRules := strings.Join(rules, "\n---\n")
 
 	// Build command args, excluding nested git repos that ast-grep would
 	// treat as separate repo boundaries (ignoring parent .gitignore)

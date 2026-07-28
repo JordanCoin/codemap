@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -19,6 +20,49 @@ func canonicalTestPath(path string) string {
 		return resolved
 	}
 	return path
+}
+
+func TestAstGrepScannerUsesEmbeddedRulesWithoutWritableTempDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires shell script execution")
+	}
+
+	tmpDir := t.TempDir()
+	blockedTemp := filepath.Join(tmpDir, "not-a-directory")
+	if err := os.WriteFile(blockedTemp, []byte("blocked"), 0644); err != nil {
+		t.Fatalf("failed to create blocked temp path: %v", err)
+	}
+
+	capturedArgs := filepath.Join(tmpDir, "args.txt")
+	fakeBinary := filepath.Join(tmpDir, "fake-sg.sh")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE_ARGS\"\nprintf '[]\\n'\n"
+	if err := os.WriteFile(fakeBinary, []byte(script), 0755); err != nil {
+		t.Fatalf("failed to create fake ast-grep binary: %v", err)
+	}
+
+	t.Setenv("TMPDIR", blockedTemp)
+	t.Setenv("TMP", blockedTemp)
+	t.Setenv("TEMP", blockedTemp)
+	t.Setenv("CAPTURE_ARGS", capturedArgs)
+
+	scanner, err := NewAstGrepScanner()
+	if err != nil {
+		t.Fatalf("NewAstGrepScanner should not require writable temp storage: %v", err)
+	}
+	t.Cleanup(scanner.Close)
+	scanner.binary = fakeBinary
+
+	if _, err := scanner.ScanDirectory(tmpDir); err != nil {
+		t.Fatalf("ScanDirectory failed: %v", err)
+	}
+
+	args, err := os.ReadFile(capturedArgs)
+	if err != nil {
+		t.Fatalf("failed to read captured arguments: %v", err)
+	}
+	if !strings.Contains(string(args), "--inline-rules\n") || !strings.Contains(string(args), "id: go-imports\n") {
+		t.Fatalf("expected embedded Go rules in --inline-rules argument, got: %s", args)
+	}
 }
 
 func TestAstGrepAnalyzer(t *testing.T) {
