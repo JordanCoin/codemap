@@ -337,25 +337,157 @@ func TestValidateCodexHookTrust(t *testing.T) {
 }
 
 func TestRunDoctorReportsUnconfiguredProject(t *testing.T) {
-	root := t.TempDir()
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-
 	originalLook := doctorLookPath
-	doctorLookPath = func(string) (string, error) { return "", os.ErrNotExist }
-	t.Cleanup(func() { doctorLookPath = originalLook })
+	originalGOOS := doctorRuntimeGOOS
+	originalCandidates := doctorDesktopCodexCandidates
+	originalVersionProbe := doctorRuntimeVersionProbe
+	originalWindowsCandidates := doctorWindowsBundledCodexCLICandidates
+	t.Cleanup(func() {
+		doctorLookPath = originalLook
+		doctorRuntimeGOOS = originalGOOS
+		doctorDesktopCodexCandidates = originalCandidates
+		doctorRuntimeVersionProbe = originalVersionProbe
+		doctorWindowsBundledCodexCLICandidates = originalWindowsCandidates
+	})
 
-	var code int
-	out := captureOutput(func() { code = RunDoctor([]string{root}, ".") })
+	for _, tt := range []struct {
+		name              string
+		goos              string
+		cliName           string
+		desktopBundle     string
+		windowsDesktop    bool
+		wantVersionProbes int
+		want              []string
+		absent            []string
+	}{
+		{
+			name: "neither",
+			goos: "darwin",
+			want: []string{"MISS project config", "no supported coding agent", "need attention"},
+		},
+		{
+			name:    "CLI only",
+			goos:    "darwin",
+			cliName: "codex",
+			want:    []string{"MISS project config", "OK   Codex executable is installed", "need attention"},
+			absent:  []string{"no supported coding agent", "Codex Desktop runtime"},
+		},
+		{
+			name:              "ChatGPT Desktop only",
+			goos:              "darwin",
+			desktopBundle:     "ChatGPT.app",
+			wantVersionProbes: 1,
+			want:              []string{"MISS project config", "OK   Codex Desktop runtime", "ChatGPT.app/Contents/Resources/codex", "need attention"},
+			absent:            []string{"no supported coding agent", "Codex CLI runtime"},
+		},
+		{
+			name:              "CLI and Codex Desktop",
+			goos:              "darwin",
+			cliName:           "codex",
+			desktopBundle:     "Codex.app",
+			wantVersionProbes: 2,
+			want:              []string{"MISS project config", "OK   Codex executable is installed", "OK   Codex CLI runtime", "OK   Codex Desktop runtime", "Codex.app/Contents/Resources/codex", "need attention"},
+			absent:            []string{"no supported coding agent"},
+		},
+		{
+			name:          "Linux ignores Desktop",
+			goos:          "linux",
+			desktopBundle: "ChatGPT.app",
+			want:          []string{"MISS project config", "no supported coding agent", "need attention"},
+			absent:        []string{"Codex Desktop runtime"},
+		},
+		{
+			name:              "Windows Desktop only",
+			goos:              "windows",
+			windowsDesktop:    true,
+			wantVersionProbes: 1,
+			want:              []string{"MISS project config", "OK   Codex Desktop app", "ChatGPT.exe", "OK   Codex Desktop runtime", "OpenAI.Codex_", "resources/codex.exe", "need attention"},
+			absent:            []string{"no supported coding agent", "Codex CLI runtime"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
+			t.Setenv("PATH", t.TempDir())
 
-	if code != 1 {
-		t.Fatalf("RunDoctor exit code = %d, want 1 for unconfigured project\n%s", code, out)
+			doctorLookPath = func(name string) (string, error) {
+				if name == "codex" && tt.cliName != "" {
+					return filepath.Join(root, tt.cliName), nil
+				}
+				return "", os.ErrNotExist
+			}
+			doctorRuntimeGOOS = tt.goos
+			doctorDesktopCodexCandidates = nil
+			doctorWindowsBundledCodexCLICandidates = func() []string { return nil }
+			if tt.desktopBundle != "" {
+				desktop := filepath.Join(t.TempDir(), tt.desktopBundle, "Contents", "Resources", "codex")
+				if err := os.MkdirAll(filepath.Dir(desktop), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(desktop, []byte("#!/bin/sh\n"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				doctorDesktopCodexCandidates = []string{desktop}
+			}
+			if tt.windowsDesktop {
+				appRoot := filepath.Join(t.TempDir(), "WindowsApps", "OpenAI.Codex_26.721.4979.0_x64__futurepublisher", "app")
+				app := filepath.Join(appRoot, "ChatGPT.exe")
+				desktop := filepath.Join(appRoot, "resources", "codex.exe")
+				if err := os.MkdirAll(filepath.Dir(desktop), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(app, []byte("desktop"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(desktop, []byte("codex"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				doctorWindowsBundledCodexCLICandidates = func() []string { return []string{desktop} }
+			}
+			var versionProbes []string
+			doctorRuntimeVersionProbe = func(path string) (string, error) {
+				versionProbes = append(versionProbes, path)
+				return "test", nil
+			}
+
+			var code int
+			out := captureOutput(func() { code = RunDoctor([]string{root}, ".") })
+			if code != 1 {
+				t.Fatalf("RunDoctor exit code = %d, want 1 for unconfigured project\n%s", code, out)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(out, want) {
+					t.Fatalf("expected %q in doctor output:\n%s", want, out)
+				}
+			}
+			for _, absent := range tt.absent {
+				if strings.Contains(out, absent) {
+					t.Fatalf("did not expect %q in doctor output:\n%s", absent, out)
+				}
+			}
+			if len(versionProbes) != tt.wantVersionProbes {
+				t.Fatalf("version probes = %d, want %d", len(versionProbes), tt.wantVersionProbes)
+			}
+		})
 	}
-	for _, want := range []string{"MISS project config", "no supported coding agent", "need attention"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("expected %q in doctor output:\n%s", want, out)
-		}
+}
+
+func TestDiscoverWindowsBundledCodexCLICandidates(t *testing.T) {
+	programFiles := t.TempDir()
+	t.Setenv("ProgramFiles", programFiles)
+	candidate := filepath.Join(programFiles, "WindowsApps", "OpenAI.Codex_26.721.4979.0_x64__futurepublisher", "app", "resources", "codex.exe")
+	if err := os.MkdirAll(filepath.Dir(candidate), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(candidate, []byte("desktop"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates := discoverWindowsBundledCodexCLICandidates()
+	if len(candidates) != 1 || candidates[0] != candidate {
+		t.Fatalf("candidates = %q, want [%q]", candidates, candidate)
 	}
 }
 

@@ -306,7 +306,7 @@ func TestScanForDepsPropagatesScanError(t *testing.T) {
 	}
 }
 
-func TestScanForDepsPropagatesSetupError(t *testing.T) {
+func TestScanForDepsDoesNotRequireWritableTempDir(t *testing.T) {
 	invalidTemp := filepath.Join(t.TempDir(), "not-a-directory")
 	if err := os.WriteFile(invalidTemp, []byte("occupied"), 0o644); err != nil {
 		t.Fatal(err)
@@ -315,7 +315,7 @@ func TestScanForDepsPropagatesSetupError(t *testing.T) {
 	t.Setenv("TMP", invalidTemp)
 	t.Setenv("TEMP", invalidTemp)
 
-	if _, err := ScanForDeps(t.TempDir()); err == nil {
-		t.Fatal("expected invalid temporary directory to propagate a scanner setup error")
+	if _, err := ScanForDeps(t.TempDir()); err != nil {
+		t.Fatalf("ScanForDeps should not require writable temporary storage: %v", err)
 	}
 }
