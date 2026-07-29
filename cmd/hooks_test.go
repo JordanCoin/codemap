@@ -977,11 +977,11 @@ func TestShowLastSessionContext(t *testing.T) {
 	})
 }
 
-// TestShowSessionProgress verifies that in-session hub-edit statistics are
-// reported accurately, exposing hub churn as a context-bloat signal.
+// TestShowSessionProgress verifies session statistics separate what the agent
+// actually edited (post-edit hook records) from what merely changed on disk.
 func TestShowSessionProgress(t *testing.T) {
-	t.Run("no daemon state produces no output", func(t *testing.T) {
-		out := captureOutput(func() { showSessionProgress(t.TempDir()) })
+	t.Run("no daemon state and no edits produces no output", func(t *testing.T) {
+		out := captureOutput(func() { showSessionProgress(t.TempDir(), "s") })
 		if out != "" {
 			t.Errorf("expected no output with no state, got %q", out)
 		}
@@ -993,13 +993,13 @@ func TestShowSessionProgress(t *testing.T) {
 			UpdatedAt: time.Now(),
 			FileCount: 5,
 		})
-		out := captureOutput(func() { showSessionProgress(root) })
+		out := captureOutput(func() { showSessionProgress(root, "s") })
 		if out != "" {
 			t.Errorf("expected no output for state with no events, got %q", out)
 		}
 	})
 
-	t.Run("shows files-edited count", func(t *testing.T) {
+	t.Run("daemon events alone report disk activity, never edits", func(t *testing.T) {
 		root := t.TempDir()
 		writeWatchState(t, root, watch.State{
 			UpdatedAt: time.Now(),
@@ -1010,29 +1010,36 @@ func TestShowSessionProgress(t *testing.T) {
 				{Path: "main.go", Op: "WRITE"}, // duplicate — same file
 			},
 		})
-		out := captureOutput(func() { showSessionProgress(root) })
-		if !strings.Contains(out, "2 files edited") {
-			t.Errorf("expected '2 files edited', got %q", out)
+		out := captureOutput(func() { showSessionProgress(root, "s") })
+		if strings.Contains(out, "files edited") {
+			t.Errorf("disk churn must not be reported as edits, got %q", out)
+		}
+		if !strings.Contains(out, "2 files changed") {
+			t.Errorf("expected '2 files changed' disk summary, got %q", out)
 		}
 	})
 
-	t.Run("reports hub-edit count to surface risky churn", func(t *testing.T) {
+	t.Run("agent edits drive files-edited and hub counts", func(t *testing.T) {
 		root := t.TempDir()
 		writeWatchState(t, root, watch.State{
 			UpdatedAt: time.Now(),
 			FileCount: 10,
-			RecentEvents: []watch.Event{
-				{Path: "types.go", Op: "WRITE", IsHub: true},
-				{Path: "utils.go", Op: "WRITE", IsHub: false},
-				{Path: "types.go", Op: "WRITE", IsHub: true},
+			Importers: map[string][]string{
+				"types.go": {"a.go", "b.go", "c.go"},
 			},
 		})
-		out := captureOutput(func() { showSessionProgress(root) })
-		if !strings.Contains(out, "1 hub edits") {
-			t.Errorf("expected '1 hub edits' (unique hub files, not events), got %q", out)
+		if err := recordAgentEdit(root, "s", "types.go", time.Now()); err != nil {
+			t.Fatal(err)
 		}
+		if err := recordAgentEdit(root, "s", "utils.go", time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		out := captureOutput(func() { showSessionProgress(root, "s") })
 		if !strings.Contains(out, "2 files edited") {
 			t.Errorf("expected '2 files edited', got %q", out)
+		}
+		if !strings.Contains(out, "1 hub edits") {
+			t.Errorf("expected '1 hub edits', got %q", out)
 		}
 	})
 
@@ -1041,11 +1048,11 @@ func TestShowSessionProgress(t *testing.T) {
 		writeWatchState(t, root, watch.State{
 			UpdatedAt: time.Now(),
 			FileCount: 5,
-			RecentEvents: []watch.Event{
-				{Path: "main.go", Op: "WRITE", IsHub: false},
-			},
 		})
-		out := captureOutput(func() { showSessionProgress(root) })
+		if err := recordAgentEdit(root, "s", "main.go", time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		out := captureOutput(func() { showSessionProgress(root, "s") })
 		if strings.Contains(out, "hub edits") {
 			t.Errorf("should not mention hub edits when count is 0, got %q", out)
 		}

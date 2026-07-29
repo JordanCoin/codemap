@@ -1278,8 +1278,21 @@ func renderImportersReportString(report scanner.ImportersReport) string {
 	return buf.String()
 }
 
+// renderImportersReportCLI is the interactive `--importers` output: unlike the
+// token-budgeted blast-radius bundle (which omits empty sections), a human ran
+// this command and deserves an explanation when the answer is "none".
+func renderImportersReportCLI(w io.Writer, report scanner.ImportersReport) {
+	if len(report.Importers) == 0 && len(report.HubImports) == 0 {
+		fmt.Fprintf(w, "No files import %s.\n", report.File)
+		fmt.Fprintln(w, "   Note: files in the same package never import each other (Go resolves")
+		fmt.Fprintln(w, "   imports at package level), so only cross-package importers appear here.")
+		return
+	}
+	renderImportersReport(w, report)
+}
+
 func renderImportersReport(w io.Writer, report scanner.ImportersReport) {
-	if len(report.Importers) >= 3 {
+	if scanner.CountHubImporters(report.Importers) >= scanner.HubThreshold {
 		fmt.Fprintf(w, "⚠️  HUB FILE: %s\n", report.File)
 		fmt.Fprintf(w, "   Imported by %d files - changes have wide impact!\n", len(report.Importers))
 		fmt.Fprintln(w)
@@ -1327,7 +1340,7 @@ func buildImportersReportFromGraph(root, file string, fg *scanner.FileGraph) sca
 		Importers:     importers,
 		Imports:       imports,
 		ImporterCount: len(importers),
-		IsHub:         len(importers) >= 3,
+		IsHub:         fg.IsHub(file),
 	}
 
 	for _, imp := range imports {

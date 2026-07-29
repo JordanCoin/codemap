@@ -266,6 +266,13 @@ func main() {
 		fmt.Println("MCP server:")
 		fmt.Println("  codemap mcp                     # Run Codemap MCP server on stdio")
 		fmt.Println()
+		fmt.Println("More subcommands:")
+		fmt.Println("  codemap watch status|start|stop # Manage the background watch daemon")
+		fmt.Println("  codemap skill list|show <name>  # List or show bundled agent skills")
+		fmt.Println("  codemap context                 # Print machine-readable project context JSON")
+		fmt.Println("  codemap serve                   # Serve project intelligence over HTTP")
+		fmt.Println("  codemap version                 # Show build version")
+		fmt.Println()
 		fmt.Println("Recommended onboarding:")
 		fmt.Println("  codemap setup                   # Configure project config + Claude hooks")
 		fmt.Println("  codemap setup --global          # Write hooks to ~/.claude/settings.json")
@@ -382,6 +389,14 @@ func main() {
 	mode := "tree"
 	if *skylineMode {
 		mode = "skyline"
+	}
+
+	// A bare word that isn't a directory is almost always a typo'd subcommand
+	// ("codemap drift"), so fail with directions instead of a walk error.
+	if _, statErr := os.Stat(root); os.IsNotExist(statErr) {
+		fmt.Fprintf(os.Stderr, "Error: path %q does not exist.\n", root)
+		fmt.Fprintln(os.Stderr, "If you meant a subcommand, run 'codemap --help' for the full list.")
+		os.Exit(1)
 	}
 
 	// Scan files
@@ -590,7 +605,7 @@ func runImportersMode(root, file string, jsonMode bool, filters scanner.Filters)
 		_ = json.NewEncoder(os.Stdout).Encode(report)
 		return
 	}
-	renderImportersReport(os.Stdout, report)
+	renderImportersReportCLI(os.Stdout, report)
 }
 
 func runWatchSubcommand(subCmd, root string) {

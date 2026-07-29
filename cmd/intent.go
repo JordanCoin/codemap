@@ -38,7 +38,25 @@ type categoryDef struct {
 	Signals  []intentSignal
 }
 
+// intentConfidenceFloor is the minimum classifier confidence required before
+// hook output acts on a category. Below it, the category is a guess (often the
+// zero-signal "feature" fallback) and emitting advice derived from it actively
+// misleads the agent.
+const intentConfidenceFloor = 0.5
+
 var categoryDefs = []categoryDef{
+	{
+		// VCS workflow tasks (merging, reviewing, releasing) come before the
+		// code categories so agent sessions that never edit code stop being
+		// misread as feature work.
+		Category: "vcs",
+		Signals: []intentSignal{
+			{"pull request", 5}, {"pull requests", 5}, {"prs", 5}, {"open pr", 5},
+			{"merge", 4}, {"rebase", 5}, {"cherry-pick", 5}, {"cherry pick", 5},
+			{"release", 4}, {"changelog", 3}, {"tag it", 4},
+			{"land", 3}, {"review", 3}, {"commit", 3}, {"push", 3}, {"branch", 2},
+		},
+	},
 	{
 		Category: "explore",
 		Signals: []intentSignal{

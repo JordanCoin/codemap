@@ -610,7 +610,7 @@ func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input Imp
 		return textResult("No files import '" + input.File + "'"), nil, nil
 	}
 
-	isHub := len(importers) >= 3
+	isHub := scanner.CountHubImporters(importers) >= scanner.HubThreshold
 	hubNote := ""
 	if isHub {
 		hubNote = " ⚠️ HUB FILE"

@@ -139,3 +139,41 @@ func mustWriteConfigFixture(t *testing.T, path string, content string) {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+func TestInitProjectConfigSkipsNoiseExtensions(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"main.go":       "package main\n",
+		"util.go":       "package main\n",
+		"a/one.log":     "log line\n",
+		"a/two.log":     "log line\n",
+		"a/three.log":   "log line\n",
+		"b/daemon.pid":  "123\n",
+		"b/backup.bak":  "old\n",
+		"b/scratch.tmp": "x\n",
+		"b/build.out":   "x\n",
+	}
+	for path, content := range files {
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	result, err := initProjectConfig(root)
+	if err != nil {
+		t.Fatalf("initProjectConfig: %v", err)
+	}
+	for _, ext := range result.TopExts {
+		switch ext {
+		case "log", "pid", "bak", "tmp", "out":
+			t.Fatalf("noise extension %q auto-included in config: %v", ext, result.TopExts)
+		}
+	}
+	if len(result.TopExts) != 1 || result.TopExts[0] != "go" {
+		t.Fatalf("TopExts = %v, want [go]", result.TopExts)
+	}
+}

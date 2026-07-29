@@ -698,9 +698,21 @@ func hookPreEdit(root string) error {
 
 // hookPostEdit shows impact after editing (reads JSON from stdin)
 func hookPostEdit(root string) error {
-	filePaths, err := extractFilePathsFromStdin()
-	if err != nil || len(filePaths) == 0 {
+	input, err := io.ReadAll(os.Stdin)
+	if err != nil {
 		return nil
+	}
+	filePaths := parseHookFilePaths(input)
+	if len(filePaths) == 0 {
+		return nil
+	}
+
+	// Record provenance: these writes came from an agent tool call, which is
+	// the signal the watch daemon can't observe on its own.
+	sessionID := sessionIDFromHookInput(input)
+	now := time.Now()
+	for _, filePath := range filePaths {
+		_ = recordAgentEdit(root, sessionID, filePath, now)
 	}
 
 	for _, filePath := range filePaths {
@@ -778,15 +790,19 @@ func hookPromptSubmit(root string) error {
 	filesMentioned := extractMentionedFiles(prompt, topK)
 	intent := classifyIntent(prompt, filesMentioned, info, projCfg)
 
-	// Emit structured intent marker (machine-readable for tools)
-	emitIntentMarker(intent)
+	// Emit structured intent marker (machine-readable for tools) only when the
+	// classification is trustworthy — a zero/low-confidence category is a
+	// guess, and downstream advice derived from it misleads the agent.
+	if intent.Confidence >= intentConfidenceFloor {
+		emitIntentMarker(intent)
+	}
 
 	// Human-readable file context (backwards compatible)
 	var output []string
 	if info != nil {
 		for _, file := range filesMentioned {
 			if importers := info.Importers[file]; len(importers) > 0 {
-				if len(importers) >= 3 {
+				if scanner.CountHubImporters(importers) >= scanner.HubThreshold {
 					output = append(output, fmt.Sprintf("   ⚠️  %s is a HUB (imported by %d files)", file, len(importers)))
 				} else {
 					output = append(output, fmt.Sprintf("   📍 %s (imported by %d files)", file, len(importers)))
@@ -825,8 +841,9 @@ func hookPromptSubmit(root string) error {
 	}
 
 	// Show working set and session progress
-	showWorkingSetSummary(root)
-	showSessionProgress(root)
+	promptSessionID := sessionIDFromHookInput(input)
+	showWorkingSetSummary(root, promptSessionID)
+	showSessionProgress(root, promptSessionID)
 
 	// Write statusline state for terminal UI
 	writeStatuslineState(root, intent)
@@ -920,6 +937,10 @@ func showNextCodemapSteps(intent TaskIntent, info *hubInfo) {
 }
 
 func planCodemapNextSteps(intent TaskIntent, info *hubInfo) []codemapNextStep {
+	if intent.Confidence < intentConfidenceFloor {
+		return nil
+	}
+
 	var steps []codemapNextStep
 	seen := make(map[string]bool)
 	add := func(command, reason string) {
@@ -933,24 +954,28 @@ func planCodemapNextSteps(intent TaskIntent, info *hubInfo) []codemapNextStep {
 	primaryFile := pickPrimaryCodemapFile(intent.Files, info)
 	if primaryFile != "" {
 		importerCount := 0
+		hubImporterCount := 0
 		if info != nil {
 			importerCount = len(info.Importers[primaryFile])
+			hubImporterCount = scanner.CountHubImporters(info.Importers[primaryFile])
 		}
 
 		reason := "check callers before editing"
 		switch {
-		case importerCount >= 3:
+		case hubImporterCount >= scanner.HubThreshold:
 			reason = fmt.Sprintf("check blast radius before editing this hub (%d importers)", importerCount)
 		case importerCount > 0:
 			reason = fmt.Sprintf("check callers before editing (%d importers)", importerCount)
 		}
 		add("codemap --importers "+shellQuoteIfNeeded(primaryFile), reason)
-		if importerCount >= 3 {
+		if hubImporterCount >= scanner.HubThreshold {
 			add("codemap --deps", "trace dependency flow around this hub before changing it")
 		}
 	}
 
 	switch intent.Category {
+	case "vcs":
+		add("codemap --diff", "review what changed before merging, reviewing, or releasing")
 	case "explore":
 		if len(intent.Files) == 0 {
 			add("codemap .", "refresh project structure before diving in")
@@ -969,7 +994,7 @@ func planCodemapNextSteps(intent TaskIntent, info *hubInfo) []codemapNextStep {
 	case "bugfix":
 		if len(intent.Files) == 0 {
 			add("codemap --diff", "check recent branch changes before debugging")
-		} else if primaryFile != "" && info != nil && len(info.Importers[primaryFile]) >= 3 {
+		} else if primaryFile != "" && info != nil && scanner.CountHubImporters(info.Importers[primaryFile]) >= scanner.HubThreshold {
 			add("codemap --deps", "hub fixes can ripple through dependents")
 		}
 	}
@@ -1079,8 +1104,13 @@ func showDriftWarnings(root string, cfg config.DriftConfig, routing config.Routi
 	}
 }
 
-// showWorkingSetSummary displays the current working set from daemon state.
-func showWorkingSetSummary(root string) {
+// showWorkingSetSummary displays session activity from daemon state, split by
+// provenance: files this agent actually edited (recorded by the post-edit
+// hook) versus files that merely changed on disk (git merges, checkouts,
+// generated output). The daemon alone can't tell those apart, so without
+// agent-edit records the output says "changed on disk" instead of claiming an
+// agent working set that may be merge churn.
+func showWorkingSetSummary(root, sessionID string) {
 	state := watch.ReadState(root)
 	if state == nil || state.WorkingSet == nil || state.WorkingSet.Size() == 0 {
 		return
@@ -1092,18 +1122,51 @@ func showWorkingSetSummary(root string) {
 		return
 	}
 
+	agentPaths := loadAgentEdits(root, time.Now().Add(-agentEditRecency)).paths
+	if len(agentPaths) == 0 {
+		fmt.Println()
+		fmt.Printf("💾 Files changed on disk: %d (no agent edits recorded this session)\n", ws.Size())
+		for _, wf := range hot {
+			fmt.Printf("   • %s (%+d lines)\n", filepath.ToSlash(wf.Path), wf.NetDelta)
+		}
+		return
+	}
+
+	var agentFiles []*watch.WorkingFile
+	for _, wf := range ws.Files {
+		if agentPaths[filepath.ToSlash(wf.Path)] {
+			agentFiles = append(agentFiles, wf)
+		}
+	}
+	sort.Slice(agentFiles, func(i, j int) bool {
+		return agentFiles[i].LastTouch.After(agentFiles[j].LastTouch)
+	})
+
+	hubCount := 0
+	for _, wf := range agentFiles {
+		if wf.IsHub {
+			hubCount++
+		}
+	}
+
 	fmt.Println()
-	fmt.Printf("🔧 Working set: %d files", ws.Size())
-	if ws.HubCount() > 0 {
-		fmt.Printf(" (%d hubs)", ws.HubCount())
+	fmt.Printf("🔧 Working set: %d files", len(agentFiles))
+	if hubCount > 0 {
+		fmt.Printf(" (%d hubs)", hubCount)
 	}
 	fmt.Println()
-	for _, wf := range hot {
+	for i, wf := range agentFiles {
+		if i >= 5 {
+			break
+		}
 		hubStr := ""
 		if wf.IsHub {
 			hubStr = " ⚠️HUB"
 		}
-		fmt.Printf("   • %s (%d edits, %+d lines%s)\n", wf.Path, wf.EditCount, wf.NetDelta, hubStr)
+		fmt.Printf("   • %s (%d edits, %+d lines%s)\n", filepath.ToSlash(wf.Path), wf.EditCount, wf.NetDelta, hubStr)
+	}
+	if others := ws.Size() - len(agentFiles); others > 0 {
+		fmt.Printf("   … %d other files changed on disk (not this agent's edits)\n", others)
 	}
 }
 
@@ -1242,34 +1305,42 @@ func emitRouteMarker(matches []subsystemRouteMatch) {
 	fmt.Printf("<!-- codemap:routes %s -->\n", string(data))
 }
 
-// showSessionProgress shows files edited so far in this session
-func showSessionProgress(root string) {
+// showSessionProgress reports what this agent session actually edited (from
+// post-edit hook records). Daemon events cover everything that changed on disk
+// — merges, checkouts, generated files — so they only back an honest
+// "disk activity" fallback, never an "edited" claim.
+func showSessionProgress(root, sessionID string) {
+	edits := loadAgentEdits(root, time.Now().Add(-agentEditRecency))
+	if sessionPaths := edits.bySession[sessionID]; len(sessionPaths) > 0 {
+		info := getHubInfoNoFallback(root)
+		hubEdits := 0
+		for path := range sessionPaths {
+			if info != nil && info.isHub(path) {
+				hubEdits++
+			}
+		}
+		fmt.Println()
+		fmt.Printf("📊 Session so far: %d files edited", len(sessionPaths))
+		if hubEdits > 0 {
+			fmt.Printf(", %d hub edits", hubEdits)
+		}
+		fmt.Println()
+		return
+	}
+
 	state := watch.ReadState(root)
 	if state == nil || len(state.RecentEvents) == 0 {
 		return
 	}
-
-	// Count unique files and unique hub files edited
-	filesEdited := make(map[string]bool)
-	hubFiles := make(map[string]bool)
+	changed := make(map[string]bool)
 	for _, e := range state.RecentEvents {
-		filesEdited[e.Path] = true
-		if e.IsHub {
-			hubFiles[e.Path] = true
-		}
+		changed[e.Path] = true
 	}
-	hubEdits := len(hubFiles)
-
-	if len(filesEdited) == 0 {
+	if len(changed) == 0 {
 		return
 	}
-
 	fmt.Println()
-	fmt.Printf("📊 Session so far: %d files edited", len(filesEdited))
-	if hubEdits > 0 {
-		fmt.Printf(", %d hub edits", hubEdits)
-	}
-	fmt.Println()
+	fmt.Printf("📊 Recent disk activity: %d files changed\n", len(changed))
 }
 
 // hookPreCompact saves hub state before context compaction
@@ -1537,6 +1608,11 @@ func hookSessionIDFromStdin() string {
 	if err != nil || len(strings.TrimSpace(string(input))) == 0 {
 		return ""
 	}
+	return sessionIDFromHookInput(input)
+}
+
+// sessionIDFromHookInput extracts the agent session id from a raw hook payload.
+func sessionIDFromHookInput(input []byte) string {
 	var payload map[string]any
 	if json.Unmarshal(input, &payload) != nil {
 		return ""
@@ -1687,7 +1763,16 @@ func extractFilePathsFromStdin() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseHookFilePaths(input), nil
+}
 
+// parseHookFilePaths extracts edited file paths from a raw hook payload.
+func parseHookFilePaths(input []byte) []string {
+	paths, _ := parseHookFilePathsErr(input)
+	return paths
+}
+
+func parseHookFilePathsErr(input []byte) ([]string, error) {
 	var data map[string]interface{}
 	if err := json.Unmarshal(input, &data); err != nil {
 		// Try regex fallback for non-JSON or partial JSON
@@ -1766,7 +1851,7 @@ func checkFileImportersWithPhase(root, filePath, phase string) error {
 	}
 
 	importers := info.Importers[filePath]
-	if len(importers) >= 3 {
+	if scanner.CountHubImporters(importers) >= scanner.HubThreshold {
 		fmt.Println()
 		switch phase {
 		case "before":
@@ -1853,9 +1938,12 @@ func showFileCodemapActions(filePath string, importerCount int, importsHub bool,
 	fmt.Println()
 }
 
-// isHub checks if a file is a hub (has 3+ importers)
+// isHub checks if a file is a hub (has HubThreshold+ non-test importers).
 func (h *hubInfo) isHub(path string) bool {
-	return len(h.Importers[path]) >= 3
+	if scanner.IsTestFile(path) {
+		return false
+	}
+	return scanner.CountHubImporters(h.Importers[path]) >= scanner.HubThreshold
 }
 
 // findChildRepos returns subdirectories that are git repositories,
