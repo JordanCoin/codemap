@@ -455,10 +455,11 @@ type stdinManifest struct {
 func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFiles map[string]bool, stdinMode bool, filters scanner.Filters) {
 	var analyses []FileAnalysis
 	var externalDeps map[string][]string
+	var inventory []scanner.FileInfo
 	var err error
 
 	if stdinMode {
-		analyses, externalDeps, err = runDepsFromStdin(filters)
+		analyses, externalDeps, inventory, err = runDepsFromStdin(filters)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading stdin manifest: %v\n", err)
 			os.Exit(1)
@@ -478,6 +479,11 @@ func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFil
 			os.Exit(1)
 		}
 		externalDeps = scanner.ReadExternalDeps(absRoot)
+		inventory, err = scanner.ScanFiles(absRoot, scanner.NewGitIgnoreCache(absRoot), filters.Only, filters.Exclude)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error scanning configured files: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	// Filter to changed files if --diff specified
@@ -485,13 +491,7 @@ func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFil
 		analyses = scanner.FilterAnalysisToChanged(analyses, changedFiles)
 	}
 
-	depsProject := scanner.DepsProject{
-		Root:         absRoot,
-		Mode:         "deps",
-		Files:        analyses,
-		ExternalDeps: externalDeps,
-		DiffRef:      diffRef,
-	}
+	depsProject := scanner.NewDepsProject(absRoot, analyses, externalDeps, diffRef, inventory)
 
 	// Render or output JSON
 	if jsonMode {
@@ -509,43 +509,47 @@ func scanForDepsWithHint(root string, filters scanner.Filters) ([]FileAnalysis, 
 // runDepsFromStdin reads a JSON manifest from stdin, writes files to a temp
 // directory, runs ast-grep on it, and returns the results with paths matching
 // the original manifest.
-func runDepsFromStdin(filters scanner.Filters) ([]FileAnalysis, map[string][]string, error) {
+func runDepsFromStdin(filters scanner.Filters) ([]FileAnalysis, map[string][]string, []scanner.FileInfo, error) {
 	var manifest stdinManifest
 	if err := json.NewDecoder(os.Stdin).Decode(&manifest); err != nil {
-		return nil, nil, fmt.Errorf("invalid JSON: %w", err)
+		return nil, nil, nil, fmt.Errorf("invalid JSON: %w", err)
 	}
 
 	if len(manifest.Files) == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 
 	// Create temp directory and write manifest files
 	tempDir, err := os.MkdirTemp("", "codemap-stdin-*")
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create temp dir: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to create temp dir: %w", err)
 	}
 	defer os.RemoveAll(tempDir)
 
 	for _, f := range manifest.Files {
 		dest := filepath.Join(tempDir, f.Path)
 		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
-			return nil, nil, fmt.Errorf("mkdir %s: %w", filepath.Dir(dest), err)
+			return nil, nil, nil, fmt.Errorf("mkdir %s: %w", filepath.Dir(dest), err)
 		}
 		if err := os.WriteFile(dest, []byte(f.Content), 0644); err != nil {
-			return nil, nil, fmt.Errorf("write %s: %w", f.Path, err)
+			return nil, nil, nil, fmt.Errorf("write %s: %w", f.Path, err)
 		}
 	}
 
 	// Run ast-grep on temp directory
 	analyses, err := scanner.ScanForDepsWithFilters(tempDir, filters)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	// Read external deps from temp directory (manifest may include go.mod etc.)
 	externalDeps := scanner.ReadExternalDeps(tempDir)
+	inventory, err := scanner.ScanFiles(tempDir, scanner.NewGitIgnoreCache(tempDir), filters.Only, filters.Exclude)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 
-	return analyses, externalDeps, nil
+	return analyses, externalDeps, inventory, nil
 }
 
 // FileAnalysis is a type alias for use in main package.

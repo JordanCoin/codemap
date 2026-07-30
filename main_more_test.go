@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"codemap/analysis"
 	"codemap/config"
 	"codemap/handoff"
 	"codemap/scanner"
@@ -352,6 +353,9 @@ func TestRunDepsModeJSONAndMainDispatchesDepsAndImporters(t *testing.T) {
 
 	root := t.TempDir()
 	writeImportersFixture(t, root)
+	if err := os.WriteFile(filepath.Join(root, "lib.rs"), []byte("pub struct Value;\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	stdout, _ := captureMainStreams(t, func() {
 		runDepsMode(root, root, true, "main", map[string]bool{"a/a.go": true}, false, scanner.Filters{})
@@ -375,7 +379,7 @@ func TestRunDepsModeJSONAndMainDispatchesDepsAndImporters(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &depsProject); err != nil {
 		t.Fatalf("expected main deps JSON output, got error %v with body:\n%s", err, stdout)
 	}
-	if depsProject.Mode != "deps" || len(depsProject.Files) == 0 {
+	if depsProject.Mode != "deps" || len(depsProject.Files) == 0 || depsProject.Coverage.Status != analysis.CoveragePartial {
 		t.Fatalf("expected deps project output, got %+v", depsProject)
 	}
 

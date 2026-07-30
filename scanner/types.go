@@ -2,8 +2,11 @@ package scanner
 
 import (
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
+
+	"codemap/analysis"
 )
 
 // FileInfo represents a single file in the codebase.
@@ -49,11 +52,77 @@ type ImportReference struct {
 
 // DepsProject is the JSON output for --deps mode.
 type DepsProject struct {
-	Root         string              `json:"root"`
-	Mode         string              `json:"mode"`
-	Files        []FileAnalysis      `json:"files"`
-	ExternalDeps map[string][]string `json:"external_deps"`
-	DiffRef      string              `json:"diff_ref,omitempty"`
+	SchemaVersion string              `json:"schema_version"`
+	Coverage      analysis.Coverage   `json:"coverage"`
+	Root          string              `json:"root"`
+	Mode          string              `json:"mode"`
+	Files         []FileAnalysis      `json:"files"`
+	ExternalDeps  map[string][]string `json:"external_deps"`
+	DiffRef       string              `json:"diff_ref,omitempty"`
+}
+
+func NewDepsProject(root string, files []FileAnalysis, externalDeps map[string][]string, diffRef string, inventory ...[]FileInfo) DepsProject {
+	files = slices.Clone(files)
+	if files == nil {
+		files = []FileAnalysis{}
+	}
+	for index := range files {
+		files[index].Functions = slices.Clone(files[index].Functions)
+		if files[index].Functions == nil {
+			files[index].Functions = []string{}
+		}
+		files[index].Imports = slices.Clone(files[index].Imports)
+		if files[index].Imports == nil {
+			files[index].Imports = []string{}
+		}
+		slices.Sort(files[index].Functions)
+		slices.Sort(files[index].Imports)
+	}
+	sort.Slice(files, func(i, j int) bool {
+		if files[i].Path != files[j].Path {
+			return files[i].Path < files[j].Path
+		}
+		if files[i].Language != files[j].Language {
+			return files[i].Language < files[j].Language
+		}
+		if order := slices.Compare(files[i].Functions, files[j].Functions); order != 0 {
+			return order < 0
+		}
+		return slices.Compare(files[i].Imports, files[j].Imports) < 0
+	})
+	deps := make(map[string][]string, len(externalDeps))
+	for language, values := range externalDeps {
+		deps[language] = slices.Clone(values)
+		if deps[language] == nil {
+			deps[language] = []string{}
+		}
+		slices.Sort(deps[language])
+	}
+	coverage := analysis.Coverage{
+		Status:  analysis.CoverageComplete,
+		Sources: []analysis.Source{{Name: "ast-grep", Status: analysis.SourceAuthoritative}},
+	}
+	for _, file := range files {
+		if file.Language == "rust" || DetectLanguage(file.Path) == "rust" {
+			coverage.Status = analysis.CoveragePartial
+			coverage.Sources[0].Detail = rustCoverageNote
+			break
+		}
+	}
+	if coverage.Status == analysis.CoverageComplete && len(inventory) > 0 {
+		for _, file := range inventory[0] {
+			if DetectLanguage(file.Path) == "rust" {
+				coverage.Status = analysis.CoveragePartial
+				coverage.Sources[0].Detail = rustCoverageNote
+				break
+			}
+		}
+	}
+	return DepsProject{
+		SchemaVersion: analysis.SchemaVersion,
+		Coverage:      analysis.NormalizeCoverage(coverage),
+		Root:          root, Mode: "deps", Files: files, ExternalDeps: deps, DiffRef: diffRef,
+	}
 }
 
 // ImportersReport is the JSON output for --importers mode.

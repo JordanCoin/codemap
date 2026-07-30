@@ -25,6 +25,7 @@ import (
 	"codemap/skills"
 	"codemap/watch"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -170,10 +171,12 @@ func NewServer(options RuntimeOptions) *mcp.Server {
 	}, handleGetStructure)
 
 	// Tool: get_dependencies - Get dependency graph
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "get_dependencies",
-		Description: "Get the dependency flow of a project. Shows external dependencies by language, internal import chains between files, hub files (most-imported), and function counts. Use this to understand how code connects and which files are most critical.",
-	}, handleGetDependencies)
+	dependenciesTool := &mcp.Tool{
+		Name:         "get_dependencies",
+		Description:  "Get the dependency flow of a project. Shows external dependencies by language, internal import chains between files, hub files (most-imported), and function counts. Use this to understand how code connects and which files are most critical.",
+		OutputSchema: mustSchemaFor[scanner.DepsProject](),
+	}
+	mcp.AddTool(server, dependenciesTool, handleGetDependencies)
 
 	// Tool: get_diff - Get changed files with impact analysis
 	mcp.AddTool(server, &mcp.Tool{
@@ -289,6 +292,14 @@ func errorResult(text string) *mcp.CallToolResult {
 	}
 }
 
+func mustSchemaFor[T any]() *jsonschema.Schema {
+	schema, err := jsonschema.For[T](nil)
+	if err != nil {
+		panic(fmt.Sprintf("infer MCP schema: %v", err))
+	}
+	return schema
+}
+
 func handleGetStructure(ctx context.Context, req *mcp.CallToolRequest, input StructureInput) (*mcp.CallToolResult, any, error) {
 	absRoot, err := filepath.Abs(input.Path)
 	if err != nil {
@@ -373,19 +384,18 @@ func handleGetDependencies(ctx context.Context, req *mcp.CallToolRequest, input 
 	if err != nil {
 		return errorResult("Scan error: " + err.Error()), nil, nil
 	}
-
-	depsProject := scanner.DepsProject{
-		Root:         absRoot,
-		Mode:         "deps",
-		Files:        analyses,
-		ExternalDeps: scanner.ReadExternalDeps(absRoot),
+	inventory, err := scanner.ScanConfiguredFiles(absRoot, scanner.NewGitIgnoreCache(absRoot))
+	if err != nil {
+		return errorResult("Scan error: " + err.Error()), nil, nil
 	}
+
+	depsProject := scanner.NewDepsProject(absRoot, analyses, scanner.ReadExternalDeps(absRoot), "", inventory)
 
 	var buf bytes.Buffer
 	render.Depgraph(&buf, depsProject)
 	output := buf.String()
 
-	return textResult(output), nil, nil
+	return textResult(output), depsProject, nil
 }
 
 func handleGetDiff(ctx context.Context, req *mcp.CallToolRequest, input DiffInput) (*mcp.CallToolResult, any, error) {
