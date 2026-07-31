@@ -271,6 +271,16 @@ func TestBuildImportersReportFromGraphCarriesCoverage(t *testing.T) {
 	}
 }
 
+func TestCapBlastRadiusImportersReportCarriesCoverage(t *testing.T) {
+	capped := capBlastRadiusImportersReport(scanner.ImportersReport{
+		CoverageStatus: "partial",
+		CoverageNotes:  []string{"dynamic routes unresolved"},
+	}, 1)
+	if capped.CoverageStatus != "partial" || !reflect.DeepEqual(capped.CoverageNotes, []string{"dynamic routes unresolved"}) {
+		t.Fatalf("capped coverage = %q %#v", capped.CoverageStatus, capped.CoverageNotes)
+	}
+}
+
 // Finding #9: changed files with no importers must not emit empty importer
 // sections.
 func TestBlastRadiusOmitsEmptyImporterSections(t *testing.T) {
