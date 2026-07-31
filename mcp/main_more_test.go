@@ -150,7 +150,7 @@ func TestMCPScansRespectConfiguredFilters(t *testing.T) {
 		}
 	}
 
-	structure, _, err := handleGetStructure(context.Background(), nil, PathInput{Path: root})
+	structure, _, err := handleGetStructure(context.Background(), nil, StructureInput{Path: root})
 	if err != nil {
 		t.Fatalf("handleGetStructure error: %v", err)
 	}

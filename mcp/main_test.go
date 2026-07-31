@@ -304,7 +304,7 @@ func TestHandleGetStructureUsesStateHubs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, _, err := handleGetStructure(context.Background(), nil, PathInput{Path: root})
+	res, _, err := handleGetStructure(context.Background(), nil, StructureInput{Path: root})
 	if err != nil {
 		t.Fatalf("handleGetStructure error: %v", err)
 	}

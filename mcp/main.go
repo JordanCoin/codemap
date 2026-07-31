@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"codemap/config"
 	"codemap/handoff"
 	"codemap/internal/buildinfo"
 	"codemap/limits"
@@ -98,9 +99,14 @@ func (options RuntimeOptions) upgradeGuidance() string {
 }
 
 // Input types for tools
+type StructureInput struct {
+	Path  string `json:"path" jsonschema:"Path to the project directory to analyze"`
+	Depth int    `json:"depth,omitempty" jsonschema:"Optional tree depth; a positive value overrides project configuration"`
+}
+
 type PathInput struct {
 	Path  string `json:"path" jsonschema:"Path to the project directory to analyze"`
-	Depth int    `json:"depth,omitempty" jsonschema:"Optional tree depth (0 = adaptive default)"`
+	Depth int    `json:"depth,omitempty" jsonschema:"Deprecated and ignored; retained for compatibility"`
 }
 
 type DiffInput struct {
@@ -283,7 +289,7 @@ func errorResult(text string) *mcp.CallToolResult {
 	}
 }
 
-func handleGetStructure(ctx context.Context, req *mcp.CallToolRequest, input PathInput) (*mcp.CallToolResult, any, error) {
+func handleGetStructure(ctx context.Context, req *mcp.CallToolRequest, input StructureInput) (*mcp.CallToolResult, any, error) {
 	absRoot, err := filepath.Abs(input.Path)
 	if err != nil {
 		return errorResult("Invalid path: " + err.Error()), nil, nil
@@ -296,6 +302,9 @@ func handleGetStructure(ctx context.Context, req *mcp.CallToolRequest, input Pat
 	}
 	fileCount := len(files)
 	depth := input.Depth
+	if depth <= 0 {
+		depth = config.Load(absRoot).Depth
+	}
 	if depth <= 0 {
 		depth = limits.AdaptiveDepth(fileCount)
 	}
