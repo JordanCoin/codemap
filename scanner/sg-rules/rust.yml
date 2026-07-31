@@ -1,10 +1,21 @@
-id: rust-imports
+id: rust-use-imports
 language: rust
 rule:
   any:
     - pattern: use $PATH;
     - pattern: use $PATH::$$$_;
+---
+id: rust-mod-imports
+language: rust
+rule:
+  any:
     - pattern: mod $PATH;
+    - pattern: pub mod $PATH;
+---
+id: rust-path-imports
+language: rust
+rule:
+  pattern: $PATH::$$$REST
 ---
 id: rust-functions
 language: rust

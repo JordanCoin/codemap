@@ -10,13 +10,15 @@ import (
 
 // TaskIntent represents a parsed understanding of what the user wants to do.
 type TaskIntent struct {
-	Category    string              `json:"category"`    // "refactor", "feature", "bugfix", "explore", "test", "docs"
-	Confidence  float64             `json:"confidence"`  // 0.0-1.0 confidence in category
-	Files       []string            `json:"files"`       // mentioned files
-	Subsystems  []string            `json:"subsystems"`  // matched subsystem IDs
-	Scope       string              `json:"scope"`       // "single-file", "package", "cross-cutting"
-	RiskLevel   string              `json:"risk"`        // "low", "medium", "high"
-	Suggestions []ContextSuggestion `json:"suggestions"` // what to read/check next
+	Category           string              `json:"category"`    // "refactor", "feature", "bugfix", "explore", "test", "docs"
+	Confidence         float64             `json:"confidence"`  // 0.0-1.0 confidence in category
+	Files              []string            `json:"files"`       // mentioned files
+	Subsystems         []string            `json:"subsystems"`  // matched subsystem IDs
+	Scope              string              `json:"scope"`       // "single-file", "package", "cross-cutting"
+	RiskLevel          string              `json:"risk"`        // "low", "medium", "high"
+	Suggestions        []ContextSuggestion `json:"suggestions"` // what to read/check next
+	DependencyCoverage string              `json:"dependency_coverage,omitempty"`
+	CoverageNotes      []string            `json:"coverage_notes,omitempty"`
 }
 
 // ContextSuggestion recommends a follow-up action based on code intelligence.
@@ -113,6 +115,10 @@ func classifyIntent(prompt string, files []string, info *hubInfo, cfg config.Pro
 		Files:     files,
 		RiskLevel: "low",
 		Scope:     "single-file",
+	}
+	if info != nil {
+		intent.DependencyCoverage = info.Coverage.Status
+		intent.CoverageNotes = append([]string(nil), info.Coverage.Notes...)
 	}
 
 	// Score each category using weighted signals

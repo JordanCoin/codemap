@@ -4,9 +4,134 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"testing"
 )
+
+func TestRustWorkspaceImportersRespectCrateBoundaries(t *testing.T) {
+	if !NewAstGrepAnalyzer().Available() {
+		t.Skip("ast-grep not available")
+	}
+
+	root := t.TempDir()
+	files := map[string]string{
+		"Cargo.toml": `[workspace]
+members = ["crate-a", "but-api", "consumer"]
+resolver = "2"
+`,
+		"crate-a/Cargo.toml": `[package]
+name = "crate-a"
+version = "0.1.0"
+edition = "2021"
+`,
+		"crate-a/src/lib.rs":       "mod workspace;\n",
+		"crate-a/src/workspace.rs": "pub fn local() {}\n",
+		"but-api/Cargo.toml": `[package]
+name = "but-api"
+version = "0.1.0"
+edition = "2021"
+`,
+		"but-api/src/lib.rs":       "pub mod workspace;\n",
+		"but-api/src/workspace.rs": "pub fn run() {}\n",
+		"consumer/Cargo.toml": `[package]
+name = "consumer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+but-api = { path = "../but-api" }
+`,
+		"consumer/src/lib.rs": "pub fn call() { but_api::workspace::run(); }\n",
+	}
+	for path, content := range files {
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	graph, err := BuildFileGraph(root)
+	if err != nil {
+		t.Fatalf("BuildFileGraph() error: %v", err)
+	}
+
+	want := []string{"but-api/src/lib.rs", "consumer/src/lib.rs"}
+	got := append([]string(nil), graph.Importers["but-api/src/workspace.rs"]...)
+	sort.Strings(got)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("but-api workspace importers = %#v, want %#v", got, want)
+	}
+	if got := graph.Imports["crate-a/src/lib.rs"]; !reflect.DeepEqual(got, []string{"crate-a/src/workspace.rs"}) {
+		t.Fatalf("crate-a module imports = %#v, want only its local workspace module", got)
+	}
+}
+
+func TestRustWorkspaceResolvesLegalModulePathsAndReportsPartialCoverage(t *testing.T) {
+	if !NewAstGrepAnalyzer().Available() {
+		t.Skip("ast-grep not available")
+	}
+
+	root := t.TempDir()
+	files := map[string]string{
+		"Cargo.toml": `[package]
+name = "root-crate"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+members = ["nested"]
+`,
+		"src/lib.rs":          "mod workspace;\nmod branch;\n#[path = \"custom.rs\"]\nmod redirected;\n",
+		"src/workspace.rs":    "pub fn run() {}\n",
+		"src/branch.rs":       "pub mod child;\npub fn call() { crate::workspace::run(); self::child::run(); }\n",
+		"src/branch/child.rs": "pub fn run() { super::super::workspace::run(); }\n",
+		"src/custom.rs":       "pub fn run() {}\n",
+		"nested/Cargo.toml": `[package]
+name = "nested"
+version = "0.1.0"
+edition = "2021"
+`,
+		"nested/src/lib.rs":       "mod workspace;\npub fn call() { crate::workspace::nested(); }\n",
+		"nested/src/workspace.rs": "pub fn nested() {}\n",
+	}
+	for path, content := range files {
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	graph, err := BuildFileGraph(root)
+	if err != nil {
+		t.Fatalf("BuildFileGraph() error: %v", err)
+	}
+
+	if got := graph.Imports["nested/src/lib.rs"]; !reflect.DeepEqual(got, []string{"nested/src/workspace.rs"}) {
+		t.Fatalf("nested crate module imports = %#v, want its own workspace module", got)
+	}
+	wantBranch := []string{"src/branch/child.rs", "src/workspace.rs"}
+	gotBranch := append([]string(nil), graph.Imports["src/branch.rs"]...)
+	sort.Strings(gotBranch)
+	if !reflect.DeepEqual(gotBranch, wantBranch) {
+		t.Fatalf("branch imports = %#v, want %#v", gotBranch, wantBranch)
+	}
+	if got := graph.Imports["src/branch/child.rs"]; !reflect.DeepEqual(got, []string{"src/workspace.rs"}) {
+		t.Fatalf("repeated super path imports = %#v, want root workspace module", got)
+	}
+	if got := graph.Imports["src/lib.rs"]; slices.Contains(got, "src/custom.rs") {
+		t.Fatalf("#[path] module should remain unresolved, got imports %#v", got)
+	}
+	if graph.Coverage.Status != "partial" || len(graph.Coverage.Notes) == 0 {
+		t.Fatalf("coverage = %+v, want explicit partial Rust coverage", graph.Coverage)
+	}
+}
 
 func TestDetectLanguage(t *testing.T) {
 	tests := []struct {
@@ -483,6 +608,9 @@ func TestBuildFileGraphImportResolutionBoundaries(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/project\n\ngo 1.24.0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "Cargo.toml"), []byte("[package]\nname = \"boundary-fixture\"\nversion = \"0.1.0\"\n\n[lib]\npath = \"crates/mod.rs\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(root, "tsconfig.json"), []byte(`{
   "compilerOptions": {
     "baseUrl": ".",
@@ -493,7 +621,12 @@ func TestBuildFileGraphImportResolutionBoundaries(t *testing.T) {
 	}
 
 	analyses := []FileAnalysis{
-		{Path: "crates/mod.rs", Language: "rust", Imports: []string{"crate::path"}},
+		{
+			Path:       "crates/mod.rs",
+			Language:   "rust",
+			Imports:    []string{"crate::path"},
+			References: []ImportReference{{Path: "crate::path", Kind: "rust-path"}},
+		},
 		{Path: "web/icon.js", Language: "javascript", Imports: []string{"path", "url", "node:path"}},
 		{Path: "web/app.ts", Language: "typescript", Imports: []string{"path", "url", "node:path"}},
 		{Path: "web/relative.ts", Language: "typescript", Imports: []string{"./path", "./target", "@local/path"}},

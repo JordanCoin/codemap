@@ -607,7 +607,7 @@ func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input Imp
 
 	importers := fg.Importers[input.File]
 	if len(importers) == 0 {
-		return textResult("No files import '" + input.File + "'"), nil, nil
+		return textResult("No files import '" + input.File + "'" + mcpCoverageText(fg)), nil, nil
 	}
 
 	isHub := scanner.CountHubImporters(importers) >= scanner.HubThreshold
@@ -616,7 +616,17 @@ func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input Imp
 		hubNote = " ⚠️ HUB FILE"
 	}
 
-	return textResult(fmt.Sprintf("%d files import '%s':%s\n%s", len(importers), input.File, hubNote, strings.Join(importers, "\n"))), nil, nil
+	return textResult(fmt.Sprintf("%d files import '%s':%s\n%s%s", len(importers), input.File, hubNote, strings.Join(importers, "\n"), mcpCoverageText(fg))), nil, nil
+}
+
+func mcpCoverageText(fg *scanner.FileGraph) string {
+	if fg == nil || fg.Coverage.Status == "" {
+		return ""
+	}
+	if len(fg.Coverage.Notes) == 0 {
+		return "\n\nCoverage: " + fg.Coverage.Status
+	}
+	return "\n\nCoverage: " + fg.Coverage.Status + " — " + strings.Join(fg.Coverage.Notes, "; ")
 }
 
 func handleGetHandoff(ctx context.Context, req *mcp.CallToolRequest, input HandoffInput) (*mcp.CallToolResult, any, error) {
@@ -977,7 +987,7 @@ func handleGetHubs(ctx context.Context, req *mcp.CallToolRequest, input PathInpu
 
 	hubs := fg.HubFiles()
 	if len(hubs) == 0 {
-		return textResult("No hub files found (no files with 3+ importers)."), nil, nil
+		return textResult("No hub files found (no files with 3+ importers)." + mcpCoverageText(fg)), nil, nil
 	}
 
 	// Sort by importer count
@@ -1002,7 +1012,7 @@ func handleGetHubs(ctx context.Context, req *mcp.CallToolRequest, input PathInpu
 		}
 	}
 
-	return textResult(sb.String()), nil, nil
+	return textResult(sb.String() + mcpCoverageText(fg)), nil, nil
 }
 
 func handleGetFileContext(ctx context.Context, req *mcp.CallToolRequest, input ImportersInput) (*mcp.CallToolResult, any, error) {
@@ -1050,6 +1060,7 @@ func handleGetFileContext(ctx context.Context, req *mcp.CallToolRequest, input I
 
 	// Connected files summary
 	sb.WriteString(fmt.Sprintf("CONNECTED: %d files in dependency graph\n", len(connected)))
+	sb.WriteString(mcpCoverageText(fg))
 
 	return textResult(sb.String()), nil, nil
 }

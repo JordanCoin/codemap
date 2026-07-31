@@ -81,6 +81,8 @@ type blastRadiusImporters struct {
 	ImportersTotal  int      `json:"importers_total"`
 	ImportsTotal    int      `json:"imports_total"`
 	HubImportsTotal int      `json:"hub_imports_total"`
+	CoverageStatus  string   `json:"coverage_status,omitempty"`
+	CoverageNotes   []string `json:"coverage_notes,omitempty"`
 }
 
 type blastRadiusHighest struct {
@@ -612,6 +614,8 @@ func capBlastRadiusImportersReport(report scanner.ImportersReport, max int) blas
 		ImportersTotal:  len(report.Importers),
 		ImportsTotal:    len(report.Imports),
 		HubImportsTotal: len(report.HubImports),
+		CoverageStatus:  report.CoverageStatus,
+		CoverageNotes:   append([]string(nil), report.CoverageNotes...),
 	}
 }
 
@@ -1318,6 +1322,19 @@ func renderImportersReport(w io.Writer, report scanner.ImportersReport) {
 		}
 		fmt.Fprintf(w, "   Imports %d hub(s): %s\n", len(report.HubImports), strings.Join(report.HubImports, ", "))
 	}
+
+	renderCoverage(w, report.CoverageStatus, report.CoverageNotes)
+}
+
+func renderCoverage(w io.Writer, status string, notes []string) {
+	if status == "" {
+		return
+	}
+	if len(notes) == 0 {
+		fmt.Fprintf(w, "Coverage: %s\n", status)
+		return
+	}
+	fmt.Fprintf(w, "Coverage: %s — %s\n", status, strings.Join(notes, "; "))
 }
 
 func buildImportersReportFromGraph(root, file string, fg *scanner.FileGraph) scanner.ImportersReport {
@@ -1334,13 +1351,15 @@ func buildImportersReportFromGraph(root, file string, fg *scanner.FileGraph) sca
 	imports := append([]string(nil), fg.Imports[file]...)
 
 	report := scanner.ImportersReport{
-		Root:          root,
-		Mode:          "importers",
-		File:          file,
-		Importers:     importers,
-		Imports:       imports,
-		ImporterCount: len(importers),
-		IsHub:         fg.IsHub(file),
+		Root:           root,
+		Mode:           "importers",
+		File:           file,
+		Importers:      importers,
+		Imports:        imports,
+		ImporterCount:  len(importers),
+		IsHub:          fg.IsHub(file),
+		CoverageStatus: fg.Coverage.Status,
+		CoverageNotes:  append([]string(nil), fg.Coverage.Notes...),
 	}
 
 	for _, imp := range imports {

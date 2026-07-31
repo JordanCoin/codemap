@@ -54,11 +54,12 @@ type Graph struct {
 
 // State represents the daemon state that hooks can read
 type State struct {
-	UpdatedAt    time.Time           `json:"updated_at"`
-	FileCount    int                 `json:"file_count"`
-	Hubs         []string            `json:"hubs"`
-	Importers    map[string][]string `json:"importers"`     // file -> files that import it
-	Imports      map[string][]string `json:"imports"`       // file -> files it imports
-	RecentEvents []Event             `json:"recent_events"` // last 50 events for timeline
-	WorkingSet   *WorkingSet         `json:"working_set,omitempty"`
+	UpdatedAt    time.Time             `json:"updated_at"`
+	FileCount    int                   `json:"file_count"`
+	Hubs         []string              `json:"hubs"`
+	Importers    map[string][]string   `json:"importers"`     // file -> files that import it
+	Imports      map[string][]string   `json:"imports"`       // file -> files it imports
+	RecentEvents []Event               `json:"recent_events"` // last 50 events for timeline
+	WorkingSet   *WorkingSet           `json:"working_set,omitempty"`
+	Coverage     scanner.GraphCoverage `json:"coverage,omitempty"`
 }

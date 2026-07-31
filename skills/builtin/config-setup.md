@@ -22,6 +22,8 @@ Write or improve `.codemap/config.json` so future Codemap calls stay focused on 
 ## Workflow
 
 1. Inspect the repo quickly before writing config
+   - Read the root and applicable nested `AGENTS.md` files before deciding ownership or scope
+   - Read language workspace manifests such as `Cargo.toml`; preserve every declared workspace member
    - Run `codemap .`
    - If needed, run `codemap --deps .`
    - Note the stack markers (`Cargo.toml`, `Package.swift`, `*.xcodeproj`, `go.mod`, `package.json`, `pyproject.toml`, etc.)
@@ -40,6 +42,7 @@ Write or improve `.codemap/config.json` so future Codemap calls stay focused on 
 
 4. Prefer stack-aware defaults
    - Rust: focus `src`, `tests`, `benches`, `examples`; de-prioritize corpora, sample PDFs, training data, large generated artifacts
+   - For Cargo workspaces, keep all workspace members' `src`, `tests`, `benches`, and `examples` trees unless repository evidence explicitly excludes one
    - iOS/Swift: focus app/framework source, tests, package/project manifests; de-prioritize `.xcassets`, screenshots, snapshots, vendor/build outputs
    - TS/JS: focus `src`, `apps`, `packages`, `tests`; de-prioritize `dist`, `coverage`, Storybook assets, large fixture payloads
    - Python: focus package roots, tests, tool config; de-prioritize notebooks, data dumps, models, fixtures when they overwhelm code
@@ -53,6 +56,7 @@ Write or improve `.codemap/config.json` so future Codemap calls stay focused on 
    - Rerun `codemap .`
    - If the repo still looks noisy, refine `exclude` and possibly `depth`
    - Only rerun `codemap --deps .` after tree output looks reasonable
+   - Verify at least one known cross-layer dependency remains discoverable after tuning
 
 ## Heuristics
 

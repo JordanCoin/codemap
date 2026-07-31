@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -248,6 +249,25 @@ func TestBuildImportersReportFromGraphPreservesScanOrder(t *testing.T) {
 		if report.Imports[i] != w {
 			t.Fatalf("imports reordered: got %v, want %v", report.Imports, want)
 		}
+	}
+}
+
+func TestBuildImportersReportFromGraphCarriesCoverage(t *testing.T) {
+	fg := &scanner.FileGraph{
+		Imports:   map[string][]string{},
+		Importers: map[string][]string{},
+		Coverage: scanner.GraphCoverage{
+			Status: "partial",
+			Notes:  []string{"dynamic routes unresolved"},
+		},
+	}
+
+	report := buildImportersReportFromGraph("/repo", "x.rs", fg)
+	if report.CoverageStatus != "partial" || !reflect.DeepEqual(report.CoverageNotes, []string{"dynamic routes unresolved"}) {
+		t.Fatalf("report coverage = %q %#v", report.CoverageStatus, report.CoverageNotes)
+	}
+	if got := renderImportersReportString(report); !strings.Contains(got, "Coverage: partial") {
+		t.Fatalf("rendered report omits partial coverage:\n%s", got)
 	}
 }
 

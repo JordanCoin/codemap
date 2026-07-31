@@ -19,6 +19,7 @@ type FileGraph struct {
 	Packages    map[string][]string // package path -> files in that package
 	PathAliases map[string][]string // TS/JS path aliases from tsconfig.json (e.g., "@modules/*" -> ["src/modules/*"])
 	BaseURL     string              // TS/JS baseUrl from tsconfig.json
+	Coverage    GraphCoverage
 }
 
 // fileIndex provides fast lookup of files by various import-like keys
@@ -73,6 +74,7 @@ func BuildFileGraphFromFilteredAnalyses(root string, analyses []FileAnalysis, fi
 
 	// Detect path aliases from tsconfig.json (for TS/JS import resolution)
 	fg.PathAliases, fg.BaseURL = detectPathAliases(absRoot)
+	rustWorkspace := buildRustWorkspaceIndex(absRoot)
 
 	// Scan all files with the same filters used for the analyses.
 	gitCache := NewGitIgnoreCache(root)
@@ -84,21 +86,31 @@ func BuildFileGraphFromFilteredAnalyses(root string, analyses []FileAnalysis, fi
 	// Build file index for fast fuzzy matching
 	idx := buildFileIndex(files, fg.Module)
 	fg.Packages = idx.goPkgs
+	for _, file := range files {
+		if strings.EqualFold(filepath.Ext(file.Path), ".rs") {
+			fg.Coverage = GraphCoverage{Status: rustCoverageStatus, Notes: []string{rustCoverageNote}}
+			break
+		}
+	}
 
 	// Resolve imports to files using universal fuzzy matching
 	for _, a := range analyses {
 		var resolvedImports []string
 
-		for _, imp := range a.Imports {
-			resolved := fuzzyResolve(imp, a.Path, idx, fg.Module, fg.PathAliases, fg.BaseURL)
-			// Exclude multi-file Go package imports to avoid inflating hub counts.
-			// Go package imports start with the module prefix and resolve to all
-			// files in that package. For all other imports (e.g., C# namespace
-			// imports that resolve via directory matching), allow multi-file
-			// resolution so inter-namespace dependencies are tracked.
-			isGoPkg := DetectLanguage(a.Path) == "go" && isLocalGoImport(imp, fg.Module) && len(resolved) > 1
-			if !isGoPkg && len(resolved) > 0 {
-				resolvedImports = append(resolvedImports, resolved...)
+		if a.Language == "rust" {
+			resolvedImports = resolveRustReferences(absRoot, a, idx, rustWorkspace)
+		} else {
+			for _, imp := range a.Imports {
+				resolved := fuzzyResolve(imp, a.Path, idx, fg.Module, fg.PathAliases, fg.BaseURL)
+				// Exclude multi-file Go package imports to avoid inflating hub counts.
+				// Go package imports start with the module prefix and resolve to all
+				// files in that package. For all other imports (e.g., C# namespace
+				// imports that resolve via directory matching), allow multi-file
+				// resolution so inter-namespace dependencies are tracked.
+				isGoPkg := DetectLanguage(a.Path) == "go" && isLocalGoImport(imp, fg.Module) && len(resolved) > 1
+				if !isGoPkg && len(resolved) > 0 {
+					resolvedImports = append(resolvedImports, resolved...)
+				}
 			}
 		}
 

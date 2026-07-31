@@ -33,10 +33,18 @@ type Project struct {
 
 // FileAnalysis holds extracted info about a single file for deps mode.
 type FileAnalysis struct {
-	Path      string   `json:"path"`
-	Language  string   `json:"language"`
-	Functions []string `json:"functions"`
-	Imports   []string `json:"imports"`
+	Path       string            `json:"path"`
+	Language   string            `json:"language"`
+	Functions  []string          `json:"functions"`
+	Imports    []string          `json:"imports"`
+	References []ImportReference `json:"-"`
+}
+
+// ImportReference preserves language-specific import semantics for graph resolution.
+type ImportReference struct {
+	Path string
+	Kind string
+	Line int
 }
 
 // DepsProject is the JSON output for --deps mode.
@@ -50,14 +58,16 @@ type DepsProject struct {
 
 // ImportersReport is the JSON output for --importers mode.
 type ImportersReport struct {
-	Root          string   `json:"root"`
-	Mode          string   `json:"mode"`
-	File          string   `json:"file"`
-	Importers     []string `json:"importers"`
-	Imports       []string `json:"imports,omitempty"`
-	HubImports    []string `json:"hub_imports,omitempty"`
-	ImporterCount int      `json:"importer_count"`
-	IsHub         bool     `json:"is_hub"`
+	Root           string   `json:"root"`
+	Mode           string   `json:"mode"`
+	File           string   `json:"file"`
+	Importers      []string `json:"importers"`
+	Imports        []string `json:"imports,omitempty"`
+	HubImports     []string `json:"hub_imports,omitempty"`
+	ImporterCount  int      `json:"importer_count"`
+	IsHub          bool     `json:"is_hub"`
+	CoverageStatus string   `json:"coverage_status,omitempty"`
+	CoverageNotes  []string `json:"coverage_notes,omitempty"`
 }
 
 // extToLang maps file extensions to language names
