@@ -25,6 +25,7 @@ import (
 	"codemap/skills"
 	"codemap/watch"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -165,8 +166,9 @@ func NewServer(options RuntimeOptions) *mcp.Server {
 
 	// Tool: get_structure - Get project tree view
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "get_structure",
-		Description: "Get the project structure as a tree view. Shows files organized by directory with language detection, file sizes, and highlights the top 5 largest source files. Use this to understand how a codebase is organized.",
+		Name:         "get_structure",
+		Description:  "Get the project structure as a tree view. Shows files organized by directory with language detection, file sizes, and highlights the top 5 largest source files. Use this to understand how a codebase is organized.",
+		OutputSchema: mustSchemaFor[StructureOutput](),
 	}, handleGetStructure)
 
 	// Tool: get_dependencies - Get dependency graph
@@ -177,8 +179,9 @@ func NewServer(options RuntimeOptions) *mcp.Server {
 
 	// Tool: get_diff - Get changed files with impact analysis
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "get_diff",
-		Description: "Get files changed compared to a git branch, with line counts and impact analysis showing which changed files are imported by others. Use this to understand what work has been done and what might break.",
+		Name:         "get_diff",
+		Description:  "Get files changed compared to a git branch, with line counts and impact analysis showing which changed files are imported by others. Use this to understand what work has been done and what might break.",
+		OutputSchema: mustSchemaFor[DiffOutput](),
 	}, handleGetDiff)
 
 	// Tool: find_file - Find files by pattern
@@ -189,8 +192,9 @@ func NewServer(options RuntimeOptions) *mcp.Server {
 
 	// Tool: get_importers - Find what imports a file
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "get_importers",
-		Description: "Find all files that import/depend on a specific file. Use this to understand the impact of changing a file.",
+		Name:         "get_importers",
+		Description:  "Find all files that import/depend on a specific file. Use this to understand the impact of changing a file.",
+		OutputSchema: mustSchemaFor[ImportersOutput](),
 	}, handleGetImporters)
 
 	// Tool: status - Verify MCP connection
@@ -241,8 +245,9 @@ func NewServer(options RuntimeOptions) *mcp.Server {
 
 	// Tool: get_handoff - Build/read cross-agent handoff artifact
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "get_handoff",
-		Description: "Build or read a layered handoff artifact for agent switching. Prefix = stable project context, delta = recent work. Supports lazy per-file detail via file=<path>. Set save=true to persist generated artifacts.",
+		Name:         "get_handoff",
+		Description:  "Build or read a layered handoff artifact for agent switching. Prefix = stable project context, delta = recent work. Supports lazy per-file detail via file=<path>. Set save=true to persist generated artifacts.",
+		OutputSchema: mustSchemaFor[HandoffOutput](),
 	}, handleGetHandoff)
 
 	// Tool: get_working_set - Get current session's working set
@@ -287,6 +292,14 @@ func errorResult(text string) *mcp.CallToolResult {
 		},
 		IsError: true,
 	}
+}
+
+func mustSchemaFor[T any]() *jsonschema.Schema {
+	schema, err := jsonschema.For[T](nil)
+	if err != nil {
+		panic(fmt.Sprintf("infer MCP schema: %v", err))
+	}
+	return schema
 }
 
 func handleGetStructure(ctx context.Context, req *mcp.CallToolRequest, input StructureInput) (*mcp.CallToolResult, any, error) {
@@ -360,7 +373,7 @@ func handleGetStructure(ctx context.Context, req *mcp.CallToolRequest, input Str
 		}
 	}
 
-	return textResult(output), nil, nil
+	return textResult(output), newStructureOutput(project, hubs), nil
 }
 
 func handleGetDependencies(ctx context.Context, req *mcp.CallToolRequest, input PathInput) (*mcp.CallToolResult, any, error) {
@@ -405,7 +418,7 @@ func handleGetDiff(ctx context.Context, req *mcp.CallToolRequest, input DiffInpu
 	}
 
 	if len(diffInfo.Changed) == 0 {
-		return textResult("No files changed vs " + ref), nil, nil
+		return textResult("No files changed vs " + ref), newDiffOutput("empty", ref, scanner.Project{Root: absRoot, Mode: "tree", DiffRef: ref}), nil
 	}
 
 	gitCache := scanner.NewGitIgnoreCache(input.Path)
@@ -429,7 +442,7 @@ func handleGetDiff(ctx context.Context, req *mcp.CallToolRequest, input DiffInpu
 	render.Tree(&buf, project)
 	output := stripANSI(buf.String())
 
-	return textResult(output), nil, nil
+	return textResult(output), newDiffOutput("diff", ref, project), nil
 }
 
 func handleFindFile(ctx context.Context, req *mcp.CallToolRequest, input FindInput) (*mcp.CallToolResult, any, error) {
@@ -609,14 +622,20 @@ func getProjectStats(path string) string {
 }
 
 func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input ImportersInput) (*mcp.CallToolResult, any, error) {
-	fg, err := scanner.BuildFileGraph(input.Path)
+	absRoot, err := filepath.Abs(input.Path)
+	if err != nil {
+		return errorResult("Invalid path: " + err.Error()), nil, nil
+	}
+	fg, err := scanner.BuildFileGraph(absRoot)
 	if err != nil {
 		return errorResult("Failed to build file graph: " + err.Error()), nil, nil
 	}
 
-	importers := fg.Importers[input.File]
+	file := normalizeImporterFile(absRoot, input.File)
+	importers := fg.Importers[file]
+	structured := newImportersOutput(absRoot, file, fg)
 	if len(importers) == 0 {
-		return textResult("No files import '" + input.File + "'" + mcpCoverageText(fg)), nil, nil
+		return textResult("No files import '" + file + "'" + mcpCoverageText(fg)), structured, nil
 	}
 
 	isHub := scanner.CountHubImporters(importers) >= scanner.HubThreshold
@@ -625,7 +644,17 @@ func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input Imp
 		hubNote = " ⚠️ HUB FILE"
 	}
 
-	return textResult(fmt.Sprintf("%d files import '%s':%s\n%s%s", len(importers), input.File, hubNote, strings.Join(importers, "\n"), mcpCoverageText(fg))), nil, nil
+	return textResult(fmt.Sprintf("%d files import '%s':%s\n%s%s", len(importers), file, hubNote, strings.Join(importers, "\n"), mcpCoverageText(fg))), structured, nil
+}
+
+func normalizeImporterFile(root, file string) string {
+	file = filepath.FromSlash(file)
+	if filepath.IsAbs(file) {
+		if relative, err := filepath.Rel(root, file); err == nil {
+			file = relative
+		}
+	}
+	return filepath.Clean(file)
 }
 
 func mcpCoverageText(fg *scanner.FileGraph) string {
@@ -655,7 +684,8 @@ func handleGetHandoff(ctx context.Context, req *mcp.CallToolRequest, input Hando
 			return errorResult("Failed to read handoff: " + err.Error()), nil, nil
 		}
 		if artifact == nil {
-			return textResult("No saved handoff found at " + handoff.LatestPath(absRoot)), nil, nil
+			message := "No saved handoff found at " + handoff.LatestPath(absRoot)
+			return textResult(message), HandoffOutput{Kind: "not_found", Message: message}, nil
 		}
 	} else {
 		baseRef := input.Ref
@@ -692,31 +722,39 @@ func handleGetHandoff(ctx context.Context, req *mcp.CallToolRequest, input Hando
 		if err != nil {
 			return errorResult("Failed to load handoff detail: " + err.Error()), nil, nil
 		}
+		structured := boundedFileDetail(detail)
 		if input.JSON {
 			data, err := json.MarshalIndent(detail, "", "  ")
 			if err != nil {
 				return errorResult("Failed to serialize handoff detail: " + err.Error()), nil, nil
 			}
-			return textResult(string(data)), nil, nil
+			return textResult(string(data)), structured, nil
 		}
 		out := handoff.RenderFileDetailMarkdown(detail)
 		out = limits.TruncateAtLineBoundary(out, limits.MaxHandoffDetailBytes, "\n\n... (handoff detail truncated)\n")
-		return textResult(out), nil, nil
+		return textResult(out), structured, nil
 	}
+
+	kind := "artifact"
+	if input.Prefix {
+		kind = "prefix"
+	} else if input.Delta {
+		kind = "delta"
+	}
+	structured := newHandoffOutput(kind, artifact)
 
 	if input.JSON {
 		var payload any = artifact
-		switch {
-		case input.Prefix:
-			payload = artifact.Prefix
-		case input.Delta:
-			payload = artifact.Delta
+		if input.Prefix {
+			payload = &artifact.Prefix
+		} else if input.Delta {
+			payload = &artifact.Delta
 		}
 		data, err := json.MarshalIndent(payload, "", "  ")
 		if err != nil {
 			return errorResult("Failed to serialize handoff: " + err.Error()), nil, nil
 		}
-		return textResult(string(data)), nil, nil
+		return textResult(string(data)), structured, nil
 	}
 
 	var out string
@@ -729,7 +767,7 @@ func handleGetHandoff(ctx context.Context, req *mcp.CallToolRequest, input Hando
 		out = handoff.RenderMarkdown(artifact)
 	}
 	out = limits.TruncateAtLineBoundary(out, limits.MaxHandoffMarkdownBytes, "\n\n... (handoff output truncated)\n")
-	return textResult(out), nil, nil
+	return textResult(out), structured, nil
 }
 
 // ANSI escape code pattern
