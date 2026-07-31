@@ -96,7 +96,7 @@ func BuildFileGraphFromFilteredAnalyses(root string, analyses []FileAnalysis, fi
 			// files in that package. For all other imports (e.g., C# namespace
 			// imports that resolve via directory matching), allow multi-file
 			// resolution so inter-namespace dependencies are tracked.
-			isGoPkg := fg.Module != "" && strings.HasPrefix(imp, fg.Module) && len(resolved) > 1
+			isGoPkg := DetectLanguage(a.Path) == "go" && isLocalGoImport(imp, fg.Module) && len(resolved) > 1
 			if !isGoPkg && len(resolved) > 0 {
 				resolvedImports = append(resolvedImports, resolved...)
 			}
@@ -155,7 +155,7 @@ func buildFileIndex(files []FileInfo, goModule string) *fileIndex {
 
 		// Go package index. Import paths always use forward slashes, so the
 		// key must be slash-normalized or lookups fail on Windows.
-		if strings.HasSuffix(path, ".go") && goModule != "" {
+		if strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") && goModule != "" {
 			pkgPath := goModule
 			if dir != "" {
 				pkgPath = goModule + "/" + filepath.ToSlash(dir)
@@ -167,63 +167,72 @@ func buildFileIndex(files []FileInfo, goModule string) *fileIndex {
 	return idx
 }
 
-// fuzzyResolve converts an import path to actual file paths using universal matching
-// No language-specific switch - relies on pattern matching against file index
+// fuzzyResolve converts an import path to compatible local file paths.
 func fuzzyResolve(imp, fromFile string, idx *fileIndex, goModule string, pathAliases map[string][]string, baseURL string) []string {
+	sourceLanguage := DetectLanguage(fromFile)
+	if sourceLanguage == "" {
+		return nil
+	}
+
 	fromDir := filepath.Dir(fromFile)
 	if fromDir == "." {
 		fromDir = ""
 	}
 
+	// Strategy 1: Go package lookup, failing closed for non-local imports.
+	if sourceLanguage == "go" {
+		if strings.HasPrefix(imp, ".") {
+			return resolveRelative(imp, fromDir, idx, sourceLanguage)
+		}
+		if !isLocalGoImport(imp, goModule) {
+			return nil
+		}
+		return idx.goPkgs[strings.Trim(imp, "\"'`")]
+	}
+
 	// Normalize the import path
 	normalized := normalizeImport(imp)
 
-	// Strategy 1: Go package lookup (if it looks like a Go module import)
-	if goModule != "" && strings.HasPrefix(imp, goModule) {
-		if files, ok := idx.goPkgs[imp]; ok {
-			return files
-		}
-	}
-
 	// Strategy 2: Relative path resolution (./foo, ../bar)
 	if strings.HasPrefix(imp, ".") {
-		return resolveRelative(imp, fromDir, idx)
-	}
-
-	// Go imports are always full package paths, so a non-relative import from
-	// a .go file that isn't under the module path is the standard library or a
-	// third-party module. Fuzzy matching those creates false edges — e.g. the
-	// stdlib "context" import resolving to a local cmd/context.go — which
-	// inflate hub counts everywhere downstream. Without a go.mod we can't
-	// resolve Go imports at all, so we return none rather than guess wrong.
-	if strings.HasSuffix(fromFile, ".go") {
-		return nil
+		return resolveRelative(imp, fromDir, idx, sourceLanguage)
 	}
 
 	// Strategy 3: TypeScript/JavaScript path alias resolution (@modules/auth, @shared/utils)
-	if len(pathAliases) > 0 {
-		if files := resolvePathAlias(imp, pathAliases, baseURL, idx); len(files) > 0 {
+	if isJavaScriptLanguage(sourceLanguage) && len(pathAliases) > 0 {
+		if files := resolvePathAlias(imp, pathAliases, baseURL, idx, sourceLanguage); len(files) > 0 {
 			return files
 		}
 	}
+	if isJavaScriptLanguage(sourceLanguage) {
+		return nil
+	}
 
 	// Strategy 4: Exact match (with common extensions)
-	if files := tryExactMatch(normalized, idx); len(files) > 0 {
+	if files := tryExactMatch(normalized, idx, sourceLanguage); len(files) > 0 {
 		return files
 	}
 
 	// Strategy 5: Suffix match (for nested packages like app.core.config -> */app/core/config.py)
-	if files := trySuffixMatch(normalized, idx); len(files) > 0 {
+	if files := trySuffixMatch(normalized, idx, sourceLanguage); len(files) > 0 {
 		return files
 	}
 
 	// Strategy 6: Directory match (for namespace-level imports like C# "using Foo.Bar;"
 	// where Foo.Bar normalizes to Foo/Bar and maps to the Foo/Bar/ directory).
-	if files := tryDirMatch(normalized, idx); len(files) > 0 {
+	if files := tryDirMatch(normalized, idx, sourceLanguage); len(files) > 0 {
 		return files
 	}
 
 	return nil
+}
+
+func isLocalGoImport(imp, module string) bool {
+	if module == "" {
+		return false
+	}
+	imp = strings.Trim(imp, "\"'`")
+	return imp == module || strings.HasPrefix(imp, module+"/")
 }
 
 // normalizeImport converts various import syntaxes to a path-like format
@@ -249,7 +258,7 @@ func normalizeImport(imp string) string {
 }
 
 // resolveRelative handles ./foo and ../bar style imports
-func resolveRelative(imp, fromDir string, idx *fileIndex) []string {
+func resolveRelative(imp, fromDir string, idx *fileIndex, sourceLanguage string) []string {
 	// Count parent directory levels
 	levels := 0
 	rest := imp
@@ -274,18 +283,20 @@ func resolveRelative(imp, fromDir string, idx *fileIndex) []string {
 		candidate = filepath.Join(targetDir, rest)
 	}
 
-	return tryExactMatch(candidate, idx)
+	return tryExactMatch(candidate, idx, sourceLanguage)
 }
 
 // tryExactMatch looks for exact path matches with common extensions.
 // Extension list derived from the canonical scanner registry.
-func tryExactMatch(path string, idx *fileIndex) []string {
+func tryExactMatch(path string, idx *fileIndex, sourceLanguage string) []string {
 	extensions := ResolverExtensions()
 
 	for _, ext := range extensions {
 		candidate := path + ext
 		if files, ok := idx.byExact[candidate]; ok {
-			return files
+			if compatible := compatibleFiles(sourceLanguage, files); len(compatible) > 0 {
+				return compatible
+			}
 		}
 	}
 
@@ -293,13 +304,17 @@ func tryExactMatch(path string, idx *fileIndex) []string {
 }
 
 // trySuffixMatch finds files where the path ends with the normalized import
-func trySuffixMatch(normalized string, idx *fileIndex) []string {
+func trySuffixMatch(normalized string, idx *fileIndex, sourceLanguage string) []string {
 	// Extension list derived from the canonical scanner registry.
 	extensions := ResolverExtensions()
 
 	for _, ext := range extensions {
 		candidate := normalized + ext
 		if files, ok := idx.bySuffix[candidate]; ok {
+			files = compatibleFiles(sourceLanguage, files)
+			if len(files) == 0 {
+				continue
+			}
 			// Return the shortest match (most specific)
 			if len(files) == 1 {
 				return files
@@ -312,7 +327,7 @@ func trySuffixMatch(normalized string, idx *fileIndex) []string {
 	// Also try __init__.py for Python packages
 	initCandidate := filepath.Join(normalized, "__init__.py")
 	if files, ok := idx.bySuffix[initCandidate]; ok {
-		return files
+		return compatibleFiles(sourceLanguage, files)
 	}
 
 	return nil
@@ -323,16 +338,20 @@ func trySuffixMatch(normalized string, idx *fileIndex) []string {
 // where an import refers to a whole directory rather than a single file.
 // It also tries progressively shorter suffixes to handle namespace prefixes
 // (e.g. "MyApp/Models" tries "MyApp/Models" first, then "Models").
-func tryDirMatch(path string, idx *fileIndex) []string {
+func tryDirMatch(path string, idx *fileIndex, sourceLanguage string) []string {
 	// Try exact match first
 	if files, ok := idx.byDir[path]; ok {
-		return files
+		if compatible := compatibleFiles(sourceLanguage, files); len(compatible) > 0 {
+			return compatible
+		}
 	}
 	// Normalize path separators for cross-platform compatibility
 	nativePath := filepath.FromSlash(path)
 	if nativePath != path {
 		if files, ok := idx.byDir[nativePath]; ok {
-			return files
+			if compatible := compatibleFiles(sourceLanguage, files); len(compatible) > 0 {
+				return compatible
+			}
 		}
 	}
 	// Try suffix match: strip leading segments progressively
@@ -341,10 +360,26 @@ func tryDirMatch(path string, idx *fileIndex) []string {
 	for i := 1; i < len(parts); i++ {
 		suffix := filepath.Join(parts[i:]...)
 		if files, ok := idx.byDir[suffix]; ok {
-			return files
+			if compatible := compatibleFiles(sourceLanguage, files); len(compatible) > 0 {
+				return compatible
+			}
 		}
 	}
 	return nil
+}
+
+func compatibleFiles(sourceLanguage string, files []string) []string {
+	var compatible []string
+	for _, file := range files {
+		if languagesCompatible(sourceLanguage, DetectLanguage(file)) {
+			compatible = append(compatible, file)
+		}
+	}
+	return compatible
+}
+
+func isJavaScriptLanguage(language string) bool {
+	return language == "javascript" || language == "typescript"
 }
 
 // detectModule reads go.mod to find the module name
@@ -512,7 +547,7 @@ func readTSConfig(configPath, root string) (map[string][]string, string) {
 
 // resolvePathAlias attempts to resolve an import using TypeScript path aliases
 // e.g., "@modules/auth" with alias "@modules/*" -> ["src/modules/*"] becomes "src/modules/auth"
-func resolvePathAlias(imp string, pathAliases map[string][]string, baseURL string, idx *fileIndex) []string {
+func resolvePathAlias(imp string, pathAliases map[string][]string, baseURL string, idx *fileIndex, sourceLanguage string) []string {
 	// Try each alias pattern
 	for pattern, targets := range pathAliases {
 		var prefix, suffix string
@@ -527,7 +562,7 @@ func resolvePathAlias(imp string, pathAliases map[string][]string, baseURL strin
 					if baseURL != "" && !filepath.IsAbs(resolved) {
 						resolved = filepath.Join(baseURL, resolved)
 					}
-					if files := tryExactMatch(resolved, idx); len(files) > 0 {
+					if files := tryExactMatch(resolved, idx, sourceLanguage); len(files) > 0 {
 						return files
 					}
 				}
@@ -563,10 +598,10 @@ func resolvePathAlias(imp string, pathAliases map[string][]string, baseURL strin
 			}
 
 			// Try to find matching files
-			if files := tryExactMatch(resolved, idx); len(files) > 0 {
+			if files := tryExactMatch(resolved, idx, sourceLanguage); len(files) > 0 {
 				return files
 			}
-			if files := trySuffixMatch(resolved, idx); len(files) > 0 {
+			if files := trySuffixMatch(resolved, idx, sourceLanguage); len(files) > 0 {
 				return files
 			}
 		}
