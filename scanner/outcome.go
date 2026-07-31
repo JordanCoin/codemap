@@ -29,8 +29,8 @@ type fileEdge struct {
 
 // ScanOutcome contains dependency analyses and their provenance.
 type ScanOutcome struct {
-	Analyses         []FileAnalysis      `json:"analyses"`
-	Sources          []analysis.Source   `json:"sources,omitempty"`
+	Analyses         []FileAnalysis    `json:"analyses"`
+	Sources          []analysis.Source `json:"sources,omitempty"`
 	precomputedEdges []fileEdge
 }
 

@@ -85,8 +85,18 @@ func cargoFallbackMetadataArgs(manifestPath string) []string {
 
 func parseCargoMetadata(data []byte) (cargoMetadata, error) {
 	var metadata cargoMetadata
-	err := json.Unmarshal(data, &metadata)
-	return metadata, err
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return metadata, err
+	}
+	for packageIndex := range metadata.Packages {
+		for dependencyIndex := range metadata.Packages[packageIndex].Dependencies {
+			dependency := &metadata.Packages[packageIndex].Dependencies[dependencyIndex]
+			if strings.TrimSpace(string(dependency.Target)) == "null" {
+				dependency.Target = nil
+			}
+		}
+	}
+	return metadata, nil
 }
 
 func buildRustWorkspaceIndex(ctx context.Context, root string, analyses []FileAnalysis, files []FileInfo, loader cargoMetadataLoader) (*rustWorkspaceIndex, *ScanSourceOutcome) {
