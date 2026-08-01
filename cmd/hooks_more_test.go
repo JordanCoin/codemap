@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -747,6 +749,39 @@ func TestHookSessionStopSummaryBranches(t *testing.T) {
 			t.Fatalf("expected modified file list, got:\n%s", out)
 		}
 	})
+}
+
+func TestHookSessionStopContextReturnsWithoutPostDeadlineOutput(t *testing.T) {
+	root := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var out bytes.Buffer
+	if err := hookSessionStopContext(ctx, root, &out); err == nil {
+		t.Fatal("hookSessionStopContext succeeded after cancellation")
+	}
+	before := out.String()
+	time.Sleep(20 * time.Millisecond)
+	if got := out.String(); got != before {
+		t.Fatalf("output changed after return: before %q after %q", before, got)
+	}
+}
+
+func TestHookSessionIDFromStdinContextBoundsOpenPipe(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	defer writer.Close()
+	original := os.Stdin
+	os.Stdin = reader
+	defer func() { os.Stdin = original }()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	_, err = hookSessionIDFromStdinContext(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want deadline exceeded", err)
+	}
 }
 
 func TestDaemonCommandHelpersAndMultiRepoShellout(t *testing.T) {

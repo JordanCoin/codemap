@@ -59,7 +59,11 @@ func normalizeOptions(opts BuildOptions, fileCount int) BuildOptions {
 
 // Build creates a multi-agent handoff artifact from git + daemon state.
 func Build(root string, opts BuildOptions) (*Artifact, error) {
-	return BuildContext(context.Background(), root, opts)
+	ctx := opts.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return BuildContext(ctx, root, opts)
 }
 
 // BuildContext creates a handoff artifact while honoring caller cancellation

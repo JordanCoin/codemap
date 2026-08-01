@@ -1,7 +1,9 @@
 package handoff
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +14,15 @@ import (
 	"codemap/internal/projectpath"
 	"codemap/watch"
 )
+
+func TestBuildHonorsCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := Build(t.TempDir(), BuildOptions{Context: ctx})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Build error = %v, want context canceled", err)
+	}
+}
 
 func runCmd(t *testing.T, dir, name string, args ...string) {
 	t.Helper()
