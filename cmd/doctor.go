@@ -54,7 +54,10 @@ func RunDoctor(args []string, defaultRoot string) int {
 	fs.SetOutput(io.Discard)
 	agent := fs.String("agent", "", "Agent integration to check (claude or codex; default: installed agents)")
 	global := fs.Bool("global", false, "Check user-scoped agent configuration")
-	if err := fs.Parse(args); err != nil || fs.NArg() > 1 {
+	if err := fs.Parse(args); errors.Is(err, flag.ErrHelp) {
+		fmt.Println("Usage: codemap doctor [--global] [--agent claude|codex] [path]")
+		return 0
+	} else if err != nil || fs.NArg() > 1 {
 		fmt.Fprintln(os.Stderr, "Usage: codemap doctor [--global] [--agent claude|codex] [path]")
 		return 2
 	}

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
@@ -19,7 +20,9 @@ func RunServe(args []string, root string) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	port := fs.Int("port", 9471, "Port to listen on")
 	host := fs.String("host", "127.0.0.1", "Host to bind to (default: localhost only)")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(args); errors.Is(err, flag.ErrHelp) {
+		return
+	} else if err != nil {
 		os.Exit(1)
 	}
 
