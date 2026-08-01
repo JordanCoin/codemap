@@ -60,12 +60,37 @@ func scanForGraphOutcomeWithFilters(ctx context.Context, root string, filters Fi
 		}
 		return ScanOutcome{}, false, err
 	}
-	fallback, fallbackErr := buildCargoFallbackOutcome(ctx, root, files, loader)
-	if fallbackErr != nil {
+	fallback := ScanOutcome{
+		Sources: []ScanSourceOutcome{incomplete.Outcome},
+	}
+	recovered := false
+	if goFallback, fallbackErr := buildGoFallbackOutcome(ctx, root, files); fallbackErr == nil {
+		mergeFallbackOutcome(&fallback, goFallback)
+		recovered = true
+	} else if ctx.Err() != nil {
+		return ScanOutcome{}, false, ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
 		return ScanOutcome{}, false, err
 	}
-	fallback.Sources = append([]ScanSourceOutcome{incomplete.Outcome}, fallback.Sources...)
+
+	if cargoFallback, fallbackErr := buildCargoFallbackOutcome(ctx, root, files, loader); fallbackErr == nil {
+		mergeFallbackOutcome(&fallback, cargoFallback)
+		recovered = true
+	}
+	if err := ctx.Err(); err != nil {
+		return ScanOutcome{}, false, err
+	}
+	if !recovered {
+		return ScanOutcome{}, false, err
+	}
 	return fallback, true, nil
+}
+
+func mergeFallbackOutcome(dst *ScanOutcome, src ScanOutcome) {
+	dst.Analyses = append(dst.Analyses, src.Analyses...)
+	dst.Sources = append(dst.Sources, src.Sources...)
+	dst.precomputedEdges = append(dst.precomputedEdges, src.precomputedEdges...)
 }
 
 func buildCargoFallbackOutcome(ctx context.Context, root string, files []FileInfo, loader cargoMetadataLoader) (ScanOutcome, error) {
