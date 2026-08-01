@@ -34,10 +34,12 @@ type cargoMetadataTarget struct {
 }
 
 type cargoMetadataDependency struct {
-	Name   string `json:"name"`
-	Rename string `json:"rename"`
-	Path   string `json:"path"`
-	Kind   string `json:"kind"`
+	Name     string          `json:"name"`
+	Rename   string          `json:"rename"`
+	Path     string          `json:"path"`
+	Kind     string          `json:"kind"`
+	Optional bool            `json:"optional"`
+	Target   json.RawMessage `json:"target"`
 }
 
 type pendingRustDependency struct {
@@ -47,13 +49,21 @@ type pendingRustDependency struct {
 }
 
 func loadCargoMetadata(ctx context.Context, manifestPath string) ([]byte, error) {
+	return runCargoMetadata(ctx, manifestPath, cargoMetadataArgs(manifestPath))
+}
+
+func loadCargoFallbackMetadata(ctx context.Context, manifestPath string) ([]byte, error) {
+	return runCargoMetadata(ctx, manifestPath, cargoFallbackMetadataArgs(manifestPath))
+}
+
+func runCargoMetadata(ctx context.Context, manifestPath string, args []string) ([]byte, error) {
 	cargo, err := exec.LookPath("cargo")
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, cargoMetadataTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, cargo, cargoMetadataArgs(manifestPath)...)
+	cmd := exec.CommandContext(ctx, cargo, args...)
 	cmd.Dir = filepath.Dir(manifestPath)
 	output, err := cmd.Output()
 	if ctx.Err() != nil {
@@ -67,6 +77,10 @@ func cargoMetadataArgs(manifestPath string) []string {
 		"metadata", "--no-deps", "--format-version", "1", "--offline",
 		"--manifest-path", manifestPath,
 	}
+}
+
+func cargoFallbackMetadataArgs(manifestPath string) []string {
+	return append(cargoMetadataArgs(manifestPath), "--locked")
 }
 
 func parseCargoMetadata(data []byte) (cargoMetadata, error) {

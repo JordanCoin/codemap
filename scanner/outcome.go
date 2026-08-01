@@ -21,10 +21,17 @@ const (
 	ScanSourceFailed        = analysis.SourceFailed
 )
 
+// fileEdge is a scanner-proven file dependency that needs no fuzzy resolution.
+type fileEdge struct {
+	from string
+	to   string
+}
+
 // ScanOutcome contains dependency analyses and their provenance.
 type ScanOutcome struct {
-	Analyses []FileAnalysis    `json:"analyses"`
-	Sources  []analysis.Source `json:"sources,omitempty"`
+	Analyses         []FileAnalysis      `json:"analyses"`
+	Sources          []analysis.Source   `json:"sources,omitempty"`
+	precomputedEdges []fileEdge
 }
 
 // GraphCoverage describes graph blind spots and scanner provenance.
