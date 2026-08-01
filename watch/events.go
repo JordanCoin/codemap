@@ -222,6 +222,7 @@ func (d *Daemon) eventLoop() {
 	for {
 		select {
 		case <-d.done:
+			d.drainQueued(debouncer, d.watcher.Events)
 			return
 
 		case <-timerC:
@@ -342,6 +343,71 @@ func (d *Daemon) handleConfiguredMembershipEvent(event fsnotify.Event) {
 	}
 }
 
+func (d *Daemon) processQueuedEvent(debouncer *eventDebouncer, event fsnotify.Event, now time.Time) {
+	if filepath.Clean(filepath.Dir(event.Name)) == filepath.Clean(d.publisher.flushDir) {
+		d.publisher.scanRequests(now)
+		return
+	}
+	for _, pending := range debouncer.takeDueBeforeEvent(event, now) {
+		d.handleEvent(pending)
+	}
+	if d.handleTopologyControlEvent(event) {
+		return
+	}
+	isCreate := event.Op&fsnotify.Create != 0
+	if !d.isSourceFile(event.Name) && !isTopologyManifest(event.Name) {
+		if !isCreate {
+			return
+		}
+		if info, err := os.Stat(event.Name); err != nil || !info.IsDir() {
+			return
+		}
+	}
+	if isTransientFile(event.Name) {
+		return
+	}
+	switch d.debounceAction(debouncer, event, now) {
+	case debounceSkip:
+		debouncer.cancelPending(event.Name)
+	case debounceDefer:
+		debouncer.deferEvent(event, now)
+	case debounceProcess:
+		d.handleEvent(event)
+	}
+}
+
+func (d *Daemon) drainQueued(debouncer *eventDebouncer, events <-chan fsnotify.Event) {
+	quiet := time.NewTimer(5 * time.Millisecond)
+	deadline := time.NewTimer(50 * time.Millisecond)
+	defer quiet.Stop()
+	defer deadline.Stop()
+	for {
+		select {
+		case event, ok := <-events:
+			if !ok {
+				goto drained
+			}
+			d.processQueuedEvent(debouncer, event, time.Now())
+			if !quiet.Stop() {
+				select {
+				case <-quiet.C:
+				default:
+				}
+			}
+			quiet.Reset(5 * time.Millisecond)
+		case <-quiet.C:
+			goto drained
+		case <-deadline.C:
+			goto drained
+		}
+	}
+
+drained:
+	for _, event := range debouncer.takeAll() {
+		d.handleEvent(event)
+	}
+	d.publisher.scanRequests(time.Now())
+}
 func (d *Daemon) handleTopologyControlEvent(event fsnotify.Event) bool {
 	rel, err := filepath.Rel(d.configDir, event.Name)
 	if err != nil || filepath.Clean(rel) != "config.json" {
@@ -364,6 +430,7 @@ func (d *Daemon) debounceAction(debouncer *eventDebouncer, event fsnotify.Event,
 
 	d.graph.mu.RLock()
 	cached := d.graph.State[relPath]
+	_, configured := d.graph.ConfiguredFiles[relPath]
 	var cachedSize, cachedModTime int64
 	if cached != nil {
 		cachedSize = cached.Size
@@ -378,8 +445,14 @@ func (d *Daemon) debounceAction(debouncer *eventDebouncer, event fsnotify.Event,
 	if err != nil {
 		return debounceProcess
 	}
+	// An identical write carries no new information and is skipped for every
+	// file. Configured files still bypass the quiet-window defer so their
+	// changes reach graph invalidation immediately.
 	if cachedModTime != 0 && cachedSize == info.Size() && cachedModTime == info.ModTime().UnixNano() {
 		return debounceSkip
+	}
+	if configured {
+		return debounceProcess
 	}
 	return debounceDefer
 }
@@ -446,6 +519,8 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 
 	// Update graph and calculate deltas
 	d.graph.mu.Lock()
+	_, wasConfigured := d.graph.ConfiguredFiles[relPath]
+	var isConfigured bool
 	switch op {
 	case "CREATE", "WRITE":
 		info, err := os.Stat(fsEvent.Name)
@@ -514,6 +589,7 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 		}
 		if d.isConfiguredFile(relPath) {
 			d.graph.ConfiguredFiles[relPath] = struct{}{}
+			isConfigured = true
 		} else {
 			delete(d.graph.ConfiguredFiles, relPath)
 		}
@@ -564,6 +640,11 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 	d.graph.mu.Unlock()
 	if d.publisher != nil {
 		d.publisher.markDirty(time.Now())
+	}
+	// Persist the stale graph state synchronously so hooks and direct callers
+	// observe the invalidation even when the coalesced publish loop is idle.
+	if wasConfigured || isConfigured {
+		d.writeState()
 	}
 
 	// Log event

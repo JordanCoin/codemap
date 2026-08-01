@@ -195,7 +195,7 @@ func TestTopologyCacheNeverChangesLegacyStateShape(t *testing.T) {
 	}
 	daemon.writeState()
 
-	data, err := os.ReadFile(filepath.Join(daemon.root, ".codemap", "state.json"))
+	data, err := os.ReadFile(daemon.publisher.path)
 	if err != nil {
 		t.Fatal(err)
 	}

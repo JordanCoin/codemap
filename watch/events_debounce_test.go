@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -109,6 +110,75 @@ func TestEventDebouncerSkipsRapidWrites(t *testing.T) {
 	if debouncer.shouldSkip(event, base.Add(220*time.Millisecond)) {
 		t.Fatal("write outside debounce window should not be skipped")
 	}
+}
+
+func TestDaemonDrainQueuedProcessesSourceAndFlushBeforeFinalPublication(t *testing.T) {
+	root := canonicalDaemonRoot(t)
+	path := filepath.Join(root, "main.go")
+	if err := os.WriteFile(path, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d, err := NewDaemon(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.watcher.Close()
+	if err := d.fullScan(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(d.publisher.flushDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.publisher.publish(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("package main\n\nvar changed = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	req := flushRequest{Version: flushProtocolVersion, CanonicalRoot: d.root, DaemonInstance: d.publisher.instance, Nonce: "drain", ObservedGeneration: d.publisher.generation, Timestamp: time.Now()}
+	data, _ := json.Marshal(req)
+	requestPath := filepath.Join(d.publisher.flushDir, "request-drain.json")
+	if err := os.WriteFile(requestPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	events := make(chan fsnotify.Event, 2)
+	events <- fsnotify.Event{Name: path, Op: fsnotify.Write}
+	events <- fsnotify.Event{Name: requestPath, Op: fsnotify.Create}
+	close(events)
+	d.drainQueued(newEventDebouncer(100*time.Millisecond), events)
+	if err := d.publisher.publish(); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.GetEvents(0); len(got) == 0 || got[len(got)-1].Path != "main.go" {
+		t.Fatalf("queued source event not published: %#v", got)
+	}
+	if _, err := os.Stat(filepath.Join(d.publisher.flushDir, "ack-drain.json")); err != nil {
+		t.Fatalf("queued flush not acknowledged: %v", err)
+	}
+}
+
+func TestStopClosesWatcherAfterEventLoopDrain(t *testing.T) {
+	d, err := NewDaemon(t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drained := make(chan struct{})
+	d.eventLoopWG.Add(1)
+	go func() {
+		defer d.eventLoopWG.Done()
+		<-d.done
+		close(drained)
+	}()
+	closeWatcher := d.closeWatcher
+	d.closeWatcher = func() error {
+		select {
+		case <-drained:
+		default:
+			t.Error("watcher closed before event-loop drain")
+		}
+		return closeWatcher()
+	}
+	d.Stop()
 }
 
 func TestEventDebouncerDoesNotSkipNonWriteOps(t *testing.T) {

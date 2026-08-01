@@ -3,15 +3,18 @@ package watch
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
+
+	"codemap/internal/projectpath"
 )
 
 func TestStatePublisherCoalescesBurstIntoOneGeneration(t *testing.T) {
-	root := t.TempDir()
+	root := canonicalDaemonRoot(t)
 	d, err := NewDaemon(root, false)
 	if err != nil {
 		t.Fatal(err)
@@ -33,8 +36,105 @@ func TestStatePublisherCoalescesBurstIntoOneGeneration(t *testing.T) {
 		t.Fatalf("generation = %d, want 1", p.generation)
 	}
 	state := readStateAt(t, filepath.Join(root, "state.json"))
-	if state.DaemonInstance != "instance-a" || state.Generation != 1 || state.CanonicalRoot != root {
+	if state.DaemonInstance != "instance-a" || state.Generation != 1 || state.CanonicalRoot != d.root {
 		t.Fatalf("published identity = %#v", state)
+	}
+}
+
+func TestStatePublisherFailureBacksOffWithoutLosingDirtyState(t *testing.T) {
+	root := t.TempDir()
+	d, err := NewDaemon(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.watcher.Close()
+	path := filepath.Join(root, "state.json")
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := newStatePublisher(d, path, "instance-a")
+	now := time.Now()
+	p.markDirty(now.Add(-publicationQuietWindow))
+	if err := p.publish(); err == nil {
+		t.Fatal("publication unexpectedly succeeded")
+	}
+	if delay, ok := p.nextDelay(now); !ok || delay <= 0 {
+		t.Fatalf("failed publication retry delay = %v, %v; want positive", delay, ok)
+	}
+	if !p.dirty {
+		t.Fatal("failed publication discarded dirty state")
+	}
+}
+
+func TestDaemonStartFailsWhenInitialStateCannotPublish(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projectpath.ProjectRuntimeDir(root), "state.json"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	d, err := NewDaemon(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.watcher.Close()
+	if err := d.Start(); err == nil {
+		t.Fatal("Start succeeded without initial state")
+	}
+}
+
+func TestStatePublisherPrunesExpiredControlArtifacts(t *testing.T) {
+	root := t.TempDir()
+	d, err := NewDaemon(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.watcher.Close()
+	p := newStatePublisher(d, filepath.Join(root, "state.json"), "instance-a")
+	p.flushDir = filepath.Join(root, "flush")
+	if err := os.Mkdir(p.flushDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour)
+	req := flushRequest{Version: flushProtocolVersion, CanonicalRoot: d.root, DaemonInstance: "instance-a", Nonce: "old", Timestamp: old}
+	data, _ := json.Marshal(req)
+	for _, name := range []string{"request-old.json", "ack-old.json"} {
+		path := filepath.Join(p.flushDir, name)
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p.scanRequests(time.Now())
+	for _, name := range []string{"request-old.json", "ack-old.json"} {
+		if _, err := os.Stat(filepath.Join(p.flushDir, name)); !os.IsNotExist(err) {
+			t.Fatalf("expired %s retained: %v", name, err)
+		}
+	}
+	if len(p.seen) != 0 {
+		t.Fatalf("expired identity retained: %d", len(p.seen))
+	}
+}
+
+func TestStatePublisherBoundsRecentRequestIdentities(t *testing.T) {
+	root := t.TempDir()
+	d, err := NewDaemon(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.watcher.Close()
+	p := newStatePublisher(d, filepath.Join(root, "state.json"), "instance-a")
+	p.flushDir = filepath.Join(root, "flush")
+	if err := os.Mkdir(p.flushDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	for i := 0; i <= maxFlushArtifacts; i++ {
+		p.seen[fmt.Sprintf("request-%03d", i)] = now.Add(time.Duration(i) * time.Nanosecond)
+	}
+	p.scanRequests(now.Add(time.Second))
+	if len(p.seen) > maxFlushArtifacts {
+		t.Fatalf("seen identities = %d, want <= %d", len(p.seen), maxFlushArtifacts)
 	}
 }
 
@@ -101,7 +201,7 @@ func TestFlushRequestValidationRequiresExactGenerationIdentity(t *testing.T) {
 }
 
 func TestFlushRequestWaitsForQuietWindowAndAcknowledgesNextGeneration(t *testing.T) {
-	root := t.TempDir()
+	root := canonicalDaemonRoot(t)
 	d, err := NewDaemon(root, false)
 	if err != nil {
 		t.Fatal(err)
@@ -116,7 +216,7 @@ func TestFlushRequestWaitsForQuietWindowAndAcknowledgesNextGeneration(t *testing
 		t.Fatal(err)
 	}
 	now := time.Now()
-	req := flushRequest{Version: flushProtocolVersion, CanonicalRoot: root, DaemonInstance: "instance-a", Nonce: "nonce-a", ObservedGeneration: 1, Timestamp: now}
+	req := flushRequest{Version: flushProtocolVersion, CanonicalRoot: d.root, DaemonInstance: "instance-a", Nonce: "nonce-a", ObservedGeneration: 1, Timestamp: now}
 	data, _ := json.Marshal(req)
 	if err := os.WriteFile(filepath.Join(p.flushDir, "request-nonce-a.json"), data, 0o600); err != nil {
 		t.Fatal(err)
@@ -221,4 +321,13 @@ func readStateAt(t *testing.T, path string) State {
 		t.Fatal(err)
 	}
 	return state
+}
+
+func canonicalDaemonRoot(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
 }

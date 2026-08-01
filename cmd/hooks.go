@@ -1575,13 +1575,14 @@ func hookSessionStopContext(ctx context.Context, root string, out io.Writer) err
 		return err
 	}
 	if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) >= 250*time.Millisecond {
-		if err := writeSessionHandoffContext(ctx, root, state); err == nil {
-			fmt.Fprintln(out, "🤝 Saved handoff to .codemap/handoff.latest.json")
+		if err := writeSessionHandoffContext(ctx, root, state); err != nil {
+			return err
 		}
+		fmt.Fprintln(out, "🤝 Saved handoff to .codemap/handoff.latest.json")
 	}
 
 	fmt.Fprintln(out)
-	return nil
+	return ctx.Err()
 }
 
 func writeSessionHandoff(root string, state *watch.State) error {
@@ -1788,12 +1789,16 @@ func finishSessionDaemonContext(ctx context.Context, root, sessionID string) err
 	if sessionID == "" {
 		return stopDaemonContext(ctx, root)
 	}
+	var stopErr error
 	if err := updateSessionLeaseContext(ctx, root, sessionID, false, time.Now(), func(active int) {
 		if active == 0 {
-			_ = stopDaemonContext(ctx, root)
+			stopErr = stopDaemonContext(ctx, root)
 		}
 	}); err != nil {
 		return stopDaemonContext(ctx, root)
+	}
+	if stopErr != nil {
+		return stopErr
 	}
 	return ctx.Err()
 }

@@ -36,8 +36,9 @@ type Daemon struct {
 	verbose    bool
 	done       chan struct{}
 
-	eventLoopWG sync.WaitGroup
-	publisher   *statePublisher
+	eventLoopWG  sync.WaitGroup
+	publisher    *statePublisher
+	closeWatcher func() error
 }
 
 func (d *Daemon) runtimeStateDir() (string, error) {
@@ -53,6 +54,9 @@ func (d *Daemon) ensurePublisher() error {
 	}
 	runtimeDir, err := d.runtimeStateDir()
 	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
 		return err
 	}
 	d.publisher = newStatePublisher(d, filepath.Join(runtimeDir, "state.json"), "legacy-test-instance")
@@ -88,14 +92,15 @@ func NewDaemon(root string, verbose bool) (*Daemon, error) {
 	}
 
 	d := &Daemon{
-		root:       absRoot,
-		configDir:  selection.PolicyDir,
-		runtimeDir: runtimeDir,
-		watcher:    watcher,
-		gitCache:   gitCache,
-		verbose:    verbose,
-		done:       make(chan struct{}),
-		eventLog:   filepath.Join(runtimeDir, "events.log"),
+		root:         absRoot,
+		configDir:    selection.PolicyDir,
+		runtimeDir:   runtimeDir,
+		watcher:      watcher,
+		gitCache:     gitCache,
+		verbose:      verbose,
+		done:         make(chan struct{}),
+		closeWatcher: watcher.Close,
+		eventLog:     filepath.Join(runtimeDir, "events.log"),
 		graph: &Graph{
 			Root:            absRoot,
 			Files:           make(map[string]*scanner.FileInfo),
@@ -162,7 +167,9 @@ func (d *Daemon) Start() error {
 	}
 
 	// Write initial state for hooks to read immediately
-	_ = d.publisher.publish()
+	if err := d.publisher.publish(); err != nil {
+		return fmt.Errorf("publish initial state: %w", err)
+	}
 
 	// Start event loop
 	d.eventLoopWG.Add(1)
@@ -223,8 +230,8 @@ func (d *Daemon) computeTopology() {
 // Stop gracefully shuts down the daemon
 func (d *Daemon) Stop() {
 	close(d.done)
-	d.watcher.Close()
 	d.eventLoopWG.Wait()
+	_ = d.closeWatcher()
 }
 
 // GetGraph returns the current graph (thread-safe)
