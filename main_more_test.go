@@ -463,6 +463,23 @@ func TestRunWatchSubcommandUsesNearestGitRootFromNestedDirectory(t *testing.T) {
 	}
 }
 
+func TestRunWatchSubcommandReturnsRuntimeRejection(t *testing.T) {
+	root := t.TempDir()
+	setup := t.TempDir()
+	projectpath.SetSetupRoot(setup)
+	t.Cleanup(projectpath.ResetSetupRoot)
+	selection, err := projectpath.SelectRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(selection.RuntimeDir, "project.json"), []byte(`{"canonical_root":"/other"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runWatchSubcommand("start", root); err == nil {
+		t.Fatal("watch start accepted a rejected runtime identity")
+	}
+}
+
 func TestRunWatchStartPreservesSetupRoot(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {

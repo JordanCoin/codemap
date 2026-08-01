@@ -22,6 +22,35 @@ func TestHelperWatchDaemonProcess(t *testing.T) {
 	time.Sleep(time.Minute)
 }
 
+func TestMutableWatcherStateFailsClosedOnRuntimeIdentityMismatch(t *testing.T) {
+	root, setup := t.TempDir(), t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	projectpath.SetSetupRoot(setup)
+	t.Cleanup(projectpath.ResetSetupRoot)
+	selection, err := projectpath.SelectRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(selection.RuntimeDir, "project.json"), []byte(`{"canonical_root":"/other"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := WriteProcessPID(root, 42); err == nil {
+		t.Fatal("WriteProcessPID accepted mismatched runtime identity")
+	}
+	if d, err := NewDaemon(root, false); err == nil {
+		d.watcher.Close()
+		t.Fatal("NewDaemon accepted mismatched runtime identity")
+	}
+	for _, name := range []string{"watch.pid", "state.json", "events.log"} {
+		if _, err := os.Stat(filepath.Join(root, ".codemap", name)); !os.IsNotExist(err) {
+			t.Fatalf("unsafe fallback artifact %s exists: %v", name, err)
+		}
+	}
+}
+
 func TestReadStateStaleButRunning(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "codemap-state-test")
 	if err != nil {

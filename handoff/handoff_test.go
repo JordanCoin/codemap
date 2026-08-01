@@ -31,6 +31,28 @@ func contains(items []string, value string) bool {
 	return false
 }
 
+func TestWriteLatestFailsClosedOnRuntimeIdentityMismatch(t *testing.T) {
+	root, setup := t.TempDir(), t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	projectpath.SetSetupRoot(setup)
+	t.Cleanup(projectpath.ResetSetupRoot)
+	selection, err := projectpath.SelectRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(selection.RuntimeDir, "project.json"), []byte(`{"canonical_root":"/other"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteLatest(root, &Artifact{SchemaVersion: SchemaVersion}); err == nil {
+		t.Fatal("WriteLatest accepted mismatched runtime identity")
+	}
+	if _, err := os.Stat(filepath.Join(root, ".codemap", latestFilename)); !os.IsNotExist(err) {
+		t.Fatalf("unsafe fallback artifact exists: %v", err)
+	}
+}
+
 func TestBuildWriteRead(t *testing.T) {
 	root := t.TempDir()
 

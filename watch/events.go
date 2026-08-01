@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"codemap/internal/projectpath"
 	"codemap/internal/runtimefile"
 	"codemap/limits"
 	"codemap/scanner"
@@ -638,9 +637,14 @@ func (d *Daemon) logEvent(e Event) {
 
 // writeState persists current state for hooks to read
 func (d *Daemon) writeState() {
+	runtimeDir, err := d.runtimeStateDir()
+	if err != nil {
+		return
+	}
+
 	d.graph.mu.RLock()
 	defer d.graph.mu.RUnlock()
-	if err := os.MkdirAll(projectpath.ProjectRuntimeDir(d.root), 0o755); err != nil {
+	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
 		return
 	}
 
@@ -678,7 +682,7 @@ func (d *Daemon) writeState() {
 		return
 	}
 
-	stateFile := filepath.Join(projectpath.ProjectRuntimeDir(d.root), "state.json")
+	stateFile := filepath.Join(runtimeDir, "state.json")
 	_ = runtimefile.WriteAtomic(stateFile, data, 0o644)
 }
 

@@ -539,7 +539,11 @@ func showLightweightDiffVsMain(root string) {
 
 // getLastSessionEvents reads events.log for previous session context
 func getLastSessionEvents(root string) []string {
-	eventsFile := filepath.Join(projectpath.ProjectRuntimeDir(root), "events.log")
+	codemapDir, err := projectpath.CheckedRuntimeCodemapDir(root)
+	if err != nil {
+		return nil
+	}
+	eventsFile := filepath.Join(codemapDir, "events.log")
 	f, err := os.Open(eventsFile)
 	if err != nil {
 		return nil
@@ -887,7 +891,10 @@ func hookPromptSubmit(root string) error {
 
 // writeStatuslineState writes a tiny file for the statusline to read.
 func writeStatuslineState(root string, intent TaskIntent) {
-	codemapDir := projectpath.ProjectRuntimeDir(root)
+	codemapDir, err := projectpath.CheckedRuntimeCodemapDir(root)
+	if err != nil {
+		return
+	}
 	status := intent.Category
 	if intent.RiskLevel != "low" {
 		status += " " + intent.RiskLevel
@@ -1379,7 +1386,10 @@ func showSessionProgress(root, sessionID string) {
 
 // hookPreCompact saves hub state before context compaction
 func hookPreCompact(root string) error {
-	codemapDir := projectpath.ProjectRuntimeDir(root)
+	codemapDir, err := projectpath.CheckedRuntimeCodemapDir(root)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(codemapDir, 0755); err != nil {
 		return err
 	}
@@ -1694,7 +1704,10 @@ func updateSessionLease(root, sessionID string, active bool, now time.Time, acti
 		}
 		return nil
 	}
-	codemapDir := projectpath.ProjectRuntimeDir(root)
+	codemapDir, err := projectpath.CheckedRuntimeCodemapDir(root)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(codemapDir, 0o755); err != nil {
 		return err
 	}

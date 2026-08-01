@@ -61,7 +61,10 @@ func MetricsPath(root string) string {
 // ReadLatest reads the latest handoff artifact if it exists.
 // Returns (nil, nil) when no artifact is present.
 func ReadLatest(root string) (*Artifact, error) {
-	path := LatestPath(root)
+	path, err := runtimePath(root, latestFilename)
+	if err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -83,7 +86,11 @@ func ReadLatest(root string) (*Artifact, error) {
 func WriteLatest(root string, artifact *Artifact) error {
 	normalizeArtifact(artifact)
 
-	path := LatestPath(root)
+	runtimeDir, err := projectpath.CheckedRuntimeCodemapDir(root)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(runtimeDir, latestFilename)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
@@ -91,13 +98,21 @@ func WriteLatest(root string, artifact *Artifact) error {
 	if err := writeJSONAtomic(path, artifact); err != nil {
 		return err
 	}
-	if err := writeJSONAtomic(PrefixPath(root), artifact.Prefix); err != nil {
+	if err := writeJSONAtomic(filepath.Join(runtimeDir, prefixFilename), artifact.Prefix); err != nil {
 		return err
 	}
-	if err := writeJSONAtomic(DeltaPath(root), artifact.Delta); err != nil {
+	if err := writeJSONAtomic(filepath.Join(runtimeDir, deltaFilename), artifact.Delta); err != nil {
 		return err
 	}
-	return appendMetrics(root, artifact)
+	return appendMetricsAt(filepath.Join(runtimeDir, metricsFilename), artifact)
+}
+
+func runtimePath(root, name string) (string, error) {
+	dir, err := projectpath.CheckedRuntimeCodemapDir(root)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, name), nil
 }
 
 func writeJSONAtomic(path string, value any) error {
@@ -109,6 +124,14 @@ func writeJSONAtomic(path string, value any) error {
 }
 
 func appendMetrics(root string, artifact *Artifact) error {
+	path, err := runtimePath(root, metricsFilename)
+	if err != nil {
+		return err
+	}
+	return appendMetricsAt(path, artifact)
+}
+
+func appendMetricsAt(path string, artifact *Artifact) error {
 	entry := struct {
 		GeneratedAt  string       `json:"generated_at"`
 		Branch       string       `json:"branch"`
@@ -132,7 +155,7 @@ func appendMetrics(root string, artifact *Artifact) error {
 		return err
 	}
 
-	f, err := runtimefile.OpenAppend(MetricsPath(root), 0o644)
+	f, err := runtimefile.OpenAppend(path, 0o644)
 	if err != nil {
 		return err
 	}
@@ -141,7 +164,7 @@ func appendMetrics(root string, artifact *Artifact) error {
 	if _, err := f.Write(append(data, '\n')); err != nil {
 		return err
 	}
-	return capMetricsLog(root, maxMetricsLines)
+	return capMetricsLogAt(path, maxMetricsLines)
 }
 
 func normalizeArtifact(artifact *Artifact) {
@@ -222,12 +245,11 @@ func backfillHashes(artifact *Artifact) {
 	}
 }
 
-func capMetricsLog(root string, maxLines int) error {
+func capMetricsLogAt(path string, maxLines int) error {
 	if maxLines <= 0 {
 		return nil
 	}
 
-	path := MetricsPath(root)
 	data, err := runtimefile.Read(path)
 	if err != nil {
 		if os.IsNotExist(err) {

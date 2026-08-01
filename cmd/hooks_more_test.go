@@ -54,6 +54,30 @@ func withHookRuntimeStubs(
 	})
 }
 
+func TestHookMutableStateFailsClosedOnRuntimeIdentityMismatch(t *testing.T) {
+	root, setup := t.TempDir(), t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	projectpath.SetSetupRoot(setup)
+	t.Cleanup(projectpath.ResetSetupRoot)
+	selection, err := projectpath.SelectRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(selection.RuntimeDir, "project.json"), []byte(`{"canonical_root":"/other"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := updateSessionLease(root, "session-a", true, time.Now(), nil); err == nil {
+		t.Fatal("session lease accepted mismatched runtime identity")
+	}
+	writeStatuslineState(root, TaskIntent{Category: "test", RiskLevel: "low"})
+	if _, err := os.Stat(filepath.Join(root, ".codemap")); !os.IsNotExist(err) {
+		t.Fatalf("unsafe project-local state exists: %v", err)
+	}
+}
+
 func captureOutputAndError(t *testing.T, fn func()) (string, string) {
 	t.Helper()
 

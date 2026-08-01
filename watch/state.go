@@ -88,7 +88,10 @@ func WriteProcessPID(root string, pid int) error {
 	if pid <= 0 {
 		return fmt.Errorf("invalid daemon PID %d", pid)
 	}
-	runtimeDir := projectpath.ProjectRuntimeDir(root)
+	runtimeDir, err := projectpath.CheckedRuntimeCodemapDir(root)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
 		return err
 	}
@@ -107,7 +110,11 @@ func ReadPID(root string) (int, error) {
 
 // RemovePID removes the project's PID file.
 func RemovePID(root string) {
-	pidFile := filepath.Join(projectpath.ProjectRuntimeDir(root), "watch.pid")
+	runtimeDir, err := projectpath.CheckedRuntimeCodemapDir(root)
+	if err != nil {
+		return
+	}
+	pidFile := filepath.Join(runtimeDir, "watch.pid")
 	os.Remove(pidFile)
 }
 

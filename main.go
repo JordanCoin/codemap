@@ -70,7 +70,10 @@ func main() {
 		if len(os.Args) >= 4 {
 			root = os.Args[3]
 		}
-		runWatchSubcommand(subCmd, root)
+		if err := runWatchSubcommand(subCmd, root); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 		return
 	}
 
@@ -718,16 +721,14 @@ func runImportersMode(root, file string, jsonMode bool, filters scanner.Filters)
 	renderImportersReportCLI(os.Stdout, report)
 }
 
-func runWatchSubcommand(subCmd, root string) {
+func runWatchSubcommand(subCmd, root string) error {
 	absRoot, _, err := cmd.ResolveNearestGitRoot(root)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 	absRoot, err = cmd.ValidateProjectPath(absRoot)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 	// Canonicalize so the daemon identity and path comparisons agree (e.g.
 	// macOS /var -> /private/var).
@@ -739,28 +740,24 @@ func runWatchSubcommand(subCmd, root string) {
 	case "start":
 		transition, err := acquireWatchTransition(absRoot)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error starting daemon: %v\n", err)
-			return
+			return fmt.Errorf("starting daemon: %w", err)
 		}
 		defer transition.Release()
 		active, err := watch.ResolveActiveRuntime(absRoot)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error starting daemon: %v\n", err)
-			return
+			return fmt.Errorf("starting daemon: %w", err)
 		}
 		if active.PID > 0 {
 			fmt.Println("Watch daemon already running")
-			return
+			return nil
 		}
 		if err := watch.PreserveStalePIDEvidence(active); err != nil {
-			fmt.Fprintf(os.Stderr, "Error preserving stale daemon PID: %v\n", err)
-			return
+			return fmt.Errorf("preserving stale daemon PID: %w", err)
 		}
 		// Fork a background daemon
 		exe, err := executablePath()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			return err
 		}
 		args := projectpath.PrependSetupRootArgs("watch", "daemon", absRoot)
 		cmd := execCommand(exe, args...)
@@ -770,13 +767,11 @@ func runWatchSubcommand(subCmd, root string) {
 		// Detach from parent process group (Unix only)
 		setSysProcAttr(cmd)
 		if err := cmd.Start(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error starting daemon: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("starting daemon: %w", err)
 		}
 		if err := writeWatchProcessPID(absRoot, cmd.Process.Pid); err != nil {
 			_ = cmd.Process.Kill()
-			fmt.Fprintf(os.Stderr, "Error publishing daemon PID: %v\n", err)
-			return
+			return fmt.Errorf("publishing daemon PID: %w", err)
 		}
 		fmt.Printf("Watch daemon started (pid %d)\n", cmd.Process.Pid)
 
@@ -787,28 +782,25 @@ func runWatchSubcommand(subCmd, root string) {
 	case "stop":
 		active, resolveErr := watch.ResolveActiveRuntime(absRoot)
 		if resolveErr != nil {
-			fmt.Fprintf(os.Stderr, "Error stopping daemon: %v\n", resolveErr)
-			return
+			return fmt.Errorf("stopping daemon: %w", resolveErr)
 		}
 		if active.PID <= 0 && !watchIsRunning(absRoot) {
 			fmt.Println("Watch daemon not running")
-			return
+			return nil
 		}
 		if err := stopWatchDaemon(absRoot); err != nil {
 			if errors.Is(err, watch.ErrForeignDaemonPID) {
 				fmt.Println("Watch daemon not running (cleared stale PID file)")
-				return
+				return nil
 			}
-			fmt.Fprintf(os.Stderr, "Error stopping daemon: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("stopping daemon: %w", err)
 		}
 		fmt.Println("Watch daemon stopped")
 
 	case "status":
 		active, err := watch.ResolveActiveRuntime(absRoot)
 		if err != nil {
-			fmt.Printf("Watch daemon status unavailable: %v\n", err)
-			return
+			return fmt.Errorf("watch daemon status unavailable: %w", err)
 		}
 		if active.PID > 0 {
 			state := watch.ReadState(absRoot)
@@ -825,10 +817,9 @@ func runWatchSubcommand(subCmd, root string) {
 		}
 
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown watch command: %s\n", subCmd)
-		fmt.Fprintln(os.Stderr, "Usage: codemap watch [start|stop|status]")
-		os.Exit(1)
+		return fmt.Errorf("unknown watch command %q (usage: codemap watch [start|stop|status])", subCmd)
 	}
+	return nil
 }
 
 func runHandoffSubcommand(args []string) {

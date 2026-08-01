@@ -2,6 +2,7 @@ package codemapmcp
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -200,6 +201,47 @@ func TestMCPScansRespectConfiguredFilters(t *testing.T) {
 
 func TestHandleWatchLifecycleAndActivity(t *testing.T) {
 	withWatcherRegistry(t)
+	previousCommand := runManagedWatchCommand
+	var managed *exec.Cmd
+	startCalls := 0
+	runManagedWatchCommand = func(_ context.Context, action, root string) (string, error) {
+		switch action {
+		case "start":
+			startCalls++
+			if pid, err := watch.ReadPID(root); err == nil && pid > 0 {
+				return "Watch daemon already running", nil
+			}
+			if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
+				return "", err
+			}
+			managed = exec.Command("sh", "-c", "while :; do sleep 1; done", "codemap", "watch", "daemon", root)
+			if err := managed.Start(); err != nil {
+				return "", err
+			}
+			if err := watch.WriteProcessPID(root, managed.Process.Pid); err != nil {
+				return "", err
+			}
+			return "Watch daemon started", nil
+		case "stop":
+			if managed == nil {
+				return "Watch daemon not running", nil
+			}
+			_ = managed.Process.Kill()
+			_, _ = managed.Process.Wait()
+			managed = nil
+			watch.RemovePID(root)
+			return "Watch daemon stopped", nil
+		default:
+			return "", errors.New("unexpected watch action")
+		}
+	}
+	t.Cleanup(func() {
+		runManagedWatchCommand = previousCommand
+		if managed != nil {
+			_ = managed.Process.Kill()
+			_, _ = managed.Process.Wait()
+		}
+	})
 
 	startRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(startRoot, "main.go"), []byte("package main\n"), 0o644); err != nil {
@@ -214,6 +256,20 @@ func TestHandleWatchLifecycleAndActivity(t *testing.T) {
 	if !strings.Contains(startOut, "Live watcher started for:") {
 		t.Fatalf("unexpected start output:\n%s", startOut)
 	}
+	if pid, err := watch.ReadPID(startRoot); err != nil || pid <= 0 {
+		t.Fatalf("MCP watcher did not publish shared ownership: pid=%d err=%v", pid, err)
+	}
+	firstPID, _ := watch.ReadPID(startRoot)
+	watchersMu.Lock()
+	delete(watchers, startRoot)
+	watchersMu.Unlock()
+	sharedRes, _, err := handleStartWatch(context.Background(), nil, WatchInput{Path: startRoot})
+	if err != nil || !strings.Contains(resultText(t, sharedRes), "Already watching:") {
+		t.Fatalf("existing CLI owner was not reused: err=%v out=%s", err, resultText(t, sharedRes))
+	}
+	if pid, _ := watch.ReadPID(startRoot); pid != firstPID {
+		t.Fatalf("owner changed: %d -> %d", firstPID, pid)
+	}
 
 	againRes, _, err := handleStartWatch(context.Background(), nil, WatchInput{Path: startRoot})
 	if err != nil {
@@ -221,6 +277,9 @@ func TestHandleWatchLifecycleAndActivity(t *testing.T) {
 	}
 	if !strings.Contains(resultText(t, againRes), "Already watching:") {
 		t.Fatalf("expected already-watching response, got:\n%s", resultText(t, againRes))
+	}
+	if startCalls != 3 {
+		t.Fatalf("managed owner was not revalidated: start calls = %d, want 3", startCalls)
 	}
 
 	stopRes, _, err := handleStopWatch(context.Background(), nil, WatchInput{Path: startRoot})
