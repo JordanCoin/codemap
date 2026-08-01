@@ -2,15 +2,25 @@ package watch
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
 	"codemap/internal/projectpath"
 	"codemap/scanner"
 )
+
+func TestHelperWatchDaemonProcess(t *testing.T) {
+	if os.Getenv("CODEMAP_TEST_WATCH_HELPER") != "1" {
+		return
+	}
+	time.Sleep(time.Minute)
+}
 
 func TestReadStateStaleButRunning(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "codemap-state-test")
@@ -36,11 +46,20 @@ func TestReadStateStaleButRunning(t *testing.T) {
 		t.Fatalf("Failed to write state file: %v", err)
 	}
 
-	// Simulate running daemon by pointing pid file to current process.
-	if err := WritePID(tmpDir); err != nil {
-		t.Fatalf("Failed to write pid file: %v", err)
+	process := exec.Command(os.Args[0], "-test.run=TestHelperWatchDaemonProcess", "--", "watch", "daemon", tmpDir)
+	process.Env = append(os.Environ(), "CODEMAP_TEST_WATCH_HELPER=1")
+	if err := process.Start(); err != nil {
+		t.Fatal(err)
 	}
-	defer RemovePID(tmpDir)
+	waited := make(chan struct{})
+	go func() {
+		_ = process.Wait()
+		close(waited)
+	}()
+	t.Cleanup(func() { _ = process.Process.Kill(); <-waited })
+	if err := os.WriteFile(filepath.Join(codemapDir, "watch.pid"), []byte(fmt.Sprint(process.Process.Pid)), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	got := ReadState(tmpDir)
 	if got == nil {
@@ -175,6 +194,171 @@ func TestWatchStorageUsesSetupRoot(t *testing.T) {
 	}
 }
 
+func TestExplicitSetupSeparatesMutableWatchFiles(t *testing.T) {
+	setup := t.TempDir()
+	projectA := t.TempDir()
+	projectB := t.TempDir()
+	projectpath.SetSetupRoot(setup)
+	t.Cleanup(projectpath.ResetSetupRoot)
+
+	if err := WritePID(projectA); err != nil {
+		t.Fatal(err)
+	}
+	if err := WritePID(projectB); err != nil {
+		t.Fatal(err)
+	}
+	a, err := projectpath.SelectRuntime(projectA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := projectpath.SelectRuntime(projectB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aDir := projectpath.ProjectRuntimeDir(a.ProjectRoot)
+	bDir := projectpath.ProjectRuntimeDir(b.ProjectRoot)
+	if aDir == bDir {
+		t.Fatalf("projects share runtime %q", aDir)
+	}
+	for _, dir := range []string{aDir, bDir} {
+		if _, err := os.Stat(filepath.Join(dir, "watch.pid")); err != nil {
+			t.Fatalf("namespaced PID missing in %q: %v", dir, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(setup, ".codemap", "watch.pid")); !os.IsNotExist(err) {
+		t.Fatalf("legacy shared PID unexpectedly written: %v", err)
+	}
+}
+
+func TestResolveActiveRuntimeUsesOnlyExactlyOwnedLiveLegacyDaemon(t *testing.T) {
+	setup := t.TempDir()
+	project := filepath.Join(t.TempDir(), "project with space")
+	if err := os.Mkdir(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	projectpath.SetSetupRoot(setup)
+	t.Cleanup(projectpath.ResetSetupRoot)
+	selection, err := projectpath.SelectRuntime(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	process := exec.Command(os.Args[0], "-test.run=TestHelperWatchDaemonProcess", "--", "watch", "daemon", selection.ProjectRoot)
+	process.Env = append(os.Environ(), "CODEMAP_TEST_WATCH_HELPER=1")
+	if err := process.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = process.Process.Kill(); _, _ = process.Process.Wait() })
+	if err := os.MkdirAll(selection.LegacyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(selection.LegacyDir, "watch.pid"), []byte(fmt.Sprint(process.Process.Pid)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	active, err := ResolveActiveRuntime(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.Directory != selection.LegacyDir || !active.Legacy || active.PID != process.Process.Pid {
+		t.Fatalf("ResolveActiveRuntime() = %#v, want owned legacy daemon", active)
+	}
+
+	foreign := t.TempDir()
+	foreignProcess := exec.Command(os.Args[0], "-test.run=TestHelperWatchDaemonProcess", "--", "watch", "daemon", foreign)
+	foreignProcess.Env = append(os.Environ(), "CODEMAP_TEST_WATCH_HELPER=1")
+	if err := foreignProcess.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = foreignProcess.Process.Kill(); _, _ = foreignProcess.Process.Wait() })
+	if err := os.WriteFile(filepath.Join(selection.LegacyDir, "watch.pid"), []byte(fmt.Sprint(foreignProcess.Process.Pid)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolveActiveRuntime(project); !errors.Is(err, ErrForeignDaemonPID) {
+		t.Fatalf("foreign ResolveActiveRuntime() error = %v, want ErrForeignDaemonPID", err)
+	}
+}
+
+func TestTransitionLockSerializesStartsAndReleases(t *testing.T) {
+	root := t.TempDir()
+	first, err := AcquireTransition(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AcquireTransition(root); !errors.Is(err, ErrTransitionLocked) {
+		t.Fatalf("second AcquireTransition() error = %v, want ErrTransitionLocked", err)
+	}
+	if err := first.Release(); err != nil {
+		t.Fatal(err)
+	}
+	third, err := AcquireTransition(root)
+	if err != nil {
+		t.Fatalf("AcquireTransition() after release: %v", err)
+	}
+	if err := third.Release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWriteProcessPIDRejectsSymlinkEndpoint(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks may require elevated privileges")
+	}
+	root := t.TempDir()
+	runtimeDir := projectpath.ProjectRuntimeDir(root)
+	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.WriteFile(target, []byte("preserve"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(runtimeDir, "watch.pid")); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteProcessPID(root, 123); err == nil {
+		t.Fatal("WriteProcessPID followed a symlink")
+	}
+	data, err := os.ReadFile(target)
+	if err != nil || string(data) != "preserve" {
+		t.Fatalf("symlink target changed: %q, %v", data, err)
+	}
+}
+
+func TestStopOwnedDaemonWaitsForVerifiedExitBeforeRemovingPID(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".codemap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	process := exec.Command(os.Args[0], "-test.run=TestHelperWatchDaemonProcess", "--", "watch", "daemon", root)
+	process.Env = append(os.Environ(), "CODEMAP_TEST_WATCH_HELPER=1")
+	if err := process.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := make(chan struct{})
+	go func() {
+		_ = process.Wait()
+		close(waited)
+	}()
+	t.Cleanup(func() { _ = process.Process.Kill(); <-waited })
+	if err := WriteProcessPID(root, process.Process.Pid); err != nil {
+		t.Fatal(err)
+	}
+	if err := Stop(root); err != nil {
+		t.Fatal(err)
+	}
+	if processAlive(process.Process.Pid) {
+		t.Fatal("Stop returned before daemon exit was observable")
+	}
+	selection, err := projectpath.SelectRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(projectpath.ProjectRuntimeDir(selection.ProjectRoot), "watch.pid")); !os.IsNotExist(err) {
+		t.Fatalf("PID evidence remains after verified exit: %v", err)
+	}
+}
+
 func TestAutomaticLinkedWorktreeUsesLocalWatchStorage(t *testing.T) {
 	projectpath.ResetSetupRoot()
 	t.Cleanup(projectpath.ResetSetupRoot)
@@ -220,7 +404,7 @@ func TestAutomaticLinkedWorktreeUsesLocalWatchStorage(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(projectpath.ProjectRuntimeDir(linked), "state.json")); err != nil {
 		t.Fatalf("linked-worktree state missing: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(primary, ".codemap", "state.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(projectpath.ProjectRuntimeDir(primary), "state.json")); !os.IsNotExist(err) {
 		t.Fatalf("primary state unexpectedly created: %v", err)
 	}
 }

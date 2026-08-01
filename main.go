@@ -36,14 +36,15 @@ var (
 	newWatchProcess = func(root string, verbose bool) (watchProcess, error) {
 		return watch.NewDaemon(root, verbose)
 	}
-	watchIsRunning  = watch.IsRunning
-	stopWatchDaemon = watch.Stop
-	writeWatchPID   = watch.WritePID
-	removeWatchPID  = watch.RemovePID
-	executablePath  = os.Executable
-	execCommand     = exec.Command
-	notifySignals   = signal.Notify
-	terminalChecker = isTerminal
+	watchIsRunning         = watch.IsRunning
+	stopWatchDaemon        = watch.Stop
+	writeWatchPID          = watch.WritePID
+	executablePath         = os.Executable
+	execCommand            = exec.Command
+	notifySignals          = signal.Notify
+	terminalChecker        = isTerminal
+	acquireWatchTransition = watch.AcquireTransition
+	writeWatchProcessPID   = watch.WriteProcessPID
 )
 
 func main() {
@@ -736,8 +737,23 @@ func runWatchSubcommand(subCmd, root string) {
 
 	switch subCmd {
 	case "start":
-		if watchIsRunning(absRoot) {
+		transition, err := acquireWatchTransition(absRoot)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error starting daemon: %v\n", err)
+			return
+		}
+		defer transition.Release()
+		active, err := watch.ResolveActiveRuntime(absRoot)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error starting daemon: %v\n", err)
+			return
+		}
+		if active.PID > 0 {
 			fmt.Println("Watch daemon already running")
+			return
+		}
+		if err := watch.PreserveStalePIDEvidence(active); err != nil {
+			fmt.Fprintf(os.Stderr, "Error preserving stale daemon PID: %v\n", err)
 			return
 		}
 		// Fork a background daemon
@@ -757,6 +773,11 @@ func runWatchSubcommand(subCmd, root string) {
 			fmt.Fprintf(os.Stderr, "Error starting daemon: %v\n", err)
 			os.Exit(1)
 		}
+		if err := writeWatchProcessPID(absRoot, cmd.Process.Pid); err != nil {
+			_ = cmd.Process.Kill()
+			fmt.Fprintf(os.Stderr, "Error publishing daemon PID: %v\n", err)
+			return
+		}
 		fmt.Printf("Watch daemon started (pid %d)\n", cmd.Process.Pid)
 
 	case "daemon":
@@ -764,7 +785,12 @@ func runWatchSubcommand(subCmd, root string) {
 		runDaemon(absRoot)
 
 	case "stop":
-		if !watchIsRunning(absRoot) {
+		active, resolveErr := watch.ResolveActiveRuntime(absRoot)
+		if resolveErr != nil {
+			fmt.Fprintf(os.Stderr, "Error stopping daemon: %v\n", resolveErr)
+			return
+		}
+		if active.PID <= 0 && !watchIsRunning(absRoot) {
 			fmt.Println("Watch daemon not running")
 			return
 		}
@@ -779,7 +805,12 @@ func runWatchSubcommand(subCmd, root string) {
 		fmt.Println("Watch daemon stopped")
 
 	case "status":
-		if watchIsRunning(absRoot) {
+		active, err := watch.ResolveActiveRuntime(absRoot)
+		if err != nil {
+			fmt.Printf("Watch daemon status unavailable: %v\n", err)
+			return
+		}
+		if active.PID > 0 {
 			state := watch.ReadState(absRoot)
 			if state != nil {
 				fmt.Printf("Watch daemon running\n")
@@ -936,6 +967,30 @@ func runHandoffSubcommand(args []string) {
 }
 
 func runDaemon(root string) {
+	var transition *watch.Transition
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		var err error
+		transition, err = acquireWatchTransition(root)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, watch.ErrTransitionLocked) || time.Now().After(deadline) {
+			fmt.Fprintf(os.Stderr, "Error claiming daemon transition: %v\n", err)
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	defer transition.Release()
+	active, err := watch.ResolveActiveRuntime(root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error resolving daemon runtime: %v\n", err)
+		return
+	}
+	if active.PID > 0 && active.PID != os.Getpid() {
+		fmt.Fprintln(os.Stderr, "Error: another watch daemon is already running")
+		return
+	}
 	daemon, err := newWatchProcess(root, false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -949,6 +1004,8 @@ func runDaemon(root string) {
 
 	// Write PID file
 	writeWatchPID(root)
+	_ = transition.Release()
+	transition = nil
 
 	// Wait for stop signal (SIGTERM or state file removal)
 	sigChan := make(chan os.Signal, 1)
@@ -956,7 +1013,7 @@ func runDaemon(root string) {
 	<-sigChan
 
 	daemon.Stop()
-	removeWatchPID(root)
+	_ = watch.RemoveProcessPID(root, os.Getpid())
 }
 
 // isGitHubURL checks if the input looks like a GitHub repo URL

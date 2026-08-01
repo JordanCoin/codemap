@@ -335,6 +335,7 @@ func TestMetricsLogCapped(t *testing.T) {
 
 func TestStoragePathsUseSetupRoot(t *testing.T) {
 	projectRoot := t.TempDir()
+	otherProject := t.TempDir()
 	setupRoot := t.TempDir()
 	projectpath.SetSetupRoot(setupRoot)
 	t.Cleanup(projectpath.ResetSetupRoot)
@@ -342,6 +343,9 @@ func TestStoragePathsUseSetupRoot(t *testing.T) {
 	want := filepath.Join(projectpath.ProjectRuntimeDir(projectRoot), latestFilename)
 	if got := LatestPath(projectRoot); got != want {
 		t.Fatalf("LatestPath() = %q, want %q", got, want)
+	}
+	if LatestPath(projectRoot) == LatestPath(otherProject) {
+		t.Fatal("explicit setup-root projects share handoff storage")
 	}
 }
 

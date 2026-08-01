@@ -125,9 +125,6 @@ func CodemapDir(projectRoot string) string {
 
 // RuntimeRoot returns the root for mutable state associated with a project.
 func RuntimeRoot(projectRoot string) string {
-	if explicit := ConfiguredSetupRoot(); explicit != "" {
-		return filepath.Clean(explicit)
-	}
 	selection, err := Select(projectRoot)
 	if err == nil {
 		return selection.RuntimeRoot
@@ -178,7 +175,11 @@ func ProjectRuntimeDir(projectRoot string) string {
 
 // RuntimeCodemapDir returns the .codemap directory for mutable project state.
 func RuntimeCodemapDir(projectRoot string) string {
-	return filepath.Join(RuntimeRoot(projectRoot), ".codemap")
+	selection, err := SelectRuntime(projectRoot)
+	if err == nil {
+		return selection.RuntimeDir
+	}
+	return filepath.Join(filepath.Clean(projectRoot), ".codemap")
 }
 
 func canonicalProjectRoot(root string) (string, error) {

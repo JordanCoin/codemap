@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"codemap/internal/projectpath"
+	"codemap/internal/runtimefile"
 	"codemap/limits"
 	"codemap/scanner"
 
@@ -592,7 +593,10 @@ func (d *Daemon) findRelatedHot(path string, window time.Duration) []string {
 
 // logEvent appends an event to the log file
 func (d *Daemon) logEvent(e Event) {
-	f, err := os.OpenFile(d.eventLog, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err := requireRegularRuntimeFile(d.eventLog); err != nil && !os.IsNotExist(err) {
+		return
+	}
+	f, err := runtimefile.OpenAppend(d.eventLog, 0o644)
 	if err != nil {
 		return
 	}
@@ -675,7 +679,7 @@ func (d *Daemon) writeState() {
 	}
 
 	stateFile := filepath.Join(projectpath.ProjectRuntimeDir(d.root), "state.json")
-	os.WriteFile(stateFile, data, 0644)
+	_ = runtimefile.WriteAtomic(stateFile, data, 0o644)
 }
 
 func appendBoundedEvents(events []Event, event Event) []Event {

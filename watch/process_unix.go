@@ -36,6 +36,9 @@ func processAlive(pid int) bool {
 // gracefully. This matches long-standing behavior and does not gate on
 // ownership (unlike Windows, where the kill is destructive): the root argument
 // is accepted only to share a signature with the Windows implementation.
-func terminateDaemon(_ string, proc *os.Process) error {
+func terminateDaemon(root string, proc *os.Process) error {
+	if daemonOwnershipForPID(root, proc.Pid) != ownershipOwned {
+		return ErrDaemonOwnershipUnknown
+	}
 	return proc.Signal(syscall.SIGTERM)
 }

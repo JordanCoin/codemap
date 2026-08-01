@@ -611,10 +611,7 @@ func TestFindChildReposAndSessionStartVariants(t *testing.T) {
 				"pkg/types.go": {"a.go", "b.go", "c.go"},
 			},
 		})
-		if err := watch.WritePID(root); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { watch.RemovePID(root) })
+		writeOwnedWatchPID(t, root)
 
 		if err := handoff.WriteLatest(root, &handoff.Artifact{
 			SchemaVersion: handoff.SchemaVersion,

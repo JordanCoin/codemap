@@ -217,7 +217,7 @@ func TestStopWithoutPIDFileReturnsNoDaemonError(t *testing.T) {
 	}
 }
 
-func TestStopTerminatesProcessAndRemovesPID(t *testing.T) {
+func TestStopRejectsForeignProcessAndRetainsPIDEvidence(t *testing.T) {
 	root := t.TempDir()
 	codemapDir := projectpath.ProjectRuntimeDir(root)
 	if err := os.MkdirAll(codemapDir, 0o755); err != nil {
@@ -238,10 +238,10 @@ func TestStopTerminatesProcessAndRemovesPID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Stop(root); err != nil {
-		t.Fatalf("Stop error: %v", err)
+	if err := Stop(root); !errors.Is(err, ErrForeignDaemonPID) {
+		t.Fatalf("Stop error = %v, want ErrForeignDaemonPID", err)
 	}
-	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
-		t.Fatalf("expected pid file to be removed, stat err=%v", err)
+	if _, err := os.Stat(pidPath); err != nil {
+		t.Fatalf("expected foreign pid evidence to remain, stat err=%v", err)
 	}
 }

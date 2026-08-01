@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"codemap/internal/projectpath"
+	"codemap/internal/runtimefile"
 )
 
 const (
@@ -104,11 +105,7 @@ func writeJSONAtomic(path string, value any) error {
 	if err != nil {
 		return err
 	}
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
+	return runtimefile.WriteAtomic(path, data, 0o644)
 }
 
 func appendMetrics(root string, artifact *Artifact) error {
@@ -135,7 +132,7 @@ func appendMetrics(root string, artifact *Artifact) error {
 		return err
 	}
 
-	f, err := os.OpenFile(MetricsPath(root), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := runtimefile.OpenAppend(MetricsPath(root), 0o644)
 	if err != nil {
 		return err
 	}
@@ -231,7 +228,7 @@ func capMetricsLog(root string, maxLines int) error {
 	}
 
 	path := MetricsPath(root)
-	data, err := os.ReadFile(path)
+	data, err := runtimefile.Read(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -250,9 +247,5 @@ func capMetricsLog(root string, maxLines int) error {
 
 	trimmed := bytes.Join(lines[len(lines)-maxLines:], []byte("\n"))
 	trimmed = append(trimmed, '\n')
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, trimmed, 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
+	return runtimefile.WriteAtomic(path, trimmed, 0o644)
 }

@@ -286,6 +286,13 @@ func runGitMainTestCmd(t *testing.T, dir string, args ...string) {
 	}
 }
 
+func TestMainWatchHelperProcess(t *testing.T) {
+	if os.Getenv("CODEMAP_MAIN_WATCH_HELPER") != "1" {
+		return
+	}
+	time.Sleep(time.Minute)
+}
+
 func writeMainWatchState(t *testing.T, root string, state watch.State, running bool) {
 	t.Helper()
 
@@ -300,10 +307,23 @@ func writeMainWatchState(t *testing.T, root string, state watch.State, running b
 		t.Fatal(err)
 	}
 	if running {
-		if err := watch.WritePID(root); err != nil {
+		canonical, err := filepath.EvalSymlinks(root)
+		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { watch.RemovePID(root) })
+		process := exec.Command(os.Args[0], "-test.run=TestMainWatchHelperProcess", "--", "watch", "daemon", canonical)
+		process.Env = append(os.Environ(), "CODEMAP_MAIN_WATCH_HELPER=1")
+		if err := process.Start(); err != nil {
+			t.Fatal(err)
+		}
+		if err := watch.WriteProcessPID(root, process.Process.Pid); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			_ = process.Process.Kill()
+			_, _ = process.Process.Wait()
+			watch.RemovePID(root)
+		})
 	}
 }
 

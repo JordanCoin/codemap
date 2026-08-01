@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -24,6 +25,35 @@ func withOwnedDaemonProcess(t *testing.T, fn func(string) bool) {
 	isOwnedDaemonProcess = fn
 	t.Cleanup(func() {
 		isOwnedDaemonProcess = prev
+	})
+}
+
+func TestOwnedWatchDaemonHelperProcess(t *testing.T) {
+	if os.Getenv("CODEMAP_CMD_WATCH_HELPER") != "1" {
+		return
+	}
+	time.Sleep(time.Minute)
+}
+
+func writeOwnedWatchPID(t *testing.T, root string) {
+	t.Helper()
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	process := exec.Command(os.Args[0], "-test.run=TestOwnedWatchDaemonHelperProcess", "--", "watch", "daemon", canonical)
+	process.Env = append(os.Environ(), "CODEMAP_CMD_WATCH_HELPER=1")
+	if err := process.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := watch.WriteProcessPID(root, process.Process.Pid); err != nil {
+		_ = process.Process.Kill()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = process.Process.Kill()
+		_, _ = process.Process.Wait()
+		watch.RemovePID(root)
 	})
 }
 
@@ -248,10 +278,7 @@ func TestShouldRestartDaemon(t *testing.T) {
 		if err := os.MkdirAll(codemapDir, 0755); err != nil {
 			t.Fatal(err)
 		}
-		if err := watch.WritePID(root); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { watch.RemovePID(root) })
+		writeOwnedWatchPID(t, root)
 
 		if !shouldRestartDaemon(root, time.Now()) {
 			t.Fatal("expected true when daemon pid exists but state is missing")
@@ -814,10 +841,7 @@ func writeWatchState(t *testing.T, root string, state watch.State) {
 	if err := os.WriteFile(filepath.Join(codemapDir, "state.json"), data, 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := watch.WritePID(root); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { watch.RemovePID(root) })
+	writeOwnedWatchPID(t, root)
 }
 
 // TestGetLastSessionEvents verifies that the 20-line budget is enforced when
