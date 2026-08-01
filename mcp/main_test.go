@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -281,6 +282,188 @@ func TestFormatOnlyFilterHintOffersDirectConfigActionForExtensionlessMatches(t *
 	}
 }
 
+func TestHandleListSkillsRejectsMalformedWorktreeSetup(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".git"), []byte("not a gitdir\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, _, err := handleListSkills(context.Background(), nil, PathInput{Path: root})
+	if err != nil {
+		t.Fatalf("handleListSkills() error: %v", err)
+	}
+	if !res.IsError || !strings.Contains(resultText(t, res), "resolve linked worktree setup") {
+		t.Fatalf("expected bounded root-resolution error, got:\n%s", resultText(t, res))
+	}
+}
+
+func TestProjectToolsRejectInvalidWorktreeMetadataBeforeAccess(t *testing.T) {
+	type toolCall func(string) (*mcp.CallToolResult, error)
+	tools := map[string]toolCall{
+		"analysis": func(path string) (*mcp.CallToolResult, error) {
+			result, _, err := handleGetStructure(context.Background(), nil, StructureInput{Path: path})
+			return result, err
+		},
+		"file context": func(path string) (*mcp.CallToolResult, error) {
+			result, _, err := handleGetFileContext(context.Background(), nil, ImportersInput{Path: path, File: "main.go"})
+			return result, err
+		},
+		"handoff read": func(path string) (*mcp.CallToolResult, error) {
+			result, _, err := handleGetHandoff(context.Background(), nil, HandoffInput{Path: path, Latest: true})
+			return result, err
+		},
+		"handoff save": func(path string) (*mcp.CallToolResult, error) {
+			result, _, err := handleGetHandoff(context.Background(), nil, HandoffInput{Path: path, Save: true})
+			return result, err
+		},
+		"watch state": func(path string) (*mcp.CallToolResult, error) {
+			result, _, err := handleGetWorkingSet(context.Background(), nil, WatchInput{Path: path})
+			return result, err
+		},
+	}
+
+	fixtures := map[string]func(string) error{
+		"malformed gitfile": func(root string) error {
+			return os.WriteFile(filepath.Join(root, ".git"), []byte("not a gitdir\n"), 0o644)
+		},
+		"inaccessible gitdir": func(root string) error {
+			return os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: missing-admin-dir\n"), 0o644)
+		},
+	}
+
+	for fixtureName, makeFixture := range fixtures {
+		for toolName, call := range tools {
+			t.Run(fixtureName+"/"+toolName, func(t *testing.T) {
+				root := t.TempDir()
+				if err := makeFixture(root); err != nil {
+					t.Fatal(err)
+				}
+
+				result, err := call(root)
+				if err != nil {
+					t.Fatalf("tool returned transport error: %v", err)
+				}
+				if !result.IsError || !strings.Contains(resultText(t, result), "resolve linked worktree setup") {
+					t.Fatalf("expected bounded root-resolution error, got:\n%s", resultText(t, result))
+				}
+				if _, err := os.Lstat(filepath.Join(root, ".codemap")); !os.IsNotExist(err) {
+					t.Fatalf("tool accessed mutable storage before root validation: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestHandoffSaveRejectsSymlinkedLinkedRuntimeBeforeWrite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks may require elevated privileges")
+	}
+	for name, withPrimarySetup := range map[string]bool{
+		"with primary setup":    true,
+		"without primary setup": false,
+	} {
+		t.Run(name, func(t *testing.T) {
+			assertHandoffSaveRejectsSymlinkedLinkedRuntime(t, withPrimarySetup)
+		})
+	}
+}
+
+func assertHandoffSaveRejectsSymlinkedLinkedRuntime(t *testing.T, withPrimarySetup bool) {
+	t.Helper()
+	primary := t.TempDir()
+	gitDir := filepath.Join(primary, ".git", "worktrees", "linked")
+	if err := os.MkdirAll(gitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if withPrimarySetup {
+		if err := os.MkdirAll(filepath.Join(primary, ".codemap"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "commondir"), []byte("../..\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linked := t.TempDir()
+	if err := os.WriteFile(filepath.Join(linked, ".git"), []byte("gitdir: "+gitDir+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	target := t.TempDir()
+	sentinel := filepath.Join(target, "sentinel")
+	if err := os.WriteFile(sentinel, []byte("unchanged"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(linked, ".codemap")); err != nil {
+		t.Fatal(err)
+	}
+
+	result, _, err := handleGetHandoff(context.Background(), nil, HandoffInput{Path: linked, Save: true})
+	if err != nil {
+		t.Fatalf("handleGetHandoff() error: %v", err)
+	}
+	if !result.IsError || !strings.Contains(resultText(t, result), "unsafe Codemap storage") {
+		t.Fatalf("expected unsafe runtime-storage error, got:\n%s", resultText(t, result))
+	}
+	data, err := os.ReadFile(sentinel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "unchanged" {
+		t.Fatalf("sentinel changed through runtime symlink: %q", data)
+	}
+	entries, err := os.ReadDir(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "sentinel" {
+		t.Fatalf("runtime symlink target was modified: %#v", entries)
+	}
+}
+
+func TestHandleListSkillsResolvesWorktreeSetupPerInputPath(t *testing.T) {
+	makeFixture := func(name string) string {
+		primary := filepath.Join(t.TempDir(), "primary")
+		gitDir := filepath.Join(primary, ".git", "worktrees", name)
+		skillsDir := filepath.Join(primary, ".codemap", "skills")
+		if err := os.MkdirAll(gitDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(skillsDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(gitDir, "commondir"), []byte("../..\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		skill := "---\nname: " + name + "\ndescription: per-path fixture\n---\n\n# Fixture\n"
+		if err := os.WriteFile(filepath.Join(skillsDir, name+".md"), []byte(skill), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		linked := filepath.Join(t.TempDir(), "linked")
+		if err := os.MkdirAll(linked, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(linked, ".git"), []byte("gitdir: "+gitDir+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return linked
+	}
+
+	linkedA := makeFixture("primary-a")
+	linkedB := makeFixture("primary-b")
+	resA, _, err := handleListSkills(context.Background(), nil, PathInput{Path: linkedA})
+	if err != nil {
+		t.Fatalf("handleListSkills(A) error: %v", err)
+	}
+	resB, _, err := handleListSkills(context.Background(), nil, PathInput{Path: linkedB})
+	if err != nil {
+		t.Fatalf("handleListSkills(B) error: %v", err)
+	}
+	outA := resultText(t, resA)
+	outB := resultText(t, resB)
+	if !strings.Contains(outA, "primary-a") || strings.Contains(outA, "primary-b") || !strings.Contains(outB, "primary-b") || strings.Contains(outB, "primary-a") {
+		t.Fatalf("per-path skill selection failed:\nA:\n%s\nB:\n%s", outA, outB)
+	}
+}
+
 func TestHandleGetStructureUsesStateHubs(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
@@ -394,4 +577,29 @@ func resultText(t *testing.T, res *mcp.CallToolResult) string {
 		t.Fatalf("expected text content, got %T", res.Content[0])
 	}
 	return text.Text
+}
+
+func TestValidateProjectPathExpandsHomeAndRejectsInvalidRoots(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	proj := filepath.Join(home, "proj")
+	if err := os.MkdirAll(filepath.Join(proj, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	abs, invalid := validateProjectPath("~/proj")
+	if invalid != nil || abs != proj {
+		t.Fatalf("validateProjectPath(~/) = %q, %v; want %q", abs, invalid, proj)
+	}
+	// A malformed linked-worktree marker is rejected via projectpath.Select.
+	bad := filepath.Join(t.TempDir(), "bad")
+	if err := os.MkdirAll(bad, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bad, ".git"), []byte("not a gitdir\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, invalid = validateProjectPath(bad)
+	if invalid == nil || !invalid.IsError {
+		t.Fatalf("validateProjectPath(malformed) not rejected: %v", invalid)
+	}
 }

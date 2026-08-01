@@ -20,6 +20,7 @@ import (
 	"codemap/config"
 	"codemap/handoff"
 	"codemap/internal/buildinfo"
+	"codemap/internal/projectpath"
 	"codemap/limits"
 	"codemap/render"
 	"codemap/scanner"
@@ -329,19 +330,18 @@ func mustSchemaFor[T any]() *jsonschema.Schema {
 	return schema
 }
 
-func traversalRoot(path string) (string, *mcp.CallToolResult) {
+func validateProjectPath(path string) (string, *mcp.CallToolResult) {
 	if strings.HasPrefix(path, "~/") {
 		path = filepath.Join(os.Getenv("HOME"), path[2:])
 	}
-	absRoot, err := filepath.Abs(path)
+	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return "", errorResult("Invalid path: " + err.Error())
 	}
-	info, err := os.Stat(absRoot)
-	if err != nil || !info.IsDir() {
-		return "", errorResult("Invalid project path: path is not an accessible directory")
+	if _, err := projectpath.Select(absPath); err != nil {
+		return "", errorResult("Invalid project path: " + err.Error())
 	}
-	return absRoot, nil
+	return absPath, nil
 }
 
 func cancellationResult(ctx context.Context, operation string) *mcp.CallToolResult {
@@ -355,7 +355,7 @@ func handleGetStructure(ctx context.Context, req *mcp.CallToolRequest, input Str
 	if cancelled := cancellationResult(ctx, "Structure scan"); cancelled != nil {
 		return cancelled, nil, nil
 	}
-	absRoot, invalid := traversalRoot(input.Path)
+	absRoot, invalid := validateProjectPath(input.Path)
 	if invalid != nil {
 		return invalid, nil, nil
 	}
@@ -441,7 +441,7 @@ func handleGetDependencies(ctx context.Context, req *mcp.CallToolRequest, input 
 	if cancelled := cancellationResult(ctx, "Dependency scan"); cancelled != nil {
 		return cancelled, nil, nil
 	}
-	absRoot, invalid := traversalRoot(input.Path)
+	absRoot, invalid := validateProjectPath(input.Path)
 	if invalid != nil {
 		return invalid, nil, nil
 	}
@@ -488,7 +488,7 @@ func handleGetDiff(ctx context.Context, req *mcp.CallToolRequest, input DiffInpu
 		ref = "main"
 	}
 
-	absRoot, invalid := traversalRoot(input.Path)
+	absRoot, invalid := validateProjectPath(input.Path)
 	if invalid != nil {
 		return invalid, nil, nil
 	}
@@ -542,7 +542,7 @@ func handleFindFile(ctx context.Context, req *mcp.CallToolRequest, input FindInp
 	if cancelled := cancellationResult(ctx, "File search"); cancelled != nil {
 		return cancelled, nil, nil
 	}
-	absRoot, invalid := traversalRoot(input.Path)
+	absRoot, invalid := validateProjectPath(input.Path)
 	if invalid != nil {
 		return invalid, nil, nil
 	}
@@ -625,7 +625,7 @@ func handleListProjects(ctx context.Context, req *mcp.CallToolRequest, input Lis
 		path = filepath.Join(home, path[2:])
 	}
 
-	absPath, invalid := traversalRoot(path)
+	absPath, invalid := validateProjectPath(path)
 	if invalid != nil {
 		return invalid, nil, nil
 	}
@@ -817,7 +817,7 @@ func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input Imp
 	if cancelled := cancellationResult(ctx, "Importer analysis"); cancelled != nil {
 		return cancelled, nil, nil
 	}
-	absRoot, invalid := traversalRoot(input.Path)
+	absRoot, invalid := validateProjectPath(input.Path)
 	if invalid != nil {
 		return invalid, nil, nil
 	}
@@ -874,13 +874,13 @@ func handleGetHandoff(ctx context.Context, req *mcp.CallToolRequest, input Hando
 		return errorResult("prefix and delta options are mutually exclusive"), nil, nil
 	}
 
-	absRoot, invalid := traversalRoot(input.Path)
+	absRoot, invalid := validateProjectPath(input.Path)
 	if invalid != nil {
 		return invalid, nil, nil
 	}
 
-	var artifact *handoff.Artifact
 	var err error
+	var artifact *handoff.Artifact
 	if input.Latest {
 		artifact, err = handoff.ReadLatest(absRoot)
 		if err != nil {
@@ -996,15 +996,9 @@ func stripANSI(s string) string {
 // === WATCH HANDLERS ===
 
 func handleStartWatch(ctx context.Context, req *mcp.CallToolRequest, input WatchInput) (*mcp.CallToolResult, any, error) {
-	path := input.Path
-	if strings.HasPrefix(path, "~/") {
-		home := os.Getenv("HOME")
-		path = filepath.Join(home, path[2:])
-	}
-
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return errorResult("Invalid path: " + err.Error()), nil, nil
+	absPath, invalid := validateProjectPath(input.Path)
+	if invalid != nil {
+		return invalid, nil, nil
 	}
 
 	watchersMu.Lock()
@@ -1040,15 +1034,9 @@ Use get_activity to see what you've been working on.`, absPath, daemon.FileCount
 }
 
 func handleStopWatch(ctx context.Context, req *mcp.CallToolRequest, input WatchInput) (*mcp.CallToolResult, any, error) {
-	path := input.Path
-	if strings.HasPrefix(path, "~/") {
-		home := os.Getenv("HOME")
-		path = filepath.Join(home, path[2:])
-	}
-
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return errorResult("Invalid path: " + err.Error()), nil, nil
+	absPath, invalid := validateProjectPath(input.Path)
+	if invalid != nil {
+		return invalid, nil, nil
 	}
 
 	watchersMu.Lock()
@@ -1068,15 +1056,9 @@ func handleStopWatch(ctx context.Context, req *mcp.CallToolRequest, input WatchI
 }
 
 func handleGetActivity(ctx context.Context, req *mcp.CallToolRequest, input WatchActivityInput) (*mcp.CallToolResult, any, error) {
-	path := input.Path
-	if strings.HasPrefix(path, "~/") {
-		home := os.Getenv("HOME")
-		path = filepath.Join(home, path[2:])
-	}
-
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return errorResult("Invalid path: " + err.Error()), nil, nil
+	absPath, invalid := validateProjectPath(input.Path)
+	if invalid != nil {
+		return invalid, nil, nil
 	}
 
 	watchersMu.RLock()
@@ -1248,7 +1230,7 @@ func handleGetHubs(ctx context.Context, req *mcp.CallToolRequest, input PathInpu
 	if cancelled := cancellationResult(ctx, "Hub analysis"); cancelled != nil {
 		return cancelled, nil, nil
 	}
-	absRoot, invalid := traversalRoot(input.Path)
+	absRoot, invalid := validateProjectPath(input.Path)
 	if invalid != nil {
 		return invalid, nil, nil
 	}
@@ -1298,7 +1280,7 @@ func handleGetFileContext(ctx context.Context, req *mcp.CallToolRequest, input I
 	if cancelled := cancellationResult(ctx, "File context analysis"); cancelled != nil {
 		return cancelled, nil, nil
 	}
-	absRoot, invalid := traversalRoot(input.Path)
+	absRoot, invalid := validateProjectPath(input.Path)
 	if invalid != nil {
 		return invalid, nil, nil
 	}
@@ -1359,15 +1341,9 @@ func handleGetFileContext(ctx context.Context, req *mcp.CallToolRequest, input I
 
 // handleGetWorkingSet returns the current session's working set
 func handleGetWorkingSet(ctx context.Context, req *mcp.CallToolRequest, input WatchInput) (*mcp.CallToolResult, any, error) {
-	path := input.Path
-	if strings.HasPrefix(path, "~/") {
-		home := os.Getenv("HOME")
-		path = filepath.Join(home, path[2:])
-	}
-
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return errorResult("Invalid path: " + err.Error()), nil, nil
+	absPath, invalid := validateProjectPath(input.Path)
+	if invalid != nil {
+		return invalid, nil, nil
 	}
 
 	// Try daemon state first (includes working set)
@@ -1399,15 +1375,9 @@ func handleGetWorkingSet(ctx context.Context, req *mcp.CallToolRequest, input Wa
 
 // handleListSkills returns metadata for all available skills
 func handleListSkills(ctx context.Context, req *mcp.CallToolRequest, input PathInput) (*mcp.CallToolResult, any, error) {
-	path := input.Path
-	if strings.HasPrefix(path, "~/") {
-		home := os.Getenv("HOME")
-		path = filepath.Join(home, path[2:])
-	}
-
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return errorResult("Invalid path: " + err.Error()), nil, nil
+	absPath, invalid := validateProjectPath(input.Path)
+	if invalid != nil {
+		return invalid, nil, nil
 	}
 
 	idx, err := skills.LoadSkills(absPath)
@@ -1435,15 +1405,9 @@ func handleListSkills(ctx context.Context, req *mcp.CallToolRequest, input PathI
 
 // handleGetSkill returns the full body of a specific skill
 func handleGetSkill(ctx context.Context, req *mcp.CallToolRequest, input SkillInput) (*mcp.CallToolResult, any, error) {
-	path := input.Path
-	if strings.HasPrefix(path, "~/") {
-		home := os.Getenv("HOME")
-		path = filepath.Join(home, path[2:])
-	}
-
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return errorResult("Invalid path: " + err.Error()), nil, nil
+	absPath, invalid := validateProjectPath(input.Path)
+	if invalid != nil {
+		return invalid, nil, nil
 	}
 
 	idx, err := skills.LoadSkills(absPath)
