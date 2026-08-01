@@ -37,6 +37,7 @@ type Daemon struct {
 	done       chan struct{}
 
 	eventLoopWG sync.WaitGroup
+	publisher   *statePublisher
 }
 
 func (d *Daemon) runtimeStateDir() (string, error) {
@@ -44,6 +45,18 @@ func (d *Daemon) runtimeStateDir() (string, error) {
 		return d.runtimeDir, nil
 	}
 	return projectpath.CheckedRuntimeCodemapDir(d.root)
+}
+
+func (d *Daemon) ensurePublisher() error {
+	if d.publisher != nil {
+		return nil
+	}
+	runtimeDir, err := d.runtimeStateDir()
+	if err != nil {
+		return err
+	}
+	d.publisher = newStatePublisher(d, filepath.Join(runtimeDir, "state.json"), "legacy-test-instance")
+	return nil
 }
 
 // NewDaemon creates a new watch daemon for the given root
@@ -94,15 +107,26 @@ func NewDaemon(root string, verbose bool) (*Daemon, error) {
 			IsGitRepo:       isGitRepo,
 		},
 	}
+	instance, err := newDaemonInstance()
+	if err != nil {
+		watcher.Close()
+		return nil, fmt.Errorf("create daemon identity: %w", err)
+	}
+	d.publisher = newStatePublisher(d, filepath.Join(runtimeDir, "state.json"), instance)
 
 	return d, nil
 }
 
 // Start begins watching and returns immediately
 func (d *Daemon) Start() error {
-	// Keep project configuration in its configured .codemap directory while
-	// mutable daemon state uses the validated project runtime namespace.
-	codemapDir := d.runtimeDir
+	if err := d.ensurePublisher(); err != nil {
+		return fmt.Errorf("resolve runtime state: %w", err)
+	}
+	runtimeDir, err := d.runtimeStateDir()
+	if err != nil {
+		return fmt.Errorf("resolve runtime state: %w", err)
+	}
+	codemapDir := runtimeDir
 	if err := os.MkdirAll(codemapDir, 0755); err != nil {
 		return fmt.Errorf("failed to create .codemap dir: %w", err)
 	}
@@ -130,9 +154,15 @@ func (d *Daemon) Start() error {
 	if err := d.watcher.Add(configDir); err != nil {
 		return fmt.Errorf("failed to watch .codemap dir: %w", err)
 	}
+	if err := ensureControlDirectory(d.publisher.flushDir); err != nil {
+		return fmt.Errorf("create flush directory: %w", err)
+	}
+	if err := d.watcher.Add(d.publisher.flushDir); err != nil {
+		return fmt.Errorf("watch flush directory: %w", err)
+	}
 
 	// Write initial state for hooks to read immediately
-	d.writeState()
+	_ = d.publisher.publish()
 
 	// Start event loop
 	d.eventLoopWG.Add(1)
@@ -240,7 +270,10 @@ func shouldComputeDependencyGraph(fileCount int) bool {
 
 // WriteInitialState writes state after initial scan (for hooks)
 func (d *Daemon) WriteInitialState() {
-	d.writeState()
+	if d.ensurePublisher() != nil {
+		return
+	}
+	_ = d.publisher.publish()
 }
 
 // fullScan does a complete scan of the project

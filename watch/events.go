@@ -3,7 +3,6 @@ package watch
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -167,6 +166,9 @@ func (d *Daemon) eventLoop() {
 			}
 		}
 		delay, ok := debouncer.nextDelay(now)
+		if publishDelay, publishOK := d.publisher.nextDelay(now); publishOK && (!ok || publishDelay < delay) {
+			delay, ok = publishDelay, true
+		}
 		if !ok {
 			timerC = nil
 			return
@@ -177,6 +179,9 @@ func (d *Daemon) eventLoop() {
 	flushDue := func(now time.Time) {
 		for _, event := range debouncer.takeDue(now) {
 			d.handleEvent(event)
+		}
+		if d.publisher.due(now) {
+			_ = d.publisher.publish()
 		}
 	}
 
@@ -209,6 +214,9 @@ func (d *Daemon) eventLoop() {
 		for _, event := range debouncer.takeAll() {
 			d.handleEvent(event)
 		}
+		if d.publisher.dirty || len(d.publisher.pending) > 0 {
+			_ = d.publisher.publish()
+		}
 	}()
 
 	for {
@@ -229,6 +237,11 @@ func (d *Daemon) eventLoop() {
 				return
 			}
 			now := time.Now()
+			if filepath.Clean(filepath.Dir(event.Name)) == filepath.Clean(d.publisher.flushDir) {
+				d.publisher.scanRequests(now)
+				armTimer(now)
+				continue
+			}
 			if resetIgnoreCache, control := d.filterControlEvent(event.Name); control {
 				// OR the flag across the burst: a coalesced refresh must still
 				// reset the ignore cache if any event in it was a .gitignore.
@@ -285,6 +298,7 @@ func (d *Daemon) eventLoop() {
 			if d.verbose {
 				fmt.Printf("[watch] Error: %v\n", err)
 			}
+			d.publisher.failPending("watch_error")
 		}
 	}
 }
@@ -548,6 +562,9 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 	}
 
 	d.graph.mu.Unlock()
+	if d.publisher != nil {
+		d.publisher.markDirty(time.Now())
+	}
 
 	// Log event
 	d.logEvent(event)
@@ -670,59 +687,14 @@ func (d *Daemon) logEvent(e Event) {
 
 	_ = trimEventLogToBytes(d.eventLog, int64(limits.MaxEventLogBytes), int64(limits.EventLogTrimToBytes))
 
-	// Update state file for hooks to read
-	d.writeState()
 }
 
 // writeState persists current state for hooks to read
 func (d *Daemon) writeState() {
-	runtimeDir, err := d.runtimeStateDir()
-	if err != nil {
+	if d.ensurePublisher() != nil {
 		return
 	}
-
-	d.graph.mu.RLock()
-	defer d.graph.mu.RUnlock()
-	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
-		return
-	}
-
-	// Keep state snapshots small and deterministic for hook reads.
-	events := d.graph.Events
-	if len(events) > limits.MaxStateRecentEvents {
-		events = events[len(events)-limits.MaxStateRecentEvents:]
-	}
-	eventsCopy := append([]Event(nil), events...)
-
-	configuredFileCount := len(d.graph.ConfiguredFiles)
-	if d.graph.ConfiguredFiles == nil {
-		configuredFileCount = len(d.graph.Files)
-	}
-	state := State{
-		Root:                canonicalRoot(d.root),
-		UpdatedAt:           time.Now(),
-		FileCount:           len(d.graph.Files),
-		ConfiguredFileCount: &configuredFileCount,
-		Hubs:                []string{},
-		Importers:           map[string][]string{},
-		Imports:             map[string][]string{},
-		RecentEvents:        eventsCopy,
-		WorkingSet:          d.graph.WorkingSet.Snapshot(50),
-	}
-	if d.graph.FileGraph != nil {
-		state.Hubs = d.graph.FileGraph.HubFiles()
-		state.Importers = d.graph.FileGraph.Importers
-		state.Imports = d.graph.FileGraph.Imports
-		state.Coverage = d.graph.FileGraph.Coverage
-	}
-
-	data, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return
-	}
-
-	stateFile := filepath.Join(runtimeDir, "state.json")
-	_ = runtimefile.WriteAtomic(stateFile, data, 0o644)
+	_ = d.publisher.publish()
 }
 
 func appendBoundedEvents(events []Event, event Event) []Event {
