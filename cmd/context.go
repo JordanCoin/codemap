@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -81,7 +82,9 @@ func RunContext(args []string, root string) {
 	fs := flag.NewFlagSet("context", flag.ContinueOnError)
 	forPrompt := fs.String("for", "", "Pre-classify intent for this prompt")
 	compact := fs.Bool("compact", false, "Minimal output for token-constrained agents")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(args); errors.Is(err, flag.ErrHelp) {
+		return
+	} else if err != nil {
 		os.Exit(1)
 	}
 
