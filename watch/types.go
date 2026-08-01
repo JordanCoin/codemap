@@ -55,6 +55,7 @@ type Graph struct {
 
 // State represents the daemon state that hooks can read
 type State struct {
+	Root                string                `json:"root,omitempty"`
 	UpdatedAt           time.Time             `json:"updated_at"`
 	FileCount           int                   `json:"file_count"`
 	ConfiguredFileCount *int                  `json:"configured_file_count,omitempty"`

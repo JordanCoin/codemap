@@ -35,10 +35,13 @@ func GitDiffInfo(ctx context.Context, root, ref string) (*DiffInfo, error) {
 	cmd := exec.CommandContext(ctx, "git", "diff", "--numstat", ref)
 	cmd.WaitDelay = gitContextWaitDelay
 	cmd.Dir = root
-	output, err := cmd.Output()
+	output, err := cmd.CombinedOutput()
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
+		}
+		if detail := strings.TrimSpace(string(output)); detail != "" {
+			return nil, fmt.Errorf("%w: %s", err, detail)
 		}
 		return nil, err
 	}

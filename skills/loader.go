@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"codemap/internal/projectpath"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -23,6 +24,10 @@ const (
 // Later sources override earlier ones if they share the same name.
 func LoadSkills(root string) (*SkillIndex, error) {
 	var all []Skill
+	selection, err := projectpath.Select(root)
+	if err != nil {
+		return nil, err
+	}
 
 	// 1. Builtin skills (embedded)
 	builtins, err := loadBuiltinSkills()
@@ -32,7 +37,7 @@ func LoadSkills(root string) (*SkillIndex, error) {
 	all = append(all, builtins...)
 
 	// 2. Project-local skills
-	projectDir := filepath.Join(projectpath.CodemapDir(root), "skills")
+	projectDir := filepath.Join(selection.SetupRoot, ".codemap", "skills")
 	projectSkills, _ := loadSkillsFromDir(projectDir, projectSource)
 	all = append(all, projectSkills...)
 

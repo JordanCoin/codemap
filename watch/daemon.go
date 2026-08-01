@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"codemap/config"
+	"codemap/internal/projectpath"
 	"codemap/limits"
 	"codemap/scanner"
 
@@ -36,6 +37,11 @@ func NewDaemon(root string, verbose bool) (*Daemon, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid root path: %w", err)
 	}
+	// Canonicalize so d.root, the runtime dir, and fsnotify event paths agree
+	// (e.g. macOS /tmp -> /private/tmp, /var -> /private/var).
+	if canonical, err := filepath.EvalSymlinks(absRoot); err == nil {
+		absRoot = canonical
+	}
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -56,7 +62,7 @@ func NewDaemon(root string, verbose bool) (*Daemon, error) {
 		gitCache: gitCache,
 		verbose:  verbose,
 		done:     make(chan struct{}),
-		eventLog: filepath.Join(absRoot, ".codemap", "events.log"),
+		eventLog: filepath.Join(projectpath.RuntimeCodemapDir(absRoot), "events.log"),
 		graph: &Graph{
 			Root:            absRoot,
 			Files:           make(map[string]*scanner.FileInfo),
@@ -75,7 +81,7 @@ func NewDaemon(root string, verbose bool) (*Daemon, error) {
 // Start begins watching and returns immediately
 func (d *Daemon) Start() error {
 	// Ensure .codemap directory exists
-	codemapDir := filepath.Join(d.root, ".codemap")
+	codemapDir := projectpath.RuntimeCodemapDir(d.root)
 	if err := os.MkdirAll(codemapDir, 0755); err != nil {
 		return fmt.Errorf("failed to create .codemap dir: %w", err)
 	}

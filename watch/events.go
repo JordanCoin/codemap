@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"codemap/internal/projectpath"
 	"codemap/limits"
 	"codemap/scanner"
 
@@ -176,10 +177,8 @@ func (d *Daemon) eventLoop() {
 		}
 	}
 
-	// Control events (config.json, any .gitignore) are coalesced separately
-	// from file events. Each refresh rebuilds the dependency graph, which runs
-	// ast-grep over the whole repo, and fsnotify routinely emits several events
-	// per save — so a trailing-edge debounce keeps one save to one rebuild.
+	// Control events are coalesced separately from file events; a trailing-edge
+	// debounce keeps one save to one graph rebuild.
 	controlTimer := time.NewTimer(time.Hour)
 	controlTimer.Stop()
 	defer controlTimer.Stop()
@@ -650,6 +649,7 @@ func (d *Daemon) writeState() {
 		configuredFileCount = len(d.graph.Files)
 	}
 	state := State{
+		Root:                canonicalRoot(d.root),
 		UpdatedAt:           time.Now(),
 		FileCount:           len(d.graph.Files),
 		ConfiguredFileCount: &configuredFileCount,
@@ -671,7 +671,7 @@ func (d *Daemon) writeState() {
 		return
 	}
 
-	stateFile := filepath.Join(d.root, ".codemap", "state.json")
+	stateFile := filepath.Join(projectpath.RuntimeCodemapDir(d.root), "state.json")
 	os.WriteFile(stateFile, data, 0644)
 }
 

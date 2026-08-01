@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -223,11 +224,14 @@ func TestGitDiffStatsHelper(t *testing.T) {
 func TestGitDiffInfoInvalidRef(t *testing.T) {
 	tmpDir := setupGitRepo(t)
 
+	const ref = "nonexistent-branch-xyz"
 	// Try to diff against nonexistent ref
-	_, err := GitDiffInfo(context.Background(), tmpDir, "nonexistent-branch-xyz")
+	_, err := GitDiffInfo(context.Background(), tmpDir, ref)
 	if err == nil {
-		// It's okay if this returns empty results instead of error
-		// but we're checking it doesn't panic
+		t.Fatal("expected invalid ref error")
+	}
+	if !strings.Contains(err.Error(), ref) {
+		t.Fatalf("expected Git stderr to identify %q, got %q", ref, err)
 	}
 }
 

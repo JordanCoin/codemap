@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"codemap/internal/projectpath"
 )
 
 const (
@@ -17,36 +19,40 @@ const (
 
 // LatestPath returns the absolute location of the latest handoff artifact.
 func LatestPath(root string) string {
-	absRoot, err := filepath.Abs(root)
+	runtimeRoot := projectpath.RuntimeRoot(root)
+	absRoot, err := filepath.Abs(runtimeRoot)
 	if err != nil {
-		return filepath.Join(root, ".codemap", latestFilename)
+		return filepath.Join(runtimeRoot, ".codemap", latestFilename)
 	}
 	return filepath.Join(absRoot, ".codemap", latestFilename)
 }
 
 // PrefixPath returns the absolute location of the prefix snapshot.
 func PrefixPath(root string) string {
-	absRoot, err := filepath.Abs(root)
+	runtimeRoot := projectpath.RuntimeRoot(root)
+	absRoot, err := filepath.Abs(runtimeRoot)
 	if err != nil {
-		return filepath.Join(root, ".codemap", prefixFilename)
+		return filepath.Join(runtimeRoot, ".codemap", prefixFilename)
 	}
 	return filepath.Join(absRoot, ".codemap", prefixFilename)
 }
 
 // DeltaPath returns the absolute location of the delta snapshot.
 func DeltaPath(root string) string {
-	absRoot, err := filepath.Abs(root)
+	runtimeRoot := projectpath.RuntimeRoot(root)
+	absRoot, err := filepath.Abs(runtimeRoot)
 	if err != nil {
-		return filepath.Join(root, ".codemap", deltaFilename)
+		return filepath.Join(runtimeRoot, ".codemap", deltaFilename)
 	}
 	return filepath.Join(absRoot, ".codemap", deltaFilename)
 }
 
 // MetricsPath returns the absolute location of the handoff metrics log.
 func MetricsPath(root string) string {
-	absRoot, err := filepath.Abs(root)
+	runtimeRoot := projectpath.RuntimeRoot(root)
+	absRoot, err := filepath.Abs(runtimeRoot)
 	if err != nil {
-		return filepath.Join(root, ".codemap", metricsFilename)
+		return filepath.Join(runtimeRoot, ".codemap", metricsFilename)
 	}
 	return filepath.Join(absRoot, ".codemap", metricsFilename)
 }
