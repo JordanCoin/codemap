@@ -25,7 +25,7 @@ type Daemon struct {
 	graph      *Graph
 	watcher    *fsnotify.Watcher
 	gitCache   *scanner.GitIgnoreCache
-	eventLog   string // path to event log file
+	eventLog   string
 	verbose    bool
 	done       chan struct{}
 

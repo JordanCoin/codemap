@@ -354,6 +354,49 @@ func TestHandleWatchLifecycleAndActivity(t *testing.T) {
 	}
 }
 
+func TestHandleStartWatchReportsChildReadinessFailure(t *testing.T) {
+	withWatcherRegistry(t)
+	previousCommand := runManagedWatchCommand
+	runManagedWatchCommand = func(context.Context, string, string) (string, error) {
+		return "Error: starting daemon: claim rejected", errors.New("exit status 1")
+	}
+	t.Cleanup(func() { runManagedWatchCommand = previousCommand })
+
+	root := t.TempDir()
+	result, _, err := handleStartWatch(context.Background(), nil, WatchInput{Path: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError || !strings.Contains(resultText(t, result), "claim rejected") {
+		t.Fatalf("readiness failure result = %#v", result)
+	}
+}
+
+func TestManagedWatchCommandOutlivesRequestCancellationWithinBound(t *testing.T) {
+	previousCommand := managedWatchExecCommand
+	var commandContextErr error
+	var commandDeadline time.Time
+	var hasDeadline bool
+	managedWatchExecCommand = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		commandContextErr = ctx.Err()
+		commandDeadline, hasDeadline = ctx.Deadline()
+		return exec.Command("sh", "-c", "exit 0")
+	}
+	t.Cleanup(func() { managedWatchExecCommand = previousCommand })
+
+	requestContext, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := managedWatchCommand(requestContext, "start", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if commandContextErr != nil {
+		t.Fatalf("lifecycle context inherited request cancellation: %v", commandContextErr)
+	}
+	if !hasDeadline || time.Until(commandDeadline) > managedWatchLifecycleTimeout {
+		t.Fatalf("lifecycle context deadline = %v, want bounded timeout", commandDeadline)
+	}
+}
+
 func TestHandleGraphContextHandlers(t *testing.T) {
 	if !scanner.NewAstGrepAnalyzer().Available() {
 		t.Skip("ast-grep not available")

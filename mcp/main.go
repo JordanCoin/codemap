@@ -34,14 +34,17 @@ import (
 
 // Global watcher registry - tracks active watchers per project
 var (
-	watchers               = make(map[string]*watch.Daemon)
-	watchersMu             sync.RWMutex
-	runManagedWatchCommand = managedWatchCommand
+	watchers                = make(map[string]*watch.Daemon)
+	watchersMu              sync.RWMutex
+	runManagedWatchCommand  = managedWatchCommand
+	managedWatchExecCommand = exec.CommandContext
 
 	buildHandoffForMCP    = handoff.BuildContext
 	buildHandoffDetailMCP = handoff.BuildFileDetailContext
 	writeLatestForMCP     = handoff.WriteLatest
 )
+
+const managedWatchLifecycleTimeout = 35 * time.Second
 
 func managedWatchCommand(ctx context.Context, action, root string) (string, error) {
 	exe, err := os.Executable()
@@ -49,7 +52,9 @@ func managedWatchCommand(ctx context.Context, action, root string) (string, erro
 		return "", err
 	}
 	args := projectpath.PrependSetupRootArgs("watch", action, root)
-	out, err := exec.CommandContext(ctx, exe, args...).CombinedOutput()
+	lifecycleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), managedWatchLifecycleTimeout)
+	defer cancel()
+	out, err := managedWatchExecCommand(lifecycleCtx, exe, args...).CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }
 
