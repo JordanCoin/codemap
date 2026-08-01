@@ -12,13 +12,13 @@ keywords: ["handoff", "agent", "switch", "continue", "resume", "context"]
 ```bash
 codemap handoff .                 # Build + save full artifact
 codemap handoff --json .          # Machine-readable for other tools
-codemap handoff --prefix .        # Stable context only (hub summaries, file count)
+codemap handoff --prefix .        # Stable context only (hubs, configured file count)
 codemap handoff --delta .         # Recent work only (changed files, risk, events)
 ```
 
 ## What's in a handoff
 
-- **Prefix** (stable): project file count, hub summaries — changes rarely
+- **Prefix** (stable): configured project file count, hub summaries — changes rarely
 - **Delta** (dynamic): changed files, risk files, recent edit events, next steps
 - **Hashes**: deterministic hashes for cache validation across agents
 
@@ -30,6 +30,8 @@ codemap handoff --detail file.go . # Lazy-load full context for one file
 ```
 
 The MCP tool `get_handoff` provides the same capabilities for tool-based consumption.
+The prefix file count and size-based handoff budgets honor the active
+`.codemap/config.json` filters even when watch state tracks a broader working set.
 
 ## When to handoff
 

@@ -70,7 +70,7 @@ func dependencyContextForFile(root string, state *watch.State, path string) ([]s
 		return append([]string{}, state.Importers[path]...), append([]string{}, state.Imports[path]...)
 	}
 
-	if state != nil && state.FileCount > limits.LargeRepoFileCount {
+	if resolveRepoFileCount(root) > limits.LargeRepoFileCount {
 		return nil, nil
 	}
 

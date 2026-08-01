@@ -138,5 +138,6 @@ Surface behavior note:
 
 Output and budget notes:
 - text responses are byte-budgeted and line-truncated to protect context
+- prefix file counts and size-based handoff budgets honor the active `.codemap/config.json` filters
 - handoff payload includes deterministic hashes (`prefix_hash`, `delta_hash`, `combined_hash`)
 - handoff payload includes cache metrics (`reuse_ratio`, `unchanged_bytes`, etc.)
