@@ -236,6 +236,8 @@ func daemonOwnershipForPID(root string, pid int) daemonOwnership {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		absRoot = root
+	} else if canonicalRoot, canonicalErr := filepath.EvalSymlinks(absRoot); canonicalErr == nil {
+		absRoot = canonicalRoot
 	}
 	const daemonMarker = " watch daemon "
 	marker := strings.LastIndex(cmdline, daemonMarker)
