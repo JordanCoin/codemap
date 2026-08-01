@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -50,12 +51,27 @@ func BuildFileGraphWithFilters(root string, filters Filters) (*FileGraph, error)
 func BuildFileGraphFromAnalyses(root string, analyses []FileAnalysis) (*FileGraph, error) {
 	cfg := config.Load(root)
 	filters := Filters{Only: cfg.Only, Exclude: cfg.Exclude}
-	return BuildFileGraphFromFilteredAnalyses(root, filterAnalyses(analyses, filters), filters)
+	return buildFileGraphFromFilteredAnalysesWithCargoMetadata(context.Background(), root, filterAnalyses(analyses, filters), filters, loadCargoMetadata)
 }
 
 // BuildFileGraphFromFilteredAnalyses builds a file graph from analyses that
 // already match the supplied filters.
 func BuildFileGraphFromFilteredAnalyses(root string, analyses []FileAnalysis, filters Filters) (*FileGraph, error) {
+	return buildFileGraphFromFilteredAnalysesWithCargoMetadata(context.Background(), root, analyses, filters, loadCargoMetadata)
+}
+
+// buildFileGraphFromAnalysesWithCargoMetadata is the testable configuration
+// aware variant of BuildFileGraphFromAnalyses.
+func buildFileGraphFromAnalysesWithCargoMetadata(ctx context.Context, root string, analyses []FileAnalysis, loader cargoMetadataLoader) (*FileGraph, error) {
+	cfg := config.Load(root)
+	filters := Filters{Only: cfg.Only, Exclude: cfg.Exclude}
+	return buildFileGraphFromFilteredAnalysesWithCargoMetadata(ctx, root, filterAnalyses(analyses, filters), filters, loader)
+}
+
+func buildFileGraphFromFilteredAnalysesWithCargoMetadata(ctx context.Context, root string, analyses []FileAnalysis, filters Filters, loader cargoMetadataLoader) (*FileGraph, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -74,12 +90,15 @@ func BuildFileGraphFromFilteredAnalyses(root string, analyses []FileAnalysis, fi
 
 	// Detect path aliases from tsconfig.json (for TS/JS import resolution)
 	fg.PathAliases, fg.BaseURL = detectPathAliases(absRoot)
-	rustWorkspace := buildRustWorkspaceIndex(absRoot)
 
 	// Scan all files with the same filters used for the analyses.
 	gitCache := NewGitIgnoreCache(root)
 	files, err := ScanFiles(root, gitCache, filters.Only, filters.Exclude)
 	if err != nil {
+		return nil, err
+	}
+	rustWorkspace := buildRustWorkspaceIndex(ctx, absRoot, analyses, files, loader)
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
