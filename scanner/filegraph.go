@@ -91,11 +91,24 @@ func buildFileGraphFromFilteredAnalysesWithCargoMetadata(ctx context.Context, ro
 	// Detect path aliases from tsconfig.json (for TS/JS import resolution)
 	fg.PathAliases, fg.BaseURL = detectPathAliases(absRoot)
 
-	// Scan all files with the same filters used for the analyses.
+	useJSWorkspace := needsJSWorkspaceResolver(analyses)
 	gitCache := NewGitIgnoreCache(root)
-	files, err := ScanFiles(root, gitCache, filters.Only, filters.Exclude)
+	scanOnly := filters.Only
+	if useJSWorkspace {
+		scanOnly = nil
+	}
+	allFiles, err := ScanFiles(root, gitCache, scanOnly, filters.Exclude)
 	if err != nil {
 		return nil, err
+	}
+	files := allFiles
+	if useJSWorkspace {
+		files = make([]FileInfo, 0, len(allFiles))
+		for _, file := range allFiles {
+			if MatchesFilters(file.Path, filepath.Ext(file.Path), filters.Only, nil) {
+				files = append(files, file)
+			}
+		}
 	}
 	rustWorkspace := buildRustWorkspaceIndex(ctx, absRoot, analyses, files, loader)
 	if err := ctx.Err(); err != nil {
@@ -112,6 +125,14 @@ func buildFileGraphFromFilteredAnalysesWithCargoMetadata(ctx context.Context, ro
 		}
 	}
 
+	var jsResolver *jsWorkspaceResolver
+	if useJSWorkspace {
+		jsResolver, err = buildJSWorkspaceResolver(ctx, absRoot, allFiles)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Resolve imports to files using universal fuzzy matching
 	for _, a := range analyses {
 		var resolvedImports []string
@@ -120,7 +141,7 @@ func buildFileGraphFromFilteredAnalysesWithCargoMetadata(ctx context.Context, ro
 			resolvedImports = resolveRustReferences(absRoot, a, idx, rustWorkspace)
 		} else {
 			for _, imp := range a.Imports {
-				resolved := fuzzyResolve(imp, a.Path, idx, fg.Module, fg.PathAliases, fg.BaseURL)
+				resolved := fuzzyResolveWithWorkspace(imp, a.Path, idx, fg.Module, fg.PathAliases, fg.BaseURL, jsResolver)
 				// Exclude multi-file Go package imports to avoid inflating hub counts.
 				// Go package imports start with the module prefix and resolve to all
 				// files in that package. For all other imports (e.g., C# namespace
@@ -144,6 +165,15 @@ func buildFileGraphFromFilteredAnalysesWithCargoMetadata(ctx context.Context, ro
 	}
 
 	return fg, nil
+}
+
+func needsJSWorkspaceResolver(analyses []FileAnalysis) bool {
+	for _, analysis := range analyses {
+		if isJavaScriptLanguage(DetectLanguage(analysis.Path)) {
+			return true
+		}
+	}
+	return false
 }
 
 // buildFileIndex creates a multi-key index for fast import resolution
@@ -200,6 +230,10 @@ func buildFileIndex(files []FileInfo, goModule string) *fileIndex {
 
 // fuzzyResolve converts an import path to compatible local file paths.
 func fuzzyResolve(imp, fromFile string, idx *fileIndex, goModule string, pathAliases map[string][]string, baseURL string) []string {
+	return fuzzyResolveWithWorkspace(imp, fromFile, idx, goModule, pathAliases, baseURL, nil)
+}
+
+func fuzzyResolveWithWorkspace(imp, fromFile string, idx *fileIndex, goModule string, pathAliases map[string][]string, baseURL string, jsResolver *jsWorkspaceResolver) []string {
 	sourceLanguage := DetectLanguage(fromFile)
 	if sourceLanguage == "" {
 		return nil
@@ -236,6 +270,9 @@ func fuzzyResolve(imp, fromFile string, idx *fileIndex, goModule string, pathAli
 		}
 	}
 	if isJavaScriptLanguage(sourceLanguage) {
+		if files := jsResolver.resolve(imp, fromFile, idx, sourceLanguage); len(files) > 0 {
+			return files
+		}
 		return nil
 	}
 
