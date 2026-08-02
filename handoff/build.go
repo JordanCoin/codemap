@@ -2,6 +2,7 @@ package handoff
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -58,6 +59,15 @@ func normalizeOptions(opts BuildOptions, fileCount int) BuildOptions {
 
 // Build creates a multi-agent handoff artifact from git + daemon state.
 func Build(root string, opts BuildOptions) (*Artifact, error) {
+	return BuildContext(context.Background(), root, opts)
+}
+
+// BuildContext creates a handoff artifact while honoring caller cancellation
+// across filesystem scans, dependency analysis, and Git subprocesses.
+func BuildContext(ctx context.Context, root string, opts BuildOptions) (*Artifact, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -67,16 +77,22 @@ func Build(root string, opts BuildOptions) (*Artifact, error) {
 	if state == nil {
 		state = watch.ReadState(absRoot)
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
-	fileCount := resolveRepoFileCount(absRoot)
+	fileCount, err := resolveRepoFileCountContext(ctx, absRoot)
+	if err != nil {
+		return nil, err
+	}
 	opts = normalizeOptions(opts, fileCount)
 
-	branch, err := gitCurrentBranch(absRoot)
+	branch, err := gitCurrentBranchContext(ctx, absRoot)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read git branch: %w", err)
 	}
 
-	entries, diffErr := collectChangedEntries(absRoot, opts.BaseRef)
+	entries, diffErr := collectChangedEntriesContext(ctx, absRoot, opts.BaseRef)
 	if diffErr != nil {
 		return nil, diffErr
 	}
@@ -92,12 +108,18 @@ func Build(root string, opts BuildOptions) (*Artifact, error) {
 		}
 	}
 
-	importers := dependencyImportersForHandoff(absRoot, state, fileCount)
+	importers, err := dependencyImportersForHandoffContext(ctx, absRoot, state, fileCount)
+	if err != nil {
+		return nil, err
+	}
 	riskFiles := summarizeRiskFiles(changedAll, importers, opts.MaxRisk)
 	selectedPaths := prioritizeChangedPaths(changedAll, riskFiles, opts.MaxChanged)
 	entries = selectEntries(entries, selectedPaths)
 
-	changedStubs := buildFileStubs(absRoot, entries)
+	changedStubs, err := buildFileStubsContext(ctx, absRoot, entries)
+	if err != nil {
+		return nil, err
+	}
 	hubs := summarizeHubs(importers, opts.MaxHubs)
 
 	nextSteps, openQuestions := deriveGuidance(selectedPaths, riskFiles, recentEvents, opts.BaseRef, state != nil, len(importers) > 0)
@@ -128,6 +150,9 @@ func Build(root string, opts BuildOptions) (*Artifact, error) {
 	if previous == nil {
 		previous, _ = ReadLatest(absRoot)
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	metrics := buildCacheMetrics(previous, prefixHash, deltaHash, prefixBytes, deltaBytes)
 	generatedAt := time.Now()
 	if previous != nil && previous.PrefixHash == prefixHash && previous.DeltaHash == deltaHash && !previous.GeneratedAt.IsZero() {
@@ -157,25 +182,37 @@ func Build(root string, opts BuildOptions) (*Artifact, error) {
 	}, nil
 }
 
-func collectChangedEntries(root, baseRef string) ([]changedEntry, error) {
+func collectChangedEntriesContext(ctx context.Context, root, baseRef string) ([]changedEntry, error) {
 	changed := make(map[string]changedEntry)
 
-	branchLines, branchErr := runGitLines(root, "diff", "--name-only", baseRef+"...HEAD")
+	branchLines, branchErr := runGitLinesContext(ctx, root, "diff", "--name-only", baseRef+"...HEAD")
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	for _, line := range branchLines {
 		addChangedEntry(changed, root, line, "branch")
 	}
 
-	workingLines, _ := runGitLines(root, "diff", "--name-only")
+	workingLines, _ := runGitLinesContext(ctx, root, "diff", "--name-only")
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	for _, line := range workingLines {
 		addChangedEntry(changed, root, line, "modified")
 	}
 
-	stagedLines, _ := runGitLines(root, "diff", "--name-only", "--cached")
+	stagedLines, _ := runGitLinesContext(ctx, root, "diff", "--name-only", "--cached")
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	for _, line := range stagedLines {
 		addChangedEntry(changed, root, line, "staged")
 	}
 
-	untrackedLines, _ := runGitLines(root, "ls-files", "--others", "--exclude-standard")
+	untrackedLines, _ := runGitLinesContext(ctx, root, "ls-files", "--others", "--exclude-standard")
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	for _, line := range untrackedLines {
 		addChangedEntry(changed, root, line, "untracked")
 	}
@@ -254,13 +291,16 @@ func isLikelyBinary(root, relPath string) bool {
 	return bytes.IndexByte(buf[:n], 0) >= 0
 }
 
-func buildFileStubs(root string, changed []changedEntry) []FileStub {
+func buildFileStubsContext(ctx context.Context, root string, changed []changedEntry) ([]FileStub, error) {
 	if len(changed) == 0 {
-		return []FileStub{}
+		return []FileStub{}, ctx.Err()
 	}
 
 	stubs := make([]FileStub, 0, len(changed))
 	for _, entry := range changed {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		stub := FileStub{
 			Path:   entry.Path,
 			Status: entry.Status,
@@ -270,25 +310,49 @@ func buildFileStubs(root string, changed []changedEntry) []FileStub {
 		info, err := os.Stat(absPath)
 		if err == nil && !info.IsDir() {
 			stub.Size = info.Size()
-			stub.Hash = fileSHA256(absPath)
+			stub.Hash, err = fileSHA256Context(ctx, absPath)
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
+			if err != nil {
+				stub.Hash = ""
+			}
 		}
 		stubs = append(stubs, stub)
 	}
-	return stubs
+	return stubs, ctx.Err()
 }
 
-func fileSHA256(path string) string {
+func fileSHA256Context(ctx context.Context, path string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	f, err := os.Open(path)
 	if err != nil {
-		return ""
+		return "", err
 	}
 	defer f.Close()
 
 	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return ""
+	buf := make([]byte, 32*1024)
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		n, readErr := f.Read(buf)
+		if n > 0 {
+			if _, err := h.Write(buf[:n]); err != nil {
+				return "", err
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return "", readErr
+		}
 	}
-	return hex.EncodeToString(h.Sum(nil))
+	return hex.EncodeToString(h.Sum(nil)), ctx.Err()
 }
 
 func summarizeHubs(importersByFile map[string][]string, maxHubs int) []HubSummary {
@@ -562,11 +626,18 @@ func buildCacheMetrics(previous *Artifact, prefixHash, deltaHash string, prefixB
 	return metrics
 }
 
-func runGitLines(root string, args ...string) ([]string, error) {
-	cmd := exec.Command("git", args...)
+func runGitLinesContext(ctx context.Context, root string, args ...string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.WaitDelay = 100 * time.Millisecond
 	cmd.Dir = root
 	out, err := cmd.Output()
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		return nil, err
 	}
 
@@ -585,40 +656,56 @@ func runGitLines(root string, args ...string) ([]string, error) {
 	return lines, nil
 }
 
-func gitCurrentBranch(root string) (string, error) {
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+func gitCurrentBranchContext(ctx context.Context, root string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd.WaitDelay = 100 * time.Millisecond
 	cmd.Dir = root
 	out, err := cmd.Output()
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", ctxErr
+		}
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
 }
 
-func resolveRepoFileCount(root string) int {
+func resolveRepoFileCountContext(ctx context.Context, root string) (int, error) {
 	gitCache := scanner.NewGitIgnoreCache(root)
-	files, err := scanner.ScanConfiguredFiles(root, gitCache)
+	files, err := scanner.ScanConfiguredFilesContext(ctx, root, gitCache)
 	if err != nil {
-		return 0
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return 0, ctxErr
+		}
+		return 0, nil
 	}
-	return len(files)
+	return len(files), ctx.Err()
 }
 
-func dependencyImportersForHandoff(root string, state *watch.State, fileCount int) map[string][]string {
+func dependencyImportersForHandoffContext(ctx context.Context, root string, state *watch.State, fileCount int) (map[string][]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if state != nil && len(state.Importers) > 0 {
-		return state.Importers
+		return state.Importers, nil
 	}
 
 	// Skip fallback graph construction for configured large repositories.
 	if fileCount > limits.LargeRepoFileCount {
-		return nil
+		return nil, nil
 	}
 
-	fg, err := scanner.BuildFileGraph(root)
+	fg, err := scanner.BuildFileGraphContext(ctx, root)
 	if err != nil {
-		return nil
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, nil
 	}
-	return fg.Importers
+	return fg.Importers, ctx.Err()
 }
 
 func nonNilStrings(items []string) []string {

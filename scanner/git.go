@@ -1,12 +1,16 @@
 package scanner
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
+
+const gitContextWaitDelay = 100 * time.Millisecond
 
 // DiffInfo holds all diff-related data for changed files
 type DiffInfo struct {
@@ -17,6 +21,14 @@ type DiffInfo struct {
 
 // GitDiffInfo returns comprehensive diff information for the repo
 func GitDiffInfo(root, ref string) (*DiffInfo, error) {
+	return GitDiffInfoContext(context.Background(), root, ref)
+}
+
+// GitDiffInfoContext returns diff information while honoring cancellation of Git subprocesses.
+func GitDiffInfoContext(ctx context.Context, root, ref string) (*DiffInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	info := &DiffInfo{
 		Changed:   make(map[string]bool),
 		Untracked: make(map[string]bool),
@@ -24,10 +36,14 @@ func GitDiffInfo(root, ref string) (*DiffInfo, error) {
 	}
 
 	// Get modified files vs ref with stats
-	cmd := exec.Command("git", "diff", "--numstat", ref)
+	cmd := exec.CommandContext(ctx, "git", "diff", "--numstat", ref)
+	cmd.WaitDelay = gitContextWaitDelay
 	cmd.Dir = root
 	output, err := cmd.Output()
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		return nil, err
 	}
 
@@ -51,9 +67,19 @@ func GitDiffInfo(root, ref string) (*DiffInfo, error) {
 	}
 
 	// Get untracked files (new files)
-	cmd2 := exec.Command("git", "ls-files", "--others", "--exclude-standard")
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	cmd2 := exec.CommandContext(ctx, "git", "ls-files", "--others", "--exclude-standard")
+	cmd2.WaitDelay = gitContextWaitDelay
 	cmd2.Dir = root
-	output2, _ := cmd2.Output()
+	output2, err := cmd2.Output()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+	if err != nil {
+		output2 = nil
+	}
 	for _, line := range strings.Split(strings.TrimSpace(string(output2)), "\n") {
 		if line != "" {
 			info.Changed[line] = true
@@ -67,7 +93,12 @@ func GitDiffInfo(root, ref string) (*DiffInfo, error) {
 // GitDiffFiles returns files changed between current HEAD and the given branch/ref
 // Also includes untracked files (new files not yet committed)
 func GitDiffFiles(root, ref string) (map[string]bool, error) {
-	info, err := GitDiffInfo(root, ref)
+	return GitDiffFilesContext(context.Background(), root, ref)
+}
+
+// GitDiffFilesContext returns changed files while honoring cancellation.
+func GitDiffFilesContext(ctx context.Context, root, ref string) (map[string]bool, error) {
+	info, err := GitDiffInfoContext(ctx, root, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -163,16 +194,28 @@ type ImpactInfo struct {
 // AnalyzeImpact checks which changed files are imported by other files
 // Uses ast-grep to extract actual imports for accuracy
 func AnalyzeImpact(root string, changedFiles []FileInfo) []ImpactInfo {
+	impact, _ := AnalyzeImpactContext(context.Background(), root, changedFiles)
+	return impact
+}
+
+// AnalyzeImpactContext analyzes impact while honoring caller cancellation.
+func AnalyzeImpactContext(ctx context.Context, root string, changedFiles []FileInfo) ([]ImpactInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(changedFiles) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// Scan all files to get their imports using ast-grep
-	analyses, err := ScanForDeps(root)
+	analyses, err := ScanForDepsContext(ctx, root)
 	if err != nil {
-		return nil
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, nil
 	}
-	return AnalyzeImpactFromAnalyses(changedFiles, analyses)
+	return AnalyzeImpactFromAnalyses(changedFiles, analyses), ctx.Err()
 }
 
 // AnalyzeImpactFromAnalyses computes impact using a pre-computed ast-grep scan,

@@ -1,17 +1,42 @@
 package scanner
 
 import (
+	"context"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
+// MCPManifestByteBudget bounds each manifest read performed for one MCP request.
+const MCPManifestByteBudget int64 = 1 << 20
+
+var errManifestBudgetExceeded = errors.New("manifest exceeds byte budget")
+
 // ReadExternalDeps reads manifest files (go.mod, requirements.txt, package.json)
 func ReadExternalDeps(root string) map[string][]string {
+	deps, _ := ReadExternalDepsContext(context.Background(), root, 0)
+	if deps == nil {
+		return make(map[string][]string)
+	}
+	return deps
+}
+
+// ReadExternalDepsContext reads external dependencies with caller cancellation.
+// A positive manifestByteBudget skips individual oversized manifests; zero keeps
+// the legacy unbounded behavior used by CLI and blast-radius callers.
+func ReadExternalDepsContext(ctx context.Context, root string, manifestByteBudget int64) (map[string][]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	deps := make(map[string][]string)
 
 	// Walk tree to find all manifest files
-	filepath.Walk(root, func(path string, info os.FileInfo, _ error) error {
+	err := filepath.Walk(root, func(path string, info os.FileInfo, _ error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if info == nil {
 			return nil
 		}
@@ -21,38 +46,35 @@ func ReadExternalDeps(root string) map[string][]string {
 			}
 			return nil
 		}
+		if !isDependencyManifest(info.Name()) {
+			return nil
+		}
+		content, err := readManifestContext(ctx, path, info.Size(), manifestByteBudget)
+		if errors.Is(err, errManifestBudgetExceeded) {
+			return nil
+		}
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			return nil
+		}
 		switch info.Name() {
 		case "go.mod":
-			if c, err := os.ReadFile(path); err == nil {
-				deps["go"] = append(deps["go"], parseGoMod(string(c))...)
-			}
+			deps["go"] = append(deps["go"], parseGoMod(string(content))...)
 		case "requirements.txt":
-			if c, err := os.ReadFile(path); err == nil {
-				deps["python"] = append(deps["python"], parseRequirements(string(c))...)
-			}
+			deps["python"] = append(deps["python"], parseRequirements(string(content))...)
 		case "package.json":
-			if c, err := os.ReadFile(path); err == nil {
-				deps["javascript"] = append(deps["javascript"], parsePackageJson(string(c))...)
-			}
+			deps["javascript"] = append(deps["javascript"], parsePackageJson(string(content))...)
 		case "Podfile":
-			if c, err := os.ReadFile(path); err == nil {
-				deps["swift"] = append(deps["swift"], parsePodfile(string(c))...)
-			}
+			deps["swift"] = append(deps["swift"], parsePodfile(string(content))...)
 		case "Package.swift":
-			if c, err := os.ReadFile(path); err == nil {
-				deps["swift"] = append(deps["swift"], parsePackageSwift(string(c))...)
-			}
+			deps["swift"] = append(deps["swift"], parsePackageSwift(string(content))...)
 		case "packages.config":
-			if c, err := os.ReadFile(path); err == nil {
-				deps["csharp"] = append(deps["csharp"], parsePackagesConfig(string(c))...)
-			}
+			deps["csharp"] = append(deps["csharp"], parsePackagesConfig(string(content))...)
 		default:
-			// .csproj files have project-specific names, so they must be matched
-			// by extension rather than a fixed case above.
 			if strings.HasSuffix(info.Name(), ".csproj") {
-				if c, err := os.ReadFile(path); err == nil {
-					deps["csharp"] = append(deps["csharp"], parseCsproj(string(c))...)
-				}
+				deps["csharp"] = append(deps["csharp"], parseCsproj(string(content))...)
 			}
 		}
 		return nil
@@ -61,7 +83,63 @@ func ReadExternalDeps(root string) map[string][]string {
 	for k, v := range deps {
 		deps[k] = dedupe(v)
 	}
-	return deps
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return deps, nil
+}
+
+func isDependencyManifest(name string) bool {
+	switch name {
+	case "go.mod", "requirements.txt", "package.json", "Podfile", "Package.swift", "packages.config":
+		return true
+	default:
+		return strings.HasSuffix(name, ".csproj")
+	}
+}
+
+func readManifestContext(ctx context.Context, path string, size, budget int64) ([]byte, error) {
+	if budget > 0 && size > budget {
+		return nil, errManifestBudgetExceeded
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	reader := io.Reader(f)
+	if budget > 0 {
+		reader = io.LimitReader(f, budget+1)
+	}
+	data := make([]byte, 0, min(max(size, 0), budgetCapacity(budget)))
+	buf := make([]byte, 32*1024)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		n, readErr := reader.Read(buf)
+		data = append(data, buf[:n]...)
+		if budget > 0 && int64(len(data)) > budget {
+			return nil, errManifestBudgetExceeded
+		}
+		if errors.Is(readErr, io.EOF) {
+			return data, nil
+		}
+		if readErr != nil {
+			return nil, readErr
+		}
+	}
+}
+
+func budgetCapacity(budget int64) int64 {
+	if budget <= 0 {
+		return 64 * 1024
+	}
+	return budget
 }
 
 func parseGoMod(c string) (deps []string) {

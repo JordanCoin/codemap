@@ -32,6 +32,10 @@ import (
 var (
 	watchers   = make(map[string]*watch.Daemon)
 	watchersMu sync.RWMutex
+
+	buildHandoffForMCP    = handoff.BuildContext
+	buildHandoffDetailMCP = handoff.BuildFileDetailContext
+	writeLatestForMCP     = handoff.WriteLatest
 )
 
 const (
@@ -289,15 +293,40 @@ func errorResult(text string) *mcp.CallToolResult {
 	}
 }
 
-func handleGetStructure(ctx context.Context, req *mcp.CallToolRequest, input StructureInput) (*mcp.CallToolResult, any, error) {
-	absRoot, err := filepath.Abs(input.Path)
+func traversalRoot(path string) (string, *mcp.CallToolResult) {
+	absRoot, err := filepath.Abs(path)
 	if err != nil {
-		return errorResult("Invalid path: " + err.Error()), nil, nil
+		return "", errorResult("Invalid path: " + err.Error())
+	}
+	info, err := os.Stat(absRoot)
+	if err != nil || !info.IsDir() {
+		return "", errorResult("Invalid project path: path is not an accessible directory")
+	}
+	return absRoot, nil
+}
+
+func cancellationResult(ctx context.Context, operation string) *mcp.CallToolResult {
+	if err := ctx.Err(); err != nil {
+		return errorResult(operation + " cancelled: " + err.Error())
+	}
+	return nil
+}
+
+func handleGetStructure(ctx context.Context, req *mcp.CallToolRequest, input StructureInput) (*mcp.CallToolResult, any, error) {
+	if cancelled := cancellationResult(ctx, "Structure scan"); cancelled != nil {
+		return cancelled, nil, nil
+	}
+	absRoot, invalid := traversalRoot(input.Path)
+	if invalid != nil {
+		return invalid, nil, nil
 	}
 
-	gitCache := scanner.NewGitIgnoreCache(input.Path)
-	files, err := scanner.ScanConfiguredFiles(input.Path, gitCache)
+	gitCache := scanner.NewGitIgnoreCache(absRoot)
+	files, err := scanner.ScanConfiguredFilesContext(ctx, absRoot, gitCache)
 	if err != nil {
+		if cancelled := cancellationResult(ctx, "Structure scan"); cancelled != nil {
+			return cancelled, nil, nil
+		}
 		return errorResult("Scan error: " + err.Error()), nil, nil
 	}
 	fileCount := len(files)
@@ -337,7 +366,10 @@ func handleGetStructure(ctx context.Context, req *mcp.CallToolRequest, input Str
 		hubs = append(hubs, state.Hubs...)
 		importers = state.Importers
 	} else if fileCount <= limits.LargeRepoFileCount {
-		fg, err := scanner.BuildFileGraph(absRoot)
+		fg, err := scanner.BuildFileGraphContext(ctx, absRoot)
+		if cancelled := cancellationResult(ctx, "Structure graph analysis"); cancelled != nil {
+			return cancelled, nil, nil
+		}
 		if err == nil {
 			hubs = fg.HubFiles()
 			importers = fg.Importers
@@ -364,21 +396,34 @@ func handleGetStructure(ctx context.Context, req *mcp.CallToolRequest, input Str
 }
 
 func handleGetDependencies(ctx context.Context, req *mcp.CallToolRequest, input PathInput) (*mcp.CallToolResult, any, error) {
-	absRoot, err := filepath.Abs(input.Path)
-	if err != nil {
-		return errorResult("Invalid path: " + err.Error()), nil, nil
+	if cancelled := cancellationResult(ctx, "Dependency scan"); cancelled != nil {
+		return cancelled, nil, nil
+	}
+	absRoot, invalid := traversalRoot(input.Path)
+	if invalid != nil {
+		return invalid, nil, nil
 	}
 
-	analyses, err := scanner.ScanForDeps(input.Path)
+	analyses, err := scanner.ScanForDepsContext(ctx, absRoot)
 	if err != nil {
+		if cancelled := cancellationResult(ctx, "Dependency scan"); cancelled != nil {
+			return cancelled, nil, nil
+		}
 		return errorResult("Scan error: " + err.Error()), nil, nil
+	}
+	externalDeps, err := scanner.ReadExternalDepsContext(ctx, absRoot, scanner.MCPManifestByteBudget)
+	if err != nil {
+		if cancelled := cancellationResult(ctx, "External dependency scan"); cancelled != nil {
+			return cancelled, nil, nil
+		}
+		return errorResult("External dependency scan error: " + err.Error()), nil, nil
 	}
 
 	depsProject := scanner.DepsProject{
 		Root:         absRoot,
 		Mode:         "deps",
 		Files:        analyses,
-		ExternalDeps: scanner.ReadExternalDeps(absRoot),
+		ExternalDeps: externalDeps,
 	}
 
 	var buf bytes.Buffer
@@ -389,18 +434,24 @@ func handleGetDependencies(ctx context.Context, req *mcp.CallToolRequest, input 
 }
 
 func handleGetDiff(ctx context.Context, req *mcp.CallToolRequest, input DiffInput) (*mcp.CallToolResult, any, error) {
+	if cancelled := cancellationResult(ctx, "Diff analysis"); cancelled != nil {
+		return cancelled, nil, nil
+	}
 	ref := input.Ref
 	if ref == "" {
 		ref = "main"
 	}
 
-	absRoot, err := filepath.Abs(input.Path)
-	if err != nil {
-		return errorResult("Invalid path: " + err.Error()), nil, nil
+	absRoot, invalid := traversalRoot(input.Path)
+	if invalid != nil {
+		return invalid, nil, nil
 	}
 
-	diffInfo, err := scanner.GitDiffInfo(absRoot, ref)
+	diffInfo, err := scanner.GitDiffInfoContext(ctx, absRoot, ref)
 	if err != nil {
+		if cancelled := cancellationResult(ctx, "Diff analysis"); cancelled != nil {
+			return cancelled, nil, nil
+		}
 		return errorResult("Git diff error: " + err.Error() + "\nMake sure '" + ref + "' is a valid branch/ref"), nil, nil
 	}
 
@@ -408,14 +459,23 @@ func handleGetDiff(ctx context.Context, req *mcp.CallToolRequest, input DiffInpu
 		return textResult("No files changed vs " + ref), nil, nil
 	}
 
-	gitCache := scanner.NewGitIgnoreCache(input.Path)
-	files, err := scanner.ScanConfiguredFiles(input.Path, gitCache)
+	gitCache := scanner.NewGitIgnoreCache(absRoot)
+	files, err := scanner.ScanConfiguredFilesContext(ctx, absRoot, gitCache)
 	if err != nil {
+		if cancelled := cancellationResult(ctx, "Diff scan"); cancelled != nil {
+			return cancelled, nil, nil
+		}
 		return errorResult("Scan error: " + err.Error()), nil, nil
 	}
 
 	files = scanner.FilterToChangedWithInfo(files, diffInfo)
-	impact := scanner.AnalyzeImpact(absRoot, files)
+	impact, err := scanner.AnalyzeImpactContext(ctx, absRoot, files)
+	if err != nil {
+		if cancelled := cancellationResult(ctx, "Impact analysis"); cancelled != nil {
+			return cancelled, nil, nil
+		}
+		return errorResult("Impact scan error: " + err.Error()), nil, nil
+	}
 
 	project := scanner.Project{
 		Root:    absRoot,
@@ -433,14 +493,24 @@ func handleGetDiff(ctx context.Context, req *mcp.CallToolRequest, input DiffInpu
 }
 
 func handleFindFile(ctx context.Context, req *mcp.CallToolRequest, input FindInput) (*mcp.CallToolResult, any, error) {
-	gitCache := scanner.NewGitIgnoreCache(input.Path)
-	files, err := scanner.ScanFiles(input.Path, gitCache, nil, nil)
+	if cancelled := cancellationResult(ctx, "File search"); cancelled != nil {
+		return cancelled, nil, nil
+	}
+	absRoot, invalid := traversalRoot(input.Path)
+	if invalid != nil {
+		return invalid, nil, nil
+	}
+	gitCache := scanner.NewGitIgnoreCache(absRoot)
+	files, err := scanner.ScanFilesContext(ctx, absRoot, gitCache, nil, nil)
 	if err != nil {
+		if cancelled := cancellationResult(ctx, "File search"); cancelled != nil {
+			return cancelled, nil, nil
+		}
 		return errorResult("Scan error: " + err.Error()), nil, nil
 	}
 
 	// Filter files matching pattern (case-insensitive)
-	matches, filteredMatches, hintsEnabled := findConfiguredMatches(input.Path, input.Pattern, files)
+	matches, filteredMatches, hintsEnabled := findConfiguredMatches(absRoot, input.Pattern, files)
 
 	if len(matches) == 0 {
 		if hintsEnabled && len(filteredMatches) > 0 {
@@ -510,6 +580,9 @@ func statusHandler(guidance string) func(context.Context, *mcp.CallToolRequest, 
 }
 
 func handleListProjects(ctx context.Context, req *mcp.CallToolRequest, input ListProjectsInput) (*mcp.CallToolResult, any, error) {
+	if cancelled := cancellationResult(ctx, "Project discovery"); cancelled != nil {
+		return cancelled, nil, nil
+	}
 	// Expand ~ to home directory
 	path := input.Path
 	if strings.HasPrefix(path, "~/") {
@@ -517,47 +590,51 @@ func handleListProjects(ctx context.Context, req *mcp.CallToolRequest, input Lis
 		path = filepath.Join(home, path[2:])
 	}
 
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return errorResult("Invalid path: " + err.Error()), nil, nil
+	absPath, invalid := traversalRoot(path)
+	if invalid != nil {
+		return invalid, nil, nil
 	}
 
-	entries, err := os.ReadDir(absPath)
+	dir, err := os.Open(absPath)
 	if err != nil {
 		return errorResult("Cannot read directory: " + err.Error()), nil, nil
 	}
+	defer dir.Close()
 
 	pattern := strings.ToLower(input.Pattern)
-	var projects []string
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
+	candidates, examined, truncatedByResults, truncatedByExamined, err := selectProjectCandidates(ctx, dir, pattern)
+	if err != nil {
+		if cancelled := cancellationResult(ctx, "Project discovery"); cancelled != nil {
+			return cancelled, nil, nil
 		}
-		name := entry.Name()
+		return errorResult("Cannot read directory: " + err.Error()), nil, nil
+	}
 
-		// Skip hidden directories and common non-project dirs
-		if strings.HasPrefix(name, ".") {
-			continue
+	projects := make([]string, 0, len(candidates))
+	for _, name := range candidates {
+		if cancelled := cancellationResult(ctx, "Project discovery"); cancelled != nil {
+			return cancelled, nil, nil
 		}
-
-		// Filter by pattern if provided
-		if pattern != "" && !strings.Contains(strings.ToLower(name), pattern) {
-			continue
-		}
-
-		// Get project stats
 		projectPath := filepath.Join(absPath, name)
-		stats := getProjectStats(projectPath)
-
+		stats, scanErr := getProjectStatsContext(ctx, projectPath)
+		if scanErr != nil {
+			if cancelled := cancellationResult(ctx, "Project discovery"); cancelled != nil {
+				return cancelled, nil, nil
+			}
+			stats = "(error scanning)"
+		}
 		projects = append(projects, fmt.Sprintf("%-30s %s", name+"/", stats))
 	}
 
+	if truncatedByExamined && len(candidates) == 0 {
+		return textResult(projectDiscoveryExaminationCap(input.Pattern, absPath, examined)), nil, nil
+	}
 	if len(projects) == 0 {
+		truncation := projectDiscoveryTruncation(truncatedByResults, truncatedByExamined, examined)
 		if pattern != "" {
-			return textResult(fmt.Sprintf("No projects matching '%s' in %s", input.Pattern, absPath)), nil, nil
+			return textResult(fmt.Sprintf("No projects matching '%s' in %s%s", input.Pattern, absPath, truncation)), nil, nil
 		}
-		return textResult("No project directories found in " + absPath), nil, nil
+		return textResult("No project directories found in " + absPath + truncation), nil, nil
 	}
 
 	header := fmt.Sprintf("Projects in %s", absPath)
@@ -565,21 +642,114 @@ func handleListProjects(ctx context.Context, req *mcp.CallToolRequest, input Lis
 		header = fmt.Sprintf("Projects matching '%s' in %s", input.Pattern, absPath)
 	}
 
-	return textResult(fmt.Sprintf("%s:\n\n%s", header, strings.Join(projects, "\n"))), nil, nil
+	output := fmt.Sprintf("%s:\n\n%s", header, strings.Join(projects, "\n"))
+	output += projectDiscoveryTruncation(truncatedByResults, truncatedByExamined, examined)
+	return textResult(output), nil, nil
+}
+
+func projectDiscoveryExaminationCap(pattern, path string, examined int) string {
+	if pattern != "" {
+		return fmt.Sprintf("Project discovery matching '%s' in %s was truncated after examining %d entries; results are unavailable because the directory exceeds the examination cap.", pattern, path, examined)
+	}
+	return fmt.Sprintf("Project discovery in %s was truncated after examining %d entries; results are unavailable because the directory exceeds the examination cap.", path, examined)
+}
+
+const (
+	maxListedProjects         = 50
+	maxExaminedProjectEntries = 200
+	projectDiscoveryBatchSize = 32
+)
+
+type projectDirectoryReader interface {
+	ReadDir(int) ([]os.DirEntry, error)
+}
+
+// selectProjectCandidates deterministically selects the lexicographically
+// first result-cap entries within the bounded examination window.
+func selectProjectCandidates(ctx context.Context, dir projectDirectoryReader, pattern string) ([]string, int, bool, bool, error) {
+	candidates := make([]string, 0, maxListedProjects+1)
+	examined := 0
+	truncatedByExamined := false
+	discoveryDone := false
+
+	for !discoveryDone {
+		if err := ctx.Err(); err != nil {
+			return nil, examined, false, truncatedByExamined, err
+		}
+		entries, readErr := dir.ReadDir(projectDiscoveryBatchSize)
+		for _, entry := range entries {
+			if examined >= maxExaminedProjectEntries {
+				truncatedByExamined = true
+				discoveryDone = true
+				break
+			}
+			examined++
+			if !entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if strings.HasPrefix(name, ".") {
+				continue
+			}
+			if pattern != "" && !strings.Contains(strings.ToLower(name), pattern) {
+				continue
+			}
+			candidates = append(candidates, name)
+		}
+		if readErr == io.EOF {
+			discoveryDone = true
+		} else if readErr != nil {
+			return nil, examined, false, truncatedByExamined, readErr
+		}
+	}
+
+	if truncatedByExamined {
+		// The bounded prefix is filesystem-order dependent. Do not emit a
+		// partial selection when the examination cap prevents observing the
+		// complete directory; only the stable truncation notice is returned.
+		return []string{}, examined, false, true, ctx.Err()
+	}
+	sort.Strings(candidates)
+	truncatedByResults := len(candidates) > maxListedProjects
+	if truncatedByResults {
+		candidates = candidates[:maxListedProjects]
+	}
+	return candidates, examined, truncatedByResults, truncatedByExamined, ctx.Err()
+}
+
+func projectDiscoveryTruncation(byResults, byExamined bool, examined int) string {
+	switch {
+	case byResults && byExamined:
+		return fmt.Sprintf("\n... truncated after %d projects and examining %d entries", maxListedProjects, examined)
+	case byResults:
+		return fmt.Sprintf("\n... truncated after %d projects", maxListedProjects)
+	case byExamined:
+		return fmt.Sprintf("\n... truncated after examining %d entries", examined)
+	default:
+		return ""
+	}
 }
 
 // getProjectStats returns a brief summary of a project directory
 // Uses the same scanner logic as the main codemap command (respects nested .gitignore files)
 func getProjectStats(path string) string {
+	stats, _ := getProjectStatsContext(context.Background(), path)
+	return stats
+}
+
+func getProjectStatsContext(ctx context.Context, path string) (string, error) {
 	gitCache := scanner.NewGitIgnoreCache(path)
-	files, err := scanner.ScanConfiguredFiles(path, gitCache)
+	files, err := scanner.ScanConfiguredFilesContext(ctx, path, gitCache)
 	if err != nil {
-		return "(error scanning)"
+		return "(error scanning)", err
 	}
 
 	// Count files by language
 	langCounts := make(map[string]int)
 	for _, f := range files {
+		if err := ctx.Err(); err != nil {
+			return "(error scanning)", err
+		}
 		lang := scanner.DetectLanguage(f.Path)
 		if lang != "" {
 			langCounts[lang]++
@@ -603,14 +773,24 @@ func getProjectStats(path string) string {
 	}
 
 	if lang, ok := scanner.LangDisplay[primaryLang]; ok {
-		return fmt.Sprintf("(%d files, %s%s)", len(files), lang, isGit)
+		return fmt.Sprintf("(%d files, %s%s)", len(files), lang, isGit), nil
 	}
-	return fmt.Sprintf("(%d files%s)", len(files), isGit)
+	return fmt.Sprintf("(%d files%s)", len(files), isGit), ctx.Err()
 }
 
 func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input ImportersInput) (*mcp.CallToolResult, any, error) {
-	fg, err := scanner.BuildFileGraph(input.Path)
+	if cancelled := cancellationResult(ctx, "Importer analysis"); cancelled != nil {
+		return cancelled, nil, nil
+	}
+	absRoot, invalid := traversalRoot(input.Path)
+	if invalid != nil {
+		return invalid, nil, nil
+	}
+	fg, err := scanner.BuildFileGraphContext(ctx, absRoot)
 	if err != nil {
+		if cancelled := cancellationResult(ctx, "Importer analysis"); cancelled != nil {
+			return cancelled, nil, nil
+		}
 		return errorResult("Failed to build file graph: " + err.Error()), nil, nil
 	}
 
@@ -639,16 +819,20 @@ func mcpCoverageText(fg *scanner.FileGraph) string {
 }
 
 func handleGetHandoff(ctx context.Context, req *mcp.CallToolRequest, input HandoffInput) (*mcp.CallToolResult, any, error) {
+	if cancelled := cancellationResult(ctx, "Handoff generation"); cancelled != nil {
+		return cancelled, nil, nil
+	}
 	if input.Prefix && input.Delta {
 		return errorResult("prefix and delta options are mutually exclusive"), nil, nil
 	}
 
-	absRoot, err := filepath.Abs(input.Path)
-	if err != nil {
-		return errorResult("Invalid path: " + err.Error()), nil, nil
+	absRoot, invalid := traversalRoot(input.Path)
+	if invalid != nil {
+		return invalid, nil, nil
 	}
 
 	var artifact *handoff.Artifact
+	var err error
 	if input.Latest {
 		artifact, err = handoff.ReadLatest(absRoot)
 		if err != nil {
@@ -673,23 +857,35 @@ func handleGetHandoff(ctx context.Context, req *mcp.CallToolRequest, input Hando
 			}
 		}
 
-		artifact, err = handoff.Build(absRoot, handoff.BuildOptions{
+		artifact, err = buildHandoffForMCP(ctx, absRoot, handoff.BuildOptions{
 			BaseRef: baseRef,
 			Since:   since,
 		})
 		if err != nil {
+			if cancelled := cancellationResult(ctx, "Handoff generation"); cancelled != nil {
+				return cancelled, nil, nil
+			}
 			return errorResult("Failed to build handoff: " + err.Error()), nil, nil
 		}
 		if input.Save {
-			if err := handoff.WriteLatest(absRoot, artifact); err != nil {
+			// Persistence commit point: cancellation observed before WriteLatest
+			// prevents all writes. Once WriteLatest begins, its established
+			// non-contextual multi-file semantics remain unchanged.
+			if cancelled := cancellationResult(ctx, "Handoff generation"); cancelled != nil {
+				return cancelled, nil, nil
+			}
+			if err := writeLatestForMCP(absRoot, artifact); err != nil {
 				return errorResult("Failed to save handoff: " + err.Error()), nil, nil
 			}
 		}
 	}
 
 	if input.File != "" {
-		detail, err := handoff.BuildFileDetail(absRoot, artifact, input.File, nil)
+		detail, err := buildHandoffDetailMCP(ctx, absRoot, artifact, input.File, nil)
 		if err != nil {
+			if cancelled := cancellationResult(ctx, "Handoff detail generation"); cancelled != nil {
+				return cancelled, nil, nil
+			}
 			return errorResult("Failed to load handoff detail: " + err.Error()), nil, nil
 		}
 		if input.JSON {
@@ -989,8 +1185,18 @@ The user may be:
 // === FILE GRAPH HANDLERS ===
 
 func handleGetHubs(ctx context.Context, req *mcp.CallToolRequest, input PathInput) (*mcp.CallToolResult, any, error) {
-	fg, err := scanner.BuildFileGraph(input.Path)
+	if cancelled := cancellationResult(ctx, "Hub analysis"); cancelled != nil {
+		return cancelled, nil, nil
+	}
+	absRoot, invalid := traversalRoot(input.Path)
+	if invalid != nil {
+		return invalid, nil, nil
+	}
+	fg, err := scanner.BuildFileGraphContext(ctx, absRoot)
 	if err != nil {
+		if cancelled := cancellationResult(ctx, "Hub analysis"); cancelled != nil {
+			return cancelled, nil, nil
+		}
 		return errorResult("Failed to build file graph: " + err.Error()), nil, nil
 	}
 
@@ -1025,8 +1231,18 @@ func handleGetHubs(ctx context.Context, req *mcp.CallToolRequest, input PathInpu
 }
 
 func handleGetFileContext(ctx context.Context, req *mcp.CallToolRequest, input ImportersInput) (*mcp.CallToolResult, any, error) {
-	fg, err := scanner.BuildFileGraph(input.Path)
+	if cancelled := cancellationResult(ctx, "File context analysis"); cancelled != nil {
+		return cancelled, nil, nil
+	}
+	absRoot, invalid := traversalRoot(input.Path)
+	if invalid != nil {
+		return invalid, nil, nil
+	}
+	fg, err := scanner.BuildFileGraphContext(ctx, absRoot)
 	if err != nil {
+		if cancelled := cancellationResult(ctx, "File context analysis"); cancelled != nil {
+			return cancelled, nil, nil
+		}
 		return errorResult("Failed to build file graph: " + err.Error()), nil, nil
 	}
 

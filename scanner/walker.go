@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"bufio"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -227,10 +228,21 @@ func LoadGitignore(root string) *ignore.GitIgnore {
 // only: list of extensions to include (empty = all)
 // exclude: list of patterns to exclude
 func ScanFiles(root string, cache *GitIgnoreCache, only []string, exclude []string) ([]FileInfo, error) {
+	return ScanFilesContext(context.Background(), root, cache, only, exclude)
+}
+
+// ScanFilesContext walks the directory tree and honors caller cancellation.
+func ScanFilesContext(ctx context.Context, root string, cache *GitIgnoreCache, only []string, exclude []string) ([]FileInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var files []FileInfo
 	absRoot, _ := filepath.Abs(root)
 
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if err != nil {
 			return err
 		}
@@ -290,6 +302,9 @@ func ScanFiles(root string, cache *GitIgnoreCache, only []string, exclude []stri
 
 		return nil
 	})
+	if err == nil {
+		err = ctx.Err()
+	}
 
 	return files, err
 }
@@ -302,23 +317,42 @@ type Filters struct {
 
 // ScanConfiguredFiles scans using the active setup root's project filters.
 func ScanConfiguredFiles(root string, cache *GitIgnoreCache) ([]FileInfo, error) {
+	return ScanConfiguredFilesContext(context.Background(), root, cache)
+}
+
+// ScanConfiguredFilesContext scans configured files and honors caller cancellation.
+func ScanConfiguredFilesContext(ctx context.Context, root string, cache *GitIgnoreCache) ([]FileInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	cfg := config.Load(root)
-	return ScanFiles(root, cache, cfg.Only, cfg.Exclude)
+	return ScanFilesContext(ctx, root, cache, cfg.Only, cfg.Exclude)
 }
 
 func filterAnalyses(analyses []FileAnalysis, filters Filters) []FileAnalysis {
+	filtered, _ := filterAnalysesContext(context.Background(), analyses, filters)
+	return filtered
+}
+
+func filterAnalysesContext(ctx context.Context, analyses []FileAnalysis, filters Filters) ([]FileAnalysis, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(filters.Only) == 0 && len(filters.Exclude) == 0 {
-		return analyses
+		return analyses, ctx.Err()
 	}
 
 	filtered := make([]FileAnalysis, 0, len(analyses))
 	for _, analysis := range analyses {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		path := filepath.ToSlash(analysis.Path)
 		if MatchesFilters(path, filepath.Ext(path), filters.Only, filters.Exclude) {
 			filtered = append(filtered, analysis)
 		}
 	}
-	return filtered
+	return filtered, ctx.Err()
 }
 
 func filterConfiguredAnalyses(root string, analyses []FileAnalysis) []FileAnalysis {
@@ -328,12 +362,28 @@ func filterConfiguredAnalyses(root string, analyses []FileAnalysis) []FileAnalys
 
 // ScanForDeps uses the configured project filters for batched dependency analysis.
 func ScanForDeps(root string) ([]FileAnalysis, error) {
+	return ScanForDepsContext(context.Background(), root)
+}
+
+// ScanForDepsContext performs configured dependency analysis with caller cancellation.
+func ScanForDepsContext(ctx context.Context, root string) ([]FileAnalysis, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	cfg := config.Load(root)
-	return ScanForDepsWithFilters(root, Filters{Only: cfg.Only, Exclude: cfg.Exclude})
+	return ScanForDepsWithFiltersContext(ctx, root, Filters{Only: cfg.Only, Exclude: cfg.Exclude})
 }
 
 // ScanForDepsWithFilters uses ast-grep for batched dependency analysis with explicit filters.
 func ScanForDepsWithFilters(root string, filters Filters) ([]FileAnalysis, error) {
+	return ScanForDepsWithFiltersContext(context.Background(), root, filters)
+}
+
+// ScanForDepsWithFiltersContext performs dependency analysis with explicit filters and caller cancellation.
+func ScanForDepsWithFiltersContext(ctx context.Context, root string, filters Filters) ([]FileAnalysis, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	astScanner, err := NewAstGrepScanner()
 	if err != nil {
 		return nil, err
@@ -344,9 +394,9 @@ func ScanForDepsWithFilters(root string, filters Filters) ([]FileAnalysis, error
 		return nil, ErrAstGrepNotFound
 	}
 
-	analyses, err := astScanner.ScanDirectory(root)
+	analyses, err := astScanner.ScanDirectoryContext(ctx, root)
 	if err != nil {
 		return nil, err
 	}
-	return filterAnalyses(analyses, filters), nil
+	return filterAnalysesContext(ctx, analyses, filters)
 }
