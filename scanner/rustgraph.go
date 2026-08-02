@@ -11,7 +11,7 @@ import (
 
 const (
 	rustCoverageStatus = "partial"
-	rustCoverageNote   = "Rust macro-generated, cfg-gated dev-dependency, string-routed, and #[path] module edges may be unresolved"
+	rustCoverageNote   = "Rust macro-generated, string-routed, and #[path] module edges may be unresolved"
 
 	rustTargetLib         = "lib"
 	rustTargetBin         = "bin"
@@ -431,8 +431,6 @@ func rustDependencyEligible(dependencyKind, targetKind string) bool {
 	switch dependencyKind {
 	case "build":
 		return targetKind == rustTargetCustomBuild
-	case "dev":
-		return targetKind == rustTargetTest || targetKind == rustTargetExample || targetKind == rustTargetBench
 	default:
 		return targetKind != rustTargetCustomBuild
 	}

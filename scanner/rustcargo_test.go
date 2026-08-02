@@ -219,9 +219,13 @@ func TestCargoMetadataScopesDependenciesByCallerAndTargetKind(t *testing.T) {
 	files := map[string]string{
 		"Cargo.toml":               "[workspace]\nmembers = [\"app\"]\n",
 		"app/Cargo.toml":           cargoTestManifest("app"),
-		"app/src/lib.rs":           "pub fn call() {}\n",
+		"app/src/lib.rs":           "#[cfg(test)] mod unit_tests;\npub fn call() {}\n",
+		"app/src/main.rs":          "fn main() {}\n",
+		"app/src/unit_tests.rs":    "#[test] fn unit() {}\n",
 		"app/build.rs":             "fn main() {}\n",
 		"app/tests/integration.rs": "fn test() {}\n",
+		"app/examples/demo.rs":     "fn main() {}\n",
+		"app/benches/measure.rs":   "fn main() {}\n",
 		"normal/Cargo.toml":        "[package]\nname = \"normal\"\nversion = \"0.1.0\"\n",
 		"normal/src/lib.rs":        "pub mod api;\n",
 		"normal/src/api.rs":        "pub fn run() {}\n",
@@ -241,8 +245,11 @@ func TestCargoMetadataScopesDependenciesByCallerAndTargetKind(t *testing.T) {
 	packages := []map[string]any{
 		cargoPackageWithTargets(root, "app", "app", []map[string]any{
 			cargoTargetJSON(root, "app/src/lib.rs", "app", rustTargetLib),
+			cargoTargetJSON(root, "app/src/main.rs", "app-bin", rustTargetBin),
 			cargoTargetJSON(root, "app/build.rs", "build-script-build", rustTargetCustomBuild),
 			cargoTargetJSON(root, "app/tests/integration.rs", "integration", rustTargetTest),
+			cargoTargetJSON(root, "app/examples/demo.rs", "demo", rustTargetExample),
+			cargoTargetJSON(root, "app/benches/measure.rs", "measure", rustTargetBench),
 		}, dependencies),
 		cargoPackage(root, "normal", "normal", "normal", nil),
 		cargoPackage(root, "build-dep", "build-dep", "build_dep", nil),
@@ -255,18 +262,26 @@ func TestCargoMetadataScopesDependenciesByCallerAndTargetKind(t *testing.T) {
 		{Path: "dev_dep::api::run", Kind: "rust-path"},
 	}
 	analyses := []FileAnalysis{
-		{Path: "app/src/lib.rs", Language: "rust", References: refs},
+		{Path: "app/src/lib.rs", Language: "rust", References: append([]ImportReference{{Path: "unit_tests", Kind: "rust-module"}}, refs...)},
+		{Path: "app/src/main.rs", Language: "rust", References: refs},
+		{Path: "app/src/unit_tests.rs", Language: "rust", References: refs},
 		{Path: "app/build.rs", Language: "rust", References: refs},
 		{Path: "app/tests/integration.rs", Language: "rust", References: refs},
+		{Path: "app/examples/demo.rs", Language: "rust", References: refs},
+		{Path: "app/benches/measure.rs", Language: "rust", References: refs},
 	}
 	graph, err := buildFileGraphFromAnalysesWithCargoMetadata(context.Background(), root, analyses, func(context.Context, string) ([]byte, error) { return metadata, nil })
 	if err != nil {
 		t.Fatal(err)
 	}
 	for from, want := range map[string][]string{
-		"app/src/lib.rs":           {"normal/src/api.rs"},
+		"app/src/lib.rs":           {"app/src/unit_tests.rs", "dev-dep/src/api.rs", "normal/src/api.rs"},
+		"app/src/main.rs":          {"dev-dep/src/api.rs", "normal/src/api.rs"},
+		"app/src/unit_tests.rs":    {"dev-dep/src/api.rs", "normal/src/api.rs"},
 		"app/build.rs":             {"build-dep/src/api.rs"},
 		"app/tests/integration.rs": {"dev-dep/src/api.rs", "normal/src/api.rs"},
+		"app/examples/demo.rs":     {"dev-dep/src/api.rs", "normal/src/api.rs"},
+		"app/benches/measure.rs":   {"dev-dep/src/api.rs", "normal/src/api.rs"},
 	} {
 		got := append([]string(nil), graph.Imports[from]...)
 		sort.Strings(got)
