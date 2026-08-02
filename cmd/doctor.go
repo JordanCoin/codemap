@@ -273,15 +273,6 @@ func doctorAnyConfigured(firstPath string, firstErr error, secondPath string, se
 	return false
 }
 
-func checkResolvedFile(label, path string, pathErr error, validate func(string) error, check func(string, string, func(string) error), failures *int) {
-	if pathErr != nil {
-		fmt.Printf("MISS %s: could not resolve path (%v)\n", label, pathErr)
-		(*failures)++
-		return
-	}
-	check(label, path, validate)
-}
-
 // doctorScope is one configuration location a check may be satisfied from.
 // validate overrides the check's default validator when a scope stores the
 // same setting in a different format, as the Codex plugin manifest does.
