@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
 	"codemap/handoff"
+	"codemap/scanner"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -224,4 +226,29 @@ func writeParityRepository(t *testing.T) string {
 	runGitMCPTestCmd(t, root, "add", ".")
 	runGitMCPTestCmd(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "change")
 	return root
+}
+
+func TestNewImportersOutputSortsDeterministically(t *testing.T) {
+	graph := &scanner.FileGraph{
+		Importers: map[string][]string{
+			"main.go": {"zebra.go", "alpha.go", "mango.go"},
+			"hub.go":  {"p.go", "q.go", "r.go"},
+		},
+		Imports: map[string][]string{
+			"main.go": {"zeta.go", "beta.go", "hub.go", "apple.go"},
+		},
+	}
+	out := newImportersOutput("/repo", "main.go", graph)
+	want := []string{"alpha.go", "mango.go", "zebra.go"}
+	if !slices.Equal(out.Importers, want) {
+		t.Fatalf("importers = %v, want sorted %v", out.Importers, want)
+	}
+	wantImports := []string{"apple.go", "beta.go", "hub.go", "zeta.go"}
+	if !slices.Equal(out.Imports, wantImports) {
+		t.Fatalf("imports = %v, want sorted %v", out.Imports, wantImports)
+	}
+	wantHubs := []string{"hub.go"}
+	if !slices.Equal(out.HubImports, wantHubs) {
+		t.Fatalf("hub_imports = %v, want %v", out.HubImports, wantHubs)
+	}
 }

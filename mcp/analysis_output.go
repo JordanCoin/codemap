@@ -1,6 +1,8 @@
 package codemapmcp
 
 import (
+	"sort"
+
 	"codemap/handoff"
 	"codemap/scanner"
 )
@@ -78,6 +80,9 @@ func newImportersOutput(root, file string, graph *scanner.FileGraph) ImportersOu
 			hubImports = append(hubImports, imported)
 		}
 	}
+	sort.Strings(importers)
+	sort.Strings(imports)
+	sort.Strings(hubImports)
 	boundedImporters, omittedCount := boundedSlice(importers)
 	boundedImports, omittedCount := addBounded(imports, omittedCount)
 	boundedHubs, omittedCount := addBounded(hubImports, omittedCount)
