@@ -105,11 +105,13 @@ func RunDoctor(args []string, defaultRoot string) int {
 	claudeMCP, claudeMCPErr := claudeMCPPath(root, *global)
 	codexHooks, codexHooksErr := codexHooksPath(root, *global)
 	codexMCP, codexMCPErr := codexConfigPath(root, *global)
-	validateEffectiveCodexMCP := validateCodexMCP
-	if !*global && codexMCPErr == nil && !codexProjectMCPOverridesPlugin(codexMCP) {
+	// An active Codex plugin manifest supersedes the project config, but never
+	// the user config, which remains the fallback scope below.
+	codexMCPScopes := doctorScopesFor(root, *global, codexConfigPath)
+	if !*global && codexMCPScopes[0].err == nil && !codexProjectMCPOverridesPlugin(codexMCPScopes[0].path) {
 		if pluginMCP, ok := activeCodexPluginMCPPath(); ok {
 			codexMCP = pluginMCP
-			validateEffectiveCodexMCP = validateCodexPluginMCP
+			codexMCPScopes[0] = doctorScope{name: "plugin", path: pluginMCP, validate: validateCodexPluginMCP}
 		}
 	}
 	claudeConfigured := doctorAnyConfigured(claudeSettings, claudeSettingsErr, claudeMCP, claudeMCPErr)
@@ -133,15 +135,15 @@ func RunDoctor(args []string, defaultRoot string) int {
 	}
 
 	if selected == "claude" || (selected == "" && (claudeConfigured || (!anyConfigured && claudeAvailable))) {
-		checkResolvedFile("Claude hooks", claudeSettings, claudeSettingsErr, func(path string) error {
+		checkScopedFile("Claude hooks", doctorScopesFor(root, *global, claudeSettingsPath), func(path string) error {
 			return validateHooks(path, recommendedClaudeHooks)
-		}, checkFile, &failures)
-		checkResolvedFile("Claude MCP", claudeMCP, claudeMCPErr, validateClaudeMCP, checkFile, &failures)
+		}, &failures)
+		checkScopedFile("Claude MCP", claudeMCPScopes(root, *global), validateClaudeMCP, &failures)
 	}
 	if selected == "codex" || (selected == "" && (codexConfigured || (!anyConfigured && (codexAvailable || codexDesktopAvailable)))) {
-		checkResolvedFile("Codex hooks", codexHooks, codexHooksErr, func(path string) error {
+		checkScopedFile("Codex hooks", doctorScopesFor(root, *global, codexHooksPath), func(path string) error {
 			return validateHooks(path, recommendedCodexHooks)
-		}, checkFile, &failures)
+		}, &failures)
 		if codexAvailable && codexHooksErr == nil && validateHooks(codexHooks, recommendedCodexHooks) == nil {
 			if err := validateCodexHookTrust(root); err != nil {
 				fmt.Printf("MISS Codex hook trust: %v\n", err)
@@ -150,7 +152,7 @@ func RunDoctor(args []string, defaultRoot string) int {
 				fmt.Println("OK   Codex hook trust: all Codemap hooks are enabled and runnable")
 			}
 		}
-		checkResolvedFile("Codex MCP", codexMCP, codexMCPErr, validateEffectiveCodexMCP, checkFile, &failures)
+		checkScopedFile("Codex MCP", codexMCPScopes, validateCodexMCP, &failures)
 	}
 
 	if failures > 0 {
@@ -271,13 +273,97 @@ func doctorAnyConfigured(firstPath string, firstErr error, secondPath string, se
 	return false
 }
 
-func checkResolvedFile(label, path string, pathErr error, validate func(string) error, check func(string, string, func(string) error), failures *int) {
-	if pathErr != nil {
-		fmt.Printf("MISS %s: could not resolve path (%v)\n", label, pathErr)
-		(*failures)++
+// doctorScope is one configuration location a check may be satisfied from.
+// validate overrides the check's default validator when a scope stores the
+// same setting in a different format, as the Codex plugin manifest does.
+type doctorScope struct {
+	name     string
+	path     string
+	err      error
+	validate func(string) error
+}
+
+// checkScopedFile validates a check against each scope in order and reports the
+// first that satisfies it, naming the scope that did.
+//
+// Agents merge user-level configuration into every project, so a hook or MCP
+// server defined in the user scope genuinely applies to this project. Reporting
+// it MISS because the project file does not repeat it describes the file layout
+// rather than the effective configuration. When every scope fails, the first
+// scope's failure is reported, since that is the one the user is expected to fix.
+func checkScopedFile(label string, scopes []doctorScope, validate func(string) error, failures *int) {
+	// When every scope fails, prefer reporting one that exists but is wired up
+	// wrong over one whose file is simply absent: the former is the user's
+	// actual problem, the latter is the normal state of an unused scope.
+	var misconfigured, absent *doctorScope
+	var misconfiguredErr, absentErr error
+	remember := func(scope *doctorScope, err error) {
+		if errors.Is(err, os.ErrNotExist) {
+			if absent == nil {
+				absent, absentErr = scope, err
+			}
+			return
+		}
+		if misconfigured == nil {
+			misconfigured, misconfiguredErr = scope, err
+		}
+	}
+
+	for index := range scopes {
+		scope := scopes[index]
+		if scope.err != nil {
+			remember(&scopes[index], fmt.Errorf("could not resolve path (%w)", scope.err))
+			continue
+		}
+		validateScope := validate
+		if scope.validate != nil {
+			validateScope = scope.validate
+		}
+		if err := validateScope(scope.path); err != nil {
+			remember(&scopes[index], err)
+			continue
+		}
+		fmt.Printf("OK   %s: %s (%s scope)\n", label, scope.path, scope.name)
 		return
 	}
-	check(label, path, validate)
+
+	*failures++
+	switch {
+	case misconfigured != nil:
+		fmt.Printf("MISS %s: %s (%v)\n", label, misconfigured.path, misconfiguredErr)
+	case absent != nil:
+		fmt.Printf("MISS %s: %s (%v)\n", label, absent.path, absentErr)
+	default:
+		fmt.Printf("MISS %s: no configuration scope available\n", label)
+	}
+}
+
+// claudeMCPScopes returns the three places Claude Code loads MCP servers from,
+// in the order it resolves them: the committed project .mcp.json, the local
+// per-project entry inside the user-level ~/.claude.json (what `claude mcp add`
+// writes by default), and that file's top-level user-wide servers.
+func claudeMCPScopes(root string, global bool) []doctorScope {
+	scopes := doctorScopesFor(root, global, claudeMCPPath)
+	if global {
+		return scopes
+	}
+	userPath, userErr := claudeMCPPath(root, true)
+	local := doctorScope{name: "local", path: userPath, err: userErr, validate: validateClaudeLocalMCP(root)}
+	return []doctorScope{scopes[0], local, scopes[1]}
+}
+
+// doctorScopesFor returns the scopes a check should consult. With --global the
+// user scope is the explicit subject of the check, so project files must not
+// satisfy it; otherwise the project scope is preferred and the user scope acts
+// as the fallback that reflects what the agent actually loads.
+func doctorScopesFor(root string, global bool, resolve func(string, bool) (string, error)) []doctorScope {
+	userPath, userErr := resolve(root, true)
+	userScope := doctorScope{name: "user", path: userPath, err: userErr}
+	if global {
+		return []doctorScope{userScope}
+	}
+	projectPath, projectErr := resolve(root, false)
+	return []doctorScope{{name: "project", path: projectPath, err: projectErr}, userScope}
 }
 
 func validateJSONFile(path string) error {
@@ -314,11 +400,88 @@ func validateHooks(path string, specs []claudeHookSpec) error {
 		return fmt.Errorf("invalid hooks: %w", err)
 	}
 	for _, spec := range specs {
-		if !hasHookSpec(hooks[spec.Event], spec) {
+		if !hookSpecSatisfied(hooks[spec.Event], spec) {
 			return fmt.Errorf("missing %s hook %q", spec.Event, spec.Command)
 		}
 	}
 	return nil
+}
+
+// hookSpecSatisfied reports whether entries already run the codemap subcommand
+// that spec describes.
+//
+// This deliberately differs from hasHookSpec, which demands byte-identity
+// because setup uses it to decide which entries it owns and may rewrite. Doctor
+// answers a weaker question — "is this hook wired up?" — so it accepts any
+// spelling that runs the same thing: PATH-resolved or absolute executable,
+// quoted or bare, with or without the --integration ownership tag. Requiring
+// the canonical spelling here reports working installations as broken.
+func hookSpecSatisfied(entries []claudeHookEntry, spec claudeHookSpec) bool {
+	requiredMatcher := strings.TrimSpace(spec.Matcher)
+	for _, entry := range entries {
+		if requiredMatcher != "" && !strings.EqualFold(strings.TrimSpace(entry.Matcher), requiredMatcher) {
+			continue
+		}
+		for _, hook := range entry.Hooks {
+			if !strings.EqualFold(strings.TrimSpace(hook.Type), "command") {
+				continue
+			}
+			if hookCommandSatisfies(hook.Command, spec.Command) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hookCommandSatisfies reports whether existing invokes the same codemap
+// subcommand as target.
+func hookCommandSatisfies(existing, target string) bool {
+	existingExecutable, existingArgs, ok := splitHookCommand(existing)
+	if !ok {
+		return false
+	}
+	_, targetArgs, ok := splitHookCommand(target)
+	if !ok {
+		return false
+	}
+	return existingArgs == targetArgs && hookExecutableIsCodemap(existingExecutable)
+}
+
+// splitHookCommand separates a hook command into its executable and the codemap
+// argument list beginning at "hook", with the --integration tag removed.
+//
+// Dropping --integration is safe because it never changes behavior: main.go
+// parses it, checks it agrees with the agent, then discards it. --agent does
+// change behavior and is preserved, so a Claude hook cannot satisfy a Codex spec.
+func splitHookCommand(command string) (executable, args string, ok bool) {
+	command = strings.TrimSpace(command)
+	index := strings.Index(command, " hook ")
+	if index < 0 {
+		return "", "", false
+	}
+	executable, ok = unquoteHookExecutable(strings.TrimSpace(command[:index]))
+	if !ok {
+		return "", "", false
+	}
+	fields := strings.Fields(command[index:])
+	kept := fields[:0]
+	for _, field := range fields {
+		if strings.HasPrefix(field, "--integration=") {
+			continue
+		}
+		kept = append(kept, field)
+	}
+	return executable, strings.Join(kept, " "), true
+}
+
+// hookExecutableIsCodemap reports whether a hook executable names a codemap
+// binary, accepting POSIX and Windows path separators, drive-letter paths, and
+// the .exe suffix.
+func hookExecutableIsCodemap(path string) bool {
+	normalized := strings.ReplaceAll(path, `\`, "/")
+	name := strings.ToLower(normalized[strings.LastIndex(normalized, "/")+1:])
+	return name == "codemap" || name == "codemap.exe"
 }
 
 func validateClaudeMCP(path string) error {
@@ -339,6 +502,40 @@ func validateClaudeMCP(path string) error {
 		return fmt.Errorf("missing codemap MCP server; repair with `codemap setup --agent claude`")
 	}
 	return validateDoctorMCPServer(server, "claude")
+}
+
+// validateClaudeLocalMCP validates the server registered for one project inside
+// the user-level ~/.claude.json, which is where `claude mcp add` writes by
+// default. The entry lives under projects[<root>].mcpServers rather than the
+// top-level mcpServers object that validateClaudeMCP reads.
+func validateClaudeLocalMCP(projectRoot string) func(string) error {
+	return func(path string) error {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		payload := map[string]any{}
+		if err := json.Unmarshal(data, &payload); err != nil {
+			return fmt.Errorf("invalid JSON: %w", err)
+		}
+		projects, ok := payload["projects"].(map[string]any)
+		if !ok {
+			return fmt.Errorf("no project-scoped MCP servers registered")
+		}
+		project, ok := projects[projectRoot].(map[string]any)
+		if !ok {
+			return fmt.Errorf("no MCP servers registered for %s", projectRoot)
+		}
+		servers, ok := project["mcpServers"].(map[string]any)
+		if !ok {
+			return fmt.Errorf("no MCP servers registered for %s", projectRoot)
+		}
+		server, ok := servers["codemap"]
+		if !ok {
+			return fmt.Errorf("missing codemap MCP server; repair with `codemap setup --agent claude`")
+		}
+		return validateDoctorMCPServer(server, "claude")
+	}
 }
 
 func validateCodexMCP(path string) error {
