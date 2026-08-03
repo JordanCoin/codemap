@@ -41,6 +41,10 @@ const (
 	debounceDefer
 )
 
+// controlRefreshWindow is how long the event loop waits for a control-event
+// burst to settle before refreshing configured files once.
+const controlRefreshWindow = 150 * time.Millisecond
+
 func newEventDebouncer(window time.Duration) *eventDebouncer {
 	pruneAfter := 10 * window
 	if pruneAfter < time.Second {
@@ -171,6 +175,34 @@ func (d *Daemon) eventLoop() {
 			d.handleEvent(event)
 		}
 	}
+
+	// Control events (config.json, any .gitignore) are coalesced separately
+	// from file events. Each refresh rebuilds the dependency graph, which runs
+	// ast-grep over the whole repo, and fsnotify routinely emits several events
+	// per save — so a trailing-edge debounce keeps one save to one rebuild.
+	controlTimer := time.NewTimer(time.Hour)
+	controlTimer.Stop()
+	defer controlTimer.Stop()
+	var controlTimerC <-chan time.Time
+	controlResetIgnoreCache := false
+	armControlTimer := func() {
+		if !controlTimer.Stop() {
+			select {
+			case <-controlTimer.C:
+			default:
+			}
+		}
+		controlTimer.Reset(controlRefreshWindow)
+		controlTimerC = controlTimer.C
+	}
+	refreshConfigured := func() {
+		controlTimerC = nil
+		resetIgnoreCache := controlResetIgnoreCache
+		controlResetIgnoreCache = false
+		if err := daemonRefreshConfiguredFiles(d, resetIgnoreCache); err == nil {
+			d.writeState()
+		}
+	}
 	defer func() {
 		for _, event := range debouncer.takeAll() {
 			d.handleEvent(event)
@@ -187,15 +219,19 @@ func (d *Daemon) eventLoop() {
 			flushDue(now)
 			armTimer(time.Now())
 
+		case <-controlTimerC:
+			refreshConfigured()
+
 		case event, ok := <-d.watcher.Events:
 			if !ok {
 				return
 			}
 			now := time.Now()
 			if resetIgnoreCache, control := d.filterControlEvent(event.Name); control {
-				if err := d.refreshConfiguredFiles(resetIgnoreCache); err == nil {
-					d.writeState()
-				}
+				// OR the flag across the burst: a coalesced refresh must still
+				// reset the ignore cache if any event in it was a .gitignore.
+				controlResetIgnoreCache = controlResetIgnoreCache || resetIgnoreCache
+				armControlTimer()
 				continue
 			}
 			for _, pending := range debouncer.takeDueBeforeEvent(event, now) {
