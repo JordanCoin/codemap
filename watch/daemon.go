@@ -212,6 +212,10 @@ func (d *Daemon) isConfiguredFile(path string) bool {
 	return scanner.MatchesFilters(path, filepath.Ext(path), cfg.Only, cfg.Exclude)
 }
 
+// daemonRefreshConfiguredFiles is the seam the event loop calls, so tests can
+// observe how often control events trigger a refresh.
+var daemonRefreshConfiguredFiles = (*Daemon).refreshConfiguredFiles
+
 func (d *Daemon) refreshConfiguredFiles(resetIgnoreCache bool) error {
 	gitCache := d.gitCache
 	if resetIgnoreCache {

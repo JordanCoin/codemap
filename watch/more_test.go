@@ -299,6 +299,7 @@ func TestConfiguredFilterChangeInvalidatesDependencyState(t *testing.T) {
 	d.graph.DepCtx = map[string]*DepContext{"old.go": {Importers: []string{"a.go"}}}
 	d.graph.HasDeps = true
 	d.graph.mu.Unlock()
+	baseline := publishedStateTime(t, root)
 	if err := os.WriteFile(configPath, []byte(`{"only":["sql"]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -306,14 +307,22 @@ func TestConfiguredFilterChangeInvalidatesDependencyState(t *testing.T) {
 	// not that the graph is left destroyed: refreshConfiguredFiles rebuilds it
 	// (see TestConfiguredFilterChangeRebuildsDependencyGraph), so assert the
 	// stale entries are gone rather than that the graph is nil.
+	//
+	// Wait on the published state advancing rather than on in-memory fields.
+	// The refresh nils the graph before rebuilding it, so an in-memory
+	// condition can be satisfied mid-refresh, before writeState has run, and
+	// the ReadState assertion below would then race the daemon.
 	waitForWatchCondition(t, 5*time.Second, func() bool {
+		if !publishedStateAdvanced(root, baseline) {
+			return false
+		}
 		d.graph.mu.RLock()
 		defer d.graph.mu.RUnlock()
 		if _, stale := d.graph.DepCtx["old.go"]; stale {
 			return false
 		}
 		if d.graph.FileGraph == nil {
-			return true
+			return false
 		}
 		_, stale := d.graph.FileGraph.Importers["old.go"]
 		return !stale
@@ -491,6 +500,7 @@ func TestConfiguredFilterChangeRebuildsDependencyGraph(t *testing.T) {
 	d.graph.DepCtx = map[string]*DepContext{"stale.go": {Importers: []string{"a.go"}}}
 	d.graph.HasDeps = true
 	d.graph.mu.Unlock()
+	baseline := publishedStateTime(t, root)
 
 	// Widen the filters; Go files stay configured, so dependency intelligence
 	// must come back rather than stay dropped.
@@ -498,6 +508,9 @@ func TestConfiguredFilterChangeRebuildsDependencyGraph(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForWatchCondition(t, 5*time.Second, func() bool {
+		if !publishedStateAdvanced(root, baseline) {
+			return false
+		}
 		d.graph.mu.RLock()
 		defer d.graph.mu.RUnlock()
 		if !d.graph.HasDeps || d.graph.FileGraph == nil {
@@ -506,4 +519,23 @@ func TestConfiguredFilterChangeRebuildsDependencyGraph(t *testing.T) {
 		_, stale := d.graph.FileGraph.Importers["stale.go"]
 		return !stale
 	})
+}
+
+// publishedStateTime returns the current state file timestamp, used as a
+// baseline so tests can wait for the daemon to publish a *newer* state rather
+// than sampling in-memory fields mid-refresh.
+func publishedStateTime(t *testing.T, root string) time.Time {
+	t.Helper()
+	state := ReadState(root)
+	if state == nil {
+		t.Fatal("daemon has not published initial state")
+	}
+	return state.UpdatedAt
+}
+
+// publishedStateAdvanced reports whether the daemon has written state newer
+// than baseline, which is the observable completion of a refresh cycle.
+func publishedStateAdvanced(root string, baseline time.Time) bool {
+	state := ReadState(root)
+	return state != nil && state.UpdatedAt.After(baseline)
 }
