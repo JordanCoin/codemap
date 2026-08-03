@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"codemap/config"
 	"codemap/limits"
 	"codemap/scanner"
 
@@ -56,13 +57,14 @@ func NewDaemon(root string, verbose bool) (*Daemon, error) {
 		done:     make(chan struct{}),
 		eventLog: filepath.Join(absRoot, ".codemap", "events.log"),
 		graph: &Graph{
-			Root:       absRoot,
-			Files:      make(map[string]*scanner.FileInfo),
-			DepCtx:     make(map[string]*DepContext),
-			State:      make(map[string]*FileState),
-			Events:     make([]Event, 0),
-			WorkingSet: NewWorkingSet(),
-			IsGitRepo:  isGitRepo,
+			Root:            absRoot,
+			Files:           make(map[string]*scanner.FileInfo),
+			ConfiguredFiles: make(map[string]struct{}),
+			DepCtx:          make(map[string]*DepContext),
+			State:           make(map[string]*FileState),
+			Events:          make([]Event, 0),
+			WorkingSet:      NewWorkingSet(),
+			IsGitRepo:       isGitRepo,
 		},
 	}
 
@@ -84,8 +86,8 @@ func (d *Daemon) Start() error {
 
 	// Compute dependency graph (best effort). Skip on very large repos to avoid
 	// expensive startup memory/CPU spikes in background hook flows.
-	fileCount := d.FileCount()
-	if fileCount <= limits.LargeRepoFileCount {
+	fileCount := d.ConfiguredFileCount()
+	if shouldComputeDependencyGraph(fileCount) {
 		d.computeDeps()
 	} else if d.verbose {
 		fmt.Printf("[watch] Skipping dependency graph for large repo (%d files)\n", fileCount)
@@ -94,6 +96,11 @@ func (d *Daemon) Start() error {
 	// Add directories to watcher
 	if err := d.addWatchDirs(); err != nil {
 		return fmt.Errorf("failed to add watch dirs: %w", err)
+	}
+	// The hidden state directory is otherwise skipped. Watch it so config edits
+	// can refresh the configured-file inventory; other state files stay ignored.
+	if err := d.watcher.Add(codemapDir); err != nil {
+		return fmt.Errorf("failed to watch .codemap dir: %w", err)
 	}
 
 	// Write initial state for hooks to read immediately
@@ -144,6 +151,19 @@ func (d *Daemon) FileCount() int {
 	return len(d.graph.Files)
 }
 
+// ConfiguredFileCount returns the number of files included by the active
+// project filters. FileCount intentionally continues to report all tracked
+// files for watch/activity consumers.
+func (d *Daemon) ConfiguredFileCount() int {
+	d.graph.mu.RLock()
+	defer d.graph.mu.RUnlock()
+	return len(d.graph.ConfiguredFiles)
+}
+
+func shouldComputeDependencyGraph(fileCount int) bool {
+	return fileCount <= limits.LargeRepoFileCount
+}
+
 // WriteInitialState writes state after initial scan (for hooks)
 func (d *Daemon) WriteInitialState() {
 	d.writeState()
@@ -157,9 +177,14 @@ func (d *Daemon) fullScan() error {
 	if err != nil {
 		return err
 	}
+	configuredFiles, err := scanner.ScanConfiguredFiles(d.root, d.gitCache)
+	if err != nil {
+		return err
+	}
 
 	d.graph.mu.Lock()
 	d.graph.Files = make(map[string]*scanner.FileInfo)
+	d.graph.ConfiguredFiles = make(map[string]struct{}, len(configuredFiles))
 	d.graph.State = make(map[string]*FileState)
 	for i := range files {
 		f := &files[i]
@@ -169,6 +194,9 @@ func (d *Daemon) fullScan() error {
 			d.graph.State[f.Path] = &FileState{Lines: lines, Size: f.Size}
 		}
 	}
+	for _, file := range configuredFiles {
+		d.graph.ConfiguredFiles[file.Path] = struct{}{}
+	}
 	d.graph.LastScan = time.Now()
 	d.graph.mu.Unlock()
 
@@ -176,6 +204,36 @@ func (d *Daemon) fullScan() error {
 		fmt.Printf("[watch] Full scan: %d files in %v\n", len(files), time.Since(start))
 	}
 
+	return nil
+}
+
+func (d *Daemon) isConfiguredFile(path string) bool {
+	cfg := config.Load(d.root)
+	return scanner.MatchesFilters(path, filepath.Ext(path), cfg.Only, cfg.Exclude)
+}
+
+func (d *Daemon) refreshConfiguredFiles(resetIgnoreCache bool) error {
+	gitCache := d.gitCache
+	if resetIgnoreCache {
+		gitCache = scanner.NewGitIgnoreCache(d.root)
+		d.gitCache = gitCache
+	}
+	files, err := scanner.ScanConfiguredFiles(d.root, gitCache)
+	if err != nil {
+		return err
+	}
+	configured := make(map[string]struct{}, len(files))
+	for _, file := range files {
+		configured[file.Path] = struct{}{}
+	}
+	d.graph.mu.Lock()
+	d.graph.ConfiguredFiles = configured
+	// Filters define dependency membership too. Do not publish the previous
+	// graph under a new configured-file count; rebuild lazily on restart.
+	d.graph.FileGraph = nil
+	d.graph.DepCtx = make(map[string]*DepContext)
+	d.graph.HasDeps = false
+	d.graph.mu.Unlock()
 	return nil
 }
 

@@ -192,6 +192,12 @@ func (d *Daemon) eventLoop() {
 				return
 			}
 			now := time.Now()
+			if resetIgnoreCache, control := d.filterControlEvent(event.Name); control {
+				if err := d.refreshConfiguredFiles(resetIgnoreCache); err == nil {
+					d.writeState()
+				}
+				continue
+			}
 			for _, pending := range debouncer.takeDueBeforeEvent(event, now) {
 				d.handleEvent(pending)
 			}
@@ -205,9 +211,11 @@ func (d *Daemon) eventLoop() {
 					if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
 						// Directory create - let it through to handleEvent
 					} else {
+						d.handleConfiguredMembershipEvent(event)
 						continue
 					}
 				} else {
+					d.handleConfiguredMembershipEvent(event)
 					continue
 				}
 			}
@@ -237,6 +245,45 @@ func (d *Daemon) eventLoop() {
 				fmt.Printf("[watch] Error: %v\n", err)
 			}
 		}
+	}
+}
+
+func (d *Daemon) filterControlEvent(path string) (resetIgnoreCache, control bool) {
+	clean := filepath.Clean(path)
+	if clean == filepath.Join(d.root, ".codemap", "config.json") {
+		return false, true
+	}
+	if filepath.Base(clean) == ".gitignore" {
+		return true, true
+	}
+	return false, false
+}
+
+func (d *Daemon) handleConfiguredMembershipEvent(event fsnotify.Event) {
+	relPath, err := filepath.Rel(d.root, event.Name)
+	if err != nil {
+		return
+	}
+	if path := filepath.ToSlash(relPath); path == ".codemap" || strings.HasPrefix(path, ".codemap/") {
+		return
+	}
+	present := event.Op&(fsnotify.Remove|fsnotify.Rename) == 0
+	if present {
+		info, err := os.Stat(event.Name)
+		if err != nil || info.IsDir() || (d.gitCache != nil && d.gitCache.ShouldIgnore(event.Name)) || !d.isConfiguredFile(relPath) {
+			present = false
+		}
+	}
+	d.graph.mu.Lock()
+	_, existed := d.graph.ConfiguredFiles[relPath]
+	if present {
+		d.graph.ConfiguredFiles[relPath] = struct{}{}
+	} else {
+		delete(d.graph.ConfiguredFiles, relPath)
+	}
+	d.graph.mu.Unlock()
+	if present != existed {
+		d.writeState()
 	}
 }
 
@@ -339,6 +386,7 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 			// files); if the path disappeared, clear any stale tracked entry.
 			if os.IsNotExist(err) {
 				delete(d.graph.Files, relPath)
+				delete(d.graph.ConfiguredFiles, relPath)
 				delete(d.graph.State, relPath)
 			}
 			d.graph.mu.Unlock()
@@ -393,6 +441,14 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 			Size: info.Size(),
 			Ext:  filepath.Ext(relPath),
 		}
+		if d.graph.ConfiguredFiles == nil {
+			d.graph.ConfiguredFiles = make(map[string]struct{})
+		}
+		if d.isConfiguredFile(relPath) {
+			d.graph.ConfiguredFiles[relPath] = struct{}{}
+		} else {
+			delete(d.graph.ConfiguredFiles, relPath)
+		}
 
 	case "REMOVE", "RENAME":
 		// Record what was lost
@@ -402,6 +458,7 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 			event.SizeDelta = -prev.Size
 		}
 		delete(d.graph.Files, relPath)
+		delete(d.graph.ConfiguredFiles, relPath)
 		delete(d.graph.State, relPath)
 	}
 
@@ -552,14 +609,19 @@ func (d *Daemon) writeState() {
 	}
 	eventsCopy := append([]Event(nil), events...)
 
+	configuredFileCount := len(d.graph.ConfiguredFiles)
+	if d.graph.ConfiguredFiles == nil {
+		configuredFileCount = len(d.graph.Files)
+	}
 	state := State{
-		UpdatedAt:    time.Now(),
-		FileCount:    len(d.graph.Files),
-		Hubs:         []string{},
-		Importers:    map[string][]string{},
-		Imports:      map[string][]string{},
-		RecentEvents: eventsCopy,
-		WorkingSet:   d.graph.WorkingSet.Snapshot(50),
+		UpdatedAt:           time.Now(),
+		FileCount:           len(d.graph.Files),
+		ConfiguredFileCount: &configuredFileCount,
+		Hubs:                []string{},
+		Importers:           map[string][]string{},
+		Imports:             map[string][]string{},
+		RecentEvents:        eventsCopy,
+		WorkingSet:          d.graph.WorkingSet.Snapshot(50),
 	}
 	if d.graph.FileGraph != nil {
 		state.Hubs = d.graph.FileGraph.HubFiles()

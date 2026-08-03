@@ -303,7 +303,17 @@ type Filters struct {
 // ScanConfiguredFiles scans using the active setup root's project filters.
 func ScanConfiguredFiles(root string, cache *GitIgnoreCache) ([]FileInfo, error) {
 	cfg := config.Load(root)
-	return ScanFiles(root, cache, cfg.Only, cfg.Exclude)
+	files, err := ScanFiles(root, cache, cfg.Only, cfg.Exclude)
+	if err != nil {
+		return nil, err
+	}
+	configured := files[:0]
+	for _, file := range files {
+		if path := filepath.ToSlash(file.Path); path != ".codemap" && !strings.HasPrefix(path, ".codemap/") {
+			configured = append(configured, file)
+		}
+	}
+	return configured, nil
 }
 
 func filterAnalyses(analyses []FileAnalysis, filters Filters) []FileAnalysis {

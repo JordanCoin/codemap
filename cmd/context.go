@@ -193,6 +193,7 @@ func buildProjectContext(root string, info *hubInfo) ProjectContext {
 	ctx := ProjectContext{
 		Root: root,
 	}
+	configuredFileCountKnown := false
 
 	// Get branch
 	if branch, ok := gitCurrentBranch(root); ok {
@@ -201,7 +202,10 @@ func buildProjectContext(root string, info *hubInfo) ProjectContext {
 
 	// Count files and detect languages from daemon state
 	if state := watch.ReadState(root); state != nil {
-		ctx.FileCount = state.FileCount
+		if count, ok := state.ConfiguredCount(); ok {
+			ctx.FileCount = count
+			configuredFileCountKnown = true
+		}
 		ctx.HubCount = len(state.Hubs)
 		if len(state.Hubs) > 5 {
 			ctx.TopHubs = state.Hubs[:5]
@@ -246,7 +250,7 @@ func buildProjectContext(root string, info *hubInfo) ProjectContext {
 	sort.Strings(ctx.Languages)
 
 	// Fallback file count from quick scan if daemon wasn't available
-	if ctx.FileCount == 0 && len(ctx.Languages) > 0 {
+	if !configuredFileCountKnown && ctx.FileCount == 0 && len(ctx.Languages) > 0 {
 		ctx.FileCount = countSourceFiles(root)
 	}
 

@@ -278,6 +278,37 @@ func TestShowDiffVsMainUsesLightweightPath(t *testing.T) {
 	}
 }
 
+func TestConfiguredStateFileCountDrivesSessionStartGates(t *testing.T) {
+	root := t.TempDir()
+	writeProjectConfig(t, root, config.ProjectConfig{Only: []string{"go"}})
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("not source\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	configuredCount := 1
+	state := &watch.State{
+		FileCount:           limits.LargeRepoFileCount + 1,
+		ConfiguredFileCount: &configuredCount,
+	}
+	fileCount, known := configuredStateFileCount(root, state)
+
+	if !known || fileCount != configuredCount {
+		t.Fatalf("configuredStateFileCount() = %d, %v; want %d, true", fileCount, known, configuredCount)
+	}
+	if got, want := limits.AdaptiveDepth(fileCount), limits.AdaptiveDepth(configuredCount); got != want {
+		t.Fatalf("adaptive depth = %d, want %d", got, want)
+	}
+	if shouldSkipHubAnalysis(fileCount, known) {
+		t.Fatal("expected configured small repo to keep hub analysis enabled")
+	}
+	if shouldUseLightweightDiff(fileCount, known) {
+		t.Fatal("expected configured small repo to keep rich diff analysis enabled")
+	}
+}
+
 func TestExtractFilePathAndEditHooks(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "pkg", "types.go")

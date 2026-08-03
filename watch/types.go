@@ -39,27 +39,39 @@ type DepContext struct {
 
 // Graph holds the live code graph state
 type Graph struct {
-	mu         sync.RWMutex
-	Root       string
-	Files      map[string]*scanner.FileInfo // path -> file info
-	FileGraph  *scanner.FileGraph           // internal file-to-file dependencies
-	DepCtx     map[string]*DepContext       // path -> dependency context (precomputed)
-	State      map[string]*FileState        // path -> line/size/mtime cache for deltas
-	Events     []Event
-	WorkingSet *WorkingSet // session working set
-	LastScan   time.Time
-	IsGitRepo  bool
-	HasDeps    bool // whether deps were successfully computed
+	mu              sync.RWMutex
+	Root            string
+	Files           map[string]*scanner.FileInfo // path -> file info
+	ConfiguredFiles map[string]struct{}          // paths included by the active project filters
+	FileGraph       *scanner.FileGraph           // internal file-to-file dependencies
+	DepCtx          map[string]*DepContext       // path -> dependency context (precomputed)
+	State           map[string]*FileState        // path -> line/size cache for deltas
+	Events          []Event
+	WorkingSet      *WorkingSet // session working set
+	LastScan        time.Time
+	IsGitRepo       bool
+	HasDeps         bool // whether deps were successfully computed
 }
 
 // State represents the daemon state that hooks can read
 type State struct {
-	UpdatedAt    time.Time             `json:"updated_at"`
-	FileCount    int                   `json:"file_count"`
-	Hubs         []string              `json:"hubs"`
-	Importers    map[string][]string   `json:"importers"`     // file -> files that import it
-	Imports      map[string][]string   `json:"imports"`       // file -> files it imports
-	RecentEvents []Event               `json:"recent_events"` // last 50 events for timeline
-	WorkingSet   *WorkingSet           `json:"working_set,omitempty"`
-	Coverage     scanner.GraphCoverage `json:"coverage,omitempty"`
+	UpdatedAt           time.Time             `json:"updated_at"`
+	FileCount           int                   `json:"file_count"`
+	ConfiguredFileCount *int                  `json:"configured_file_count,omitempty"`
+	Hubs                []string              `json:"hubs"`
+	Importers           map[string][]string   `json:"importers"`     // file -> files that import it
+	Imports             map[string][]string   `json:"imports"`       // file -> files it imports
+	RecentEvents        []Event               `json:"recent_events"` // last 50 events for timeline
+	WorkingSet          *WorkingSet           `json:"working_set,omitempty"`
+	Coverage            scanner.GraphCoverage `json:"coverage,omitempty"`
+}
+
+// ConfiguredCount returns the persisted count for the active project filters.
+// Old state files did not include this field, so callers can distinguish them
+// from a current state that legitimately contains zero configured files.
+func (s *State) ConfiguredCount() (int, bool) {
+	if s == nil || s.ConfiguredFileCount == nil {
+		return 0, false
+	}
+	return *s.ConfiguredFileCount, true
 }
