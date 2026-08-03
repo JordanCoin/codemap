@@ -19,3 +19,16 @@ coverage.out
 
 # Local settings
 .claude/settings.local.json
+
+# Local agent artifacts. Machine-specific or generated, never authored here:
+# .codex/config.toml pins absolute paths for one machine (mirrors how
+# .claude/settings.local.json is ignored while .claude/ is not, so project-scoped
+# .codex/hooks.json can still be committed); .agents/skills/ is populated by
+# `codemap plugin install` while .agents/plugins/marketplace.json stays tracked;
+# AGENTS.md is produced by agent tooling from CLAUDE.md.
+.codex/config.toml
+.agents/skills/
+/AGENTS.md
+
+# Rust prototype build output
+/codemapd/
