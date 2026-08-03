@@ -302,10 +302,21 @@ func TestConfiguredFilterChangeInvalidatesDependencyState(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(`{"only":["sql"]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	waitForWatchCondition(t, 2*time.Second, func() bool {
+	// The invariant is that state computed under the old filters is discarded,
+	// not that the graph is left destroyed: refreshConfiguredFiles rebuilds it
+	// (see TestConfiguredFilterChangeRebuildsDependencyGraph), so assert the
+	// stale entries are gone rather than that the graph is nil.
+	waitForWatchCondition(t, 5*time.Second, func() bool {
 		d.graph.mu.RLock()
 		defer d.graph.mu.RUnlock()
-		return !d.graph.HasDeps && d.graph.FileGraph == nil && len(d.graph.DepCtx) == 0
+		if _, stale := d.graph.DepCtx["old.go"]; stale {
+			return false
+		}
+		if d.graph.FileGraph == nil {
+			return true
+		}
+		_, stale := d.graph.FileGraph.Importers["old.go"]
+		return !stale
 	})
 	state := ReadState(root)
 	if state == nil || len(state.Hubs) != 0 || len(state.Imports) != 0 || len(state.Importers) != 0 {
@@ -445,4 +456,54 @@ func TestDaemonStartTracksWriteEventsAndState(t *testing.T) {
 	if state == nil || len(state.RecentEvents) == 0 {
 		t.Fatalf("expected watch state with recent events, got %+v", state)
 	}
+}
+
+// TestConfiguredFilterChangeRebuildsDependencyGraph pins that invalidating the
+// dependency graph after a filter change is followed by rebuilding it. Dropping
+// it and waiting for a restart leaves the daemon serving no hub or importer
+// intelligence for the rest of its life, so every hook that reads daemon state
+// silently degrades after a single config edit.
+func TestConfiguredFilterChangeRebuildsDependencyGraph(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, ".codemap", "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"only":["go"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d, err := NewDaemon(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer d.Stop()
+
+	// Plant a sentinel so a rebuilt graph is distinguishable both from the
+	// startup graph and from one that was merely dropped.
+	d.graph.mu.Lock()
+	d.graph.FileGraph = &scanner.FileGraph{Importers: map[string][]string{"stale.go": {"a.go"}}}
+	d.graph.DepCtx = map[string]*DepContext{"stale.go": {Importers: []string{"a.go"}}}
+	d.graph.HasDeps = true
+	d.graph.mu.Unlock()
+
+	// Widen the filters; Go files stay configured, so dependency intelligence
+	// must come back rather than stay dropped.
+	if err := os.WriteFile(configPath, []byte(`{"only":["go","md"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitForWatchCondition(t, 5*time.Second, func() bool {
+		d.graph.mu.RLock()
+		defer d.graph.mu.RUnlock()
+		if !d.graph.HasDeps || d.graph.FileGraph == nil {
+			return false
+		}
+		_, stale := d.graph.FileGraph.Importers["stale.go"]
+		return !stale
+	})
 }
