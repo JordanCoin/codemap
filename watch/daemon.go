@@ -228,12 +228,20 @@ func (d *Daemon) refreshConfiguredFiles(resetIgnoreCache bool) error {
 	}
 	d.graph.mu.Lock()
 	d.graph.ConfiguredFiles = configured
-	// Filters define dependency membership too. Do not publish the previous
-	// graph under a new configured-file count; rebuild lazily on restart.
+	// Filters define dependency membership too, so the previous graph must not
+	// be published under a new configured-file count.
 	d.graph.FileGraph = nil
 	d.graph.DepCtx = make(map[string]*DepContext)
 	d.graph.HasDeps = false
 	d.graph.mu.Unlock()
+
+	// Invalidation alone would leave the daemon serving no hub or importer
+	// intelligence until it restarts, so every hook reading daemon state would
+	// silently degrade after one config edit. Rebuild under the same size guard
+	// Start uses. computeDeps takes the lock itself, so call it unlocked.
+	if shouldComputeDependencyGraph(len(configured)) {
+		d.computeDeps()
+	}
 	return nil
 }
 
