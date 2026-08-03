@@ -58,8 +58,10 @@ func TestControlEventBurstTriggersOneRefresh(t *testing.T) {
 	}
 
 	waitForWatchCondition(t, 5*time.Second, func() bool { return refreshes.Load() >= 1 })
-	// Let any further coalesced refreshes land before counting.
-	time.Sleep(500 * time.Millisecond)
+	// Let any further refresh land before counting. Derived from the coalescing
+	// window so this stays correct if the window changes; several multiples so a
+	// slow CI machine does not read a late second refresh as a pass.
+	time.Sleep(5 * controlRefreshWindow)
 
 	if got := refreshes.Load(); got != 1 {
 		t.Fatalf("control event burst caused %d refreshes, want 1", got)

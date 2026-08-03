@@ -289,8 +289,8 @@ type doctorScope struct {
 // Agents merge user-level configuration into every project, so a hook or MCP
 // server defined in the user scope genuinely applies to this project. Reporting
 // it MISS because the project file does not repeat it describes the file layout
-// rather than the effective configuration. When every scope fails, the first
-// scope's failure is reported, since that is the one the user is expected to fix.
+// rather than the effective configuration. When every scope fails, the failure
+// reported is chosen by the rule described below rather than by scope order.
 func checkScopedFile(label string, scopes []doctorScope, validate func(string) error, failures *int) {
 	// When every scope fails, prefer reporting one that exists but is wired up
 	// wrong over one whose file is simply absent: the former is the user's
@@ -327,7 +327,7 @@ func checkScopedFile(label string, scopes []doctorScope, validate func(string) e
 		return
 	}
 
-	*failures++
+	(*failures)++
 	switch {
 	case misconfigured != nil:
 		fmt.Printf("MISS %s: %s (%v)\n", label, misconfigured.path, misconfiguredErr)
