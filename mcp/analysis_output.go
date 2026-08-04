@@ -89,7 +89,7 @@ func newImportersOutput(root, file string, graph *scanner.FileGraph) ImportersOu
 		Kind: kind, Root: root, Mode: "importers", File: file,
 		Importers: boundedImporters, Imports: boundedImports, HubImports: boundedHubs,
 		ImporterCount: len(importers), IsHub: graph.IsHub(file),
-		CoverageStatus: graph.Coverage.Status, CoverageNotes: nonNilCopy(graph.Coverage.Notes),
+		CoverageStatus: string(graph.Coverage.Status), CoverageNotes: nonNilCopy(graph.Coverage.Notes),
 		Truncated: omittedCount > 0, OmittedCount: omittedCount,
 	}
 }

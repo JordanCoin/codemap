@@ -64,7 +64,11 @@ func BuildFileGraphFromAnalyses(ctx context.Context, root string, analyses []Fil
 func buildFileGraphFromAnalysesWithCargoMetadata(ctx context.Context, root string, analyses []FileAnalysis, loader cargoMetadataLoader) (*FileGraph, error) {
 	cfg := config.Load(root)
 	filters := Filters{Only: cfg.Only, Exclude: cfg.Exclude}
-	return buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx, root, filterAnalyses(analyses, filters), filters, loader)
+	filtered, err := filterAnalysesContext(ctx, analyses, filters)
+	if err != nil {
+		return nil, err
+	}
+	return buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx, root, filtered, filters, loader)
 }
 
 func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, root string, analyses []FileAnalysis, filters Filters, loader cargoMetadataLoader, sources ...ScanSourceOutcome) (*FileGraph, error) {

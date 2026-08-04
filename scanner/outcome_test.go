@@ -2,6 +2,8 @@ package scanner
 
 import (
 	"context"
+
+	"codemap/analysis"
 	"errors"
 	"os"
 	"path/filepath"
@@ -20,11 +22,11 @@ func requireSourceOutcome(t *testing.T, coverage GraphCoverage, source string) S
 }
 
 func TestGraphCoverageSourceOutcomesPreserveSemanticCoverage(t *testing.T) {
-	coverage := GraphCoverage{Status: "partial", Notes: []string{"dynamic routes unresolved"}}
+	coverage := GraphCoverage{Status: analysis.CoveragePartial, Notes: []string{"dynamic routes unresolved"}}
 	coverage.AddSource(ScanSourceOutcome{Name: "ast-grep", Status: ScanSourceAuthoritative})
 	coverage.AddSource(ScanSourceOutcome{Name: "cargo-metadata", Status: ScanSourceFallback, Detail: "1 of 1 Cargo manifests used fallback topology"})
 
-	if got, want := coverage.Status, "partial"; got != want {
+	if got, want := coverage.Status, analysis.CoveragePartial; got != want {
 		t.Fatalf("status = %q, want %q", got, want)
 	}
 	if got := requireSourceOutcome(t, coverage, "ast-grep").Status; got != ScanSourceAuthoritative {
@@ -158,5 +160,25 @@ func TestNonCargoGraphHasNoCargoOutcome(t *testing.T) {
 		if outcome.Name == "cargo-metadata" {
 			t.Fatalf("unexpected Cargo outcome: %#v", outcome)
 		}
+	}
+}
+
+func TestCoverageFromSourcesMatrix(t *testing.T) {
+	tests := []struct {
+		name    string
+		sources []analysis.Source
+		want    analysis.CoverageStatus
+	}{
+		{"empty", nil, analysis.CoverageUnavailable},
+		{"authoritative", []analysis.Source{{Name: "ast-grep", Status: analysis.SourceAuthoritative}}, analysis.CoverageComplete},
+		{"fallback", []analysis.Source{{Name: "ast-grep", Status: analysis.SourceFallback}}, analysis.CoveragePartial},
+		{"timeout", []analysis.Source{{Name: "ast-grep", Status: analysis.SourceTimeout}}, analysis.CoverageUnavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := CoverageFromSources(tt.sources).Status; got != tt.want {
+				t.Fatalf("CoverageFromSources(%v) = %q, want %q", tt.sources, got, tt.want)
+			}
+		})
 	}
 }

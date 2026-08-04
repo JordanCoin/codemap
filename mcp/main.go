@@ -844,9 +844,9 @@ func mcpCoverageText(fg *scanner.FileGraph) string {
 		return ""
 	}
 	if len(fg.Coverage.Notes) == 0 {
-		return "\n\nCoverage: " + fg.Coverage.Status
+		return "\n\nCoverage: " + string(fg.Coverage.Status)
 	}
-	return "\n\nCoverage: " + fg.Coverage.Status + " — " + strings.Join(fg.Coverage.Notes, "; ")
+	return "\n\nCoverage: " + string(fg.Coverage.Status) + " — " + strings.Join(fg.Coverage.Notes, "; ")
 }
 
 func handleGetHandoff(ctx context.Context, req *mcp.CallToolRequest, input HandoffInput) (*mcp.CallToolResult, any, error) {

@@ -28,9 +28,9 @@ type ScanOutcome struct {
 
 // GraphCoverage describes graph blind spots and scanner provenance.
 type GraphCoverage struct {
-	Status  string            `json:"status,omitempty"`
-	Notes   []string          `json:"notes,omitempty"`
-	Sources []analysis.Source `json:"sources,omitempty"`
+	Status  analysis.CoverageStatus `json:"status,omitempty"`
+	Notes   []string                `json:"notes,omitempty"`
+	Sources []analysis.Source       `json:"sources,omitempty"`
 }
 
 // AddSource records one scanner outcome and marks degraded results partial.
@@ -42,7 +42,7 @@ func (c *GraphCoverage) AddSource(outcome ScanSourceOutcome) {
 	if outcome.Status == ScanSourceAuthoritative {
 		return
 	}
-	c.Status = "partial"
+	c.Status = analysis.CoveragePartial
 	if outcome.Detail != "" {
 		c.Notes = append(c.Notes, outcome.Detail)
 	}

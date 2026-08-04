@@ -336,11 +336,6 @@ func ScanConfiguredFiles(ctx context.Context, root string, cache *GitIgnoreCache
 	return configured, nil
 }
 
-func filterAnalyses(analyses []FileAnalysis, filters Filters) []FileAnalysis {
-	filtered, _ := filterAnalysesContext(context.Background(), analyses, filters)
-	return filtered
-}
-
 func filterAnalysesContext(ctx context.Context, analyses []FileAnalysis, filters Filters) ([]FileAnalysis, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -364,7 +359,8 @@ func filterAnalysesContext(ctx context.Context, analyses []FileAnalysis, filters
 
 func filterConfiguredAnalyses(root string, analyses []FileAnalysis) []FileAnalysis {
 	cfg := config.Load(root)
-	return filterAnalyses(analyses, Filters{Only: cfg.Only, Exclude: cfg.Exclude})
+	filtered, _ := filterAnalysesContext(context.Background(), analyses, Filters{Only: cfg.Only, Exclude: cfg.Exclude})
+	return filtered
 }
 
 // ScanForDeps performs dependency analysis with explicit filters, provenance,

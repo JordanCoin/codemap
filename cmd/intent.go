@@ -117,7 +117,7 @@ func classifyIntent(prompt string, files []string, info *hubInfo, cfg config.Pro
 		Scope:     "single-file",
 	}
 	if info != nil {
-		intent.DependencyCoverage = info.Coverage.Status
+		intent.DependencyCoverage = string(info.Coverage.Status)
 		intent.CoverageNotes = append([]string(nil), info.Coverage.Notes...)
 	}
 

@@ -1363,7 +1363,7 @@ func buildImportersReportFromGraph(root, file string, fg *scanner.FileGraph) sca
 		Imports:        imports,
 		ImporterCount:  len(importers),
 		IsHub:          fg.IsHub(file),
-		CoverageStatus: fg.Coverage.Status,
+		CoverageStatus: string(fg.Coverage.Status),
 		CoverageNotes:  append([]string(nil), fg.Coverage.Notes...),
 	}
 

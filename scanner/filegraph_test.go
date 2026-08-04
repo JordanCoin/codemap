@@ -2,6 +2,8 @@ package scanner
 
 import (
 	"context"
+
+	"codemap/analysis"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -129,7 +131,7 @@ edition = "2021"
 	if got := graph.Imports["src/lib.rs"]; slices.Contains(got, "src/custom.rs") {
 		t.Fatalf("#[path] module should remain unresolved, got imports %#v", got)
 	}
-	if graph.Coverage.Status != "partial" || len(graph.Coverage.Notes) == 0 {
+	if graph.Coverage.Status != analysis.CoveragePartial || len(graph.Coverage.Notes) == 0 {
 		t.Fatalf("coverage = %+v, want explicit partial Rust coverage", graph.Coverage)
 	}
 }
