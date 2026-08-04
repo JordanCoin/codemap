@@ -1,6 +1,7 @@
 package render
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -69,7 +70,7 @@ func Depgraph(w io.Writer, project scanner.DepsProject) {
 	}
 
 	// Use BuildFileGraph for accurate file-level dependency resolution
-	fg, err := scanner.BuildFileGraph(project.Root)
+	fg, err := scanner.BuildFileGraph(context.Background(), project.Root, scanner.ConfiguredFilters(project.Root))
 	var internalDeps map[string][]string
 	var depCounts map[string]int
 	if err == nil && fg != nil {

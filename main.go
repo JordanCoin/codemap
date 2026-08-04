@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -368,7 +369,7 @@ func main() {
 	var diffInfo *scanner.DiffInfo
 	if *diffMode {
 		var err error
-		diffInfo, err = scanner.GitDiffInfo(absRoot, *diffRef)
+		diffInfo, err = scanner.GitDiffInfo(context.Background(), absRoot, *diffRef)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error getting git diff: %v\n", err)
 			fmt.Fprintf(os.Stderr, "Make sure '%s' is a valid branch/ref\n", *diffRef)
@@ -404,7 +405,7 @@ func main() {
 	}
 
 	// Scan files
-	files, err := scanner.ScanFiles(root, gitCache, only, exclude)
+	files, err := scanner.ScanFiles(context.Background(), root, gitCache, only, exclude)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error walking tree: %v\n", err)
 		os.Exit(1)
@@ -415,7 +416,11 @@ func main() {
 	var activeDiffRef string
 	if diffInfo != nil {
 		files = scanner.FilterToChangedWithInfo(files, diffInfo)
-		impact = scanner.AnalyzeImpact(absRoot, files)
+		impact, err = scanner.AnalyzeImpact(context.Background(), absRoot, files)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error analyzing impact: %v\n", err)
+			os.Exit(1)
+		}
 		activeDiffRef = *diffRef
 	}
 
@@ -453,22 +458,22 @@ type stdinManifest struct {
 }
 
 func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFiles map[string]bool, stdinMode bool, filters scanner.Filters) {
-	var analyses []FileAnalysis
+	var outcome scanner.ScanOutcome
 	var externalDeps map[string][]string
+	var graph *scanner.FileGraph
 	var err error
 
 	if stdinMode {
-		analyses, externalDeps, err = runDepsFromStdin(filters)
+		outcome, externalDeps, graph, err = runDepsFromStdin(filters)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading stdin manifest: %v\n", err)
 			os.Exit(1)
 		}
-		// Use the manifest root as absRoot if provided
 		if externalDeps == nil {
 			externalDeps = make(map[string][]string)
 		}
 	} else {
-		analyses, err = scanForDepsWithHint(root, filters)
+		outcome, err = scanForDepsOutcomeWithHint(root, filters)
 		if err != nil {
 			if errors.Is(err, scanner.ErrAstGrepNotFound) {
 				printAstGrepInstallHint(os.Stderr, err)
@@ -477,21 +482,23 @@ func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFil
 			}
 			os.Exit(1)
 		}
-		externalDeps = scanner.ReadExternalDeps(absRoot)
+		externalDeps, err = scanner.ReadExternalDeps(context.Background(), absRoot, 0)
+		if err != nil {
+			externalDeps = make(map[string][]string)
+		}
+		graph, err = scanner.BuildFileGraphFromOutcome(context.Background(), absRoot, outcome, filters)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error building dependency graph: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	// Filter to changed files if --diff specified
 	if changedFiles != nil {
-		analyses = scanner.FilterAnalysisToChanged(analyses, changedFiles)
+		outcome.Analyses = scanner.FilterAnalysisToChanged(outcome.Analyses, changedFiles)
 	}
 
-	depsProject := scanner.DepsProject{
-		Root:         absRoot,
-		Mode:         "deps",
-		Files:        analyses,
-		ExternalDeps: externalDeps,
-		DiffRef:      diffRef,
-	}
+	depsProject := scanner.NewDepsProjectWithCoverage(absRoot, outcome.Analyses, externalDeps, diffRef, scanner.CoverageFromSources(graph.Coverage.Sources))
 
 	// Render or output JSON
 	if jsonMode {
@@ -501,51 +508,60 @@ func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFil
 	}
 }
 
-// scanForDepsWithHint wraps scanner.ScanForDepsWithFilters (extracted for testability).
-func scanForDepsWithHint(root string, filters scanner.Filters) ([]FileAnalysis, error) {
-	return scanner.ScanForDepsWithFilters(root, filters)
+// scanForDepsOutcomeWithHint wraps scanner.ScanForDeps (extracted for testability).
+func scanForDepsOutcomeWithHint(root string, filters scanner.Filters) (scanner.ScanOutcome, error) {
+	return scanner.ScanForDeps(context.Background(), root, filters)
 }
 
 // runDepsFromStdin reads a JSON manifest from stdin, writes files to a temp
 // directory, runs ast-grep on it, and returns the results with paths matching
 // the original manifest.
-func runDepsFromStdin(filters scanner.Filters) ([]FileAnalysis, map[string][]string, error) {
+func runDepsFromStdin(filters scanner.Filters) (scanner.ScanOutcome, map[string][]string, *scanner.FileGraph, error) {
 	var manifest stdinManifest
 	if err := json.NewDecoder(os.Stdin).Decode(&manifest); err != nil {
-		return nil, nil, fmt.Errorf("invalid JSON: %w", err)
+		return scanner.ScanOutcome{}, nil, nil, fmt.Errorf("invalid JSON: %w", err)
 	}
 
 	if len(manifest.Files) == 0 {
-		return nil, nil, nil
+		return scanner.ScanOutcome{}, nil, nil, nil
 	}
 
 	// Create temp directory and write manifest files
 	tempDir, err := os.MkdirTemp("", "codemap-stdin-*")
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create temp dir: %w", err)
+		return scanner.ScanOutcome{}, nil, nil, fmt.Errorf("failed to create temp dir: %w", err)
 	}
 	defer os.RemoveAll(tempDir)
 
 	for _, f := range manifest.Files {
 		dest := filepath.Join(tempDir, f.Path)
 		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
-			return nil, nil, fmt.Errorf("mkdir %s: %w", filepath.Dir(dest), err)
+			return scanner.ScanOutcome{}, nil, nil, fmt.Errorf("mkdir %s: %w", filepath.Dir(dest), err)
 		}
 		if err := os.WriteFile(dest, []byte(f.Content), 0644); err != nil {
-			return nil, nil, fmt.Errorf("write %s: %w", f.Path, err)
+			return scanner.ScanOutcome{}, nil, nil, fmt.Errorf("write %s: %w", f.Path, err)
 		}
 	}
 
 	// Run ast-grep on temp directory
-	analyses, err := scanner.ScanForDepsWithFilters(tempDir, filters)
+	outcome, err := scanner.ScanForDeps(context.Background(), tempDir, filters)
 	if err != nil {
-		return nil, nil, err
+		return scanner.ScanOutcome{}, nil, nil, err
 	}
 
 	// Read external deps from temp directory (manifest may include go.mod etc.)
-	externalDeps := scanner.ReadExternalDeps(tempDir)
+	externalDeps, err := scanner.ReadExternalDeps(context.Background(), tempDir, 0)
+	if err != nil {
+		return scanner.ScanOutcome{}, nil, nil, err
+	}
 
-	return analyses, externalDeps, nil
+	// Build the graph in the temp directory so coverage provenance is honest.
+	graph, err := scanner.BuildFileGraphFromOutcome(context.Background(), tempDir, outcome, filters)
+	if err != nil {
+		return scanner.ScanOutcome{}, nil, nil, err
+	}
+
+	return outcome, externalDeps, graph, nil
 }
 
 // FileAnalysis is a type alias for use in main package.
@@ -591,7 +607,7 @@ func runWatchMode(root string, verbose bool) {
 }
 
 func buildImportersReport(root, file string, filters scanner.Filters) (scanner.ImportersReport, error) {
-	fg, err := scanner.BuildFileGraphWithFilters(root, filters)
+	fg, err := scanner.BuildFileGraph(context.Background(), root, filters)
 	if err != nil {
 		return scanner.ImportersReport{}, err
 	}

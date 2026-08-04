@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -300,8 +301,8 @@ func TestBlastRadiusOmitsEmptyImporterSections(t *testing.T) {
 	}
 }
 
-// Finding #10: BuildFileGraphFromAnalyses / AnalyzeImpactFromAnalyses must match
-// the scanning wrappers so the single-scan refactor is behavior-preserving.
+// Finding #10: injected scan outcomes must match the scanning wrappers so the
+// single-scan refactor preserves both graph results and provenance.
 func TestBlastRadiusSingleScanParity(t *testing.T) {
 	requireBlastRadiusTools(t)
 	root := makeBlastRadiusHubRepo(t)
@@ -314,27 +315,33 @@ func TestBlastRadiusSingleScanParity(t *testing.T) {
 	cfg := config.Load(root)
 	filters := scanner.Filters{Only: cfg.Only, Exclude: cfg.Exclude}
 
-	analyses, err := scanner.ScanForDepsWithFilters(root, filters)
+	outcome, err := scanner.ScanForDeps(context.Background(), root, filters)
 	if err != nil {
-		t.Fatalf("ScanForDepsWithFilters: %v", err)
+		t.Fatalf("ScanForDeps: %v", err)
 	}
 
-	fgWrap, err := scanner.BuildFileGraph(root)
+	fgWrap, err := scanner.BuildFileGraph(context.Background(), root, filters)
 	if err != nil {
 		t.Fatalf("BuildFileGraph: %v", err)
 	}
-	fgInjected, err := scanner.BuildFileGraphFromFilteredAnalyses(root, analyses, filters)
+	fgInjected, err := scanner.BuildFileGraphFromOutcome(context.Background(), root, outcome, filters)
 	if err != nil {
-		t.Fatalf("BuildFileGraphFromFilteredAnalyses: %v", err)
+		t.Fatalf("BuildFileGraphFromOutcome: %v", err)
 	}
 	if len(fgWrap.Importers["pkg/hub/hub.go"]) != len(fgInjected.Importers["pkg/hub/hub.go"]) {
 		t.Fatalf("file graph importer parity mismatch: %v vs %v",
 			fgWrap.Importers["pkg/hub/hub.go"], fgInjected.Importers["pkg/hub/hub.go"])
 	}
+	if !reflect.DeepEqual(fgWrap.Coverage.Sources, fgInjected.Coverage.Sources) {
+		t.Fatalf("file graph provenance mismatch: %#v vs %#v", fgWrap.Coverage.Sources, fgInjected.Coverage.Sources)
+	}
 
 	changed := []scanner.FileInfo{{Path: "pkg/hub/hub.go"}}
-	impWrap := scanner.AnalyzeImpact(root, changed)
-	impInjected := scanner.AnalyzeImpactFromAnalyses(changed, analyses)
+	impWrap, err := scanner.AnalyzeImpact(context.Background(), root, changed)
+	if err != nil {
+		t.Fatalf("AnalyzeImpact: %v", err)
+	}
+	impInjected := scanner.AnalyzeImpactFromAnalyses(changed, outcome.Analyses)
 	if len(impWrap) != len(impInjected) {
 		t.Fatalf("impact parity mismatch: %v vs %v", impWrap, impInjected)
 	}

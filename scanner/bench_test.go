@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"context"
 	"os"
 	"testing"
 	"time"
@@ -23,18 +24,18 @@ func TestBenchmarkAstGrep(t *testing.T) {
 	defer scanner.Close()
 
 	start := time.Now()
-	results, err := scanner.ScanDirectory(testDir)
+	outcome, err := scanner.ScanDirectory(context.Background(), testDir)
 	if err != nil {
 		t.Fatalf("ast-grep scan error: %v", err)
 	}
 
 	var totalFuncs, totalImports int
-	for _, r := range results {
+	for _, r := range outcome.Analyses {
 		totalFuncs += len(r.Functions)
 		totalImports += len(r.Imports)
 	}
 	t.Logf("ast-grep: %v (%d functions, %d imports, %d files)",
-		time.Since(start), totalFuncs, totalImports, len(results))
+		time.Since(start), totalFuncs, totalImports, len(outcome.Analyses))
 }
 
 func TestAstGrepScanner(t *testing.T) {
@@ -49,22 +50,22 @@ func TestAstGrepScanner(t *testing.T) {
 	}
 
 	// Test on codemap's own codebase
-	results, err := scanner.ScanDirectory("..")
+	outcome, err := scanner.ScanDirectory(context.Background(), "..")
 	if err != nil {
 		t.Fatalf("ScanDirectory failed: %v", err)
 	}
 
-	if len(results) == 0 {
+	if len(outcome.Analyses) == 0 {
 		t.Error("Expected some results")
 	}
 
 	var totalFuncs, totalImports int
-	for _, r := range results {
+	for _, r := range outcome.Analyses {
 		totalFuncs += len(r.Functions)
 		totalImports += len(r.Imports)
 	}
 
-	t.Logf("Scanned %d files, found %d functions and %d imports", len(results), totalFuncs, totalImports)
+	t.Logf("Scanned %d files, found %d functions and %d imports", len(outcome.Analyses), totalFuncs, totalImports)
 
 	// Should find some Go functions
 	if totalFuncs == 0 {

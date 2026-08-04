@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -241,7 +242,10 @@ requests
 		t.Fatal(err)
 	}
 
-	deps := ReadExternalDeps(tmpDir)
+	deps, err := ReadExternalDeps(context.Background(), tmpDir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Check Go deps
 	if goDeps, ok := deps["go"]; !ok {
@@ -290,7 +294,10 @@ func TestReadExternalDepsIgnoresNodeModules(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	deps := ReadExternalDeps(tmpDir)
+	deps, err := ReadExternalDeps(context.Background(), tmpDir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Should only have the root package.json deps
 	if jsDeps, ok := deps["javascript"]; ok {
@@ -860,7 +867,10 @@ func TestReadExternalDepsCsharp(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	deps := ReadExternalDeps(tmpDir)
+	deps, err := ReadExternalDeps(context.Background(), tmpDir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	csDeps, ok := deps["csharp"]
 	if !ok {
@@ -886,7 +896,10 @@ func TestReadExternalDepsPackagesConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	deps := ReadExternalDeps(tmpDir)
+	deps, err := ReadExternalDeps(context.Background(), tmpDir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	csDeps, ok := deps["csharp"]
 	if !ok {

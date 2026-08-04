@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -54,7 +55,7 @@ but-api = { path = "../but-api" }
 		}
 	}
 
-	graph, err := BuildFileGraph(root)
+	graph, err := BuildFileGraph(context.Background(), root, ConfiguredFilters(root))
 	if err != nil {
 		t.Fatalf("BuildFileGraph() error: %v", err)
 	}
@@ -108,7 +109,7 @@ edition = "2021"
 		}
 	}
 
-	graph, err := BuildFileGraph(root)
+	graph, err := BuildFileGraph(context.Background(), root, ConfiguredFilters(root))
 	if err != nil {
 		t.Fatalf("BuildFileGraph() error: %v", err)
 	}
@@ -509,7 +510,7 @@ func TestBuildFileGraphGoPackageTargets(t *testing.T) {
 		{Path: filepath.FromSlash("cmd/caller_test.go"), Language: "go", Imports: imports},
 	}
 
-	graph, err := BuildFileGraphFromAnalyses(root, analyses)
+	graph, err := BuildFileGraphFromAnalyses(context.Background(), root, analyses, ConfiguredFilters(root))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -639,7 +640,7 @@ func TestBuildFileGraphImportResolutionBoundaries(t *testing.T) {
 		{Path: "README.md", Language: "", Imports: []string{"path"}},
 	}
 
-	fg, err := BuildFileGraphFromAnalyses(root, analyses)
+	fg, err := BuildFileGraphFromAnalyses(context.Background(), root, analyses, ConfiguredFilters(root))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -701,7 +702,7 @@ func TestFilteredImportResolutionTargets(t *testing.T) {
 		filepath.FromSlash("blocked/target.ts"),
 		filepath.FromSlash("pkg/filteredpkg/target.go"),
 	}}
-	scanned, err := ScanFiles(root, NewGitIgnoreCache(root), filters.Only, filters.Exclude)
+	scanned, err := ScanFiles(context.Background(), root, NewGitIgnoreCache(root), filters.Only, filters.Exclude)
 	if err != nil {
 		t.Fatalf("ScanFiles() error: %v", err)
 	}
@@ -733,7 +734,7 @@ func TestFilteredImportResolutionTargets(t *testing.T) {
 		}
 	}
 
-	precomputed, err := BuildFileGraphFromFilteredAnalyses(root, analyses, filters)
+	precomputed, err := BuildFileGraphFromAnalyses(context.Background(), root, analyses, filters)
 	if err != nil {
 		t.Fatalf("BuildFileGraphFromFilteredAnalyses() error: %v", err)
 	}
@@ -743,7 +744,7 @@ func TestFilteredImportResolutionTargets(t *testing.T) {
 		if !NewAstGrepAnalyzer().Available() {
 			t.Skip("ast-grep not available")
 		}
-		live, err := BuildFileGraphWithFilters(root, filters)
+		live, err := BuildFileGraph(context.Background(), root, filters)
 		if err != nil {
 			t.Fatalf("BuildFileGraphWithFilters() error: %v", err)
 		}

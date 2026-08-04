@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -42,7 +43,7 @@ func TestGoStdlibImportsDoNotResolveToLocalFiles(t *testing.T) {
 		}},
 	}
 
-	fg, err := BuildFileGraphFromFilteredAnalyses(root, analyses, Filters{})
+	fg, err := BuildFileGraphFromAnalyses(context.Background(), root, analyses, Filters{})
 	if err != nil {
 		t.Fatalf("BuildFileGraphFromFilteredAnalyses: %v", err)
 	}
@@ -77,7 +78,7 @@ func TestGoFilesWithoutModuleGetNoFuzzyEdges(t *testing.T) {
 	analyses := []FileAnalysis{
 		{Path: "main.go", Language: "go", Imports: []string{"context"}},
 	}
-	fg, err := BuildFileGraphFromFilteredAnalyses(root, analyses, Filters{})
+	fg, err := BuildFileGraphFromAnalyses(context.Background(), root, analyses, Filters{})
 	if err != nil {
 		t.Fatalf("BuildFileGraphFromFilteredAnalyses: %v", err)
 	}
@@ -92,7 +93,7 @@ func TestNonGoResolutionUnaffectedByGoGate(t *testing.T) {
 	analyses := []FileAnalysis{
 		{Path: "app/main.py", Language: "python", Imports: []string{"app.core.config"}},
 	}
-	fg, err := BuildFileGraphFromFilteredAnalyses(root, analyses, Filters{})
+	fg, err := BuildFileGraphFromAnalyses(context.Background(), root, analyses, Filters{})
 	if err != nil {
 		t.Fatalf("BuildFileGraphFromFilteredAnalyses: %v", err)
 	}

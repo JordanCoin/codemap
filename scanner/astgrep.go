@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"codemap/analysis"
 )
 
 //go:embed sg-rules/*.yml
@@ -204,10 +206,45 @@ func findNestedGitRepos(root string) []string {
 	return repos
 }
 
-// ScanDirectory analyzes all files in a directory using sg scan
-func (s *AstGrepScanner) ScanDirectory(root string) ([]FileAnalysis, error) {
+// ScanDirectory analyzes all files in a directory while honoring caller
+// cancellation and recording ast-grep provenance. A timed-out or failed scan
+// fails closed to an empty outcome whose Sources record the degraded status,
+// so callers get an honest, usable answer instead of a hard error; an
+// unavailable scanner (ast-grep not installed) still returns an error.
+func (s *AstGrepScanner) ScanDirectory(parent context.Context, root string) (ScanOutcome, error) {
+	analyses, err := s.scanDirectory(parent, root)
+	if err != nil {
+		var incomplete *IncompleteScanError
+		if errors.As(err, &incomplete) && incomplete.Outcome.Status != ScanSourceUnavailable {
+			return ScanOutcome{
+				Analyses: nil,
+				Sources:  []analysis.Source{incomplete.Outcome},
+			}, nil
+		}
+		return ScanOutcome{}, err
+	}
+	source := analysis.Source{Name: "ast-grep", Status: analysis.SourceAuthoritative}
+	for _, fileAnalysis := range analyses {
+		if DetectLanguage(fileAnalysis.Path) == "rust" {
+			source.Status = analysis.SourceMixed
+			source.Detail = rustCoverageNote
+			break
+		}
+	}
+	return ScanOutcome{
+		Analyses: analyses,
+		Sources:  []analysis.Source{source},
+	}, nil
+}
+
+// scanDirectory analyzes all files in a directory while honoring caller cancellation.
+// The existing internal timeout remains a best-effort empty-result safety cap.
+func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]FileAnalysis, error) {
+	if err := parent.Err(); err != nil {
+		return nil, err
+	}
 	if !s.Available() {
-		return nil, nil
+		return nil, newIncompleteScanError("ast-grep", ScanSourceUnavailable, ErrAstGrepNotFound.Error(), ErrAstGrepNotFound)
 	}
 
 	inlineRules := s.inlineRules
@@ -234,40 +271,42 @@ func (s *AstGrepScanner) ScanDirectory(root string) ([]FileAnalysis, error) {
 	}
 	args = append(args, root)
 
-	ctx, cancel := context.WithTimeout(context.Background(), astGrepScanTimeout)
+	ctx, cancel := context.WithTimeout(parent, astGrepScanTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, s.binary, args...)
+	cmd.WaitDelay = 100 * time.Millisecond
 	out, err := cmd.Output()
 	if err != nil {
+		if parentErr := parent.Err(); parentErr != nil {
+			return nil, parentErr
+		}
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
-			fmt.Fprintf(os.Stderr, "warning: ast-grep timed out after %s in %s; skipping ast-grep results\n", astGrepScanTimeout, root)
-			return nil, nil
+			return nil, newIncompleteScanError("ast-grep", ScanSourceTimeout, fmt.Sprintf("ast-grep timed out after %s", astGrepScanTimeout), err)
 		}
 
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
-				fmt.Fprintf(os.Stderr, "warning: ast-grep exited with signal %d in %s; skipping ast-grep results\n", status.Signal(), root)
-				return nil, nil
+				return nil, newIncompleteScanError("ast-grep", ScanSourceFailed, fmt.Sprintf("ast-grep terminated by signal %d", status.Signal()), err)
 			}
 		}
 
-		// sg scan returns non-zero if no matches, check if output contains JSON
-		if len(out) == 0 {
-			return nil, nil
-		}
+		return nil, newIncompleteScanError("ast-grep", ScanSourceFailed, "ast-grep exited unsuccessfully", err)
+	}
+	if err := parent.Err(); err != nil {
+		return nil, err
 	}
 
 	// Extract JSON array from output (handles debug output before JSON, e.g. ast-grep 0.40.2 bug)
 	jsonData := extractJSONArray(out)
 	if jsonData == nil {
-		return nil, nil
+		return nil, newIncompleteScanError("ast-grep", ScanSourceFailed, "ast-grep produced no JSON results", err)
 	}
 
 	var matches []ScanMatch
-	if err := json.Unmarshal(jsonData, &matches); err != nil {
-		return nil, err
+	if decodeErr := json.Unmarshal(jsonData, &matches); decodeErr != nil {
+		return nil, newIncompleteScanError("ast-grep", ScanSourceFailed, "ast-grep produced invalid JSON results", decodeErr)
 	}
 
 	// Group matches by file
@@ -635,12 +674,12 @@ func NewAstGrepAnalyzer() *AstGrepAnalyzer {
 }
 
 func (s *AstGrepScanner) AnalyzeFile(filePath string) (*FileAnalysis, error) {
-	results, err := s.ScanDirectory(filepath.Dir(filePath))
+	outcome, err := s.ScanDirectory(context.Background(), filepath.Dir(filePath))
 	if err != nil {
 		return nil, err
 	}
 	base := filepath.Base(filePath)
-	for _, r := range results {
+	for _, r := range outcome.Analyses {
 		if filepath.Base(r.Path) == base {
 			return &r, nil
 		}

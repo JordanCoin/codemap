@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"codemap/analysis"
 	"codemap/config"
 )
 
@@ -31,44 +32,42 @@ type fileIndex struct {
 	goPkgs   map[string][]string // Go package path -> files
 }
 
-// BuildFileGraph analyzes a project with its configured filters.
-func BuildFileGraph(root string) (*FileGraph, error) {
-	cfg := config.Load(root)
-	return BuildFileGraphWithFilters(root, Filters{Only: cfg.Only, Exclude: cfg.Exclude})
-}
-
-// BuildFileGraphWithFilters analyzes a project with explicit filters.
-func BuildFileGraphWithFilters(root string, filters Filters) (*FileGraph, error) {
-	analyses, err := ScanForDepsWithFilters(root, filters)
+// BuildFileGraph scans a project with explicit filters and builds its file
+// graph while honoring caller cancellation.
+func BuildFileGraph(ctx context.Context, root string, filters Filters) (*FileGraph, error) {
+	outcome, err := ScanForDeps(ctx, root, filters)
 	if err != nil {
 		return nil, err
 	}
-	return BuildFileGraphFromFilteredAnalyses(root, analyses, filters)
+	return BuildFileGraphFromOutcome(ctx, root, outcome, filters)
+}
+
+// BuildFileGraphFromOutcome builds a file graph from a scan outcome without
+// dropping scanner provenance.
+func BuildFileGraphFromOutcome(ctx context.Context, root string, outcome ScanOutcome, filters Filters) (*FileGraph, error) {
+	return buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx, root, outcome.Analyses, filters, loadCargoMetadata, outcome.Sources...)
 }
 
 // BuildFileGraphFromAnalyses builds a file graph from pre-computed analyses
-// using the configured project filters.
-func BuildFileGraphFromAnalyses(root string, analyses []FileAnalysis) (*FileGraph, error) {
-	cfg := config.Load(root)
-	filters := Filters{Only: cfg.Only, Exclude: cfg.Exclude}
-	return buildFileGraphFromFilteredAnalysesWithCargoMetadata(context.Background(), root, filterAnalyses(analyses, filters), filters, loadCargoMetadata)
+// using the supplied filters.
+func BuildFileGraphFromAnalyses(ctx context.Context, root string, analyses []FileAnalysis, filters Filters) (*FileGraph, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	filtered, err := filterAnalysesContext(ctx, analyses, filters)
+	if err != nil {
+		return nil, err
+	}
+	return buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx, root, filtered, filters, loadCargoMetadata)
 }
 
-// BuildFileGraphFromFilteredAnalyses builds a file graph from analyses that
-// already match the supplied filters.
-func BuildFileGraphFromFilteredAnalyses(root string, analyses []FileAnalysis, filters Filters) (*FileGraph, error) {
-	return buildFileGraphFromFilteredAnalysesWithCargoMetadata(context.Background(), root, analyses, filters, loadCargoMetadata)
-}
-
-// buildFileGraphFromAnalysesWithCargoMetadata is the testable configuration
-// aware variant of BuildFileGraphFromAnalyses.
 func buildFileGraphFromAnalysesWithCargoMetadata(ctx context.Context, root string, analyses []FileAnalysis, loader cargoMetadataLoader) (*FileGraph, error) {
 	cfg := config.Load(root)
 	filters := Filters{Only: cfg.Only, Exclude: cfg.Exclude}
-	return buildFileGraphFromFilteredAnalysesWithCargoMetadata(ctx, root, filterAnalyses(analyses, filters), filters, loader)
+	return buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx, root, filterAnalyses(analyses, filters), filters, loader)
 }
 
-func buildFileGraphFromFilteredAnalysesWithCargoMetadata(ctx context.Context, root string, analyses []FileAnalysis, filters Filters, loader cargoMetadataLoader) (*FileGraph, error) {
+func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, root string, analyses []FileAnalysis, filters Filters, loader cargoMetadataLoader, sources ...ScanSourceOutcome) (*FileGraph, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -84,6 +83,9 @@ func buildFileGraphFromFilteredAnalysesWithCargoMetadata(ctx context.Context, ro
 		Packages:    make(map[string][]string),
 		PathAliases: make(map[string][]string),
 	}
+	for _, source := range sources {
+		fg.Coverage.AddSource(source)
+	}
 
 	// Detect module name from go.mod (for Go import resolution)
 	fg.Module = detectModule(absRoot)
@@ -91,36 +93,74 @@ func buildFileGraphFromFilteredAnalysesWithCargoMetadata(ctx context.Context, ro
 	// Detect path aliases from tsconfig.json (for TS/JS import resolution)
 	fg.PathAliases, fg.BaseURL = detectPathAliases(absRoot)
 
-	// Scan all files with the same filters used for the analyses.
+	useJSWorkspace := needsJSWorkspaceResolver(analyses)
 	gitCache := NewGitIgnoreCache(root)
-	files, err := ScanFiles(root, gitCache, filters.Only, filters.Exclude)
+	scanOnly := filters.Only
+	if useJSWorkspace {
+		scanOnly = nil
+	}
+	allFiles, err := ScanFiles(ctx, root, gitCache, scanOnly, filters.Exclude)
 	if err != nil {
 		return nil, err
 	}
-	rustWorkspace := buildRustWorkspaceIndex(ctx, absRoot, analyses, files, loader)
+	files := allFiles
+	if useJSWorkspace {
+		files = make([]FileInfo, 0, len(allFiles))
+		for _, file := range allFiles {
+			if MatchesFilters(file.Path, filepath.Ext(file.Path), filters.Only, nil) {
+				files = append(files, file)
+			}
+		}
+	}
+	rustWorkspace, cargoOutcome := buildRustWorkspaceIndex(ctx, absRoot, analyses, files, loader)
+	if cargoOutcome != nil {
+		fg.Coverage.AddSource(*cargoOutcome)
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
 	// Build file index for fast fuzzy matching
-	idx := buildFileIndex(files, fg.Module)
+	idx, err := buildFileIndexContext(ctx, files, fg.Module)
+	if err != nil {
+		return nil, err
+	}
 	fg.Packages = idx.goPkgs
 	for _, file := range files {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if strings.EqualFold(filepath.Ext(file.Path), ".rs") {
-			fg.Coverage = GraphCoverage{Status: rustCoverageStatus, Notes: []string{rustCoverageNote}}
+			if CoverageFromSources(fg.Coverage.Sources).Status != analysis.CoverageUnavailable {
+				fg.Coverage.AddSource(ScanSourceOutcome{Name: "rust-cargo", Status: ScanSourceMixed, Detail: rustCoverageNote})
+			}
 			break
+		}
+	}
+
+	var jsResolver *jsWorkspaceResolver
+	if useJSWorkspace {
+		jsResolver, err = buildJSWorkspaceResolver(ctx, absRoot, allFiles)
+		if err != nil {
+			return nil, err
 		}
 	}
 
 	// Resolve imports to files using universal fuzzy matching
 	for _, a := range analyses {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		var resolvedImports []string
 
 		if a.Language == "rust" {
 			resolvedImports = resolveRustReferences(absRoot, a, idx, rustWorkspace)
 		} else {
 			for _, imp := range a.Imports {
-				resolved := fuzzyResolve(imp, a.Path, idx, fg.Module, fg.PathAliases, fg.BaseURL)
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				resolved := fuzzyResolveWithWorkspace(imp, a.Path, idx, fg.Module, fg.PathAliases, fg.BaseURL, jsResolver)
 				// Exclude multi-file Go package imports to avoid inflating hub counts.
 				// Go package imports start with the module prefix and resolve to all
 				// files in that package. For all other imports (e.g., C# namespace
@@ -143,11 +183,28 @@ func buildFileGraphFromFilteredAnalysesWithCargoMetadata(ctx context.Context, ro
 		}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return fg, nil
+}
+
+func needsJSWorkspaceResolver(analyses []FileAnalysis) bool {
+	for _, analysis := range analyses {
+		if isJavaScriptLanguage(DetectLanguage(analysis.Path)) {
+			return true
+		}
+	}
+	return false
 }
 
 // buildFileIndex creates a multi-key index for fast import resolution
 func buildFileIndex(files []FileInfo, goModule string) *fileIndex {
+	idx, _ := buildFileIndexContext(context.Background(), files, goModule)
+	return idx
+}
+
+func buildFileIndexContext(ctx context.Context, files []FileInfo, goModule string) (*fileIndex, error) {
 	idx := &fileIndex{
 		byExact:  make(map[string][]string),
 		bySuffix: make(map[string][]string),
@@ -156,6 +213,9 @@ func buildFileIndex(files []FileInfo, goModule string) *fileIndex {
 	}
 
 	for _, f := range files {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		path := f.Path
 		dir := filepath.Dir(path)
 		if dir == "." {
@@ -177,6 +237,9 @@ func buildFileIndex(files []FileInfo, goModule string) *fileIndex {
 		//   - "config.py"
 		parts := strings.Split(path, string(filepath.Separator))
 		for i := 1; i < len(parts); i++ {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			suffix := strings.Join(parts[i:], string(filepath.Separator))
 			idx.bySuffix[suffix] = append(idx.bySuffix[suffix], path)
 			// Also without extension
@@ -195,11 +258,18 @@ func buildFileIndex(files []FileInfo, goModule string) *fileIndex {
 		}
 	}
 
-	return idx
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return idx, nil
 }
 
 // fuzzyResolve converts an import path to compatible local file paths.
 func fuzzyResolve(imp, fromFile string, idx *fileIndex, goModule string, pathAliases map[string][]string, baseURL string) []string {
+	return fuzzyResolveWithWorkspace(imp, fromFile, idx, goModule, pathAliases, baseURL, nil)
+}
+
+func fuzzyResolveWithWorkspace(imp, fromFile string, idx *fileIndex, goModule string, pathAliases map[string][]string, baseURL string, jsResolver *jsWorkspaceResolver) []string {
 	sourceLanguage := DetectLanguage(fromFile)
 	if sourceLanguage == "" {
 		return nil
@@ -236,6 +306,9 @@ func fuzzyResolve(imp, fromFile string, idx *fileIndex, goModule string, pathAli
 		}
 	}
 	if isJavaScriptLanguage(sourceLanguage) {
+		if files := jsResolver.resolve(imp, fromFile, idx, sourceLanguage); len(files) > 0 {
+			return files
+		}
 		return nil
 	}
 
@@ -438,8 +511,6 @@ const HubThreshold = 3
 
 // IsTestFile reports whether a path names a test file across the supported
 // languages (Go _test files, JS/TS .test/.spec files, Python test_ modules).
-// Test importers are real graph edges but shouldn't confer hub status: a file
-// imported only by its own tests doesn't have blast radius.
 func IsTestFile(path string) bool {
 	base := strings.ToLower(filepath.Base(filepath.FromSlash(path)))
 	if strings.HasSuffix(base, "_test.go") {

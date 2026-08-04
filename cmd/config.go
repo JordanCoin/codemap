@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -99,7 +100,7 @@ func initProjectConfig(root string) (configInitResult, error) {
 	}
 
 	gitCache := scanner.NewGitIgnoreCache(root)
-	files, err := scanner.ScanFiles(root, gitCache, nil, nil)
+	files, err := scanner.ScanFiles(context.Background(), root, gitCache, nil, nil)
 	if err != nil {
 		return result, fmt.Errorf("scan files: %w", err)
 	}

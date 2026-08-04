@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -58,7 +59,7 @@ func TestScanFiles(t *testing.T) {
 	}
 
 	// Scan the directory
-	result, err := ScanFiles(tmpDir, nil, nil, nil)
+	result, err := ScanFiles(context.Background(), tmpDir, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("ScanFiles failed: %v", err)
 	}
@@ -89,7 +90,7 @@ func TestScanFilesIgnoresDirs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := ScanFiles(tmpDir, nil, nil, nil)
+	result, err := ScanFiles(context.Background(), tmpDir, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("ScanFiles failed: %v", err)
 	}
@@ -123,7 +124,7 @@ func TestScanFilesExtensions(t *testing.T) {
 		}
 	}
 
-	result, err := ScanFiles(tmpDir, nil, nil, nil)
+	result, err := ScanFiles(context.Background(), tmpDir, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +295,7 @@ func TestNestedGitignore(t *testing.T) {
 
 	// Scan with GitIgnoreCache
 	cache := NewGitIgnoreCache(tmpDir)
-	files, err := ScanFiles(tmpDir, cache, nil, nil)
+	files, err := ScanFiles(context.Background(), tmpDir, cache, nil, nil)
 	if err != nil {
 		t.Fatalf("ScanFiles failed: %v", err)
 	}
@@ -337,7 +338,7 @@ func TestGitIgnoreCacheNil(t *testing.T) {
 	}
 
 	// Scan without gitignore cache
-	files, err := ScanFiles(tmpDir, nil, nil, nil)
+	files, err := ScanFiles(context.Background(), tmpDir, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("ScanFiles failed: %v", err)
 	}
@@ -435,7 +436,7 @@ func TestNestedGitignoreMonorepo(t *testing.T) {
 
 	// Scan with GitIgnoreCache
 	cache := NewGitIgnoreCache(tmpDir)
-	files, err := ScanFiles(tmpDir, cache, nil, nil)
+	files, err := ScanFiles(context.Background(), tmpDir, cache, nil, nil)
 	if err != nil {
 		t.Fatalf("ScanFiles failed: %v", err)
 	}
@@ -482,7 +483,7 @@ func TestNestedGitignoreUnignore(t *testing.T) {
 	os.WriteFile(filepath.Join(tmpDir, "sub", "other.log"), []byte("other"), 0644)
 
 	cache := NewGitIgnoreCache(tmpDir)
-	files, err := ScanFiles(tmpDir, cache, nil, nil)
+	files, err := ScanFiles(context.Background(), tmpDir, cache, nil, nil)
 	if err != nil {
 		t.Fatalf("ScanFiles failed: %v", err)
 	}
@@ -539,7 +540,7 @@ func TestNestedGitignoreDirectoryIgnore(t *testing.T) {
 	}
 
 	cache := NewGitIgnoreCache(tmpDir)
-	files, err := ScanFiles(tmpDir, cache, nil, nil)
+	files, err := ScanFiles(context.Background(), tmpDir, cache, nil, nil)
 	if err != nil {
 		t.Fatalf("ScanFiles failed: %v", err)
 	}
@@ -775,7 +776,7 @@ func TestScanFilesWithOnlyAndExcludeFilters(t *testing.T) {
 		}
 	}
 
-	got, err := ScanFiles(tmpDir, nil, []string{"go"}, []string{"*_test.go"})
+	got, err := ScanFiles(context.Background(), tmpDir, nil, []string{"go"}, []string{"*_test.go"})
 	if err != nil {
 		t.Fatal(err)
 	}

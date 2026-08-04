@@ -285,7 +285,6 @@ func TestDebounce(t *testing.T) {
 		if err := os.WriteFile(testFile, content, 0644); err != nil {
 			t.Fatalf("Failed to modify file: %v", err)
 		}
-		time.Sleep(20 * time.Millisecond) // 20ms < 100ms debounce window
 	}
 
 	time.Sleep(300 * time.Millisecond)

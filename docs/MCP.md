@@ -138,6 +138,12 @@ Surface behavior note:
 
 Output and budget notes:
 - text responses are byte-budgeted and line-truncated to protect context
+- project discovery reads bounded batches, returns at most 50 sorted projects, examines at most 200 parent entries, and reports truncation separately from cancellation; when the examination cap is exceeded it returns only the truncation notice rather than a filesystem-order-dependent partial list
+- MCP dependency discovery skips individual manifests larger than 1 MiB; CLI dependency and blast-radius callers retain their legacy unbounded manifest behavior
 - prefix file counts and size-based handoff budgets honor the active `.codemap/config.json` filters
 - handoff payload includes deterministic hashes (`prefix_hash`, `delta_hash`, `combined_hash`)
 - handoff payload includes cache metrics (`reuse_ratio`, `unchanged_bytes`, etc.)
+
+Cancellation notes:
+- project scans, dependency graphs, ast-grep, Git diff/impact work, project discovery, and generated handoff/detail work stop with the MCP request context
+- with `save=true`, cancellation observed after generation but before persistence prevents `WriteLatest`; once persistence begins, the existing multi-file write completes or reports its existing error without rollback

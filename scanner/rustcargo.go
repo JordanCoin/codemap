@@ -3,6 +3,7 @@ package scanner
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -74,10 +75,15 @@ func parseCargoMetadata(data []byte) (cargoMetadata, error) {
 	return metadata, err
 }
 
-func buildRustWorkspaceIndex(ctx context.Context, root string, analyses []FileAnalysis, files []FileInfo, loader cargoMetadataLoader) *rustWorkspaceIndex {
+func buildRustWorkspaceIndex(ctx context.Context, root string, analyses []FileAnalysis, files []FileInfo, loader cargoMetadataLoader) (*rustWorkspaceIndex, *ScanSourceOutcome) {
 	index := buildRustFallbackWorkspaceIndex(root, analyses)
+	manifestPaths := discoverCargoManifests(root, files)
+	if len(manifestPaths) == 0 {
+		return index, nil
+	}
 	if loader == nil {
-		return index
+		outcome := cargoMetadataOutcome(0, len(manifestPaths))
+		return index, &outcome
 	}
 	ctx, cancel := context.WithTimeout(ctx, cargoMetadataTimeout)
 	defer cancel()
@@ -89,7 +95,7 @@ func buildRustWorkspaceIndex(ctx context.Context, root string, analyses []FileAn
 	pendingByRoot := make(map[string][]pendingRustDependency)
 	handledManifests := make(map[string]bool)
 
-	for _, manifestPath := range discoverCargoManifests(root, files) {
+	for _, manifestPath := range manifestPaths {
 		manifestPath = filepath.Clean(manifestPath)
 		if handledManifests[manifestPath] {
 			continue
@@ -103,15 +109,19 @@ func buildRustWorkspaceIndex(ctx context.Context, root string, analyses []FileAn
 			continue
 		}
 
-		handledManifests[manifestPath] = true
+		covered := false
 		for _, metadataPackage := range metadata.Packages {
 			pkg, pending, ok := rustPackageFromCargoMetadata(root, metadataPackage)
-			if !ok {
+			if !ok || (pkg.lib == nil && len(pkg.targets) == 0) {
 				continue
 			}
+			covered = true
 			packagesByRoot[pkg.root] = pkg
 			pendingByRoot[pkg.root] = pending
 			handledManifests[filepath.Clean(metadataPackage.ManifestPath)] = true
+		}
+		if covered {
+			handledManifests[manifestPath] = true
 		}
 	}
 
@@ -152,7 +162,29 @@ func buildRustWorkspaceIndex(ctx context.Context, root string, analyses []FileAn
 		}
 		return len(index.packages[i].root) > len(index.packages[j].root)
 	})
-	return index
+
+	handled := 0
+	for _, manifestPath := range manifestPaths {
+		if handledManifests[filepath.Clean(manifestPath)] {
+			handled++
+		}
+	}
+	outcome := cargoMetadataOutcome(handled, len(manifestPaths))
+	return index, &outcome
+}
+
+func cargoMetadataOutcome(handled, total int) ScanSourceOutcome {
+	outcome := ScanSourceOutcome{Name: "cargo-metadata", Status: ScanSourceAuthoritative}
+	fallbacks := total - handled
+	if fallbacks <= 0 {
+		return outcome
+	}
+	outcome.Status = ScanSourceMixed
+	if handled == 0 {
+		outcome.Status = ScanSourceFallback
+	}
+	outcome.Detail = fmt.Sprintf("%d of %d Cargo manifests used fallback topology", fallbacks, total)
+	return outcome
 }
 
 func discoverCargoManifests(root string, files []FileInfo) []string {

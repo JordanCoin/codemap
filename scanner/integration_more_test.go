@@ -1,11 +1,14 @@
 package scanner
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"codemap/analysis"
 )
 
 func writeScannerDepsFixture(t *testing.T, root string) {
@@ -38,10 +41,11 @@ func TestScanForDepsBuildFileGraphAndAnalyzeImpact(t *testing.T) {
 	root := t.TempDir()
 	writeScannerDepsFixture(t, root)
 
-	analyses, err := ScanForDeps(root)
+	outcome, err := ScanForDeps(context.Background(), root, ConfiguredFilters(root))
 	if err != nil {
 		t.Fatalf("ScanForDeps() error: %v", err)
 	}
+	analyses := outcome.Analyses
 	byPath := make(map[string]FileAnalysis, len(analyses))
 	for _, analysis := range analyses {
 		byPath[analysis.Path] = analysis
@@ -53,7 +57,7 @@ func TestScanForDepsBuildFileGraphAndAnalyzeImpact(t *testing.T) {
 		t.Fatalf("expected main.go to expose main(), got %+v", got)
 	}
 
-	fg, err := BuildFileGraph(root)
+	fg, err := BuildFileGraph(context.Background(), root, ConfiguredFilters(root))
 	if err != nil {
 		t.Fatalf("BuildFileGraph() error: %v", err)
 	}
@@ -67,7 +71,10 @@ func TestScanForDepsBuildFileGraphAndAnalyzeImpact(t *testing.T) {
 		t.Fatal("expected pkg/types/types.go to be detected as a hub")
 	}
 
-	impacts := AnalyzeImpact(root, []FileInfo{{Path: "pkg/types/types.go"}})
+	impacts, err := AnalyzeImpact(context.Background(), root, []FileInfo{{Path: "pkg/types/types.go"}})
+	if err != nil {
+		t.Fatalf("AnalyzeImpact() error: %v", err)
+	}
 	if len(impacts) == 0 {
 		t.Fatal("expected AnalyzeImpact to report at least one impacted file")
 	}
@@ -109,17 +116,18 @@ func TestDependencyAndGraphScansRespectConfiguredFilters(t *testing.T) {
 		}
 	}
 
-	analyses, err := ScanForDeps(root)
+	outcome, err := ScanForDeps(context.Background(), root, ConfiguredFilters(root))
 	if err != nil {
 		t.Fatalf("ScanForDeps() error: %v", err)
 	}
+	analyses := outcome.Analyses
 	for _, analysis := range analyses {
 		if analysis.Path == "schema.ts" || strings.HasPrefix(analysis.Path, "excluded/") {
 			t.Fatalf("configured-out dependency analysis returned: %s", analysis.Path)
 		}
 	}
 
-	fg, err := BuildFileGraph(root)
+	fg, err := BuildFileGraph(context.Background(), root, ConfiguredFilters(root))
 	if err != nil {
 		t.Fatalf("BuildFileGraph() error: %v", err)
 	}
@@ -133,7 +141,7 @@ func TestDependencyAndGraphScansRespectConfiguredFilters(t *testing.T) {
 		t.Fatal("extension-filtered file remains in graph")
 	}
 
-	fromAnalyses, err := BuildFileGraphFromAnalyses(root, analyses)
+	fromAnalyses, err := BuildFileGraphFromAnalyses(context.Background(), root, analyses, ConfiguredFilters(root))
 	if err != nil {
 		t.Fatalf("BuildFileGraphFromAnalyses() error: %v", err)
 	}
@@ -173,27 +181,28 @@ func TestExplicitDependencyFiltersOverrideRepositoryConfig(t *testing.T) {
 			}
 		}
 
-		analyses, err := ScanForDepsWithFilters(root, Filters{Only: []string{"go"}})
+		outcome, err := ScanForDeps(context.Background(), root, Filters{Only: []string{"go"}})
 		if err != nil {
-			t.Fatalf("ScanForDepsWithFilters() error: %v", err)
+			t.Fatalf("ScanForDeps() error: %v", err)
 		}
+		analyses := outcome.Analyses
 		for _, analysis := range analyses {
 			if filepath.Ext(analysis.Path) != ".go" {
 				t.Fatalf("explicit only filter returned %q", analysis.Path)
 			}
 		}
 
-		configured, err := ScanForDeps(root)
+		configuredOutcome, err := ScanForDeps(context.Background(), root, ConfiguredFilters(root))
 		if err != nil {
 			t.Fatalf("ScanForDeps() error: %v", err)
 		}
-		for _, analysis := range configured {
+		for _, analysis := range configuredOutcome.Analyses {
 			if filepath.Ext(analysis.Path) == ".go" {
 				t.Fatalf("configured wrapper ignored repository only filter: %q", analysis.Path)
 			}
 		}
 
-		graph, err := BuildFileGraphWithFilters(root, Filters{Only: []string{"go"}})
+		graph, err := BuildFileGraph(context.Background(), root, Filters{Only: []string{"go"}})
 		if err != nil {
 			t.Fatalf("BuildFileGraphWithFilters() error: %v", err)
 		}
@@ -225,10 +234,11 @@ func TestExplicitDependencyFiltersOverrideRepositoryConfig(t *testing.T) {
 		}
 
 		filters := Filters{Exclude: []string{"keep"}}
-		analyses, err := ScanForDepsWithFilters(root, filters)
+		outcome, err := ScanForDeps(context.Background(), root, filters)
 		if err != nil {
-			t.Fatalf("ScanForDepsWithFilters() error: %v", err)
+			t.Fatalf("ScanForDeps() error: %v", err)
 		}
+		analyses := outcome.Analyses
 		for _, analysis := range analyses {
 			if strings.HasPrefix(analysis.Path, "keep/") {
 				t.Fatalf("explicit exclude filter returned %q", analysis.Path)
@@ -238,7 +248,7 @@ func TestExplicitDependencyFiltersOverrideRepositoryConfig(t *testing.T) {
 			t.Fatal("explicit exclude filter inherited repository config")
 		}
 
-		graph, err := BuildFileGraphFromFilteredAnalyses(root, analyses, filters)
+		graph, err := BuildFileGraphFromAnalyses(context.Background(), root, analyses, filters)
 		if err != nil {
 			t.Fatalf("BuildFileGraphFromFilteredAnalyses() error: %v", err)
 		}
@@ -275,16 +285,16 @@ func TestConfiguredScanHelpers(t *testing.T) {
 		t.Fatalf("unconfigured analysis filter = %+v, want original analysis", got)
 	}
 
-	if _, err := ScanConfiguredFiles(filepath.Join(root, "missing"), nil); err == nil {
+	if _, err := ScanConfiguredFiles(context.Background(), filepath.Join(root, "missing"), nil); err == nil {
 		t.Fatal("expected configured scan of missing root to fail")
 	}
 
-	if _, err := BuildFileGraphFromFilteredAnalyses(filepath.Join(root, "missing"), nil, Filters{}); err == nil {
+	if _, err := BuildFileGraphFromAnalyses(context.Background(), filepath.Join(root, "missing"), nil, Filters{}); err == nil {
 		t.Fatal("expected explicit-filter graph of missing root to propagate a file scan error")
 	}
 }
 
-func TestScanForDepsPropagatesScanError(t *testing.T) {
+func TestScanForDepsFailsClosedOnFailedScanner(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires shell script execution")
 	}
@@ -297,12 +307,25 @@ func TestScanForDepsPropagatesScanError(t *testing.T) {
 	}
 	t.Setenv("PATH", binDir)
 
-	if _, err := ScanForDeps(t.TempDir()); err == nil {
-		t.Fatal("expected malformed ast-grep output to propagate a scan error")
+	// Malformed ast-grep output fails closed: no analyses, honest failed source,
+	// and no hard error so hooks and MCP keep a usable answer.
+	outcome, err := ScanForDeps(context.Background(), t.TempDir(), Filters{})
+	if err != nil {
+		t.Fatalf("ScanForDeps() error = %v, want degraded outcome", err)
+	}
+	if len(outcome.Analyses) != 0 {
+		t.Fatalf("degraded ScanForDeps analyses = %#v, want empty", outcome.Analyses)
+	}
+	if len(outcome.Sources) != 1 || outcome.Sources[0].Status != ScanSourceFailed {
+		t.Fatalf("degraded ScanForDeps sources = %#v, want failed ast-grep", outcome.Sources)
 	}
 
-	if _, err := BuildFileGraphWithFilters(t.TempDir(), Filters{}); err == nil {
-		t.Fatal("expected explicit-filter graph to propagate a dependency scan error")
+	graph, err := BuildFileGraph(context.Background(), t.TempDir(), Filters{})
+	if err != nil {
+		t.Fatalf("BuildFileGraph() error = %v, want degraded graph", err)
+	}
+	if coverage := CoverageFromSources(graph.Coverage.Sources); coverage.Status != analysis.CoverageUnavailable {
+		t.Fatalf("degraded graph coverage = %q, want unavailable", coverage.Status)
 	}
 }
 
@@ -315,7 +338,7 @@ func TestScanForDepsDoesNotRequireWritableTempDir(t *testing.T) {
 	t.Setenv("TMP", invalidTemp)
 	t.Setenv("TEMP", invalidTemp)
 
-	if _, err := ScanForDeps(t.TempDir()); err != nil {
+	if _, err := ScanForDeps(context.Background(), t.TempDir(), Filters{}); err != nil {
 		t.Fatalf("ScanForDeps should not require writable temporary storage: %v", err)
 	}
 }

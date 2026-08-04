@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -427,7 +428,7 @@ func resolveBlastRadiusRoot(root string) (string, func(), error) {
 }
 
 func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blastRadiusBundle, error) {
-	diffInfo, err := scanner.GitDiffInfo(absRoot, ref)
+	diffInfo, err := scanner.GitDiffInfo(context.Background(), absRoot, ref)
 	if err != nil {
 		return blastRadiusBundle{}, &blastRadiusDiffError{ref: ref, err: err}
 	}
@@ -435,7 +436,7 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 	cfg := config.Load(absRoot)
 	filters := scanner.Filters{Only: cfg.Only, Exclude: cfg.Exclude}
 	gitCache := scanner.NewGitIgnoreCache(absRoot)
-	allFiles, err := scanner.ScanFiles(absRoot, gitCache, filters.Only, filters.Exclude)
+	allFiles, err := scanner.ScanFiles(context.Background(), absRoot, gitCache, filters.Only, filters.Exclude)
 	if err != nil {
 		return blastRadiusBundle{}, err
 	}
@@ -450,13 +451,14 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 	// Single ast-grep scan shared by impact analysis, the deps project, and the
 	// file graph below. Previously each of those triggered its own full-repo
 	// ScanForDeps, tripling latency on large repositories.
-	var analyses []scanner.FileAnalysis
+	var scanOutcome scanner.ScanOutcome
 	if diffTotal > 0 {
-		analyses, err = scanForDepsWithHint(absRoot, filters)
+		scanOutcome, err = scanForDepsOutcomeWithHint(absRoot, filters)
 		if err != nil {
 			return blastRadiusBundle{}, err
 		}
 	}
+	analyses := scanOutcome.Analyses
 
 	diffProject := scanner.Project{
 		Root:    absRoot,
@@ -485,16 +487,19 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 	var rawImpacted []blastRadiusRelation
 	var impacted []blastRadiusRelation
 	var rawContext []blastRadiusRelation
-	var context []blastRadiusRelation
+	var ctxRelations []blastRadiusRelation
 	var snippets []blastRadiusSnippet
 
 	if diffTotal > 0 {
 		depsProject.Files = scanner.FilterAnalysisToChanged(analyses, changedSet)
-		depsProject.ExternalDeps = scanner.ReadExternalDeps(absRoot)
+		depsProject.ExternalDeps, err = scanner.ReadExternalDeps(context.Background(), absRoot, 0)
+		if err != nil {
+			return blastRadiusBundle{}, err
+		}
 		depsTotal = len(depsProject.Files)
 		depsCapped = capBlastRadiusDepsProject(depsProject, limits.MaxChangedFiles)
 
-		fg, err := scanner.BuildFileGraphFromFilteredAnalyses(absRoot, analyses, filters)
+		fg, err := scanner.BuildFileGraphFromOutcome(context.Background(), absRoot, scanOutcome, filters)
 		if err != nil {
 			return blastRadiusBundle{}, err
 		}
@@ -515,11 +520,11 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 		rawImpacted = collectBlastRadiusImpacted(allReports, changedSet)
 		rawContext = collectBlastRadiusContext(allReports, changedSet)
 		impacted = capBlastRadiusRelations(rawImpacted, limits.MaxAffected)
-		context = capBlastRadiusRelations(rawContext, limits.MaxContext)
-		snippets = buildBlastRadiusSnippets(absRoot, changedFiles, depsProject.Files, impacted, context, limits)
+		ctxRelations = capBlastRadiusRelations(rawContext, limits.MaxContext)
+		snippets = buildBlastRadiusSnippets(absRoot, changedFiles, depsProject.Files, impacted, ctxRelations, limits)
 	}
 
-	summary := buildBlastRadiusSummary(diffCapped.Files, diffTotal, impacted, rawImpacted, context, rawContext, allReports)
+	summary := buildBlastRadiusSummary(diffCapped.Files, diffTotal, impacted, rawImpacted, ctxRelations, rawContext, allReports)
 
 	bundle := blastRadiusBundle{
 		Root:    absRoot,
@@ -548,7 +553,7 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 		Importers:                    jsonReports,
 		Limits:                       limits,
 		ImpactedOutsideDiff:          impacted,
-		DependencyContextOutsideDiff: context,
+		DependencyContextOutsideDiff: ctxRelations,
 		Snippets:                     snippets,
 	}
 	bundle.Rendered = buildBlastRadiusRendered(diffCapped, depsCapped, shownReports, diffTotal, limits)

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -137,7 +138,7 @@ func getHubInfoWithFallback(root string, allowFallback bool) *hubInfo {
 	}
 
 	// Fall back to fresh scan only when daemon is not running.
-	fg, err := scanner.BuildFileGraph(root)
+	fg, err := scanner.BuildFileGraph(context.Background(), root, scanner.ConfiguredFilters(root))
 	if err != nil {
 		return nil
 	}
@@ -486,7 +487,7 @@ func configuredStateFileCount(root string, state *watch.State) (int, bool) {
 	if state == nil {
 		return 0, false
 	}
-	files, err := scanner.ScanConfiguredFiles(root, scanner.NewGitIgnoreCache(root))
+	files, err := scanner.ScanConfiguredFiles(context.Background(), root, scanner.NewGitIgnoreCache(root))
 	if err != nil {
 		return 0, false
 	}
