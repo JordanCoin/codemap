@@ -61,7 +61,11 @@ type DepsProject struct {
 	DiffRef       string              `json:"diff_ref,omitempty"`
 }
 
-func NewDepsProject(root string, files []FileAnalysis, externalDeps map[string][]string, diffRef string, inventory ...[]FileInfo) DepsProject {
+// newDepsProject builds a DepsProject with default coverage derived from the
+// analyses and inventory (Rust repos are partial). Production callers pass
+// explicit graph-derived coverage via NewDepsProjectWithCoverage; this default
+// constructor is kept for the determinism and Rust-coverage tests.
+func newDepsProject(root string, files []FileAnalysis, externalDeps map[string][]string, diffRef string, inventory ...[]FileInfo) DepsProject {
 	coverage := analysis.Coverage{
 		Status:  analysis.CoverageComplete,
 		Sources: []analysis.Source{{Name: "ast-grep", Status: analysis.SourceAuthoritative}},

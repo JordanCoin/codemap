@@ -9,7 +9,7 @@ import (
 )
 
 func TestNewDepsProjectReturnsVersionedCompleteCoverage(t *testing.T) {
-	project := NewDepsProject("/repo", []FileAnalysis{{Path: "empty.go"}}, map[string][]string{"go": nil}, "main")
+	project := newDepsProject("/repo", []FileAnalysis{{Path: "empty.go"}}, map[string][]string{"go": nil}, "main")
 	if project.SchemaVersion != analysis.SchemaVersion || project.Coverage.Status != analysis.CoverageComplete {
 		t.Fatalf("versioned coverage = %#v", project)
 	}
@@ -22,11 +22,11 @@ func TestNewDepsProjectReturnsVersionedCompleteCoverage(t *testing.T) {
 }
 
 func TestNewDepsProjectProducesDeterministicCollections(t *testing.T) {
-	first := NewDepsProject("/repo", []FileAnalysis{
+	first := newDepsProject("/repo", []FileAnalysis{
 		{Path: "z.go", Functions: []string{"Z", "A"}, Imports: []string{"z", "a"}},
 		{Path: "a.go"},
 	}, map[string][]string{"go": {"z", "a"}}, "")
-	second := NewDepsProject("/repo", []FileAnalysis{
+	second := newDepsProject("/repo", []FileAnalysis{
 		{Path: "a.go"},
 		{Path: "z.go", Functions: []string{"A", "Z"}, Imports: []string{"a", "z"}},
 	}, map[string][]string{"go": {"a", "z"}}, "")
@@ -44,11 +44,11 @@ func TestNewDepsProjectProducesDeterministicCollections(t *testing.T) {
 }
 
 func TestNewDepsProjectOrdersDuplicateFileKeysAndReportsRustCoverage(t *testing.T) {
-	first := NewDepsProject("/repo", []FileAnalysis{
+	first := newDepsProject("/repo", []FileAnalysis{
 		{Path: "same.rs", Language: "rust", Functions: []string{"z"}},
 		{Path: "same.rs", Language: "rust", Functions: []string{"a"}},
 	}, nil, "")
-	second := NewDepsProject("/repo", []FileAnalysis{
+	second := newDepsProject("/repo", []FileAnalysis{
 		{Path: "same.rs", Language: "rust", Functions: []string{"a"}},
 		{Path: "same.rs", Language: "rust", Functions: []string{"z"}},
 	}, nil, "")
