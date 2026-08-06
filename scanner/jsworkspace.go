@@ -872,7 +872,9 @@ func splitJSPackageSpecifier(specifier string) (string, string, bool) {
 	}
 	parts := strings.Split(specifier, "/")
 	if strings.HasPrefix(specifier, "@") {
-		if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		// A scoped specifier needs both a non-empty scope and a package name:
+		// "@/pkg" (empty scope) and "@scope/" (empty name) are malformed.
+		if len(parts) < 2 || parts[0] == "" || parts[1] == "" || parts[0] == "@" {
 			return "", "", false
 		}
 		return strings.Join(parts[:2], "/"), strings.Join(parts[2:], "/"), true

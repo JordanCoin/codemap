@@ -61,3 +61,24 @@ func TestNewDepsProjectOrdersDuplicateFileKeysAndReportsRustCoverage(t *testing.
 		t.Fatalf("Rust coverage = %q, want partial", first.Coverage.Status)
 	}
 }
+
+func TestNewDepsProjectRustCoverageFromPathAndInventory(t *testing.T) {
+	// A Rust file whose Language field is empty still flips coverage to partial
+	// via DetectLanguage on the path.
+	fromPath := newDepsProject("/repo", []FileAnalysis{{Path: "crate/src/lib.rs"}}, nil, "")
+	if fromPath.Coverage.Status != analysis.CoveragePartial {
+		t.Fatalf("path-detected Rust coverage = %q, want partial", fromPath.Coverage.Status)
+	}
+	// Rust files in the FileInfo inventory also flip a complete scan to partial.
+	fromInventory := newDepsProject("/repo", []FileAnalysis{{Path: "main.go"}}, nil, "",
+		[]FileInfo{{Path: "crate/src/lib.rs", Ext: ".rs"}})
+	if fromInventory.Coverage.Status != analysis.CoveragePartial {
+		t.Fatalf("inventory Rust coverage = %q, want partial", fromInventory.Coverage.Status)
+	}
+	// No Rust anywhere keeps coverage complete.
+	complete := newDepsProject("/repo", []FileAnalysis{{Path: "main.go"}}, nil, "",
+		[]FileInfo{{Path: "main.go", Ext: ".go"}})
+	if complete.Coverage.Status != analysis.CoverageComplete {
+		t.Fatalf("non-Rust coverage = %q, want complete", complete.Coverage.Status)
+	}
+}

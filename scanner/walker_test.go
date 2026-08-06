@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -790,5 +791,58 @@ func TestScanFilesWithOnlyAndExcludeFilters(t *testing.T) {
 	want := []string{"cmd/main.go"}
 	if !reflect.DeepEqual(paths, want) {
 		t.Fatalf("expected %v, got %v", want, paths)
+	}
+}
+
+func TestScanConfiguredFilesExcludesCodemapState(t *testing.T) {
+	root := t.TempDir()
+	for path, content := range map[string]string{
+		"main.go":             "package main\n",
+		".codemap/state.json": "{}",
+		"pkg/util.go":         "package pkg\n",
+	} {
+		full := filepath.Join(root, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	files, err := ScanConfiguredFiles(context.Background(), root, NewGitIgnoreCache(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	for _, f := range files {
+		paths = append(paths, filepath.ToSlash(f.Path))
+	}
+	want := []string{"main.go", "pkg/util.go"}
+	if !reflect.DeepEqual(paths, want) {
+		t.Fatalf("configured files = %v, want %v (no .codemap entries)", paths, want)
+	}
+}
+
+func TestFilterAnalysesContextBranches(t *testing.T) {
+	analyses := []FileAnalysis{
+		{Path: "a.go", Language: "go"},
+		{Path: "b.py", Language: "python"},
+	}
+	// No filters: analyses pass through unchanged.
+	got, err := filterAnalysesContext(context.Background(), analyses, Filters{})
+	if err != nil || len(got) != 2 {
+		t.Fatalf("empty filters = %d analyses, err %v, want passthrough", len(got), err)
+	}
+	// Only filter keeps only Go files.
+	got, err = filterAnalysesContext(context.Background(), analyses, Filters{Only: []string{"go"}})
+	if err != nil || len(got) != 1 || got[0].Path != "a.go" {
+		t.Fatalf("only-go filter = %v, err %v, want [a.go]", got, err)
+	}
+	// Pre-cancelled context fails closed with the context error.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := filterAnalysesContext(ctx, analyses, Filters{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled filter error = %v, want context.Canceled", err)
 	}
 }

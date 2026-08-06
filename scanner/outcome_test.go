@@ -240,3 +240,35 @@ func TestGraphCoverageUnavailableSourceStaysUnavailable(t *testing.T) {
 		t.Fatalf("notes = %#v, want unavailable detail", coverage.Notes)
 	}
 }
+
+// A usable source recorded after a degraded-only source must repair the
+// reading: coverage can never stay "unavailable" once dependency references
+// were extracted by any source.
+func TestGraphCoverageAuthoritativeRepairsUnavailable(t *testing.T) {
+	coverage := GraphCoverage{}
+	coverage.AddSource(ScanSourceOutcome{Name: "ast-grep", Status: ScanSourceTimeout, Detail: "30s limit hit"})
+	coverage.AddSource(ScanSourceOutcome{Name: "cargo-metadata", Status: ScanSourceAuthoritative})
+	if got, want := coverage.Status, analysis.CoveragePartial; got != want {
+		t.Fatalf("status after authoritative repair = %q, want %q", got, want)
+	}
+	if len(coverage.Sources) != 2 {
+		t.Fatalf("sources = %d, want 2 recorded", len(coverage.Sources))
+	}
+	if len(coverage.Notes) != 1 || coverage.Notes[0] != "30s limit hit" {
+		t.Fatalf("notes = %#v, want timeout detail only", coverage.Notes)
+	}
+}
+
+// A degraded source appended after a usable one must not mark the graph
+// unavailable: the usable source already extracted dependency references.
+func TestGraphCoverageDegradedAfterUsableKeepsPartial(t *testing.T) {
+	coverage := GraphCoverage{}
+	coverage.AddSource(ScanSourceOutcome{Name: "ast-grep", Status: ScanSourceAuthoritative})
+	coverage.AddSource(ScanSourceOutcome{Name: "cargo-metadata", Status: ScanSourceTimeout, Detail: "cargo hung"})
+	if got, want := coverage.Status, analysis.CoveragePartial; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+	if len(coverage.Notes) != 1 || coverage.Notes[0] != "cargo hung" {
+		t.Fatalf("notes = %#v, want cargo detail", coverage.Notes)
+	}
+}

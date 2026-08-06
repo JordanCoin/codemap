@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -976,6 +977,53 @@ func TestRunDepsModeEmptyStdinManifestDoesNotPanic(t *testing.T) {
 				}
 			} else if !strings.Contains(stdout, "No source files found.") {
 				t.Fatalf("expected empty rendered deps, got:\n%s", stdout)
+			}
+		})
+	}
+}
+
+func TestSafeStdinManifestPath(t *testing.T) {
+	for _, accepted := range []string{"go.mod", "src/main.go", "a/b/c.ts", "./go.mod", "a/../b/x.go"} {
+		got, ok := safeStdinManifestPath(accepted)
+		if !ok {
+			t.Fatalf("safeStdinManifestPath(%q) rejected, want accept", accepted)
+		}
+		if got == "" {
+			t.Fatalf("safeStdinManifestPath(%q) = empty path", accepted)
+		}
+	}
+	for _, rejected := range []string{"", "../x", "a/../../x", "/abs/path", ".."} {
+		if _, ok := safeStdinManifestPath(rejected); ok {
+			t.Fatalf("safeStdinManifestPath(%q) accepted, want reject", rejected)
+		}
+	}
+}
+
+// A --stdin manifest must never write outside the private temp directory:
+// parent traversal and absolute paths are rejected before any file is written,
+// so a hostile manifest cannot touch arbitrary paths on disk.
+func TestRunDepsFromStdinRejectsEscapingPaths(t *testing.T) {
+	for _, path := range []string{"../outside.go", "a/../../outside.go", "/etc/outside.go", ".."} {
+		t.Run(path, func(t *testing.T) {
+			reader, writer, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			oldStdin := os.Stdin
+			os.Stdin = reader
+			t.Cleanup(func() {
+				os.Stdin = oldStdin
+				_ = reader.Close()
+			})
+			manifest := fmt.Sprintf(`{"root":"stdin-root","files":[{"path":%q,"content":"package main\n"},{"path":"go.mod","content":"module example.com/stdin\n"}]}`, path)
+			if _, err := writer.WriteString(manifest); err != nil {
+				t.Fatal(err)
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, _, err := runDepsFromStdin(scanner.Filters{}); err == nil {
+				t.Fatalf("expected error for manifest path %q", path)
 			}
 		})
 	}

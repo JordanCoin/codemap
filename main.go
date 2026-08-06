@@ -457,6 +457,21 @@ type stdinManifest struct {
 	} `json:"files"`
 }
 
+// safeStdinManifestPath validates a --stdin manifest file path and returns a
+// cleaned, slash-normalized path that stays inside the manifest root. Absolute
+// paths and any ".." traversal are rejected so a hostile manifest cannot write
+// outside the private temp directory.
+func safeStdinManifestPath(rel string) (string, bool) {
+	if rel == "" || filepath.IsAbs(rel) {
+		return "", false
+	}
+	cleaned := filepath.Clean(filepath.FromSlash(rel))
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) || filepath.IsAbs(cleaned) {
+		return "", false
+	}
+	return cleaned, true
+}
+
 func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFiles map[string]bool, stdinMode bool, filters scanner.Filters) {
 	var outcome scanner.ScanOutcome
 	var externalDeps map[string][]string
@@ -545,7 +560,11 @@ func runDepsFromStdin(filters scanner.Filters) (scanner.ScanOutcome, map[string]
 	defer os.RemoveAll(tempDir)
 
 	for _, f := range manifest.Files {
-		dest := filepath.Join(tempDir, f.Path)
+		rel, ok := safeStdinManifestPath(f.Path)
+		if !ok {
+			return scanner.ScanOutcome{}, nil, nil, fmt.Errorf("invalid manifest path %q: must be a relative path inside the manifest root", f.Path)
+		}
+		dest := filepath.Join(tempDir, rel)
 		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
 			return scanner.ScanOutcome{}, nil, nil, fmt.Errorf("mkdir %s: %w", filepath.Dir(dest), err)
 		}

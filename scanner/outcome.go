@@ -34,25 +34,49 @@ type GraphCoverage struct {
 }
 
 // AddSource records one scanner outcome and marks degraded results partial.
-// Only usable fallback/mixed sources promote coverage to partial; a
+// Only usable sources (authoritative, fallback, mixed) keep coverage usable: a
 // timeout/failed/unavailable source (which extracted no dependency references)
-// keeps coverage unavailable unless a usable source was already recorded.
+// leaves the graph unavailable unless a usable source was also recorded, and an
+// authoritative source can repair an earlier degraded-only unavailable reading.
 func (c *GraphCoverage) AddSource(outcome ScanSourceOutcome) {
 	if c == nil || outcome.Name == "" {
 		return
 	}
 	c.Sources = append(c.Sources, outcome)
-	if outcome.Status == ScanSourceAuthoritative {
-		return
-	}
-	if outcome.Status == ScanSourceFallback || outcome.Status == ScanSourceMixed {
+	switch outcome.Status {
+	case ScanSourceAuthoritative:
+		// Authoritative alone keeps the default complete coverage. It cannot
+		// make coverage unavailable, so a degraded-only reading observed
+		// earlier must at least become partial once a usable source exists.
+		if c.Status == analysis.CoverageUnavailable {
+			c.Status = analysis.CoveragePartial
+		}
+	case ScanSourceFallback, ScanSourceMixed:
 		c.Status = analysis.CoveragePartial
-	} else if c.Status == "" {
-		c.Status = analysis.CoverageUnavailable
+	default:
+		// timeout/failed/unavailable extracted no dependency references; the
+		// graph is only unavailable while no usable source has been recorded.
+		if hasUsableSource(c.Sources) {
+			c.Status = analysis.CoveragePartial
+		} else {
+			c.Status = analysis.CoverageUnavailable
+		}
 	}
 	if outcome.Detail != "" {
 		c.Notes = append(c.Notes, outcome.Detail)
 	}
+}
+
+// hasUsableSource reports whether any recorded source extracted dependency
+// references (authoritative, fallback, or mixed).
+func hasUsableSource(sources []analysis.Source) bool {
+	for _, source := range sources {
+		switch source.Status {
+		case analysis.SourceAuthoritative, analysis.SourceFallback, analysis.SourceMixed:
+			return true
+		}
+	}
+	return false
 }
 
 // CoverageFromSources derives honest coverage from source capability evidence.
