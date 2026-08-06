@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -101,7 +102,7 @@ func TestGitDiffFilesInRepo(t *testing.T) {
 	}
 
 	// Get diff info
-	info, err := GitDiffInfo(tmpDir, "main")
+	info, err := GitDiffInfo(context.Background(), tmpDir, "main")
 	if err != nil {
 		t.Fatalf("GitDiffInfo failed: %v", err)
 	}
@@ -152,15 +153,15 @@ func TestGitDiffFilesHelper(t *testing.T) {
 	cmd.Dir = tmpDir
 	cmd.Run()
 
-	// Use GitDiffFiles helper
-	changed, err := GitDiffFiles(tmpDir, "main")
+	// Use GitDiffInfo helper
+	info, err := GitDiffInfo(context.Background(), tmpDir, "main")
 	if err != nil {
-		t.Fatalf("GitDiffFiles failed: %v", err)
+		t.Fatalf("GitDiffInfo failed: %v", err)
 	}
 
 	// No changes since last commit
-	if len(changed) != 0 {
-		t.Errorf("Expected no changes, got %v", changed)
+	if len(info.Changed) != 0 {
+		t.Errorf("Expected no changes, got %v", info.Changed)
 	}
 
 	// Modify file
@@ -168,12 +169,12 @@ func TestGitDiffFilesHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	changed, err = GitDiffFiles(tmpDir, "main")
+	info, err = GitDiffInfo(context.Background(), tmpDir, "main")
 	if err != nil {
-		t.Fatalf("GitDiffFiles failed: %v", err)
+		t.Fatalf("GitDiffInfo failed: %v", err)
 	}
 
-	if !changed["test.go"] {
+	if !info.Changed["test.go"] {
 		t.Error("Expected test.go in changed files")
 	}
 }
@@ -205,7 +206,7 @@ func TestGitDiffStatsHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stats, err := GitDiffStats(tmpDir, "main")
+	stats, err := GitDiffStats(context.Background(), tmpDir, "main")
 	if err != nil {
 		t.Fatalf("GitDiffStats failed: %v", err)
 	}
@@ -223,7 +224,7 @@ func TestGitDiffInfoInvalidRef(t *testing.T) {
 	tmpDir := setupGitRepo(t)
 
 	// Try to diff against nonexistent ref
-	_, err := GitDiffInfo(tmpDir, "nonexistent-branch-xyz")
+	_, err := GitDiffInfo(context.Background(), tmpDir, "nonexistent-branch-xyz")
 	if err == nil {
 		// It's okay if this returns empty results instead of error
 		// but we're checking it doesn't panic
@@ -247,12 +248,18 @@ func TestImpactInfo(t *testing.T) {
 
 func TestAnalyzeImpactEmpty(t *testing.T) {
 	// Test with empty changed files
-	impacts := AnalyzeImpact(".", nil)
+	impacts, err := AnalyzeImpact(context.Background(), ".", nil)
+	if err != nil {
+		t.Fatalf("AnalyzeImpact() error: %v", err)
+	}
 	if impacts != nil {
 		t.Errorf("Expected nil impacts for empty input, got %v", impacts)
 	}
 
-	impacts = AnalyzeImpact(".", []FileInfo{})
+	impacts, err = AnalyzeImpact(context.Background(), ".", []FileInfo{})
+	if err != nil {
+		t.Fatalf("AnalyzeImpact() error: %v", err)
+	}
 	if impacts != nil {
 		t.Errorf("Expected nil impacts for empty slice, got %v", impacts)
 	}

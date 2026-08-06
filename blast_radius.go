@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"codemap/analysis"
 	"codemap/config"
 	"codemap/render"
 	"codemap/scanner"
@@ -67,6 +69,8 @@ type blastRadiusDeps struct {
 	ExternalDeps      map[string][]string    `json:"external_deps"`
 	DiffRef           string                 `json:"diff_ref,omitempty"`
 	ChangedFilesTotal int                    `json:"changed_files_total"`
+	CoverageStatus    string                 `json:"coverage_status,omitempty"`
+	CoverageNotes     []string               `json:"coverage_notes,omitempty"`
 }
 
 type blastRadiusImporters struct {
@@ -427,7 +431,7 @@ func resolveBlastRadiusRoot(root string) (string, func(), error) {
 }
 
 func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blastRadiusBundle, error) {
-	diffInfo, err := scanner.GitDiffInfo(absRoot, ref)
+	diffInfo, err := scanner.GitDiffInfo(context.Background(), absRoot, ref)
 	if err != nil {
 		return blastRadiusBundle{}, &blastRadiusDiffError{ref: ref, err: err}
 	}
@@ -435,7 +439,7 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 	cfg := config.Load(absRoot)
 	filters := scanner.Filters{Only: cfg.Only, Exclude: cfg.Exclude}
 	gitCache := scanner.NewGitIgnoreCache(absRoot)
-	allFiles, err := scanner.ScanFiles(absRoot, gitCache, filters.Only, filters.Exclude)
+	allFiles, err := scanner.ScanFiles(context.Background(), absRoot, gitCache, filters.Only, filters.Exclude)
 	if err != nil {
 		return blastRadiusBundle{}, err
 	}
@@ -450,13 +454,14 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 	// Single ast-grep scan shared by impact analysis, the deps project, and the
 	// file graph below. Previously each of those triggered its own full-repo
 	// ScanForDeps, tripling latency on large repositories.
-	var analyses []scanner.FileAnalysis
+	var scanOutcome scanner.ScanOutcome
 	if diffTotal > 0 {
-		analyses, err = scanForDepsWithHint(absRoot, filters)
+		scanOutcome, err = scanForDepsOutcomeWithHint(absRoot, filters)
 		if err != nil {
 			return blastRadiusBundle{}, err
 		}
 	}
+	analyses := scanOutcome.Analyses
 
 	diffProject := scanner.Project{
 		Root:    absRoot,
@@ -485,19 +490,26 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 	var rawImpacted []blastRadiusRelation
 	var impacted []blastRadiusRelation
 	var rawContext []blastRadiusRelation
-	var context []blastRadiusRelation
+	var ctxRelations []blastRadiusRelation
 	var snippets []blastRadiusSnippet
 
 	if diffTotal > 0 {
 		depsProject.Files = scanner.FilterAnalysisToChanged(analyses, changedSet)
-		depsProject.ExternalDeps = scanner.ReadExternalDeps(absRoot)
-		depsTotal = len(depsProject.Files)
-		depsCapped = capBlastRadiusDepsProject(depsProject, limits.MaxChangedFiles)
-
-		fg, err := scanner.BuildFileGraphFromFilteredAnalyses(absRoot, analyses, filters)
+		depsProject.ExternalDeps, err = scanner.ReadExternalDeps(context.Background(), absRoot, 0)
 		if err != nil {
 			return blastRadiusBundle{}, err
 		}
+		depsTotal = len(depsProject.Files)
+
+		fg, err := scanner.BuildFileGraphFromOutcome(context.Background(), absRoot, scanOutcome, filters)
+		if err != nil {
+			return blastRadiusBundle{}, err
+		}
+
+		// Carry scan provenance into the deps project so a fail-closed scan
+		// never reads as an empty, complete dependency graph.
+		depsProject.Coverage = scanner.CoverageFromSources(fg.Coverage.Sources)
+		depsCapped = capBlastRadiusDepsProject(depsProject, limits.MaxChangedFiles)
 
 		// Analyze the FULL changed set; capping only limits what is displayed,
 		// it must not shrink blast-radius analysis or the summary stats.
@@ -515,11 +527,11 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 		rawImpacted = collectBlastRadiusImpacted(allReports, changedSet)
 		rawContext = collectBlastRadiusContext(allReports, changedSet)
 		impacted = capBlastRadiusRelations(rawImpacted, limits.MaxAffected)
-		context = capBlastRadiusRelations(rawContext, limits.MaxContext)
-		snippets = buildBlastRadiusSnippets(absRoot, changedFiles, depsProject.Files, impacted, context, limits)
+		ctxRelations = capBlastRadiusRelations(rawContext, limits.MaxContext)
+		snippets = buildBlastRadiusSnippets(absRoot, changedFiles, depsProject.Files, impacted, ctxRelations, limits)
 	}
 
-	summary := buildBlastRadiusSummary(diffCapped.Files, diffTotal, impacted, rawImpacted, context, rawContext, allReports)
+	summary := buildBlastRadiusSummary(diffCapped.Files, diffTotal, impacted, rawImpacted, ctxRelations, rawContext, allReports)
 
 	bundle := blastRadiusBundle{
 		Root:    absRoot,
@@ -544,11 +556,13 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 			ExternalDeps:      depsCapped.ExternalDeps,
 			DiffRef:           depsCapped.DiffRef,
 			ChangedFilesTotal: depsTotal,
+			CoverageStatus:    string(depsCapped.Coverage.Status),
+			CoverageNotes:     coverageNotesFromSources(depsCapped.Coverage.Sources),
 		},
 		Importers:                    jsonReports,
 		Limits:                       limits,
 		ImpactedOutsideDiff:          impacted,
-		DependencyContextOutsideDiff: context,
+		DependencyContextOutsideDiff: ctxRelations,
 		Snippets:                     snippets,
 	}
 	bundle.Rendered = buildBlastRadiusRendered(diffCapped, depsCapped, shownReports, diffTotal, limits)
@@ -596,6 +610,18 @@ func capBlastRadiusDepsProject(project scanner.DepsProject, max int) scanner.Dep
 	}
 	project.Files = append([]scanner.FileAnalysis(nil), project.Files[:max]...)
 	return project
+}
+
+// coverageNotesFromSources flattens source-level detail into coverage notes,
+// mirroring how the graph records blind-spot details for importers.
+func coverageNotesFromSources(sources []analysis.Source) []string {
+	var notes []string
+	for _, source := range sources {
+		if source.Detail != "" {
+			notes = append(notes, source.Detail)
+		}
+	}
+	return notes
 }
 
 func capBlastRadiusImportersReport(report scanner.ImportersReport, max int) blastRadiusImporters {
@@ -1272,7 +1298,7 @@ func renderDiffProject(project scanner.Project) string {
 
 func renderDepsProject(project scanner.DepsProject) string {
 	var buf bytes.Buffer
-	render.Depgraph(&buf, project)
+	render.Depgraph(context.Background(), &buf, project)
 	return stripANSI(buf.String())
 }
 
@@ -1358,7 +1384,7 @@ func buildImportersReportFromGraph(root, file string, fg *scanner.FileGraph) sca
 		Imports:        imports,
 		ImporterCount:  len(importers),
 		IsHub:          fg.IsHub(file),
-		CoverageStatus: fg.Coverage.Status,
+		CoverageStatus: string(fg.Coverage.Status),
 		CoverageNotes:  append([]string(nil), fg.Coverage.Notes...),
 	}
 

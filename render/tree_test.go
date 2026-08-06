@@ -2,6 +2,7 @@ package render
 
 import (
 	"bytes"
+	"context"
 	"math/rand/v2"
 	"reflect"
 	"strings"
@@ -463,7 +464,7 @@ func TestCreateBuildings(t *testing.T) {
 
 func TestTreeDepgraphNoSourceFiles(t *testing.T) {
 	var buf bytes.Buffer
-	Depgraph(&buf, scanner.DepsProject{
+	Depgraph(context.Background(), &buf, scanner.DepsProject{
 		Root:  "/tmp/example",
 		Files: nil,
 	})

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"codemap/analysis"
 	"codemap/config"
 	"codemap/scanner"
 )
@@ -300,8 +302,8 @@ func TestBlastRadiusOmitsEmptyImporterSections(t *testing.T) {
 	}
 }
 
-// Finding #10: BuildFileGraphFromAnalyses / AnalyzeImpactFromAnalyses must match
-// the scanning wrappers so the single-scan refactor is behavior-preserving.
+// Finding #10: injected scan outcomes must match the scanning wrappers so the
+// single-scan refactor preserves both graph results and provenance.
 func TestBlastRadiusSingleScanParity(t *testing.T) {
 	requireBlastRadiusTools(t)
 	root := makeBlastRadiusHubRepo(t)
@@ -314,27 +316,33 @@ func TestBlastRadiusSingleScanParity(t *testing.T) {
 	cfg := config.Load(root)
 	filters := scanner.Filters{Only: cfg.Only, Exclude: cfg.Exclude}
 
-	analyses, err := scanner.ScanForDepsWithFilters(root, filters)
+	outcome, err := scanner.ScanForDeps(context.Background(), root, filters)
 	if err != nil {
-		t.Fatalf("ScanForDepsWithFilters: %v", err)
+		t.Fatalf("ScanForDeps: %v", err)
 	}
 
-	fgWrap, err := scanner.BuildFileGraph(root)
+	fgWrap, err := scanner.BuildFileGraph(context.Background(), root, filters)
 	if err != nil {
 		t.Fatalf("BuildFileGraph: %v", err)
 	}
-	fgInjected, err := scanner.BuildFileGraphFromFilteredAnalyses(root, analyses, filters)
+	fgInjected, err := scanner.BuildFileGraphFromOutcome(context.Background(), root, outcome, filters)
 	if err != nil {
-		t.Fatalf("BuildFileGraphFromFilteredAnalyses: %v", err)
+		t.Fatalf("BuildFileGraphFromOutcome: %v", err)
 	}
 	if len(fgWrap.Importers["pkg/hub/hub.go"]) != len(fgInjected.Importers["pkg/hub/hub.go"]) {
 		t.Fatalf("file graph importer parity mismatch: %v vs %v",
 			fgWrap.Importers["pkg/hub/hub.go"], fgInjected.Importers["pkg/hub/hub.go"])
 	}
+	if !reflect.DeepEqual(fgWrap.Coverage.Sources, fgInjected.Coverage.Sources) {
+		t.Fatalf("file graph provenance mismatch: %#v vs %#v", fgWrap.Coverage.Sources, fgInjected.Coverage.Sources)
+	}
 
 	changed := []scanner.FileInfo{{Path: "pkg/hub/hub.go"}}
-	impWrap := scanner.AnalyzeImpact(root, changed)
-	impInjected := scanner.AnalyzeImpactFromAnalyses(changed, analyses)
+	impWrap, err := scanner.AnalyzeImpact(context.Background(), root, changed)
+	if err != nil {
+		t.Fatalf("AnalyzeImpact: %v", err)
+	}
+	impInjected := scanner.AnalyzeImpactFromAnalyses(changed, outcome.Analyses)
 	if len(impWrap) != len(impInjected) {
 		t.Fatalf("impact parity mismatch: %v vs %v", impWrap, impInjected)
 	}
@@ -373,5 +381,35 @@ func TestBlastOutputBuilderClosesFenceOnTruncation(t *testing.T) {
 	out := b.String()
 	if strings.Count(out, "```")%2 != 0 {
 		t.Fatalf("unbalanced fences after truncation:\n%q", out)
+	}
+}
+
+// Regression for PR #105: blast-radius deps output must carry scan provenance
+// so a fail-closed scan never reads as an empty, complete dependency graph.
+func TestCapBlastRadiusDepsProjectCarriesCoverage(t *testing.T) {
+	capped := capBlastRadiusDepsProject(scanner.DepsProject{
+		Files: []scanner.FileAnalysis{{Path: "a.go"}, {Path: "b.go"}},
+		Coverage: analysis.Coverage{
+			Status:  analysis.CoverageUnavailable,
+			Sources: []analysis.Source{{Name: "ast-grep", Status: analysis.SourceFailed, Detail: "scanner failed"}},
+		},
+	}, 1)
+	if capped.Coverage.Status != analysis.CoverageUnavailable {
+		t.Fatalf("capped deps coverage = %q, want unavailable", capped.Coverage.Status)
+	}
+	if len(capped.Files) != 1 {
+		t.Fatalf("capped deps files = %d, want 1", len(capped.Files))
+	}
+}
+
+func TestCoverageNotesFromSources(t *testing.T) {
+	notes := coverageNotesFromSources([]analysis.Source{
+		{Name: "ast-grep", Status: analysis.SourceFailed, Detail: "scanner failed"},
+		{Name: "cargo-metadata", Status: analysis.SourceAuthoritative},
+		{Name: "rust-cargo", Status: analysis.SourceMixed, Detail: "partial Rust"},
+	})
+	want := []string{"scanner failed", "partial Rust"}
+	if !reflect.DeepEqual(notes, want) {
+		t.Fatalf("coverageNotesFromSources() = %#v, want %#v", notes, want)
 	}
 }

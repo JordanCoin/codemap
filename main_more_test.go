@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"codemap/analysis"
 	"codemap/config"
 	"codemap/handoff"
 	"codemap/scanner"
@@ -352,6 +354,9 @@ func TestRunDepsModeJSONAndMainDispatchesDepsAndImporters(t *testing.T) {
 
 	root := t.TempDir()
 	writeImportersFixture(t, root)
+	if err := os.WriteFile(filepath.Join(root, "lib.rs"), []byte("pub struct Value;\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	stdout, _ := captureMainStreams(t, func() {
 		runDepsMode(root, root, true, "main", map[string]bool{"a/a.go": true}, false, scanner.Filters{})
@@ -375,7 +380,7 @@ func TestRunDepsModeJSONAndMainDispatchesDepsAndImporters(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &depsProject); err != nil {
 		t.Fatalf("expected main deps JSON output, got error %v with body:\n%s", err, stdout)
 	}
-	if depsProject.Mode != "deps" || len(depsProject.Files) == 0 {
+	if depsProject.Mode != "deps" || len(depsProject.Files) == 0 || depsProject.Coverage.Status != analysis.CoveragePartial {
 		t.Fatalf("expected deps project output, got %+v", depsProject)
 	}
 
@@ -930,5 +935,96 @@ func TestRunWatchSubcommandStopForeignPID(t *testing.T) {
 	}
 	if strings.Contains(stdout, "Watch daemon stopped") {
 		t.Fatalf("should not claim the daemon was stopped for a foreign PID:\n%s", stdout)
+	}
+}
+
+// Regression for PR #105: an empty stdin manifest must produce an empty deps
+// answer instead of panicking on a nil graph's coverage.
+func TestRunDepsModeEmptyStdinManifestDoesNotPanic(t *testing.T) {
+	for _, jsonMode := range []bool{true, false} {
+		name := "text"
+		if jsonMode {
+			name = "json"
+		}
+		t.Run(name, func(t *testing.T) {
+			reader, writer, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			oldStdin := os.Stdin
+			os.Stdin = reader
+			t.Cleanup(func() {
+				os.Stdin = oldStdin
+				_ = reader.Close()
+			})
+			if _, err := writer.WriteString(`{"root":"stdin-root","files":[]}`); err != nil {
+				t.Fatal(err)
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			stdout, _ := captureMainStreams(t, func() {
+				runDepsMode("stdin-root", "stdin-root", jsonMode, "main", nil, true, scanner.Filters{})
+			})
+			if jsonMode {
+				var project scanner.DepsProject
+				if err := json.Unmarshal([]byte(stdout), &project); err != nil {
+					t.Fatalf("decode empty stdin deps JSON: %v\n%s", err, stdout)
+				}
+				if project.Mode != "deps" || len(project.Files) != 0 {
+					t.Fatalf("expected empty deps project, got %+v", project)
+				}
+			} else if !strings.Contains(stdout, "No source files found.") {
+				t.Fatalf("expected empty rendered deps, got:\n%s", stdout)
+			}
+		})
+	}
+}
+
+func TestSafeStdinManifestPath(t *testing.T) {
+	for _, accepted := range []string{"go.mod", "src/main.go", "a/b/c.ts", "./go.mod", "a/../b/x.go"} {
+		got, ok := safeStdinManifestPath(accepted)
+		if !ok {
+			t.Fatalf("safeStdinManifestPath(%q) rejected, want accept", accepted)
+		}
+		if got == "" {
+			t.Fatalf("safeStdinManifestPath(%q) = empty path", accepted)
+		}
+	}
+	for _, rejected := range []string{"", "../x", "a/../../x", "/abs/path", ".."} {
+		if _, ok := safeStdinManifestPath(rejected); ok {
+			t.Fatalf("safeStdinManifestPath(%q) accepted, want reject", rejected)
+		}
+	}
+}
+
+// A --stdin manifest must never write outside the private temp directory:
+// parent traversal and absolute paths are rejected before any file is written,
+// so a hostile manifest cannot touch arbitrary paths on disk.
+func TestRunDepsFromStdinRejectsEscapingPaths(t *testing.T) {
+	for _, path := range []string{"../outside.go", "a/../../outside.go", "/etc/outside.go", ".."} {
+		t.Run(path, func(t *testing.T) {
+			reader, writer, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			oldStdin := os.Stdin
+			os.Stdin = reader
+			t.Cleanup(func() {
+				os.Stdin = oldStdin
+				_ = reader.Close()
+			})
+			manifest := fmt.Sprintf(`{"root":"stdin-root","files":[{"path":%q,"content":"package main\n"},{"path":"go.mod","content":"module example.com/stdin\n"}]}`, path)
+			if _, err := writer.WriteString(manifest); err != nil {
+				t.Fatal(err)
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, _, err := runDepsFromStdin(scanner.Filters{}); err == nil {
+				t.Fatalf("expected error for manifest path %q", path)
+			}
+		})
 	}
 }

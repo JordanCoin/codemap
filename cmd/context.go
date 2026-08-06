@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -314,7 +315,7 @@ func detectLanguagesFromFiles(root string) map[string]bool {
 
 	// Include subdirectory source files. Reuse the scan result for countSourceFiles too.
 	gitCache := scanner.NewGitIgnoreCache(root)
-	if files, err := scanner.ScanConfiguredFiles(root, gitCache); err == nil {
+	if files, err := scanner.ScanConfiguredFiles(context.Background(), root, gitCache); err == nil {
 		for _, f := range files {
 			addLang(scanner.DetectLanguage(f.Path))
 		}
@@ -360,7 +361,7 @@ func countSourceFiles(root string) int {
 		return count
 	}
 	gitCache := scanner.NewGitIgnoreCache(root)
-	files, err := scanner.ScanConfiguredFiles(root, gitCache)
+	files, err := scanner.ScanConfiguredFiles(context.Background(), root, gitCache)
 	if err != nil {
 		return 0
 	}

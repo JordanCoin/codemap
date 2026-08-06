@@ -126,6 +126,11 @@ func TestBlastRadiusSubcommandMarkdownAndJSON(t *testing.T) {
 	if bundle.Snippets[0].MatchedTerm != "ComputeTotal" {
 		t.Fatalf("expected snippet match to target ComputeTotal, got %+v", bundle.Snippets[0])
 	}
+	// PR #105: blast-radius deps output carries scan provenance, so a healthy
+	// repo reports complete coverage rather than an empty, silent graph.
+	if bundle.Deps.CoverageStatus != "complete" {
+		t.Fatalf("expected deps coverage complete, got %q (notes %#v)", bundle.Deps.CoverageStatus, bundle.Deps.CoverageNotes)
+	}
 }
 
 func TestBlastRadiusSubcommandNoChanges(t *testing.T) {

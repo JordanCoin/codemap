@@ -10,8 +10,7 @@ import (
 )
 
 const (
-	rustCoverageStatus = "partial"
-	rustCoverageNote   = "Rust macro-generated, string-routed, and #[path] module edges may be unresolved"
+	rustCoverageNote = "Rust macro-generated, string-routed, and #[path] module edges may be unresolved"
 
 	rustTargetLib         = "lib"
 	rustTargetBin         = "bin"
@@ -20,12 +19,6 @@ const (
 	rustTargetBench       = "bench"
 	rustTargetCustomBuild = "custom-build"
 )
-
-// GraphCoverage describes known dependency-graph blind spots.
-type GraphCoverage struct {
-	Status string   `json:"status,omitempty"`
-	Notes  []string `json:"notes,omitempty"`
-}
 
 type rustTarget struct {
 	rootFile  string

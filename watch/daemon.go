@@ -2,6 +2,7 @@
 package watch
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -173,11 +174,11 @@ func (d *Daemon) WriteInitialState() {
 func (d *Daemon) fullScan() error {
 	start := time.Now()
 
-	files, err := scanner.ScanFiles(d.root, d.gitCache, nil, nil)
+	files, err := scanner.ScanFiles(context.Background(), d.root, d.gitCache, nil, nil)
 	if err != nil {
 		return err
 	}
-	configuredFiles, err := scanner.ScanConfiguredFiles(d.root, d.gitCache)
+	configuredFiles, err := scanner.ScanConfiguredFiles(context.Background(), d.root, d.gitCache)
 	if err != nil {
 		return err
 	}
@@ -222,7 +223,7 @@ func (d *Daemon) refreshConfiguredFiles(resetIgnoreCache bool) error {
 		gitCache = scanner.NewGitIgnoreCache(d.root)
 		d.gitCache = gitCache
 	}
-	files, err := scanner.ScanConfiguredFiles(d.root, gitCache)
+	files, err := scanner.ScanConfiguredFiles(context.Background(), d.root, gitCache)
 	if err != nil {
 		return err
 	}
@@ -254,7 +255,7 @@ func (d *Daemon) computeDeps() {
 	start := time.Now()
 
 	// Build file graph (internal file-to-file dependencies)
-	fg, err := scanner.BuildFileGraph(d.root)
+	fg, err := scanner.BuildFileGraph(context.Background(), d.root, scanner.ConfiguredFilters(d.root))
 	if err != nil {
 		if d.verbose {
 			fmt.Printf("[watch] File graph unavailable: %v\n", err)

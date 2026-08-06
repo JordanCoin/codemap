@@ -1,6 +1,8 @@
 package scanner
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -58,7 +60,7 @@ func TestScanFiles(t *testing.T) {
 	}
 
 	// Scan the directory
-	result, err := ScanFiles(tmpDir, nil, nil, nil)
+	result, err := ScanFiles(context.Background(), tmpDir, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("ScanFiles failed: %v", err)
 	}
@@ -89,7 +91,7 @@ func TestScanFilesIgnoresDirs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := ScanFiles(tmpDir, nil, nil, nil)
+	result, err := ScanFiles(context.Background(), tmpDir, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("ScanFiles failed: %v", err)
 	}
@@ -123,7 +125,7 @@ func TestScanFilesExtensions(t *testing.T) {
 		}
 	}
 
-	result, err := ScanFiles(tmpDir, nil, nil, nil)
+	result, err := ScanFiles(context.Background(), tmpDir, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +296,7 @@ func TestNestedGitignore(t *testing.T) {
 
 	// Scan with GitIgnoreCache
 	cache := NewGitIgnoreCache(tmpDir)
-	files, err := ScanFiles(tmpDir, cache, nil, nil)
+	files, err := ScanFiles(context.Background(), tmpDir, cache, nil, nil)
 	if err != nil {
 		t.Fatalf("ScanFiles failed: %v", err)
 	}
@@ -337,7 +339,7 @@ func TestGitIgnoreCacheNil(t *testing.T) {
 	}
 
 	// Scan without gitignore cache
-	files, err := ScanFiles(tmpDir, nil, nil, nil)
+	files, err := ScanFiles(context.Background(), tmpDir, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("ScanFiles failed: %v", err)
 	}
@@ -435,7 +437,7 @@ func TestNestedGitignoreMonorepo(t *testing.T) {
 
 	// Scan with GitIgnoreCache
 	cache := NewGitIgnoreCache(tmpDir)
-	files, err := ScanFiles(tmpDir, cache, nil, nil)
+	files, err := ScanFiles(context.Background(), tmpDir, cache, nil, nil)
 	if err != nil {
 		t.Fatalf("ScanFiles failed: %v", err)
 	}
@@ -482,7 +484,7 @@ func TestNestedGitignoreUnignore(t *testing.T) {
 	os.WriteFile(filepath.Join(tmpDir, "sub", "other.log"), []byte("other"), 0644)
 
 	cache := NewGitIgnoreCache(tmpDir)
-	files, err := ScanFiles(tmpDir, cache, nil, nil)
+	files, err := ScanFiles(context.Background(), tmpDir, cache, nil, nil)
 	if err != nil {
 		t.Fatalf("ScanFiles failed: %v", err)
 	}
@@ -539,7 +541,7 @@ func TestNestedGitignoreDirectoryIgnore(t *testing.T) {
 	}
 
 	cache := NewGitIgnoreCache(tmpDir)
-	files, err := ScanFiles(tmpDir, cache, nil, nil)
+	files, err := ScanFiles(context.Background(), tmpDir, cache, nil, nil)
 	if err != nil {
 		t.Fatalf("ScanFiles failed: %v", err)
 	}
@@ -775,7 +777,7 @@ func TestScanFilesWithOnlyAndExcludeFilters(t *testing.T) {
 		}
 	}
 
-	got, err := ScanFiles(tmpDir, nil, []string{"go"}, []string{"*_test.go"})
+	got, err := ScanFiles(context.Background(), tmpDir, nil, []string{"go"}, []string{"*_test.go"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -789,5 +791,58 @@ func TestScanFilesWithOnlyAndExcludeFilters(t *testing.T) {
 	want := []string{"cmd/main.go"}
 	if !reflect.DeepEqual(paths, want) {
 		t.Fatalf("expected %v, got %v", want, paths)
+	}
+}
+
+func TestScanConfiguredFilesExcludesCodemapState(t *testing.T) {
+	root := t.TempDir()
+	for path, content := range map[string]string{
+		"main.go":             "package main\n",
+		".codemap/state.json": "{}",
+		"pkg/util.go":         "package pkg\n",
+	} {
+		full := filepath.Join(root, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	files, err := ScanConfiguredFiles(context.Background(), root, NewGitIgnoreCache(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	for _, f := range files {
+		paths = append(paths, filepath.ToSlash(f.Path))
+	}
+	want := []string{"main.go", "pkg/util.go"}
+	if !reflect.DeepEqual(paths, want) {
+		t.Fatalf("configured files = %v, want %v (no .codemap entries)", paths, want)
+	}
+}
+
+func TestFilterAnalysesContextBranches(t *testing.T) {
+	analyses := []FileAnalysis{
+		{Path: "a.go", Language: "go"},
+		{Path: "b.py", Language: "python"},
+	}
+	// No filters: analyses pass through unchanged.
+	got, err := filterAnalysesContext(context.Background(), analyses, Filters{})
+	if err != nil || len(got) != 2 {
+		t.Fatalf("empty filters = %d analyses, err %v, want passthrough", len(got), err)
+	}
+	// Only filter keeps only Go files.
+	got, err = filterAnalysesContext(context.Background(), analyses, Filters{Only: []string{"go"}})
+	if err != nil || len(got) != 1 || got[0].Path != "a.go" {
+		t.Fatalf("only-go filter = %v, err %v, want [a.go]", got, err)
+	}
+	// Pre-cancelled context fails closed with the context error.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := filterAnalysesContext(ctx, analyses, Filters{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled filter error = %v, want context.Canceled", err)
 	}
 }

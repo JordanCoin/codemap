@@ -1,6 +1,7 @@
 package render
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"unicode"
 
+	"codemap/analysis"
 	"codemap/scanner"
 )
 
@@ -48,14 +50,18 @@ func getSystemName(dirPath string) string {
 	return "Root"
 }
 
-// Depgraph renders the dependency flow visualization
-func Depgraph(w io.Writer, project scanner.DepsProject) {
+// Depgraph renders the dependency flow visualization. The file graph is built
+// from the caller's analyses (BuildFileGraphFromAnalyses) rather than by
+// re-running the ast-grep scan, and ctx propagates cancellation through that
+// build so MCP and CLI callers are not left with an unobservable second scan.
+func Depgraph(ctx context.Context, w io.Writer, project scanner.DepsProject) {
 	files := project.Files
 	externalDeps := project.ExternalDeps
 	projectName := filepath.Base(project.Root)
 
 	if len(files) == 0 {
 		fmt.Fprintln(w, "  No source files found.")
+		renderCoverageLine(w, project.Coverage)
 		return
 	}
 
@@ -68,8 +74,9 @@ func Depgraph(w io.Writer, project scanner.DepsProject) {
 		internalNames[name] = true
 	}
 
-	// Use BuildFileGraph for accurate file-level dependency resolution
-	fg, err := scanner.BuildFileGraph(project.Root)
+	// Build the graph from the analyses the caller already produced instead of
+	// re-scanning with BuildFileGraph, which would double the ast-grep work.
+	fg, err := scanner.BuildFileGraphFromAnalyses(ctx, project.Root, files, scanner.ConfiguredFilters(project.Root))
 	var internalDeps map[string][]string
 	var depCounts map[string]int
 	if err == nil && fg != nil {
@@ -362,5 +369,25 @@ func Depgraph(w io.Writer, project scanner.DepsProject) {
 		internalCount += len(targets)
 	}
 	fmt.Fprintf(w, "%d files · %d functions · %d deps\n", len(files), totalFuncs, internalCount)
+	renderCoverageLine(w, project.Coverage)
 	fmt.Fprintln(w)
+}
+
+// renderCoverageLine surfaces degraded scan coverage in text output so a
+// fail-closed or partial scan never reads as a complete, empty graph.
+func renderCoverageLine(w io.Writer, coverage analysis.Coverage) {
+	if coverage.Status == "" || coverage.Status == analysis.CoverageComplete {
+		return
+	}
+	var details []string
+	for _, source := range coverage.Sources {
+		if source.Detail != "" {
+			details = append(details, source.Detail)
+		}
+	}
+	if len(details) == 0 {
+		fmt.Fprintf(w, "  Coverage: %s\n", coverage.Status)
+		return
+	}
+	fmt.Fprintf(w, "  Coverage: %s — %s\n", coverage.Status, strings.Join(details, "; "))
 }
