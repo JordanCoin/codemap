@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"codemap/analysis"
 	"codemap/config"
 	"codemap/scanner"
 )
@@ -380,5 +381,35 @@ func TestBlastOutputBuilderClosesFenceOnTruncation(t *testing.T) {
 	out := b.String()
 	if strings.Count(out, "```")%2 != 0 {
 		t.Fatalf("unbalanced fences after truncation:\n%q", out)
+	}
+}
+
+// Regression for PR #105: blast-radius deps output must carry scan provenance
+// so a fail-closed scan never reads as an empty, complete dependency graph.
+func TestCapBlastRadiusDepsProjectCarriesCoverage(t *testing.T) {
+	capped := capBlastRadiusDepsProject(scanner.DepsProject{
+		Files: []scanner.FileAnalysis{{Path: "a.go"}, {Path: "b.go"}},
+		Coverage: analysis.Coverage{
+			Status:  analysis.CoverageUnavailable,
+			Sources: []analysis.Source{{Name: "ast-grep", Status: analysis.SourceFailed, Detail: "scanner failed"}},
+		},
+	}, 1)
+	if capped.Coverage.Status != analysis.CoverageUnavailable {
+		t.Fatalf("capped deps coverage = %q, want unavailable", capped.Coverage.Status)
+	}
+	if len(capped.Files) != 1 {
+		t.Fatalf("capped deps files = %d, want 1", len(capped.Files))
+	}
+}
+
+func TestCoverageNotesFromSources(t *testing.T) {
+	notes := coverageNotesFromSources([]analysis.Source{
+		{Name: "ast-grep", Status: analysis.SourceFailed, Detail: "scanner failed"},
+		{Name: "cargo-metadata", Status: analysis.SourceAuthoritative},
+		{Name: "rust-cargo", Status: analysis.SourceMixed, Detail: "partial Rust"},
+	})
+	want := []string{"scanner failed", "partial Rust"}
+	if !reflect.DeepEqual(notes, want) {
+		t.Fatalf("coverageNotesFromSources() = %#v, want %#v", notes, want)
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"codemap/analysis"
 	"codemap/config"
 	"codemap/render"
 	"codemap/scanner"
@@ -68,6 +69,8 @@ type blastRadiusDeps struct {
 	ExternalDeps      map[string][]string    `json:"external_deps"`
 	DiffRef           string                 `json:"diff_ref,omitempty"`
 	ChangedFilesTotal int                    `json:"changed_files_total"`
+	CoverageStatus    string                 `json:"coverage_status,omitempty"`
+	CoverageNotes     []string               `json:"coverage_notes,omitempty"`
 }
 
 type blastRadiusImporters struct {
@@ -497,12 +500,16 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 			return blastRadiusBundle{}, err
 		}
 		depsTotal = len(depsProject.Files)
-		depsCapped = capBlastRadiusDepsProject(depsProject, limits.MaxChangedFiles)
 
 		fg, err := scanner.BuildFileGraphFromOutcome(context.Background(), absRoot, scanOutcome, filters)
 		if err != nil {
 			return blastRadiusBundle{}, err
 		}
+
+		// Carry scan provenance into the deps project so a fail-closed scan
+		// never reads as an empty, complete dependency graph.
+		depsProject.Coverage = scanner.CoverageFromSources(fg.Coverage.Sources)
+		depsCapped = capBlastRadiusDepsProject(depsProject, limits.MaxChangedFiles)
 
 		// Analyze the FULL changed set; capping only limits what is displayed,
 		// it must not shrink blast-radius analysis or the summary stats.
@@ -549,6 +556,8 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 			ExternalDeps:      depsCapped.ExternalDeps,
 			DiffRef:           depsCapped.DiffRef,
 			ChangedFilesTotal: depsTotal,
+			CoverageStatus:    string(depsCapped.Coverage.Status),
+			CoverageNotes:     coverageNotesFromSources(depsCapped.Coverage.Sources),
 		},
 		Importers:                    jsonReports,
 		Limits:                       limits,
@@ -601,6 +610,18 @@ func capBlastRadiusDepsProject(project scanner.DepsProject, max int) scanner.Dep
 	}
 	project.Files = append([]scanner.FileAnalysis(nil), project.Files[:max]...)
 	return project
+}
+
+// coverageNotesFromSources flattens source-level detail into coverage notes,
+// mirroring how the graph records blind-spot details for importers.
+func coverageNotesFromSources(sources []analysis.Source) []string {
+	var notes []string
+	for _, source := range sources {
+		if source.Detail != "" {
+			notes = append(notes, source.Detail)
+		}
+	}
+	return notes
 }
 
 func capBlastRadiusImportersReport(report scanner.ImportersReport, max int) blastRadiusImporters {
@@ -1277,7 +1298,7 @@ func renderDiffProject(project scanner.Project) string {
 
 func renderDepsProject(project scanner.DepsProject) string {
 	var buf bytes.Buffer
-	render.Depgraph(&buf, project)
+	render.Depgraph(context.Background(), &buf, project)
 	return stripANSI(buf.String())
 }
 

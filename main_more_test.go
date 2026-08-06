@@ -936,3 +936,47 @@ func TestRunWatchSubcommandStopForeignPID(t *testing.T) {
 		t.Fatalf("should not claim the daemon was stopped for a foreign PID:\n%s", stdout)
 	}
 }
+
+// Regression for PR #105: an empty stdin manifest must produce an empty deps
+// answer instead of panicking on a nil graph's coverage.
+func TestRunDepsModeEmptyStdinManifestDoesNotPanic(t *testing.T) {
+	for _, jsonMode := range []bool{true, false} {
+		name := "text"
+		if jsonMode {
+			name = "json"
+		}
+		t.Run(name, func(t *testing.T) {
+			reader, writer, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			oldStdin := os.Stdin
+			os.Stdin = reader
+			t.Cleanup(func() {
+				os.Stdin = oldStdin
+				_ = reader.Close()
+			})
+			if _, err := writer.WriteString(`{"root":"stdin-root","files":[]}`); err != nil {
+				t.Fatal(err)
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			stdout, _ := captureMainStreams(t, func() {
+				runDepsMode("stdin-root", "stdin-root", jsonMode, "main", nil, true, scanner.Filters{})
+			})
+			if jsonMode {
+				var project scanner.DepsProject
+				if err := json.Unmarshal([]byte(stdout), &project); err != nil {
+					t.Fatalf("decode empty stdin deps JSON: %v\n%s", err, stdout)
+				}
+				if project.Mode != "deps" || len(project.Files) != 0 {
+					t.Fatalf("expected empty deps project, got %+v", project)
+				}
+			} else if !strings.Contains(stdout, "No source files found.") {
+				t.Fatalf("expected empty rendered deps, got:\n%s", stdout)
+			}
+		})
+	}
+}

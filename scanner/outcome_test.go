@@ -182,3 +182,61 @@ func TestCoverageFromSourcesMatrix(t *testing.T) {
 		})
 	}
 }
+
+// Regression for PR #105: a timed-out or failed primary scan that extracted no
+// dependency references must keep graph coverage unavailable, and only a usable
+// fallback/mixed source may promote it to partial.
+func TestGraphCoverageTimeoutStaysUnavailable(t *testing.T) {
+	coverage := GraphCoverage{}
+	coverage.AddSource(ScanSourceOutcome{Name: "ast-grep", Status: ScanSourceTimeout, Detail: "30s limit hit"})
+	if got, want := coverage.Status, analysis.CoverageUnavailable; got != want {
+		t.Fatalf("timeout status = %q, want %q", got, want)
+	}
+
+	coverage.AddSource(ScanSourceOutcome{Name: "cargo-metadata", Status: ScanSourceFallback})
+	if got, want := coverage.Status, analysis.CoveragePartial; got != want {
+		t.Fatalf("status after fallback = %q, want %q", got, want)
+	}
+	if len(coverage.Notes) != 1 || coverage.Notes[0] != "30s limit hit" {
+		t.Fatalf("notes = %#v, want timeout detail only", coverage.Notes)
+	}
+}
+
+func TestGraphCoverageFailedOnlyStaysUnavailable(t *testing.T) {
+	coverage := GraphCoverage{}
+	coverage.AddSource(ScanSourceOutcome{Name: "ast-grep", Status: ScanSourceFailed, Detail: "malformed output"})
+	if got, want := coverage.Status, analysis.CoverageUnavailable; got != want {
+		t.Fatalf("failed status = %q, want %q", got, want)
+	}
+	if len(coverage.Notes) != 1 || coverage.Notes[0] != "malformed output" {
+		t.Fatalf("notes = %#v, want failed detail", coverage.Notes)
+	}
+}
+
+func TestGraphCoveragePartialNotDemotedByTimeout(t *testing.T) {
+	coverage := GraphCoverage{Status: analysis.CoveragePartial}
+	coverage.AddSource(ScanSourceOutcome{Name: "cargo-metadata", Status: ScanSourceMixed})
+	coverage.AddSource(ScanSourceOutcome{Name: "ast-grep", Status: ScanSourceTimeout})
+	if got, want := coverage.Status, analysis.CoveragePartial; got != want {
+		t.Fatalf("status = %q, want %q (usable sources must not be demoted)", got, want)
+	}
+}
+
+func TestGraphCoverageAuthoritativeLeavesStatusUnset(t *testing.T) {
+	coverage := GraphCoverage{}
+	coverage.AddSource(ScanSourceOutcome{Name: "ast-grep", Status: ScanSourceAuthoritative})
+	if coverage.Status != "" {
+		t.Fatalf("authoritative-only status = %q, want unset", coverage.Status)
+	}
+}
+
+func TestGraphCoverageUnavailableSourceStaysUnavailable(t *testing.T) {
+	coverage := GraphCoverage{}
+	coverage.AddSource(ScanSourceOutcome{Name: "ast-grep", Status: ScanSourceUnavailable, Detail: "scanner not installed"})
+	if got, want := coverage.Status, analysis.CoverageUnavailable; got != want {
+		t.Fatalf("unavailable source status = %q, want %q", got, want)
+	}
+	if len(coverage.Notes) != 1 || coverage.Notes[0] != "scanner not installed" {
+		t.Fatalf("notes = %#v, want unavailable detail", coverage.Notes)
+	}
+}

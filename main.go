@@ -486,10 +486,12 @@ func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFil
 		if err != nil {
 			externalDeps = make(map[string][]string)
 		}
-		graph, err = scanner.BuildFileGraphFromOutcome(context.Background(), absRoot, outcome, filters)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error building dependency graph: %v\n", err)
-			os.Exit(1)
+		// Build the graph from the scan outcome. The graph is best-effort: a
+		// fail-closed scan or a non-fatal graph build problem must not turn
+		// --deps into a hard error. Coverage falls back to the scan outcome's
+		// own sources when no graph is available.
+		if built, graphErr := scanner.BuildFileGraphFromOutcome(context.Background(), absRoot, outcome, filters); graphErr == nil {
+			graph = built
 		}
 	}
 
@@ -498,13 +500,20 @@ func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFil
 		outcome.Analyses = scanner.FilterAnalysisToChanged(outcome.Analyses, changedFiles)
 	}
 
-	depsProject := scanner.NewDepsProjectWithCoverage(absRoot, outcome.Analyses, externalDeps, diffRef, scanner.CoverageFromSources(graph.Coverage.Sources))
+	// Derive coverage from the graph's provenance when one was built; otherwise
+	// fall back to the scan outcome's sources (nil graph = empty stdin manifest
+	// or best-effort graph failure).
+	coverageSources := outcome.Sources
+	if graph != nil {
+		coverageSources = graph.Coverage.Sources
+	}
+	depsProject := scanner.NewDepsProjectWithCoverage(absRoot, outcome.Analyses, externalDeps, diffRef, scanner.CoverageFromSources(coverageSources))
 
 	// Render or output JSON
 	if jsonMode {
 		json.NewEncoder(os.Stdout).Encode(depsProject)
 	} else {
-		render.Depgraph(os.Stdout, depsProject)
+		render.Depgraph(context.Background(), os.Stdout, depsProject)
 	}
 }
 
@@ -523,7 +532,9 @@ func runDepsFromStdin(filters scanner.Filters) (scanner.ScanOutcome, map[string]
 	}
 
 	if len(manifest.Files) == 0 {
-		return scanner.ScanOutcome{}, nil, nil, nil
+		// Return a valid empty graph/outcome so callers never dereference a nil
+		// graph when deriving coverage; an empty manifest is an empty answer.
+		return scanner.ScanOutcome{}, nil, &scanner.FileGraph{}, nil
 	}
 
 	// Create temp directory and write manifest files

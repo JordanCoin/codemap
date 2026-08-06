@@ -446,7 +446,7 @@ func handleGetDependencies(ctx context.Context, req *mcp.CallToolRequest, input 
 	depsProject := scanner.NewDepsProjectWithCoverage(absRoot, outcome.Analyses, externalDeps, "", coverage)
 
 	var buf bytes.Buffer
-	render.Depgraph(&buf, depsProject)
+	render.Depgraph(ctx, &buf, depsProject)
 	output := buf.String()
 
 	return textResult(output), depsProject, nil

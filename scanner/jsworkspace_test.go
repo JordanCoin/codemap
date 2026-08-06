@@ -406,3 +406,102 @@ func assertWorkspaceImports(t *testing.T, graph *FileGraph, path string, want []
 		t.Fatalf("imports[%q] = %v, want %v", path, got, want)
 	}
 }
+
+// Regression for PR #105: package-internal "#imports" with conditional targets
+// ({"default": ..., "types": ...}) must resolve like conditional exports
+// instead of being dropped as invalid.
+func TestBuildFileGraphResolvesConditionalPackageImports(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, root, "package.json",
+		`{"name":"@acme/cond","exports":"./src/index.ts","imports":{"#env":{"default":"./src/env.ts","types":"./src/env.d.ts"},"#noop":"nope"}}`)
+	writeWorkspaceFiles(t, root, "src/index.ts", "src/env.ts", "src/env.d.ts", "src/consumer.ts")
+
+	graph := buildWorkspaceGraph(t, root,
+		workspaceAnalysis("src/consumer.ts", "#env", "#noop"),
+	)
+	assertWorkspaceImports(t, graph, "src/consumer.ts", []string{filepath.FromSlash("src/env.ts")})
+}
+
+// Regression for PR #105: a package whose tsconfig.json inherits rootDir/outDir
+// via extends must still remap ./dist/* exports back to src/* sources.
+func TestBuildFileGraphResolvesExtendedTsconfigOutputDirs(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, root, "tsconfig.base.json", `{"compilerOptions":{"rootDir":"src","outDir":"dist"}}`)
+	writeWorkspaceFile(t, root, "package.json", `{"workspaces":["packages/*"]}`)
+	writeWorkspaceFile(t, root, "packages/core/package.json", `{"name":"@acme/ext","exports":"./dist/index.js"}`)
+	writeWorkspaceFile(t, root, "packages/core/tsconfig.json", `{"extends":"../../tsconfig.base.json"}`)
+	writeWorkspaceFiles(t, root, "app/main.ts", "packages/core/src/index.ts")
+
+	graph := buildWorkspaceGraph(t, root, workspaceAnalysis("app/main.ts", "@acme/ext"))
+	assertWorkspaceImports(t, graph, "app/main.ts", []string{filepath.FromSlash("packages/core/src/index.ts")})
+}
+
+func TestParsePackageImportsConditionalTargets(t *testing.T) {
+	m := parsePackageImports(map[string]any{
+		"#env":    map[string]any{"default": "./src/env.ts", "types": "./src/env.d.ts"},
+		"#direct": "./src/direct.ts",
+		"#bad":    []any{"./a.ts", "./b.ts"},
+		"#types":  map[string]any{"types": "./src/env.d.ts"},
+	})
+	if got := m.exact["#env"]; !got.valid || got.target != "./src/env.ts" {
+		t.Fatalf("#env = %+v, want valid ./src/env.ts", got)
+	}
+	if got := m.exact["#direct"]; !got.valid || got.target != "./src/direct.ts" {
+		t.Fatalf("#direct = %+v, want valid ./src/direct.ts", got)
+	}
+	if got := m.exact["#bad"]; got.valid {
+		t.Fatalf("#bad array must stay invalid, got %+v", got)
+	}
+	if got := m.exact["#types"]; got.valid {
+		t.Fatalf("#types-only target must stay invalid, got %+v", got)
+	}
+}
+
+func TestMergedTSOutputDirsChildOverridesParent(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, root, "tsconfig.base.json", `{"compilerOptions":{"rootDir":"lib","outDir":"build"}}`)
+	writeWorkspaceFile(t, root, "tsconfig.json", `{"extends":"./tsconfig.base.json","compilerOptions":{"outDir":"dist"}}`)
+	rootDir, outDir := mergedTSOutputDirs(filepath.Join(root, "tsconfig.json"))
+	if rootDir != "lib" || outDir != "dist" {
+		t.Fatalf("merged dirs = (%q, %q), want (lib, dist)", rootDir, outDir)
+	}
+}
+
+func TestMergedTSOutputDirsExtendsWithoutExtension(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, root, "tsconfig.base.json", `{"compilerOptions":{"rootDir":"src","outDir":"dist"}}`)
+	writeWorkspaceFile(t, root, "tsconfig.json", `{"extends":"./tsconfig.base"}`)
+	rootDir, outDir := mergedTSOutputDirs(filepath.Join(root, "tsconfig.json"))
+	if rootDir != "src" || outDir != "dist" {
+		t.Fatalf("merged dirs = (%q, %q), want (src, dist)", rootDir, outDir)
+	}
+}
+
+func TestMergedTSOutputDirsCycleGuardTerminates(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, root, "a.json", `{"extends":"./b.json"}`)
+	writeWorkspaceFile(t, root, "b.json", `{"extends":"./a.json"}`)
+	rootDir, outDir := mergedTSOutputDirs(filepath.Join(root, "a.json"))
+	if rootDir != "" || outDir != "" {
+		t.Fatalf("cyclic extends must yield empty dirs, got (%q, %q)", rootDir, outDir)
+	}
+}
+
+func TestParsePackageImportsSkipsNonPackageKeys(t *testing.T) {
+	m := parsePackageImports(map[string]any{
+		"#ok":   "./src/ok.ts",
+		"env":   "./src/env.ts",
+		"#":     "./src/hash.ts",
+		"#/":    "./src/slash.ts",
+		"#sub/": "./src/sub.ts",
+	})
+	if got := m.exact["#ok"]; !got.valid {
+		t.Fatalf("#ok must stay valid, got %+v", got)
+	}
+	// Non-# keys, bare "#", "#/" and trailing-#/ keys are not package imports.
+	for _, key := range []string{"env", "#", "#/"} {
+		if _, ok := m.exact[key]; ok {
+			t.Fatalf("key %q must be skipped, got %+v", key, m.exact[key])
+		}
+	}
+}

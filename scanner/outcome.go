@@ -34,6 +34,9 @@ type GraphCoverage struct {
 }
 
 // AddSource records one scanner outcome and marks degraded results partial.
+// Only usable fallback/mixed sources promote coverage to partial; a
+// timeout/failed/unavailable source (which extracted no dependency references)
+// keeps coverage unavailable unless a usable source was already recorded.
 func (c *GraphCoverage) AddSource(outcome ScanSourceOutcome) {
 	if c == nil || outcome.Name == "" {
 		return
@@ -42,7 +45,11 @@ func (c *GraphCoverage) AddSource(outcome ScanSourceOutcome) {
 	if outcome.Status == ScanSourceAuthoritative {
 		return
 	}
-	c.Status = analysis.CoveragePartial
+	if outcome.Status == ScanSourceFallback || outcome.Status == ScanSourceMixed {
+		c.Status = analysis.CoveragePartial
+	} else if c.Status == "" {
+		c.Status = analysis.CoverageUnavailable
+	}
 	if outcome.Detail != "" {
 		c.Notes = append(c.Notes, outcome.Detail)
 	}
