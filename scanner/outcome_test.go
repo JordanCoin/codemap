@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -270,5 +271,28 @@ func TestGraphCoverageDegradedAfterUsableKeepsPartial(t *testing.T) {
 	}
 	if len(coverage.Notes) != 1 || coverage.Notes[0] != "cargo hung" {
 		t.Fatalf("notes = %#v, want cargo detail", coverage.Notes)
+	}
+}
+
+// Regression for PR #105 follow-up: distinct sources may legitimately carry the
+// same caveat (the shared Rust resolution note), but every recorded note is
+// surfaced to users, so AddSource must record each detail only once. Without
+// dedup, ast-grep + rust-cargo both carrying the Rust note doubled the warning
+// in rendered output and in CoverageNotes.
+func TestGraphCoverageAddSourceDedupesSharedDetail(t *testing.T) {
+	coverage := GraphCoverage{}
+	coverage.AddSource(ScanSourceOutcome{Name: "ast-grep", Status: ScanSourceAuthoritative, Detail: rustCoverageNote})
+	coverage.AddSource(ScanSourceOutcome{Name: "rust-cargo", Status: ScanSourceMixed, Detail: rustCoverageNote})
+	coverage.AddSource(ScanSourceOutcome{Name: "cargo-metadata", Status: ScanSourceFallback, Detail: "1 of 1 Cargo manifests used fallback topology"})
+
+	if got, want := coverage.Status, analysis.CoveragePartial; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+	if len(coverage.Sources) != 3 {
+		t.Fatalf("sources = %d, want 3 recorded", len(coverage.Sources))
+	}
+	wantNotes := []string{rustCoverageNote, "1 of 1 Cargo manifests used fallback topology"}
+	if !reflect.DeepEqual(coverage.Notes, wantNotes) {
+		t.Fatalf("notes = %#v, want deduped %#v", coverage.Notes, wantNotes)
 	}
 }

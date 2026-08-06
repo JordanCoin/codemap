@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"fmt"
+	"slices"
 
 	"codemap/analysis"
 )
@@ -62,7 +63,10 @@ func (c *GraphCoverage) AddSource(outcome ScanSourceOutcome) {
 			c.Status = analysis.CoverageUnavailable
 		}
 	}
-	if outcome.Detail != "" {
+	// Record the detail once: distinct sources may legitimately carry the same
+	// caveat (e.g. a shared Rust resolution note), and consumers surface every
+	// note, so a duplicate would read as a doubled warning in the output.
+	if outcome.Detail != "" && !slices.Contains(c.Notes, outcome.Detail) {
 		c.Notes = append(c.Notes, outcome.Detail)
 	}
 }

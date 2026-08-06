@@ -64,24 +64,34 @@ type DepsProject struct {
 // newDepsProject builds a DepsProject with default coverage derived from the
 // analyses and inventory (Rust repos are partial). Production callers pass
 // explicit graph-derived coverage via NewDepsProjectWithCoverage; this default
-// constructor is kept for the determinism and Rust-coverage tests.
+// constructor is kept for the determinism and Rust-coverage tests. It mirrors
+// the graph-derived production shape: ast-grep stays authoritative (it did its
+// job) and the Rust caveat is carried by a rust-cargo source, never attached
+// to ast-grep, so the source list reads as what each tool contributed.
 func newDepsProject(root string, files []FileAnalysis, externalDeps map[string][]string, diffRef string, inventory ...[]FileInfo) DepsProject {
 	coverage := analysis.Coverage{
 		Status:  analysis.CoverageComplete,
 		Sources: []analysis.Source{{Name: "ast-grep", Status: analysis.SourceAuthoritative}},
 	}
+	addRustCaveat := func() {
+		if coverage.Status == analysis.CoveragePartial {
+			return
+		}
+		coverage.Status = analysis.CoveragePartial
+		coverage.Sources = append(coverage.Sources, analysis.Source{
+			Name: "rust-cargo", Status: analysis.SourceMixed, Detail: rustCoverageNote,
+		})
+	}
 	for _, file := range files {
 		if file.Language == "rust" || DetectLanguage(file.Path) == "rust" {
-			coverage.Status = analysis.CoveragePartial
-			coverage.Sources[0].Detail = rustCoverageNote
+			addRustCaveat()
 			break
 		}
 	}
 	if coverage.Status == analysis.CoverageComplete && len(inventory) > 0 {
 		for _, file := range inventory[0] {
 			if DetectLanguage(file.Path) == "rust" {
-				coverage.Status = analysis.CoveragePartial
-				coverage.Sources[0].Detail = rustCoverageNote
+				addRustCaveat()
 				break
 			}
 		}

@@ -319,6 +319,51 @@ func TestAstGrepScanDirectoryUnavailableIsIncomplete(t *testing.T) {
 	}
 }
 
+// Regression for PR #105 follow-up: ast-grep extraction is authoritative even
+// when the scan contains Rust files. The Rust caveat (macro-generated,
+// string-routed, #[path] edges) is a *resolution* gap owned by rust-cargo, so
+// ast-grep must not be demoted to mixed with a Rust-specific detail — doing so
+// degrades a Go+Rust monorepo's Go analysis and duplicates the caveat.
+func TestAstGrepScanDirectoryRustStaysAuthoritative(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires shell script execution")
+	}
+
+	tmpDir := t.TempDir()
+	rootDir := filepath.Join(tmpDir, "repo")
+	if err := os.MkdirAll(filepath.Join(rootDir, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeBinary := filepath.Join(tmpDir, "fake-sg.sh")
+	// Emit a successful scan whose only analysis is a Rust file.
+	match := `[{"file":"` + filepath.Join(rootDir, "src", "lib.rs") +
+		`","ruleId":"rust-use-imports","range":{"start":{"line":1,"column":1}}` +
+		`,"text":"use std::collections::HashMap;","metaVariables":{"single":{"PATH":{"text":"std::collections::HashMap"}}}}]`
+	script := "#!/bin/sh\nprintf '%s\\n' '" + match + "'\n"
+	if err := os.WriteFile(fakeBinary, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	scanner := &AstGrepScanner{rulesDir: tmpDir, binary: fakeBinary}
+
+	outcome, err := scanner.ScanDirectory(context.Background(), rootDir)
+	if err != nil {
+		t.Fatalf("ScanDirectory() error = %v", err)
+	}
+	if len(outcome.Analyses) != 1 || outcome.Analyses[0].Language != "rust" {
+		t.Fatalf("analyses = %#v, want one Rust analysis", outcome.Analyses)
+	}
+	if len(outcome.Sources) != 1 {
+		t.Fatalf("sources = %#v, want exactly ast-grep", outcome.Sources)
+	}
+	source := outcome.Sources[0]
+	if source.Name != "ast-grep" || source.Status != ScanSourceAuthoritative {
+		t.Fatalf("source = %#v, want authoritative ast-grep", source)
+	}
+	if source.Detail != "" {
+		t.Fatalf("ast-grep detail = %q, want empty (Rust caveat belongs to rust-cargo)", source.Detail)
+	}
+}
+
 func TestScanForDepsRejectsNonAstGrepSg(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires shell script execution")

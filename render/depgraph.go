@@ -6,6 +6,7 @@ import (
 	"io"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -381,7 +382,10 @@ func renderCoverageLine(w io.Writer, coverage analysis.Coverage) {
 	}
 	var details []string
 	for _, source := range coverage.Sources {
-		if source.Detail != "" {
+		// Sources are normalized (sorted, deduped by name/status/detail), but
+		// two distinct sources can still carry the same caveat; render each
+		// detail once so the warning is not doubled.
+		if source.Detail != "" && !slices.Contains(details, source.Detail) {
 			details = append(details, source.Detail)
 		}
 	}

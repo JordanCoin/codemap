@@ -82,3 +82,21 @@ func TestNewDepsProjectRustCoverageFromPathAndInventory(t *testing.T) {
 		t.Fatalf("non-Rust coverage = %q, want complete", complete.Coverage.Status)
 	}
 }
+
+// Regression for PR #105 follow-up: the default deps coverage must mirror the
+// graph-derived production shape — ast-grep stays authoritative (it did its
+// job) and the Rust caveat is carried by a rust-cargo source, never attached
+// to ast-grep. Attaching it to ast-grep mislabels Go analysis in a Go+Rust
+// monorepo and duplicates the caveat when rust-cargo is also recorded.
+func TestNewDepsProjectRustCaveatOwnedByRustCargoSource(t *testing.T) {
+	project := newDepsProject("/repo", []FileAnalysis{{Path: "crate/src/lib.rs"}}, nil, "")
+	if got, want := project.Coverage.Sources, []analysis.Source{
+		{Name: "ast-grep", Status: analysis.SourceAuthoritative},
+		{Name: "rust-cargo", Status: analysis.SourceMixed, Detail: rustCoverageNote},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("coverage sources = %#v, want %#v", got, want)
+	}
+	if project.Coverage.Status != analysis.CoveragePartial {
+		t.Fatalf("Rust coverage = %q, want partial", project.Coverage.Status)
+	}
+}

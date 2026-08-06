@@ -10,6 +10,7 @@ __pycache__/
 
 # Runtime state
 .codemap/
+.cache/
 /codemap-dev
 /dev_codemap
 /bundled-tools/
