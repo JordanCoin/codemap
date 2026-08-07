@@ -68,6 +68,43 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 If you prefer a standalone MCP binary, keep using `/path/to/codemap-mcp`.
 
+### Linked Worktrees and Separate Roots
+
+A standard linked Git worktree automatically reuses `.codemap/config.json` and
+project skills from its primary worktree. Create it with Git, an IDE, or any
+compatible worktree manager, then pass its absolute path to normal MCP tool
+calls:
+
+```bash
+git worktree add <path> -b <branch> <base>
+```
+
+No MCP launch flags, project-specific MCP stanza, or `--setup-root` is needed.
+Handoff, watcher, and hook/session state stays under the linked worktree's own
+`.codemap` directory, so parallel worktrees do not overwrite one another.
+
+Independent clones cannot prove that they should share setup. For those, put
+an explicit setup override before `mcp`:
+
+```json
+{
+  "mcpServers": {
+    "codemap": {
+      "command": "codemap",
+      "args": [
+        "--project-root", "/tmp/independent-clone",
+        "--setup-root", "/path/to/original",
+        "mcp"
+      ]
+    }
+  }
+}
+```
+
+Both values may be repository roots or subdirectories. An explicit
+`--setup-root` preserves the existing shared policy-and-runtime-state behavior,
+and managed MCP definitions created while it is active retain it automatically.
+
 ## Available Tools (17)
 
 ### Project Analysis

@@ -281,7 +281,7 @@ func migrateExistingCodexProjectIntegration(executable string) (int, error) {
 	if owned, err := hasOwnedCodexMCP(configPath); err != nil {
 		return migrated, err
 	} else if owned {
-		changed, err := ensureCodexMCPWithExecutable(configPath, executable)
+		changed, err := ensureCodexMCPWithExecutable(configPath, executable, root)
 		if err != nil {
 			return migrated, err
 		}
@@ -305,15 +305,11 @@ func migrateExistingCodexProjectIntegration(executable string) (int, error) {
 }
 
 func existingGitRepositoryRoot(start string) string {
-	for current := start; ; current = filepath.Dir(current) {
-		if _, err := os.Stat(filepath.Join(current, ".git")); err == nil {
-			return current
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return ""
-		}
+	root, found, err := ResolveNearestGitRoot(start)
+	if err != nil || !found {
+		return ""
 	}
+	return root
 }
 
 func hasOwnedCodexMCP(path string) (bool, error) {

@@ -19,6 +19,7 @@ import (
 
 	"codemap/config"
 	"codemap/handoff"
+	"codemap/internal/projectpath"
 	"codemap/limits"
 	"codemap/scanner"
 	"codemap/skills"
@@ -235,6 +236,15 @@ func waitForDaemonState(root string, timeout time.Duration) *watch.State {
 
 // RunHook executes the named hook with the given project root
 func RunHook(hookName, root string) error {
+	resolvedRoot, _, err := ResolveNearestGitRoot(root)
+	if err != nil {
+		return err
+	}
+	root, err = ValidateProjectPath(resolvedRoot)
+	if err != nil {
+		return err
+	}
+
 	var fn func() error
 	switch hookName {
 	case "session-start":
@@ -348,7 +358,7 @@ func hookSessionStart(root string) error {
 			depth = projCfg.Depth
 		}
 
-		args := []string{"--depth", strconv.Itoa(depth)}
+		args := projectpath.PrependSetupRootArgs("--depth", strconv.Itoa(depth))
 		if len(projCfg.Only) > 0 {
 			args = append(args, "--only", strings.Join(projCfg.Only, ","))
 		}
@@ -451,7 +461,7 @@ func showDiffVsMain(root string, fileCount int, fileCountKnown bool, projCfg con
 
 	// Run codemap --diff to show richer impact analysis on manageable repos.
 	diffBudget := projCfg.DiffOutputBytes()
-	args := []string{"--diff"}
+	args := projectpath.PrependSetupRootArgs("--diff")
 	if len(projCfg.Only) > 0 {
 		args = append(args, "--only", strings.Join(projCfg.Only, ","))
 	}
@@ -529,7 +539,7 @@ func showLightweightDiffVsMain(root string) {
 
 // getLastSessionEvents reads events.log for previous session context
 func getLastSessionEvents(root string) []string {
-	eventsFile := filepath.Join(root, ".codemap", "events.log")
+	eventsFile := filepath.Join(projectpath.RuntimeCodemapDir(root), "events.log")
 	f, err := os.Open(eventsFile)
 	if err != nil {
 		return nil
@@ -696,7 +706,8 @@ func startDaemon(root string) {
 	if err != nil {
 		return
 	}
-	cmd := hookExecCommand(exe, "watch", "start", root)
+	args := projectpath.PrependSetupRootArgs("watch", "start", root)
+	cmd := hookExecCommand(exe, args...)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	cmd.Stdin = nil
@@ -876,7 +887,7 @@ func hookPromptSubmit(root string) error {
 
 // writeStatuslineState writes a tiny file for the statusline to read.
 func writeStatuslineState(root string, intent TaskIntent) {
-	codemapDir := filepath.Join(root, ".codemap")
+	codemapDir := projectpath.RuntimeCodemapDir(root)
 	status := intent.Category
 	if intent.RiskLevel != "low" {
 		status += " " + intent.RiskLevel
@@ -1368,7 +1379,7 @@ func showSessionProgress(root, sessionID string) {
 
 // hookPreCompact saves hub state before context compaction
 func hookPreCompact(root string) error {
-	codemapDir := filepath.Join(root, ".codemap")
+	codemapDir := projectpath.RuntimeCodemapDir(root)
 	if err := os.MkdirAll(codemapDir, 0755); err != nil {
 		return err
 	}
@@ -1683,7 +1694,7 @@ func updateSessionLease(root, sessionID string, active bool, now time.Time, acti
 		}
 		return nil
 	}
-	codemapDir := filepath.Join(root, ".codemap")
+	codemapDir := projectpath.RuntimeCodemapDir(root)
 	if err := os.MkdirAll(codemapDir, 0o755); err != nil {
 		return err
 	}
@@ -1775,7 +1786,8 @@ func stopDaemon(root string) {
 	if err != nil {
 		return
 	}
-	cmd := hookExecCommand(exe, "watch", "stop", root)
+	args := projectpath.PrependSetupRootArgs("watch", "stop", root)
+	cmd := hookExecCommand(exe, args...)
 	cmd.Run()
 }
 
@@ -2065,7 +2077,7 @@ func hookSessionStartMultiRepo(root string, childRepos []string) error {
 			depth = projCfg.Depth
 		}
 
-		args := []string{"--depth", strconv.Itoa(depth)}
+		args := projectpath.PrependSetupRootArgs("--depth", strconv.Itoa(depth))
 		if len(projCfg.Only) > 0 {
 			args = append(args, "--only", strings.Join(projCfg.Only, ","))
 		}

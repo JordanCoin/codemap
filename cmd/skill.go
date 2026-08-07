@@ -3,13 +3,22 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"codemap/internal/projectpath"
 	"codemap/skills"
 )
 
 // RunSkill handles the "codemap skill" subcommand.
 func RunSkill(args []string, root string) {
+	resolvedRoot, _, err := ResolveNearestGitRoot(root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error resolving path: %v\n", err)
+		os.Exit(1)
+	}
+	root = resolvedRoot
+
 	subCmd := ""
 	if len(args) > 0 {
 		subCmd = args[0]
@@ -89,7 +98,7 @@ func runSkillShow(root, name string) {
 }
 
 func runSkillInit(root string) {
-	skillsDir := root + "/.codemap/skills"
+	skillsDir := filepath.Join(projectpath.CodemapDir(root), "skills")
 	if err := os.MkdirAll(skillsDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating skills directory: %v\n", err)
 		os.Exit(1)
@@ -118,7 +127,7 @@ Describe the situations where this skill applies.
 3. Third step
 `
 
-	path := skillsDir + "/my-skill.md"
+	path := filepath.Join(skillsDir, "my-skill.md")
 	if _, err := os.Stat(path); err == nil {
 		fmt.Printf("Skill template already exists at %s\n", path)
 		return

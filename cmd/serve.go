@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -30,7 +29,12 @@ func RunServe(args []string, root string) {
 		root = fs.Arg(0)
 	}
 
-	absRoot, err := filepath.Abs(root)
+	absRoot, _, err := ResolveNearestGitRoot(root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	absRoot, err = ValidateProjectPath(absRoot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

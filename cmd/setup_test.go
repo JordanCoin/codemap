@@ -4,8 +4,45 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
+
+	"codemap/internal/projectpath"
 )
+
+func TestGeneratedIntegrationsPreserveSetupRoot(t *testing.T) {
+	projectRoot := t.TempDir()
+	setupRoot := t.TempDir()
+	projectpath.SetSetupRoot(setupRoot)
+	t.Cleanup(projectpath.ResetSetupRoot)
+
+	wantOption := "--setup-root " + quoteHookExecutable(setupRoot, runtime.GOOS)
+	for _, hooks := range [][]claudeHookSpec{
+		generatedClaudeHooks("/tmp/codemap"),
+		generatedCodexHooks("/tmp/codemap"),
+	} {
+		for _, hook := range hooks {
+			if !strings.Contains(hook.Command, wantOption) {
+				t.Fatalf("hook command %q does not contain %q", hook.Command, wantOption)
+			}
+		}
+	}
+
+	wantArgs := []string{
+		"--project-root", projectRoot,
+		"--setup-root", setupRoot,
+		"mcp", "--configured-version", "test", "--integration", "codex-setup",
+	}
+	gotArgs := managedMCPArgs(projectRoot, "test", "codex-setup")
+	if !stringSlicesEqual(gotArgs, wantArgs) {
+		t.Fatalf("managedMCPArgs() = %#v, want %#v", gotArgs, wantArgs)
+	}
+	server := map[string]any{"command": "/tmp/codemap", "args": gotArgs}
+	if !isOwnedCodemapMCPServer(server, "codex-setup") {
+		t.Fatal("setup-root MCP command should remain managed")
+	}
+}
 
 func TestEnsureClaudeHooksCreatesSettings(t *testing.T) {
 	settingsPath := filepath.Join(t.TempDir(), ".claude", "settings.local.json")

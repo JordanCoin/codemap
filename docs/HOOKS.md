@@ -43,7 +43,29 @@ Use `--agent claude` or `--agent codex` to configure only one integration.
 Managed commands use the verified absolute path of the running `codemap`; rerun
 setup if that path changes. `codemap doctor` validates without rewriting; it checks project scope and falls back to user scope, reporting which one satisfied each check (`codemap doctor --global` checks user scope only).
 
-Important: run `codemap setup` from the git repo root. Hook commands run relative to the current working directory; starting Claude from a nested folder can prevent codemap from finding `.git` and `.codemap`.
+Important: repo-scoped commands and managed hooks resolve the nearest git root
+automatically, so starting Claude or Codex from a nested folder still finds
+root-level setup and hook state.
+
+Standard linked Git worktrees automatically inherit central config and project
+skills from their primary worktree. Create one with Git, an IDE, or any manager
+that writes standard linked-worktree metadata, then give the agent its absolute
+path:
+
+```bash
+git worktree add <path> -b <branch> <base>
+codemap -C /tmp/feature-worktree context
+```
+
+Normal CLI, hook, and plugin MCP calls need no `--setup-root`. Config and skills
+come from the primary worktree, while daemon state, events, handoffs, and
+session files remain local to the linked worktree. Tools built on standard
+linked worktrees require no special Codemap integration.
+
+Independent clones remain unrelated. Use `--setup-root /path/to/original`
+explicitly when they must share both policy and runtime state. `-C` and
+`--setup-root` may name repository roots or subdirectories; managed hook, MCP,
+and daemon commands preserve an explicit setup override.
 
 ### Manual Hook JSON (advanced)
 
@@ -120,7 +142,14 @@ If you want to manage Claude settings manually, add this `hooks` object to `.cla
 
 Restart Claude Code. You should immediately see project context at session start.
 
-If you intentionally run Claude from subdirectories, pass the repo root explicitly:
+To preserve setup explicitly in a manually managed hook command:
+
+```bash
+codemap --setup-root /path/to/original hook session-start
+```
+
+If you intentionally want a hook to target a different repository than the
+current nearest git root, pass that root explicitly:
 
 ```bash
 codemap hook session-start "$(git rev-parse --show-toplevel)"

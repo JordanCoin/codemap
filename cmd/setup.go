@@ -15,6 +15,7 @@ import (
 
 	"codemap/config"
 	"codemap/internal/buildinfo"
+	"codemap/internal/projectpath"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -99,7 +100,7 @@ func defaultIntegrationExecutable() string {
 }
 
 func generatedClaudeHooks(executable string) []claudeHookSpec {
-	command := quoteHookExecutable(executable, runtime.GOOS)
+	command := managedHookCommand(executable)
 	return []claudeHookSpec{
 		{Event: "SessionStart", Command: command + " hook session-start --integration=claude-setup"},
 		{Event: "PreToolUse", Matcher: "Edit|Write", Command: command + " hook pre-edit --integration=claude-setup"},
@@ -111,7 +112,7 @@ func generatedClaudeHooks(executable string) []claudeHookSpec {
 }
 
 func generatedCodexHooks(executable string) []claudeHookSpec {
-	command := quoteHookExecutable(executable, runtime.GOOS)
+	command := managedHookCommand(executable)
 	return []claudeHookSpec{
 		{Event: "SessionStart", Command: command + " hook session-start --agent=codex --integration=codex-setup"},
 		{Event: "PreToolUse", Matcher: "apply_patch|Edit|Write", Command: command + " hook pre-edit --agent=codex --integration=codex-setup"},
@@ -148,6 +149,14 @@ func detectInstalledAgents() (claude, codex bool) {
 		}
 	}
 	return claude, codex
+}
+
+func managedHookCommand(executable string) string {
+	command := quoteHookExecutable(executable, runtime.GOOS)
+	if setupRoot := projectpath.ConfiguredSetupRoot(); setupRoot != "" {
+		command += " --setup-root " + quoteHookExecutable(setupRoot, runtime.GOOS)
+	}
+	return command
 }
 
 // RunSetup configures codemap for the recommended hooks-first workflow.
@@ -206,7 +215,12 @@ func RunSetup(args []string, defaultRoot string) int {
 	if fs.NArg() == 1 {
 		root = fs.Arg(0)
 	}
-	absRoot, err := filepath.Abs(root)
+	absRoot, foundRepoRoot, err := ResolveNearestGitRoot(root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error resolving path: %v\n", err)
+		return 1
+	}
+	absRoot, err = ValidateProjectPath(absRoot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error resolving path: %v\n", err)
 		return 1
@@ -218,7 +232,7 @@ func RunSetup(args []string, defaultRoot string) int {
 	}
 
 	if !*skipConfig {
-		if _, err := os.Stat(filepath.Join(absRoot, ".git")); os.IsNotExist(err) {
+		if !foundRepoRoot {
 			fmt.Fprintf(os.Stderr, "Warning: %s is not a git repository root; continuing setup anyway.\n", absRoot)
 		}
 	}
@@ -265,7 +279,7 @@ func RunSetup(args []string, defaultRoot string) int {
 		}
 		if !*skipMCP {
 			if configureMCP("Claude", claudeMCPPath, func(path string) (bool, error) {
-				return ensureClaudeMCPWithExecutable(path, executable)
+				return ensureClaudeMCPWithExecutable(path, executable, absRoot)
 			}, absRoot, *useGlobalHooks) != nil {
 				failed = true
 			} else if !*useGlobalHooks {
@@ -280,7 +294,7 @@ func RunSetup(args []string, defaultRoot string) int {
 			failed = true
 		}
 		if !*skipMCP && configureMCP("Codex", codexConfigPath, func(path string) (bool, error) {
-			return ensureCodexMCPWithExecutable(path, executable)
+			return ensureCodexMCPWithExecutable(path, executable, absRoot)
 		}, absRoot, *useGlobalHooks) != nil {
 			failed = true
 		}
@@ -400,7 +414,7 @@ func codexConfigPath(projectRoot string, global bool) (string, error) {
 	return filepath.Join(homeDir, ".codex", "config.toml"), nil
 }
 
-func ensureClaudeMCPWithExecutable(path, executable string) (bool, error) {
+func ensureClaudeMCPWithExecutable(path, executable, projectRoot string) (bool, error) {
 	payload := map[string]any{}
 	data, err := os.ReadFile(path)
 	switch {
@@ -434,14 +448,14 @@ func ensureClaudeMCPWithExecutable(path, executable string) (bool, error) {
 			return false, fmt.Errorf("%s already defines a conflicting codemap MCP server", path)
 		}
 		serverMap := server.(map[string]any)
-		args := managedMCPArgs(buildinfo.Current(), "claude-setup")
+		args := managedMCPArgs(projectRoot, buildinfo.Current(), "claude-setup")
 		if serverMap["command"] == executable && stringSlicesEqual(mcpServerArgs(serverMap), args) {
 			return false, nil
 		}
 		serverMap["command"] = executable
 		serverMap["args"] = args
 	} else {
-		servers["codemap"] = map[string]any{"command": executable, "args": managedMCPArgs(buildinfo.Current(), "claude-setup")}
+		servers["codemap"] = map[string]any{"command": executable, "args": managedMCPArgs(projectRoot, buildinfo.Current(), "claude-setup")}
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return false, err
@@ -453,7 +467,7 @@ func ensureClaudeMCPWithExecutable(path, executable string) (bool, error) {
 	return true, writeFileAtomic(path, append(out, '\n'), 0o644)
 }
 
-func ensureCodexMCPWithExecutable(path, executable string) (bool, error) {
+func ensureCodexMCPWithExecutable(path, executable, projectRoot string) (bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return false, fmt.Errorf("read %s: %w", path, err)
@@ -474,7 +488,7 @@ func ensureCodexMCPWithExecutable(path, executable string) (bool, error) {
 				return false, fmt.Errorf("%s already defines a conflicting codemap MCP server", path)
 			}
 			serverMap := server.(map[string]any)
-			args := managedMCPArgs(buildinfo.Current(), "codex-setup")
+			args := managedMCPArgs(projectRoot, buildinfo.Current(), "codex-setup")
 			if serverMap["command"] == executable && stringSlicesEqual(mcpServerArgs(serverMap), args) {
 				return false, nil
 			}
@@ -486,7 +500,7 @@ func ensureCodexMCPWithExecutable(path, executable string) (bool, error) {
 		}
 	}
 	const section = "[mcp_servers.codemap]"
-	body := section + "\ncommand = " + tomlString(executable) + "\nargs = " + tomlStringArray(managedMCPArgs(buildinfo.Current(), "codex-setup")) + "\n"
+	body := section + "\ncommand = " + tomlString(executable) + "\nargs = " + tomlStringArray(managedMCPArgs(projectRoot, buildinfo.Current(), "codex-setup")) + "\n"
 	addition := "\n" + body
 	if len(data) == 0 {
 		addition = body
@@ -520,7 +534,11 @@ func isOwnedCodemapMCPServer(raw any, integration string) bool {
 	if command == "codemap" && stringSlicesEqual(args, []string{"mcp"}) {
 		return true
 	}
-	return isAbsoluteIntegrationPath(command) && len(args) == 5 && args[0] == "mcp" && args[1] == "--configured-version" && args[2] != "" && args[3] == "--integration" && args[4] == integration
+	if !isAbsoluteIntegrationPath(command) {
+		return false
+	}
+	_, remaining, err := ParseGlobalRootOptions(args)
+	return err == nil && len(remaining) == 5 && remaining[0] == "mcp" && remaining[1] == "--configured-version" && remaining[2] != "" && remaining[3] == "--integration" && remaining[4] == integration
 }
 
 func ensureClaudeHooks(settingsPath string, global bool) (ensureHooksResult, error) {

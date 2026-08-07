@@ -11,6 +11,22 @@ import (
 	"codemap/watch"
 )
 
+func TestRunContextPreservesExplicitSubtree(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "pkg")
+	mustWriteFile(t, filepath.Join(root, ".git", "HEAD"), "ref: refs/heads/main\n")
+	mustWriteFile(t, filepath.Join(nested, "main.go"), "package pkg\n")
+
+	var envelope ContextEnvelope
+	out := captureOutput(func() { RunContext([]string{nested}, root) })
+	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Project.Root != nested {
+		t.Fatalf("context root = %q, want explicit subtree %q", envelope.Project.Root, nested)
+	}
+}
+
 func TestDetectLanguagesFromFiles_ManifestSignals(t *testing.T) {
 	root := t.TempDir()
 

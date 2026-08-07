@@ -89,11 +89,20 @@ func RunContext(args []string, root string) {
 		os.Exit(1)
 	}
 
-	if fs.NArg() > 0 {
+	explicitRoot := fs.NArg() > 0
+	if explicitRoot {
 		root = fs.Arg(0)
 	}
 
 	absRoot, err := filepath.Abs(root)
+	if !explicitRoot {
+		absRoot, _, err = ResolveNearestGitRoot(root)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	absRoot, err = ValidateProjectPath(absRoot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"codemap/internal/projectpath"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -521,6 +522,38 @@ func TestResolveGlobalRoots(t *testing.T) {
 		}
 	})
 
+	t.Run("directory alone discovers linked worktree setup", func(t *testing.T) {
+		primary := filepath.Join(launchDir, "primary")
+		gitDir := filepath.Join(primary, ".git", "worktrees", "agent")
+		if err := os.MkdirAll(gitDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(primary, ".codemap"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(gitDir, "commondir"), []byte("../..\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		linked := filepath.Join(launchDir, "linked")
+		nested := filepath.Join(linked, "pkg")
+		if err := os.MkdirAll(nested, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(linked, ".git"), []byte("gitdir: "+gitDir+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		roots, err := ResolveGlobalRoots(GlobalRootOptions{Directory: nested}, launchDir)
+		if err != nil {
+			t.Fatalf("ResolveGlobalRoots() error: %v", err)
+		}
+		primary = canonicalTestPath(t, primary)
+		linked = canonicalTestPath(t, linked)
+		if roots.Project != linked || roots.Setup != primary || roots.Runtime != linked || roots.Source != projectpath.SourceLinkedWorktree {
+			t.Fatalf("roots = %#v, want project/runtime %q, setup %q, linked source", roots, linked, primary)
+		}
+	})
+
 	t.Run("relative setup root resolves after directory", func(t *testing.T) {
 		relSetup, err := filepath.Rel(projectRoot, setupNested)
 		if err != nil {
@@ -550,6 +583,24 @@ func TestResolveGlobalRoots(t *testing.T) {
 			SetupRoot: t.TempDir(),
 		}, launchDir); err == nil {
 			t.Fatal("expected explicit non-repository setup to be rejected")
+		}
+	})
+
+	t.Run("explicit setup does not bypass malformed project gitfile", func(t *testing.T) {
+		malformedProject := filepath.Join(launchDir, "malformed-project")
+		if err := os.MkdirAll(malformedProject, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(malformedProject, ".git"), []byte("not a gitdir\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := ResolveGlobalRoots(GlobalRootOptions{
+			Directory: malformedProject,
+			SetupRoot: setupNested,
+		}, launchDir)
+		if err == nil || !strings.Contains(err.Error(), "resolve linked worktree setup") {
+			t.Fatalf("ResolveGlobalRoots() error = %v, want malformed project gitfile rejection", err)
 		}
 	})
 
@@ -583,4 +634,13 @@ func TestResolveGlobalRoots(t *testing.T) {
 			t.Fatal("expected non-directory .codemap storage to be rejected")
 		}
 	})
+}
+
+func canonicalTestPath(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
 }

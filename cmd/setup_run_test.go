@@ -101,3 +101,39 @@ func TestRunSetupCreatesConfigAndHooks(t *testing.T) {
 		t.Fatal("expected hooks to be configured")
 	}
 }
+
+func TestRunSetupUsesNearestGitRootFromNestedDirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	nested := filepath.Join(root, "pkg", "feature")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var code int
+	out := captureOutput(func() {
+		code = RunSetup([]string{"--no-hooks"}, nested)
+	})
+	if code != 0 {
+		t.Fatalf("RunSetup() exit code = %d, want 0", code)
+	}
+	wantRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Project: "+wantRoot) {
+		t.Fatalf("expected setup output to use repo root %q, got:\n%s", wantRoot, out)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".codemap", "config.json")); err != nil {
+		t.Fatalf("expected root config to exist: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(nested, ".codemap", "config.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected nested config to be absent, got err=%v", err)
+	}
+}
