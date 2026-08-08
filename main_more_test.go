@@ -666,8 +666,15 @@ func TestResolveImportersProjectRoot(t *testing.T) {
 				if gotRoot != test.want {
 					t.Fatalf("root = %q, want %q", gotRoot, test.want)
 				}
-				if gotFile != absoluteFile {
-					t.Fatalf("file = %q, want unchanged %q", gotFile, absoluteFile)
+				// The explicit root wins, but the absolute importer is still
+				// canonicalized so its relative path matches the canonical
+				// project root (e.g. macOS /tmp -> /private/tmp).
+				canonicalFile, err := filepath.EvalSymlinks(absoluteFile)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if gotFile != canonicalFile {
+					t.Fatalf("file = %q, want canonical %q", gotFile, canonicalFile)
 				}
 			})
 		}
@@ -713,6 +720,41 @@ func TestAbsoluteImporterInfersProjectRootFromUnrelatedDirectory(t *testing.T) {
 	}
 	if report.File != "main.go" {
 		t.Fatalf("report file = %q, want main.go", report.File)
+	}
+}
+
+// TestExplicitRootImportersReportUsesCanonicalRelativePath ensures an
+// absolute importer with a differently spelled root still reports a
+// canonical root-relative path.
+func TestExplicitRootImportersReportUsesCanonicalRelativePath(t *testing.T) {
+	if !scanner.NewAstGrepAnalyzer().Available() {
+		t.Skip("ast-grep not available")
+	}
+
+	repo := makeMainGitRepo(t, "main")
+	canonicalRepo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := runRootOptionsBinary(
+		t.TempDir(),
+		"--json",
+		"--importers", filepath.Join(repo, "main.go"),
+		canonicalRepo,
+	)
+	if err != nil {
+		t.Fatalf("codemap failed: %v\n%s", err, out)
+	}
+
+	var report scanner.ImportersReport
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("decode importers report: %v\n%s", err, out)
+	}
+	if report.Root != canonicalRepo {
+		t.Fatalf("report root = %q, want %q", report.Root, canonicalRepo)
+	}
+	if report.File != "main.go" {
+		t.Fatalf("report file = %q, want main.go (canonical-relative)", report.File)
 	}
 }
 

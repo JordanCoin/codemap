@@ -560,6 +560,13 @@ func applyGlobalRootOptions(args []string) ([]string, bool, error) {
 
 func resolveImportersInvocation(root, importer string, projectRootExplicit bool) (string, string, error) {
 	if root != "" || projectRootExplicit || importer == "" || !filepath.IsAbs(importer) {
+		// Canonicalize the importer so the relative path matches the
+		// canonicalized project root (e.g. macOS /tmp -> /private/tmp).
+		if filepath.IsAbs(importer) {
+			if canonical, err := filepath.EvalSymlinks(importer); err == nil {
+				importer = canonical
+			}
+		}
 		return root, importer, nil
 	}
 
