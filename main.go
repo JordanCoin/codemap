@@ -490,6 +490,11 @@ func applyGlobalRootOptions(args []string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Canonicalize the stored setup root so projectpath and daemon args agree
+	// with the resolved project root (e.g. macOS /var -> /private/var).
+	if canonical, err := filepath.EvalSymlinks(roots.Setup); err == nil {
+		roots.Setup = canonical
+	}
 	if err := os.Chdir(roots.Project); err != nil {
 		return nil, fmt.Errorf("change to project root %q: %w", roots.Project, err)
 	}
@@ -722,6 +727,11 @@ func runWatchSubcommand(subCmd, root string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+	// Canonicalize so the daemon identity and path comparisons agree (e.g.
+	// macOS /var -> /private/var).
+	if canonical, err := filepath.EvalSymlinks(absRoot); err == nil {
+		absRoot = canonical
 	}
 
 	switch subCmd {

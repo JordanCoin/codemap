@@ -225,6 +225,11 @@ func RunSetup(args []string, defaultRoot string) int {
 		fmt.Fprintf(os.Stderr, "Error resolving path: %v\n", err)
 		return 1
 	}
+	// Canonicalize so setup output, config paths, and hooks agree (e.g. macOS
+	// /tmp -> /private/tmp, /var -> /private/var).
+	if canonical, err := filepath.EvalSymlinks(absRoot); err == nil {
+		absRoot = canonical
+	}
 	executable, err := resolveIntegrationExecutable()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error resolving codemap executable: %v\n", err)

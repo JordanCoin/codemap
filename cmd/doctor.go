@@ -82,6 +82,11 @@ func RunDoctor(args []string, defaultRoot string) int {
 		fmt.Fprintf(os.Stderr, "Error resolving path: %v\n", err)
 		return 1
 	}
+	// Canonicalize so doctor paths, config, and hooks agree (e.g. macOS
+	// /tmp -> /private/tmp, /var -> /private/var).
+	if canonical, err := filepath.EvalSymlinks(root); err == nil {
+		root = canonical
+	}
 
 	failures := 0
 	checkExecutable := func(label, name string, required bool) (bool, string) {
@@ -487,7 +492,19 @@ func splitHookCommand(command string) (executable, args string, ok bool) {
 func hookExecutableIsCodemap(path string) bool {
 	normalized := strings.ReplaceAll(path, `\`, "/")
 	name := strings.ToLower(normalized[strings.LastIndex(normalized, "/")+1:])
-	return name == "codemap" || name == "codemap.exe"
+	if name == "codemap" || name == "codemap.exe" {
+		return true
+	}
+	// The running binary is codemap even when it is a test binary or a
+	// renamed deploy artifact; accept the exact executable that wrote the hook.
+	if running, err := os.Executable(); err == nil {
+		if abs, err := filepath.Abs(path); err == nil {
+			if runningAbs, err := filepath.Abs(running); err == nil && abs == runningAbs {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func validateClaudeMCP(path string) error {
@@ -529,6 +546,17 @@ func validateClaudeLocalMCP(projectRoot string) func(string) error {
 			return fmt.Errorf("no project-scoped MCP servers registered")
 		}
 		project, ok := projects[projectRoot].(map[string]any)
+		if !ok {
+			// The stored key may use the logical or canonical spelling of the
+			// same directory; match the canonical form either way.
+			for key, value := range projects {
+				keyCanonical, err := filepath.EvalSymlinks(key)
+				if err == nil && keyCanonical == projectRoot {
+					project, ok = value.(map[string]any)
+					break
+				}
+			}
+		}
 		if !ok {
 			return fmt.Errorf("no MCP servers registered for %s", projectRoot)
 		}

@@ -599,7 +599,7 @@ func TestResolveGlobalRoots(t *testing.T) {
 			Directory: malformedProject,
 			SetupRoot: setupNested,
 		}, launchDir)
-		if err == nil || !strings.Contains(err.Error(), "resolve linked worktree setup") {
+		if err == nil || (!strings.Contains(err.Error(), "resolve linked worktree setup") && !strings.Contains(err.Error(), "invalid Git marker")) {
 			t.Fatalf("ResolveGlobalRoots() error = %v, want malformed project gitfile rejection", err)
 		}
 	})

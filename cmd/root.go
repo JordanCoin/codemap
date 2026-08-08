@@ -117,10 +117,12 @@ func ResolveGlobalRoots(opts GlobalRootOptions, launchDir string) (InvocationRoo
 		}
 		runtimeRoot = setupRoot
 		source = projectpath.SourceExplicit
-	} else {
+	} else if projectSelection.Source == projectpath.SourceLinkedWorktree {
+		// Linked worktrees resolve to the physical primary and worktree roots.
+		projectRoot = projectSelection.ProjectRoot
 		setupRoot = projectSelection.SetupRoot
 		runtimeRoot = projectSelection.RuntimeRoot
-		source = projectSelection.Source
+		source = projectpath.SourceLinkedWorktree
 	}
 	if err := validateCodemapStorageRoot(setupRoot); err != nil {
 		return InvocationRoots{}, fmt.Errorf("resolve setup root: %w", err)
