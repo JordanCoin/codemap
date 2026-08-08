@@ -1,14 +1,34 @@
 # codemap 🗺️
 
-> **codemap — a project brain for your AI.**
-> Give LLMs instant architectural context without burning tokens.
+> **codemap — structural ground truth for coding agents.**
+> Resolves what your code actually imports, tells you what breaks if you change it, and is explicit about what it couldn't figure out.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Go](https://img.shields.io/badge/go-1.21+-00ADD8.svg)
+![Go](https://img.shields.io/badge/go-1.24+-00ADD8.svg)
 ![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/JordanCoin/6ffe3276ddb8a7a7f08d50d649e567bd/raw/codemap-coverage.json)
 [![Run in Smithery](https://smithery.ai/badge/skills/jordancoin)](https://smithery.ai/skills?ns=jordancoin&utm_source=github&utm_medium=badge)
 
 ![codemap screenshot](assets/codemap.png)
+
+## What it's for
+
+An agent reading your repo can see what a file *says*. It can't cheaply see what depends on that file — that answer lives in `go.mod`, Cargo workspace membership, `package.json` `exports` maps, and `tsconfig` path aliases, not in the source text.
+
+codemap computes three things:
+
+| | |
+|---|---|
+| **Orientation** | A structure map with the most-imported files called out. Cheap cold start, useful when an agent has no memory of the last hour. |
+| **Dependency graph** | Imports resolved through each ecosystem's real rules — not string matching. |
+| **Blast radius** | Who breaks if you change this file. |
+
+And one thing that matters more than any of them: **it tells you when it doesn't know.** Every dependency answer carries a coverage status, so a partial graph never reads as a complete one.
+
+```bash
+codemap .                        # structure + hubs
+codemap --importers path/to/file # who depends on this
+codemap --diff                   # what changed vs main
+```
 
 ## Install
 
@@ -21,14 +41,11 @@ scoop bucket add codemap https://github.com/JordanCoin/scoop-codemap
 scoop install codemap
 ```
 
-> Other options: [Releases](https://github.com/JordanCoin/codemap/releases) | `go install` | Build from source
+> Other options: [Releases](https://github.com/JordanCoin/codemap/releases) | `go install` | build from source
 
-## Tarball / CI Install
+### CI / tarball install
 
-If you install `codemap` from a release tarball, also install `ast-grep` separately for `--deps`.
-The tarball includes `codemap` and the bundled rules, but not the `ast-grep` executable.
-
-Example for Alpine-based CI:
+Release tarballs ship `codemap` and the bundled rules but not the `ast-grep` executable, which `--deps` needs. Either install it separately:
 
 ```bash
 apk add --no-cache curl jq bash python3 py3-pip
@@ -43,122 +60,129 @@ curl -fsSL "https://github.com/JordanCoin/codemap/releases/download/v${CODEMAP_V
 python3 -m pip install --no-cache-dir ast-grep-cli
 ```
 
-If you want a self-contained archive for CI/CD, use the `codemap-full` release artifact instead.
-It includes `codemap`, `ast-grep`, and `sg` in one archive so `--deps` works after extraction.
+…or use the self-contained `codemap-full` artifact, which bundles `codemap`, `ast-grep`, and `sg`:
 
 ```bash
-apk add --no-cache curl jq bash
-
-ARCH=$(uname -m)
-if [ "$ARCH" = "x86_64" ]; then ARCH="amd64"; elif [ "$ARCH" = "aarch64" ]; then ARCH="arm64"; fi
-
-CODEMAP_VERSION=$(curl -fsSL https://api.github.com/repos/JordanCoin/codemap/releases/latest | jq -r '.tag_name' | tr -d 'v')
 curl -fsSL "https://github.com/JordanCoin/codemap/releases/download/v${CODEMAP_VERSION}/codemap-full_${CODEMAP_VERSION}_linux_${ARCH}.tar.gz" \
   | tar xz -C /usr/local/bin/ codemap ast-grep sg
 ```
 
-## Recommended Setup (Hooks + Daemon + Config)
+## Setup
 
-No repo clone is required for normal users.
-Run setup from your git repo root (not a subdirectory), or hooks may not resolve project context.
+Run from your git repo root — hooks resolve project context from the working directory.
 
 ```bash
-# install codemap first (package manager)
-brew tap JordanCoin/tap && brew install codemap
-
-# then run setup inside your project
 cd /path/to/your/project
 codemap setup
 ```
 
 `codemap setup` configures Claude Code and Codex by default:
-- creates `.codemap/config.json` (if missing) with auto-detected language filters
+
+- creates `.codemap/config.json` with auto-detected language filters
 - merges hooks into `.claude/settings.local.json` and `.codex/hooks.json`
 - configures MCP in `.mcp.json` and `.codex/config.toml`
-- hooks automatically start/read daemon state on session start
+- hooks start and read daemon state at session start
 
-Managed entries use the verified absolute path of the running `codemap`, so
-agents do not depend on your shell `PATH`. Rerun setup if that path changes.
-
-Configure one agent only, or use global settings:
+Managed entries record the verified absolute path of the running `codemap`, so agents don't depend on your shell `PATH`. Rerun setup if that path changes.
 
 ```bash
-codemap setup --agent claude
+codemap setup --agent claude   # one agent only
 codemap setup --agent codex
-codemap setup --global
+codemap setup --global         # user-scope, applies to every project
 ```
 
-Windows equivalent:
+### Verify
 
 ```bash
-scoop bucket add codemap https://github.com/JordanCoin/scoop-codemap
-scoop install codemap
-cd C:\path\to\your\project
-codemap setup
+codemap doctor            # validate this project's integrations
+codemap doctor --global   # validate user-scope configuration
 ```
 
-Optional helper scripts (mainly for contributors running from this repo):
-- macOS/Linux: `./scripts/onboard.sh /path/to/your/project`
-- Windows (PowerShell): `./scripts/onboard.ps1 -ProjectRoot C:\path\to\your\project`
+Doctor checks project scope and falls back to user scope, reporting which one satisfied each check. For Codex, trust the hooks from `/hooks` in CLI or Settings → Hooks in Desktop, then start a new session.
 
-## Verify Setup
+## Dependency resolution
 
-1. Run `codemap doctor` (or select `--agent claude|codex`).
-2. Trust Codex project hooks from `/hooks` in CLI or Settings > Hooks in Desktop, then start a new session/task.
-3. Confirm Codemap appears in `/mcp`, then edit a file and verify hook context.
+`--deps` and `--importers` resolve imports using each ecosystem's own rules rather than guessing from paths:
 
-## Daily Commands
+| Ecosystem | Resolved via |
+|-----------|--------------|
+| **Go** | module path from `go.mod`; stdlib and third-party imports are not fuzzy-matched into local files |
+| **Rust** | `cargo metadata` — workspace membership, target kinds (lib/bin/test/bench/example/build), and `dev-dependencies` reachable from `#[cfg(test)]` blocks |
+| **JS/TS** | `package.json` `exports`/`imports` maps, npm/pnpm/Bun workspaces, Deno import maps, and `tsconfig` `rootDir`/`outDir` remapping (including `extends`) |
+| **Everything else** | ast-grep import extraction with suffix and directory matching |
+
+### The coverage contract
+
+Every dependency answer reports how much of it codemap actually stands behind:
 
 ```bash
-codemap .          # Fast tree/context view (respects .codemap/config.json)
-codemap --diff     # What changed vs main
-codemap handoff .  # Save layered handoff for cross-agent continuation
-codemap --deps .   # Dependency flow (requires ast-grep)
-codemap skill list # Show available skills
-codemap context    # Universal JSON context for any AI tool
-codemap mcp        # Run Codemap MCP server on stdio
-codemap --version  # Show the installed build version
-codemap plugin install # Install/update and activate the Codemap plugin through Codex CLI
-codemap doctor     # Validate installed Claude/Codex integrations
-codemap serve      # HTTP API for non-MCP integrations
+codemap --json --deps . | jq .coverage
 ```
 
-## Other Commands
+```json
+{
+  "status": "partial",
+  "sources": [
+    { "name": "ast-grep", "status": "authoritative" },
+    { "name": "cargo-metadata", "status": "mixed",
+      "detail": "2 of 5 Cargo manifests used fallback topology" }
+  ],
+  "issues": []
+}
+```
+
+- `status` is `complete`, `partial`, or `unavailable`.
+- Each source reports `authoritative`, `mixed`, `fallback`, `timeout`, `unavailable`, or `failed`.
+- A timed-out or failed scan returns an **empty result with provenance**, not a silent empty graph and not a hard error — so an agent can tell "nothing imports this" apart from "I couldn't tell".
+
+The JSON payload is versioned (`schema_version: codemap.analysis/v1`) so consumers can depend on its shape.
+
+### Supported languages
+
+20 language rules for dependency analysis: Go, Python, JavaScript, JSX, TypeScript, TSX, Rust, Ruby, C, C++, Java, Swift, Kotlin, C#, PHP, Bash, Lua, Scala, Elixir, Solidity.
+
+> Powered by [ast-grep](https://ast-grep.github.io/). Installed automatically with the Homebrew formula.
+
+## Commands
 
 ```bash
-codemap --only swift .
-codemap --exclude .xcassets,Fonts,.png .
-codemap --depth 2 .
-codemap github.com/user/repo
+codemap .              # structure view (respects .codemap/config.json)
+codemap --diff         # what changed vs main
+codemap --deps .       # dependency flow
+codemap --importers f  # who imports a file
+codemap blast-radius   # review bundle: diff + deps + importers
+codemap handoff .      # save layered handoff for cross-agent continuation
+codemap context        # machine-readable project context JSON
+codemap doctor         # validate agent integrations
+codemap skill list     # available agent skills
+codemap watch start    # background daemon for live graph state
+codemap serve          # HTTP API for non-MCP integrations
+codemap mcp            # MCP server on stdio
+codemap --version
 ```
 
-## Options
+### Options
 
 | Flag | Description |
 |------|-------------|
 | `--depth, -d <n>` | Limit tree depth (0 = unlimited) |
-| `--only <exts>` | Only show files with these extensions |
+| `--only <exts>` | Only include files with these extensions |
 | `--exclude <patterns>` | Exclude files matching patterns |
 | `--diff` | Show files changed vs main branch |
-| `--ref <branch>` | Branch to compare against (with --diff) |
+| `--ref <branch>` | Branch to compare against (with `--diff`) |
 | `--deps` | Dependency flow mode |
 | `--importers <file>` | Check who imports a file |
 | `--skyline` | City skyline visualization |
-| `--animate` | Animate the skyline (use with --skyline) |
+| `--animate` | Animate the skyline (with `--skyline`) |
 | `--json` | Output JSON |
 
-> **Note:** Flags must come before the path/URL: `codemap --json github.com/user/repo`
+> Flags come before the path/URL: `codemap --json github.com/user/repo`
 
-**Smart pattern matching** — no quotes needed:
-- `.png` → any `.png` file
-- `Fonts` → any `/Fonts/` directory
-- `*Test*` → glob pattern
+**Pattern matching** needs no quotes: `.png` matches any `.png` file, `Fonts` matches any `/Fonts/` directory, `*Test*` is a glob.
 
 ## Modes
 
-### Diff Mode
-
-See what you're working on:
+### Diff
 
 ```bash
 codemap --diff
@@ -176,9 +200,7 @@ codemap --diff --ref develop
 ⚠ handlers.go is used by 3 other files
 ```
 
-### Dependency Flow
-
-See how your code connects:
+### Dependency flow
 
 ```bash
 codemap --deps .
@@ -198,43 +220,25 @@ Backend ════════════════════════
 HUBS: config (12←), api (8←), utils (5←)
 ```
 
-### Skyline Mode
+### Blast radius
+
+Who breaks if you change a file:
 
 ```bash
-codemap --skyline --animate
+codemap --importers config/config.go
 ```
 
-![codemap skyline](assets/skyline-animated.gif)
+```
+⚠️  HUB FILE: config/config.go
+   Imported by 21 files - changes have wide impact!
 
-### Remote Repos
-
-Analyze any public GitHub or GitLab repo without cloning it yourself:
-
-```bash
-codemap github.com/anthropics/anthropic-cookbook
-codemap https://github.com/user/repo
-codemap gitlab.com/user/repo
+   Dependents:
+   • cmd/hooks.go
+   • mcp/find_guidance.go
+   ...
 ```
 
-Uses a shallow clone to a temp directory (fast, no history, auto-cleanup). If you already have the repo cloned locally, codemap will use your local copy instead.
-
-## Supported Languages
-
-18 languages for dependency analysis: Go, Python, JavaScript, TypeScript, Rust, Ruby, C, C++, Java, Swift, Kotlin, C#, PHP, Bash, Lua, Scala, Elixir, Solidity
-
-> Powered by [ast-grep](https://ast-grep.github.io/). Install via `brew install ast-grep` for `--deps` mode.
-
-## Blast Radius Bundle
-
-If you want a compact review bundle for another LLM, combine the three high-signal views:
-
-```bash
-codemap --json --diff --ref main .
-codemap --json --deps --diff --ref main .
-codemap --json --importers path/to/file .
-```
-
-For a reusable built-in command that emits either Markdown, text, or a single JSON object:
+For a review bundle in one command — Markdown, text, or a single JSON object:
 
 ```bash
 codemap blast-radius --ref main .
@@ -242,132 +246,89 @@ codemap blast-radius --json --ref main .
 codemap blast-radius --text --ref main .
 ```
 
-## Codex Integration
-
-Plain `codemap setup` already configures Claude Code and Codex. Use
-`codemap setup --agent codex` to configure only Codex project hooks and MCP.
-Add `--no-config --no-mcp` when the Codex plugin owns MCP and only hooks are needed.
-Use `codemap plugin install` to install/update the bundled MCP and skills and
-activate them through Codex CLI. Both commands are
-idempotent and report when a new Codex task/session is needed. Use
-`--no-activate` only for staging; legacy `--activate` is deprecated because
-activation is now the default. Use `codemap doctor --agent codex` to validate
-the shared project integration and report CLI/Desktop runtimes independently.
-
-Managed MCP entries record the Codemap build version. After an upgrade, rerun
-setup or plugin installation if MCP reports a mismatch. Codex CLI and Desktop
-may use different runtime releases; doctor reports them independently.
-
-### After a Codemap upgrade
-
-Agent integrations do not update themselves. Codex users should refresh the
-global plugin first; all users should then refresh each project's managed hooks
-and MCP entries:
+### Skyline
 
 ```bash
-# After upgrading the codemap binary
-# Codex only, once for each Codex environment:
-codemap plugin install
-
-# Claude and Codex: repeat in each configured project
-cd /path/to/project
-codemap setup
-codemap doctor
+codemap --skyline --animate
 ```
 
-`codemap plugin install` updates the global plugin and migrates the current
-project when run inside one, but it does not discover every configured project.
-One installation refreshes the plugin for CLI and Desktop when they share the
-same Codex environment. Repeat it for another host or `CODEX_HOME`; it does not
-upgrade the Codex applications themselves.
-Claude users skip that command but still rerun `codemap setup --agent claude`
-and `codemap doctor --agent claude` in each configured project.
-Rerun `codemap setup --global` separately if you use global agent settings.
-After plugin or managed command changes, start a new task in Desktop or a new
-session in CLI, and review hook trust again if Codex asks.
+![codemap skyline](assets/skyline-animated.gif)
 
-Note: `codemap doctor` probes the executables recorded in project-local
-configuration (`.codex/config.toml`, `.mcp.json`), so running it inside a
-repository you don't trust executes a repo-chosen path. Doctor bounds this by
-requiring absolute paths and a recognized argument shape, but treat doctor like
-any other command that honors project-local config.
+### Remote repos
 
-## Claude Integration
+Analyze any public GitHub or GitLab repo without cloning it yourself:
 
-**Hooks (Recommended)** — Automatic context at session start, before/after edits, and more.
+```bash
+codemap github.com/anthropics/anthropic-cookbook
+codemap gitlab.com/user/repo
+```
+
+Shallow-clones to a temp directory and cleans up. If you already have the repo locally, codemap uses your copy.
+
+## Agent integration
+
+### Hooks
+
+Automatic context at session start, before and after edits, and at compaction.
 → See [docs/HOOKS.md](docs/HOOKS.md)
 
-**MCP Server** — Deep integration with project analysis + handoff tools.
-→ See [docs/MCP.md](docs/MCP.md)
+The prompt-submit hook classifies intent, surfaces hub-file risk, shows your working set, matches relevant skills, and emits structured markers (`<!-- codemap:intent -->`) for tool consumption.
 
-## Multi-Agent Handoff
+### MCP
 
-codemap now supports a shared handoff artifact so you can switch between agents (Claude, Codex, MCP clients) without re-briefing.
+`codemap mcp` serves 16 tools over stdio:
 
-```bash
-codemap handoff .                 # Build + save layered handoff artifacts
-codemap handoff --latest .        # Read latest saved artifact
-codemap handoff --json .          # Machine-readable handoff payload
-codemap handoff --since 2h .      # Limit timeline lookback window
-codemap handoff --prefix .        # Stable prefix layer only
-codemap handoff --delta .         # Recent delta layer only
-codemap handoff --detail a.go .   # Lazy-load full detail for one changed file
-codemap handoff --no-save .       # Build/read without writing artifacts
-```
+| Category | Tools |
+|----------|-------|
+| Structure | `get_structure`, `find_file`, `get_hubs`, `get_file_context` |
+| Dependencies | `get_dependencies`, `get_importers`, `get_diff` |
+| Session | `get_working_set`, `get_activity`, `get_handoff` |
+| Daemon | `start_watch`, `stop_watch`, `status` |
+| Skills | `list_skills`, `get_skill` |
+| Discovery | `list_projects` |
 
-What it captures (layered for cache reuse):
-- `prefix` (stable): hub summaries + repo file-count context
-- `delta` (dynamic): changed file stubs (`path`, `hash`, `status`, `size`), risk files, recent events, next steps
-- deterministic hashes: `prefix_hash`, `delta_hash`, `combined_hash`
-- cache metrics: reuse ratio + unchanged bytes vs previous handoff
+`get_structure`, `get_diff`, `get_importers`, `get_dependencies`, and `get_handoff` declare an `OutputSchema` and return typed structured content alongside the text response, so callers get parseable results instead of prose.
 
-Artifacts written:
-- `.codemap/handoff.latest.json` (full artifact)
-- `.codemap/handoff.prefix.json` (stable prefix snapshot)
-- `.codemap/handoff.delta.json` (dynamic delta snapshot)
-- `.codemap/handoff.metrics.log` (append-only metrics stream, one JSON line per save)
+### Codex
 
-Save defaults:
-- CLI saves by default; use `--no-save` to make generation read-only.
-- MCP does not save by default; set `save=true` to persist artifacts.
-
-Compatibility note:
-- legacy top-level fields (`changed_files`, `risk_files`, etc.) are still included for compatibility and will be removed in a future schema version after migration.
-
-Why this matters:
-- default transport is compact stubs (low context cost)
-- full per-file context is lazy-loaded only when needed (`--detail` / `file=...`)
-- output is deterministic and budgeted to reduce context churn across agent turns
-
-Hook integration:
-- `session-stop` writes `.codemap/handoff.latest.json`
-- `session-start` shows a compact recent handoff summary (24h freshness window)
-
-**CLAUDE.md** — Add to your project root to teach Claude when to run codemap:
-```bash
-cp /path/to/codemap/CLAUDE.md your-project/
-```
-
-## Project Config
-
-Set per-project defaults in `.codemap/config.json` so you don't need to pass `--only`/`--exclude`/`--depth` every time. Hooks also respect this config.
+`codemap setup` configures Codex alongside Claude. For Codex only:
 
 ```bash
-codemap config init          # Auto-detect top extensions, write config
-codemap config show          # Display current config
+codemap setup --agent codex          # project hooks + MCP
+codemap plugin install               # global plugin (MCP + skills), activated by default
+codemap doctor --agent codex         # validate; reports CLI and Desktop runtimes separately
 ```
 
-Example `.codemap/config.json`:
+**After upgrading the codemap binary**, agent integrations do not update themselves:
+
+```bash
+codemap plugin install   # Codex only, once per Codex environment
+cd /path/to/project && codemap setup && codemap doctor   # both agents, per project
+```
+
+`codemap plugin install` refreshes the plugin for CLI and Desktop sharing a Codex environment, and migrates the current project when run inside one — but it does not discover every configured project. Start a new task or session afterward, and re-check hook trust if Codex asks.
+
+> `codemap doctor` probes executables recorded in project-local config (`.codex/config.toml`, `.mcp.json`), so running it inside an untrusted repo executes a repo-chosen path. Doctor bounds this by requiring absolute paths and a recognized argument shape, but treat it like any command that honors project-local config.
+
+## Project config
+
+Per-project defaults in `.codemap/config.json`, so you don't pass `--only`/`--exclude`/`--depth` every time. Hooks respect it too.
+
+```bash
+codemap config init   # auto-detect top extensions, write config
+codemap config show   # display current config
+```
+
 ```json
 {
   "only": ["rs", "sh", "sql", "toml", "yml"],
   "exclude": ["docs/reference", "docs/research"],
+  "depth": 4,
+  "mode": "auto",
   "guidance": {
     "missing_extension_hints": true,
     "ignored_extensions": []
   },
-  "depth": 4,
-  "mode": "auto",
   "budgets": {
     "session_start_bytes": 30000,
     "diff_bytes": 15000,
@@ -393,34 +354,28 @@ Example `.codemap/config.json`:
 }
 ```
 
-When an MCP file search has no visible results but finds real matches hidden by `only`, Codemap reports the matching paths and suggests which extensions to include. These hints still respect `exclude` and never modify project config. Set `guidance.missing_extension_hints` to `false` to disable all hints, or list extensions in `guidance.ignored_extensions` to suppress only those suggestions.
-
-All fields are optional. CLI flags always override config values.
-Hook-specific policy fields are optional and bounded by safe defaults.
+All fields are optional; CLI flags always override config. When an MCP file search finds real matches hidden by `only`, codemap reports the paths and suggests which extensions to add — set `guidance.missing_extension_hints: false` to disable.
 
 ## Skills
 
-codemap ships with a **skills framework** — markdown files that provide context-aware guidance to AI agents. Skills are automatically matched against your intent, the files you mention, and the languages in your project.
+Markdown files that give agents context-aware guidance, matched against intent, mentioned files, and project languages.
 
 ```bash
-codemap skill list              # Show all available skills
-codemap skill show hub-safety   # Print full skill content
-codemap skill init              # Create a custom skill template
+codemap skill list
+codemap skill show hub-safety
+codemap skill init            # custom skill template
 ```
 
-### Builtin Skills
-
-| Skill | Activates When |
-|-------|---------------|
+| Builtin | Activates when |
+|---------|---------------|
 | `hub-safety` | Editing hub files (3+ importers) |
 | `refactor` | Restructuring, renaming, moving code |
 | `test-first` | Writing tests, TDD workflows |
 | `explore` | Understanding how code works |
 | `handoff` | Switching between AI agents |
+| `config-setup` | `.codemap/config.json` is missing, boilerplate, or mismatched to the stack |
 
-### Custom Skills
-
-Drop a `.md` file in `.codemap/skills/` with YAML frontmatter:
+Drop a `.md` file with YAML frontmatter in `.codemap/skills/` to add your own — project-local skills override builtins, no Go code required:
 
 ```yaml
 ---
@@ -433,38 +388,19 @@ languages: ["go"]
 # Instructions for the AI agent
 ```
 
-Project-local skills override builtins. No Go code needed — just markdown.
+## Context protocol
 
-### MCP Tools
-
-Skills are also available via MCP: `list_skills` (metadata) and `get_skill` (full body).
-
-## Intelligent Routing
-
-The prompt-submit hook performs **intent classification** on every prompt — detecting whether you're refactoring, fixing a bug, exploring, testing, or building a feature. It then:
-
-- Surfaces **risk analysis** based on hub file involvement
-- Emits **exact next-step codemap commands** at transition points like “before editing” and “before refactoring”
-- Shows your **working set** (files edited this session)
-- Emits **structured JSON markers** (`<!-- codemap:intent -->`) for tool consumption
-- Matches **relevant skills** and tells you which to pull (`codemap skill show <name>`)
-- Warns about **documentation drift** when docs are stale
-
-## Context Protocol
-
-A single command that gives **any AI tool** codemap's full intelligence:
+One command that gives any AI tool codemap's full intelligence:
 
 ```bash
-codemap context                       # Full JSON envelope
-codemap context --for "refactor auth" # With pre-classified intent + matched skills
-codemap context --compact             # Minimal for token-constrained agents
+codemap context                       # full JSON envelope
+codemap context --for "refactor auth" # with pre-classified intent + matched skills
+codemap context --compact             # minimal, for token-constrained agents
 ```
 
-The output is a `ContextEnvelope` containing project metadata, intent classification, working set, matched skills, and handoff reference. Cursor, Windsurf, Codex, custom agents — anything that can shell out gets code-aware intelligence.
+Returns a `ContextEnvelope` with project metadata, intent classification, working set, matched skills, and a handoff reference. Anything that can shell out gets code-aware context.
 
 ## HTTP API
-
-For tools that prefer HTTP over CLI:
 
 ```bash
 codemap serve --port 9471
@@ -478,13 +414,13 @@ codemap serve --port 9471
 | `GET /api/skills?language=go&category=refactor` | Filtered skill matches |
 | `GET /api/skills/<name>` | Full skill body |
 | `GET /api/working-set` | Current session's active files |
-| `GET /api/health` | Server health check |
+| `GET /api/health` | Health check |
 
-Binds to `127.0.0.1` by default. Use `--host 0.0.0.0` to expose to network.
+Binds to `127.0.0.1`; use `--host 0.0.0.0` to expose.
 
-## Agent-Aware Handoff
+## Cross-agent handoff
 
-When you switch between AI agents (Claude → Codex → Cursor), codemap tracks who worked and what they did:
+When you switch agents (Claude → Codex → Cursor), codemap tracks who worked and what they touched:
 
 ```json
 {
@@ -495,28 +431,22 @@ When you switch between AI agents (Claude → Codex → Cursor), codemap tracks 
 }
 ```
 
-Agent detection is automatic via environment variables. History is carried across sessions (capped at 20 entries) in the handoff artifact.
+Agent detection is automatic via environment variables. History carries across sessions, capped at 20 entries, in `.codemap/handoff.latest.json`.
 
 ## Roadmap
 
-- [x] Diff mode, Skyline mode, Dependency flow
-- [x] Tree depth limiting (`--depth`)
-- [x] File filtering (`--only`, `--exclude`)
-- [x] Project config (`.codemap/config.json`)
-- [x] Claude Code hooks & MCP server
-- [x] Cross-agent handoff artifact (`.codemap/handoff.latest.json`)
-- [x] Remote repo support (GitHub, GitLab)
-- [x] Intelligent routing (intent classification, risk analysis, working set)
-- [x] Skills framework (builtin + custom skills, CLI, MCP tools)
-- [x] Context protocol (`codemap context` — universal JSON envelope for any AI tool)
-- [x] HTTP API (`codemap serve` — REST endpoints for non-MCP integrations)
-- [x] Agent-aware handoff (multi-agent history tracking)
-- [ ] Community skill registry (GitHub-hosted, `codemap skill add <name>`)
+Shipped: diff/skyline/deps modes, project config, Claude + Codex hooks and MCP, cross-agent handoff, remote repos, intent routing, skills framework, context protocol, HTTP API, build-system-aware resolution for Go/Rust/JS/TS, and the versioned coverage contract.
+
+Next:
+
+- [ ] Per-query coverage — report only the gaps that affect *this* answer, not the whole scan ([#111](https://github.com/JordanCoin/codemap/issues/111))
+- [ ] Per-edge provenance — which resolver produced each edge, so "why does codemap think A imports B?" is answerable
+- [ ] Community skill registry (`codemap skill add <name>`)
 - [ ] Enhanced analysis (entry points, key types)
 
 ## Contributing
 
-1. Fork → 2. Branch → 3. Commit → 4. PR
+Fork → branch → commit → PR. See [CONTRIBUTING.md](CONTRIBUTING.md) before adding a new language.
 
 ## License
 
