@@ -300,3 +300,58 @@ func TestResolveRustExplicitModuleRequiresOneIndexedRustFile(t *testing.T) {
 		t.Fatalf("multiply indexed target = %q, want unresolved", target)
 	}
 }
+func TestCargoManifestParsingEdgeCases(t *testing.T) {
+	root := t.TempDir()
+	manifestPath := filepath.Join(root, "Cargo.toml")
+	content := `[workspace]
+members = [
+  "crates/a",
+  "crates/b",
+]  # closing bracket with comment
+exclude = ["crates/ignored"]
+
+[package]
+name = "demo"  # trailing comment
+
+[lib]
+path = "src/lib.rs"
+`
+	if err := os.WriteFile(manifestPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifest, ok := readCargoManifest(manifestPath)
+	if !ok {
+		t.Fatal("readCargoManifest failed on valid manifest")
+	}
+	if len(manifest.Workspace.Members) != 2 || manifest.Workspace.Members[0] != "crates/a" || manifest.Workspace.Members[1] != "crates/b" {
+		t.Fatalf("workspace members = %v, want [crates/a crates/b]", manifest.Workspace.Members)
+	}
+	if len(manifest.Workspace.Exclude) != 1 || manifest.Workspace.Exclude[0] != "crates/ignored" {
+		t.Fatalf("workspace exclude = %v, want [crates/ignored]", manifest.Workspace.Exclude)
+	}
+	if manifest.Package.Name != "demo" {
+		t.Fatalf("package name = %q, want demo", manifest.Package.Name)
+	}
+	if manifest.Lib.Path != "src/lib.rs" {
+		t.Fatalf("lib path = %q, want src/lib.rs", manifest.Lib.Path)
+	}
+
+	if _, ok := readCargoManifest(filepath.Join(root, "missing.toml")); ok {
+		t.Fatal("readCargoManifest on a missing file should report not-ok")
+	}
+}
+
+func TestStripCargoCommentKeepsHashesInsideStrings(t *testing.T) {
+	cases := map[string]string{
+		`members = ["a#b"]`:           `members = ["a#b"]`,
+		`members = ["a"]  # trailing`: `members = ["a"]  `,
+		`path = "src/#weird"`:         `path = "src/#weird"`,
+		`path = "src/x\"#y"`:          `path = "src/x\"#y"`,
+	}
+	for input, want := range cases {
+		if got := stripCargoComment(input); got != want {
+			t.Fatalf("stripCargoComment(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
