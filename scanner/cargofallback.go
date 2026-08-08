@@ -43,10 +43,6 @@ func buildFileGraphWithFallbackWithFilters(ctx context.Context, root string, fil
 	return buildFileGraphFromOutcomeWithCargoMetadataAndFilters(ctx, root, outcome, filters, graphLoader)
 }
 
-func scanForGraphOutcome(ctx context.Context, root string, scan dependencyOutcomeScanner, loader cargoMetadataLoader) (ScanOutcome, bool, error) {
-	return scanForGraphOutcomeWithFilters(ctx, root, Filters{}, scan, loader)
-}
-
 func scanForGraphOutcomeWithFilters(ctx context.Context, root string, filters Filters, scan dependencyOutcomeScanner, loader cargoMetadataLoader) (ScanOutcome, bool, error) {
 	outcome, err := scan(root)
 	if err == nil {
