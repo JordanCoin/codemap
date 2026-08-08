@@ -277,3 +277,33 @@ func TestDepgraphRendersPartialCoverageWithoutDetail(t *testing.T) {
 		t.Fatalf("expected bare partial coverage line, got:\n%s", buf.String())
 	}
 }
+
+// Regression for PR #105 follow-up: two sources carrying the same caveat (the
+// shared Rust resolution note) must render that detail once, not doubled — a
+// timed-out/partial scan should read as one warning, not two.
+func TestDepgraphRendersSharedCoverageDetailOnce(t *testing.T) {
+	root := t.TempDir()
+	writeDepgraphFile(t, root, "main.go", "package main\n")
+	project := scanner.DepsProject{
+		Root:  root,
+		Files: []scanner.FileAnalysis{{Path: "main.go", Language: "go", Functions: []string{"main"}}},
+		Coverage: analysis.Coverage{
+			Status: analysis.CoveragePartial,
+			Sources: []analysis.Source{
+				{Name: "ast-grep", Status: analysis.SourceAuthoritative},
+				{Name: "rust-cargo", Status: analysis.SourceMixed, Detail: "Rust dependency resolution is partial"},
+				{Name: "cargo-metadata", Status: analysis.SourceMixed, Detail: "Rust dependency resolution is partial"},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	Depgraph(context.Background(), &buf, project)
+	output := buf.String()
+	if got := strings.Count(output, "Rust dependency resolution is partial"); got != 1 {
+		t.Fatalf("shared detail rendered %d times, want 1:\n%s", got, output)
+	}
+	if !strings.Contains(output, "Coverage: partial") {
+		t.Fatalf("expected partial coverage line, got:\n%s", output)
+	}
+}

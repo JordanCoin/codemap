@@ -223,17 +223,15 @@ func (s *AstGrepScanner) ScanDirectory(parent context.Context, root string) (Sca
 		}
 		return ScanOutcome{}, err
 	}
-	source := analysis.Source{Name: "ast-grep", Status: analysis.SourceAuthoritative}
-	for _, fileAnalysis := range analyses {
-		if DetectLanguage(fileAnalysis.Path) == "rust" {
-			source.Status = analysis.SourceMixed
-			source.Detail = rustCoverageNote
-			break
-		}
-	}
+	// ast-grep extraction is authoritative regardless of language: it scanned
+	// the files and reported every reference it found. The Rust caveat
+	// (macro-generated, string-routed, and #[path] edges) is a *resolution*
+	// gap owned by rust-cargo, which the file graph records separately; labeling
+	// ast-grep mixed here would degrade a Go+Rust monorepo's Go analysis and
+	// duplicate the same caveat on two sources.
 	return ScanOutcome{
 		Analyses: analyses,
-		Sources:  []analysis.Source{source},
+		Sources:  []analysis.Source{{Name: "ast-grep", Status: analysis.SourceAuthoritative}},
 	}, nil
 }
 
