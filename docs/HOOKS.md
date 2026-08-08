@@ -41,7 +41,7 @@ This command:
 
 Use `--agent claude` or `--agent codex` to configure only one integration.
 Managed commands use the verified absolute path of the running `codemap`; rerun
-setup if that path changes. `codemap doctor` validates without rewriting.
+setup if that path changes. `codemap doctor` validates without rewriting; it checks project scope and falls back to user scope, reporting which one satisfied each check (`codemap doctor --global` checks user scope only).
 
 Important: run `codemap setup` from the git repo root. Hook commands run relative to the current working directory; starting Claude from a nested folder can prevent codemap from finding `.git` and `.codemap`.
 
@@ -303,6 +303,10 @@ Next codemap:
 
 The **working set** tracks files you've edited during the current session. It shows edit count, net line delta, and hub status — giving Claude awareness of your active work context.
 
+Edits are attributed by *provenance*, not by disk churn. The `PostToolUse` hook records the paths an agent wrote through its own tool calls into `.codemap/agent_edits.jsonl`, so a branch switch, a build, or a `git` command that touches hundreds of files does not masquerade as work the agent did. When no agent edits have been recorded, the summary says so and falls back to reporting disk activity rather than conflating the two.
+
+Provenance depends on the hook receiving a payload it understands: `tool_input.file_path` (Edit/Write), `tool_input.notebook_path` (NotebookEdit), or `tool_input.command` (Codex `apply_patch`).
+
 ### At Session End
 ```
 📊 Session Summary
@@ -339,7 +343,7 @@ If a recent handoff exists **for the current branch**, session start includes a 
 |---------|--------------|---------------|
 | `codemap hook session-start` | `SessionStart` | Full tree, hubs, branch diff, last session context |
 | `codemap hook pre-edit` | `PreToolUse` (Edit\|Write) | Who imports file + what hubs it imports |
-| `codemap hook post-edit` | `PostToolUse` (Edit\|Write) | Impact of changes (same as pre-edit) |
+| `codemap hook post-edit` | `PostToolUse` (Edit\|Write) | Impact of changes (same as pre-edit), and records the edit's provenance |
 | `codemap hook prompt-submit` | `UserPromptSubmit` | Intent classification, hub context, risk analysis, working set, route suggestions, drift warnings |
 | `codemap hook pre-compact` | `PreCompact` | Saves hub state to .codemap/hubs.txt |
 | `codemap hook session-stop` | `SessionEnd` | Edit timeline + writes `.codemap/handoff.latest.json`, `.codemap/handoff.prefix.json`, `.codemap/handoff.delta.json` |
