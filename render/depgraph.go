@@ -382,9 +382,9 @@ func renderCoverageLine(w io.Writer, coverage analysis.Coverage) {
 	}
 	var details []string
 	for _, source := range coverage.Sources {
-		// Sources are normalized (sorted, deduped by name/status/detail), but
-		// two distinct sources can still carry the same caveat; render each
-		// detail once so the warning is not doubled.
+		// NormalizeCoverage sorts Sources by name/status/detail but does not
+		// deduplicate them; two distinct sources can still carry the same
+		// caveat, so render each detail once to keep the warning single.
 		if source.Detail != "" && !slices.Contains(details, source.Detail) {
 			details = append(details, source.Detail)
 		}
