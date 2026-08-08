@@ -354,4 +354,3 @@ func TestStripCargoCommentKeepsHashesInsideStrings(t *testing.T) {
 		}
 	}
 }
-
