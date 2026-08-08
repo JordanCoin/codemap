@@ -4,7 +4,7 @@ This is a Codex plugin bundle for Codemap.
 
 It bundles:
 
-- the Codemap skill under `./skills/`
+- the Codemap skills under `./skills/`
 - an MCP configuration generated at install time
 - packaged logo/icon assets under `./assets/`
 

@@ -1813,12 +1813,25 @@ func parseHookFilePathsErr(input []byte) ([]string, error) {
 		return nil, err
 	}
 
+	// Legacy shape: some hosts put the path at the top level.
 	if filePath, ok := data["file_path"].(string); ok {
 		return []string{filePath}, nil
 	}
-	// Codex applies file edits through apply_patch. Its hook payload stores the
-	// patch text under tool_input.command rather than a Claude-style file_path.
 	if toolInput, ok := data["tool_input"].(map[string]interface{}); ok {
+		// Claude Code nests the target under tool_input: file_path for
+		// Edit/Write, notebook_path for NotebookEdit. Missing these silently
+		// disables agent-edit provenance and the post-edit blast-radius report,
+		// because a well-formed payload parses cleanly and then matches nothing
+		// (the regex fallback above only runs when Unmarshal fails).
+		for _, key := range []string{"file_path", "notebook_path"} {
+			if filePath, ok := toolInput[key].(string); ok {
+				if paths := appendUniquePath(nil, filePath); len(paths) > 0 {
+					return paths, nil
+				}
+			}
+		}
+		// Codex applies file edits through apply_patch, which stores the patch
+		// text under tool_input.command rather than a path.
 		if command, ok := toolInput["command"].(string); ok {
 			matches := regexp.MustCompile(`(?m)^\*\*\* (?:Update|Add|Delete) File: (.+)$`).FindAllStringSubmatch(command, -1)
 			paths := make([]string, 0, len(matches))

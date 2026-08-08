@@ -10,7 +10,7 @@ Thanks for your interest in contributing! Here's how to get involved.
 
 ## Adding a New Language
 
-Want to add support for a language like Clojure, Elixir, Scala, etc.? Here's what's needed:
+Want to add support for a language like Clojure, Zig, Haskell, etc.? Here's what's needed:
 
 ### 1. Add grammar to `release.yml`
 
