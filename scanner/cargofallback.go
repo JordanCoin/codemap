@@ -59,6 +59,9 @@ func scanForGraphOutcomeWithFilters(ctx context.Context, root string, filters Fi
 	}
 	files, scanErr := ScanFiles(ctx, root, NewGitIgnoreCache(root), filters.Only, filters.Exclude)
 	if scanErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ScanOutcome{}, false, ctxErr
+		}
 		return ScanOutcome{}, false, err
 	}
 	fallback, fallbackErr := buildCargoFallbackOutcome(ctx, root, files, loader)
