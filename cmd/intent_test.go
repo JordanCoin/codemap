@@ -235,8 +235,8 @@ func TestClassifyIntent_SubsystemMatching(t *testing.T) {
 func TestClassifyIntent_NilInfoSafe(t *testing.T) {
 	// Should not panic with nil hubInfo
 	intent := classifyIntent("refactor everything", []string{"main.go"}, nil, config.ProjectConfig{})
-	if intent.RiskLevel != "low" {
-		t.Errorf("expected low risk with nil info, got %q", intent.RiskLevel)
+	if intent.RiskLevel != "unknown" {
+		t.Errorf("expected unknown risk with nil info, got %q", intent.RiskLevel)
 	}
 	if intent.Category != "refactor" {
 		t.Errorf("expected refactor category, got %q", intent.Category)
