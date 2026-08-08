@@ -343,3 +343,32 @@ func TestPrependSetupRootArgs(t *testing.T) {
 		}
 	}
 }
+func TestRuntimeRootAndCheckedRuntimeCodemapDir(t *testing.T) {
+	ResetSetupRoot()
+	t.Cleanup(ResetSetupRoot)
+
+	root := t.TempDir()
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := RuntimeRoot(root); got != canonicalRoot {
+		t.Fatalf("RuntimeRoot() = %q, want canonical %q", got, canonicalRoot)
+	}
+
+	// Linked worktrees keep runtime state local to the worktree root.
+	_, linked := makeLinkedWorktreeFixture(t, false)
+	canonicalLinked, err := filepath.EvalSymlinks(linked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := RuntimeRoot(linked); got != canonicalLinked {
+		t.Fatalf("linked RuntimeRoot() = %q, want %q", got, canonicalLinked)
+	}
+
+	// The convenience form falls back to the cleaned input when selection fails.
+	missing := filepath.Join(t.TempDir(), "missing")
+	if got := RuntimeRoot(missing); got != filepath.Clean(missing) {
+		t.Fatalf("RuntimeRoot() fallback = %q, want %q", got, filepath.Clean(missing))
+	}
+}
