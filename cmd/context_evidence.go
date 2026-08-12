@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"codemap/analysis"
 	"codemap/limits"
 	"codemap/scanner"
 	"codemap/watch"
@@ -99,7 +100,16 @@ func loadContextRequestInputs(ctx context.Context, root string, deps contextEnve
 		inputs.evidence = unavailableGraphEvidence(graphErrorReason(ctx, err))
 		return inputs
 	}
-	if graph == nil || (len(graph.Imports) == 0 && len(graph.Importers) == 0) {
+	if graph == nil {
+		inputs.evidence = unavailableGraphEvidence(graphEvidenceScanIncomplete)
+		return inputs
+	}
+	// An edge-free graph is still authoritative when its coverage is complete
+	// (the zero coverage status is the production graph's complete default).
+	// Explicitly unavailable provenance remains fail-closed, even if stale or
+	// partial edge maps happen to contain entries.
+	if graph.Coverage.Status == analysis.CoverageUnavailable ||
+		(len(graph.Coverage.Sources) > 0 && scanner.CoverageFromSources(graph.Coverage.Sources).Status == analysis.CoverageUnavailable) {
 		inputs.evidence = unavailableGraphEvidence(graphEvidenceScanIncomplete)
 		return inputs
 	}

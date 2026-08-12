@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http/httptest"
 	"os"
@@ -12,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"codemap/analysis"
 	"codemap/scanner"
 	"codemap/watch"
 )
@@ -52,7 +52,7 @@ func TestContextGraphEvidenceTrueHubAndDeterministicOrder(t *testing.T) {
 	}
 }
 
-func TestContextEnvelopeV2UnavailableShape(t *testing.T) {
+func TestContextGraphEvidenceZeroEdgesProvesEmpty(t *testing.T) {
 	files := []scanner.FileInfo{{Path: "main.go"}}
 	graph := &scanner.FileGraph{
 		Packages:  map[string][]string{"main": {"main.go"}},
@@ -61,24 +61,53 @@ func TestContextEnvelopeV2UnavailableShape(t *testing.T) {
 	}
 	envelope := buildContextEnvelopeWithDeps(context.Background(), t.TempDir(), "refactor main.go", true, testContextEnvelopeDeps(files, graph))
 
-	data, err := json.Marshal(envelope)
-	if err != nil {
-		t.Fatal(err)
+	if envelope.Project.GraphEvidence != (GraphEvidence{Status: graphEvidenceAvailable, Source: graphEvidenceFreshScan}) {
+		t.Fatalf("graph evidence = %#v, want fresh available", envelope.Project.GraphEvidence)
 	}
-	var decoded map[string]any
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatal(err)
+	if envelope.Project.HubCount == nil || *envelope.Project.HubCount != 0 {
+		t.Fatalf("hub count = %#v, want numeric zero", envelope.Project.HubCount)
 	}
-	project := decoded["project"].(map[string]any)
-	if project["hub_count"] != nil {
-		t.Fatalf("hub_count = %#v, want null", project["hub_count"])
+	if envelope.Intent == nil || envelope.Intent.RiskLevel != "low" {
+		t.Fatalf("intent = %#v, want low risk", envelope.Intent)
 	}
-	if _, ok := project["top_hubs"]; ok {
-		t.Fatalf("top_hubs must be omitted: %s", data)
+}
+
+func TestContextGraphEvidenceUnavailableCoverageFailsClosed(t *testing.T) {
+	files := []scanner.FileInfo{{Path: "main.go"}}
+	graph := &scanner.FileGraph{
+		Imports:   map[string][]string{"main.go": {"dep.go"}},
+		Importers: map[string][]string{"dep.go": {"main.go"}},
+		Coverage:  scanner.GraphCoverage{Status: analysis.CoverageUnavailable},
 	}
-	evidence := project["graph_evidence"].(map[string]any)
-	if evidence["reason"] != graphEvidenceScanIncomplete {
-		t.Fatalf("evidence = %#v, want scan_incomplete", evidence)
+	envelope := buildContextEnvelopeWithDeps(context.Background(), t.TempDir(), "refactor main.go", true, testContextEnvelopeDeps(files, graph))
+
+	if envelope.Project.GraphEvidence.Status != graphEvidenceUnavailable || envelope.Project.GraphEvidence.Reason != graphEvidenceScanIncomplete {
+		t.Fatalf("graph evidence = %#v, want unavailable scan_incomplete", envelope.Project.GraphEvidence)
+	}
+	if envelope.Project.HubCount != nil {
+		t.Fatalf("hub count = %#v, want null", envelope.Project.HubCount)
+	}
+	if envelope.Intent == nil || envelope.Intent.RiskLevel != "unknown" {
+		t.Fatalf("intent = %#v, want unknown risk", envelope.Intent)
+	}
+}
+
+func TestContextGraphEvidenceFailedOnlyCoverageFailsClosed(t *testing.T) {
+	files := []scanner.FileInfo{{Path: "main.go"}}
+	graph := &scanner.FileGraph{
+		Imports:   map[string][]string{"main.go": {"dep.go"}},
+		Importers: map[string][]string{"dep.go": {"main.go"}},
+		Coverage: scanner.GraphCoverage{Sources: []analysis.Source{{
+			Name: "go", Status: analysis.SourceFailed,
+		}}},
+	}
+	envelope := buildContextEnvelopeWithDeps(context.Background(), t.TempDir(), "refactor main.go", true, testContextEnvelopeDeps(files, graph))
+
+	if envelope.Project.GraphEvidence.Status != graphEvidenceUnavailable || envelope.Project.GraphEvidence.Reason != graphEvidenceScanIncomplete {
+		t.Fatalf("graph evidence = %#v, want unavailable scan_incomplete", envelope.Project.GraphEvidence)
+	}
+	if envelope.Project.HubCount != nil {
+		t.Fatalf("hub count = %#v, want null", envelope.Project.HubCount)
 	}
 	if envelope.Intent == nil || envelope.Intent.RiskLevel != "unknown" {
 		t.Fatalf("intent = %#v, want unknown risk", envelope.Intent)
