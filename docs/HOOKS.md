@@ -249,7 +249,7 @@ Or if it's a hub:
 
 ### When You Mention a File (Prompt Submit)
 
-The prompt-submit hook now performs **intent classification** — it analyzes what you're trying to do and surfaces relevant code intelligence.
+The prompt-submit hook performs **intent classification** and surfaces relevant code intelligence. Cached hub context may still be displayed, but hook risk is `unknown` unless a request has fresh dependency evidence.
 
 ```
 <!-- codemap:intent {"category":"refactor","confidence":1,"risk":"high",...} -->
@@ -295,6 +295,7 @@ Next codemap:
 
 | Level | Meaning |
 |-------|---------|
+| `unknown` | Fresh dependency evidence is unavailable |
 | `low` | No hub files involved |
 | `medium` | 1 hub file in scope |
 | `high` | 2+ hub files, or a hub with 8+ importers |

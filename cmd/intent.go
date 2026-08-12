@@ -15,7 +15,7 @@ type TaskIntent struct {
 	Files              []string            `json:"files"`       // mentioned files
 	Subsystems         []string            `json:"subsystems"`  // matched subsystem IDs
 	Scope              string              `json:"scope"`       // "single-file", "package", "cross-cutting"
-	RiskLevel          string              `json:"risk"`        // "low", "medium", "high"
+	RiskLevel          string              `json:"risk"`        // "unknown", "low", "medium", "high"
 	Suggestions        []ContextSuggestion `json:"suggestions"` // what to read/check next
 	DependencyCoverage string              `json:"dependency_coverage,omitempty"`
 	CoverageNotes      []string            `json:"coverage_notes,omitempty"`
@@ -113,7 +113,7 @@ func classifyIntent(prompt string, files []string, info *hubInfo, cfg config.Pro
 	intent := TaskIntent{
 		Category:  "feature", // default
 		Files:     files,
-		RiskLevel: "low",
+		RiskLevel: "unknown",
 		Scope:     "single-file",
 	}
 	if info != nil {
@@ -164,8 +164,14 @@ func classifyIntent(prompt string, files []string, info *hubInfo, cfg config.Pro
 	}
 
 	// Compute risk level and generate suggestions from hub analysis
-	if info != nil {
+	if info != nil && len(files) > 0 {
 		intent.RiskLevel, intent.Suggestions = analyzeRisk(files, info, intent.Category)
+	} else {
+		intent.Suggestions = []ContextSuggestion{{
+			Type:   "check-deps",
+			Target: ".",
+			Reason: "risk is unknown without a configured file and available dependency graph",
+		}}
 	}
 
 	return intent

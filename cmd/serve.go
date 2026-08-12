@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -39,12 +40,7 @@ func RunServe(args []string, root string) {
 	mux := http.NewServeMux()
 
 	// GET /api/context — full context envelope
-	mux.HandleFunc("/api/context", func(w http.ResponseWriter, r *http.Request) {
-		prompt := r.URL.Query().Get("intent")
-		compact := r.URL.Query().Get("compact") == "true"
-		envelope := buildContextEnvelope(absRoot, prompt, compact)
-		writeJSON(w, envelope)
-	})
+	mux.HandleFunc("/api/context", newContextHandler(absRoot, buildContextEnvelopeContext))
 
 	// GET /api/skills — list available skills
 	mux.HandleFunc("/api/skills", func(w http.ResponseWriter, r *http.Request) {
@@ -149,6 +145,16 @@ func RunServe(args []string, root string) {
 	if err := server.ListenAndServe(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+type contextEnvelopeBuilder func(context.Context, string, string, bool) ContextEnvelope
+
+func newContextHandler(root string, build contextEnvelopeBuilder) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		prompt := r.URL.Query().Get("intent")
+		compact := r.URL.Query().Get("compact") == "true"
+		writeJSON(w, build(r.Context(), root, prompt, compact))
 	}
 }
 
