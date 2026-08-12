@@ -456,3 +456,23 @@ func assertPathsOrdered(t *testing.T, text string, paths []string) {
 		previous = index
 	}
 }
+
+func TestTraversalRootRejectsInaccessiblePath(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	root, result := traversalRoot(missing)
+	if root != "" || result == nil || !result.IsError {
+		t.Fatalf("traversalRoot(%q) = %q, %v; want error", missing, root, result)
+	}
+	if !strings.Contains(resultText(t, result), "not an accessible directory") {
+		t.Fatalf("unexpected rejection: %q", resultText(t, result))
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, "proj"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	expanded, result := traversalRoot("~/proj")
+	if result != nil || expanded != filepath.Join(home, "proj") {
+		t.Fatalf("traversalRoot(~/) = %q, %v; want %q", expanded, result, filepath.Join(home, "proj"))
+	}
+}

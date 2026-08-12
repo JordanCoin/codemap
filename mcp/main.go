@@ -46,30 +46,6 @@ const (
 	IntegrationCodexPlugin = "codex-plugin"
 )
 
-type statusTool struct {
-	name        string
-	description string
-}
-
-var statusTools = []statusTool{
-	{"list_projects", "Discover projects in a directory"},
-	{"get_structure", "Project tree view"},
-	{"get_dependencies", "Import/function analysis"},
-	{"get_diff", "Changed files vs branch"},
-	{"find_file", "Search by filename"},
-	{"get_importers", "Find what imports a file"},
-	{"status", "Verify MCP connection"},
-	{"start_watch", "Start watching a project for changes"},
-	{"stop_watch", "Stop watching a project"},
-	{"get_activity", "See recent coding activity"},
-	{"get_hubs", "Find files with wide dependency impact"},
-	{"get_file_context", "Show imports and importers for one file"},
-	{"get_handoff", "Build/read cross-agent handoff summary"},
-	{"get_working_set", "Show files active in the current session"},
-	{"list_skills", "List available Codemap skills"},
-	{"get_skill", "Read one Codemap skill"},
-}
-
 type RuntimeOptions struct {
 	ConfiguredVersion string
 	Integration       string
@@ -354,6 +330,9 @@ func mustSchemaFor[T any]() *jsonschema.Schema {
 }
 
 func traversalRoot(path string) (string, *mcp.CallToolResult) {
+	if strings.HasPrefix(path, "~/") {
+		path = filepath.Join(os.Getenv("HOME"), path[2:])
+	}
 	absRoot, err := filepath.Abs(path)
 	if err != nil {
 		return "", errorResult("Invalid path: " + err.Error())
@@ -611,11 +590,6 @@ func handleStatus(ctx context.Context, req *mcp.CallToolRequest, input EmptyInpu
 		watchStatus = fmt.Sprintf("%d active: %s", activeWatchers, strings.Join(watchedPaths, ", "))
 	}
 
-	var inventory strings.Builder
-	for _, tool := range statusTools {
-		fmt.Fprintf(&inventory, "  %-18s - %s\n", tool.name, tool.description)
-	}
-
 	return textResult(fmt.Sprintf(`codemap MCP server v%s
 Status: connected
 Local filesystem access: enabled
@@ -623,8 +597,7 @@ Working directory: %s
 Home directory: %s
 Active watchers: %s
 
-Available tools:
-%s`, buildinfo.Current(), cwd, home, watchStatus, strings.TrimSuffix(inventory.String(), "\n"))), nil, nil
+Tools: run tools/list for the full tool inventory.`, buildinfo.Current(), cwd, home, watchStatus)), nil, nil
 }
 
 func statusHandler(guidance string) func(context.Context, *mcp.CallToolRequest, EmptyInput) (*mcp.CallToolResult, any, error) {
