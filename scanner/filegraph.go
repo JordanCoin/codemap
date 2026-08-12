@@ -33,19 +33,24 @@ type fileIndex struct {
 }
 
 // BuildFileGraph scans a project with explicit filters and builds its file
-// graph while honoring caller cancellation.
+// graph while honoring caller cancellation. When the primary scan fails with
+// an incomplete ast-grep outcome, Cargo metadata recovers what topology it can
+// and the graph is marked partial.
 func BuildFileGraph(ctx context.Context, root string, filters Filters) (*FileGraph, error) {
-	outcome, err := ScanForDeps(ctx, root, filters)
-	if err != nil {
-		return nil, err
-	}
-	return BuildFileGraphFromOutcome(ctx, root, outcome, filters)
+	return buildFileGraphWithFallbackWithFilters(ctx, root, filters, func(r string) (ScanOutcome, error) {
+		return ScanForDeps(ctx, r, filters)
+	}, loadCargoFallbackMetadata)
 }
 
 // BuildFileGraphFromOutcome builds a file graph from a scan outcome without
 // dropping scanner provenance.
 func BuildFileGraphFromOutcome(ctx context.Context, root string, outcome ScanOutcome, filters Filters) (*FileGraph, error) {
-	return buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx, root, outcome.Analyses, filters, loadCargoMetadata, outcome.Sources...)
+	fg, err := buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx, root, outcome.Analyses, filters, loadCargoMetadata, outcome.Sources...)
+	if err != nil {
+		return nil, err
+	}
+	applyPrecomputedFileEdges(fg, outcome.precomputedEdges)
+	return fg, nil
 }
 
 // BuildFileGraphFromAnalyses builds a file graph from pre-computed analyses
@@ -191,6 +196,16 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 		return nil, err
 	}
 	return fg, nil
+}
+
+func applyPrecomputedFileEdges(fg *FileGraph, edges []fileEdge) {
+	for _, edge := range edges {
+		if edge.from == "" || edge.to == "" || edge.from == edge.to {
+			continue
+		}
+		fg.Imports[edge.from] = dedupe(append(fg.Imports[edge.from], edge.to))
+		fg.Importers[edge.to] = dedupe(append(fg.Importers[edge.to], edge.from))
+	}
 }
 
 func needsJSWorkspaceResolver(analyses []FileAnalysis) bool {

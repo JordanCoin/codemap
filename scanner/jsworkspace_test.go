@@ -107,6 +107,69 @@ func TestBuildFileGraphCombinesWorkspaceDeclarationsAtSameRoot(t *testing.T) {
 	})
 }
 
+func TestBuildFileGraphResolvesRushWorkspaceProjects(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, root, "rush.json", `{
+		// Rush inventories projects explicitly.
+		"projects": [
+			{"packageName":"@acme/app","projectFolder":"apps/app"},
+			{"packageName":"@acme/lib","projectFolder":"packages/lib"},
+		],
+	}`)
+	writeWorkspaceFile(t, root, "apps/app/package.json", `{"name":"@acme/app"}`)
+	writeWorkspaceFile(t, root, "packages/lib/package.json", `{"name":"@acme/lib","exports":"./index.ts"}`)
+	writeWorkspaceFile(t, root, "packages/unlisted/package.json", `{"name":"@acme/unlisted","exports":"./index.ts"}`)
+	writeWorkspaceFile(t, root, "nested/rush.json", `{"projects":[{"packageName":"nested-app","projectFolder":"app"},{"packageName":"@acme/lib","projectFolder":"lib"}]}`)
+	writeWorkspaceFile(t, root, "nested/app/package.json", `{"name":"nested-app"}`)
+	writeWorkspaceFile(t, root, "nested/lib/package.json", `{"name":"@acme/lib","exports":"./index.ts"}`)
+	writeWorkspaceFiles(t, root, "apps/app/main.ts", "packages/lib/index.ts", "packages/unlisted/index.ts", "nested/app/main.ts", "nested/lib/index.ts")
+
+	graph := buildWorkspaceGraph(t, root,
+		workspaceAnalysis("apps/app/main.ts", "@acme/lib", "@acme/unlisted"),
+		workspaceAnalysis("nested/app/main.ts", "@acme/lib"),
+	)
+	assertWorkspaceImports(t, graph, "apps/app/main.ts", []string{filepath.FromSlash("packages/lib/index.ts")})
+	assertWorkspaceImports(t, graph, "nested/app/main.ts", []string{filepath.FromSlash("nested/lib/index.ts")})
+}
+
+func TestNormalizeRushProjectFolderRejectsDisguisedUnsafePaths(t *testing.T) {
+	for _, folder := range []string{"./C:/outside", `./\server\share`, ".//outside", "packages/../other", "!packages/x"} {
+		if got, ok := normalizeRushProjectFolder(folder, true); ok {
+			t.Errorf("normalizeRushProjectFolder(%q) = %q, want invalid", folder, got)
+		}
+	}
+}
+
+func TestBuildFileGraphRejectsInvalidRushWorkspaceAtomically(t *testing.T) {
+	tests := map[string]struct {
+		entry string
+		files map[string]string
+	}{
+		"missing package name":        {`{"projectFolder":"packages/missing-name"}`, nil},
+		"unsafe folder":               {`{"packageName":"bad","projectFolder":"../bad"}`, nil},
+		"missing manifest":            {`{"packageName":"missing","projectFolder":"packages/missing"}`, nil},
+		"package name mismatch":       {`{"packageName":"declared","projectFolder":"packages/mismatch"}`, map[string]string{"packages/mismatch/package.json": `{"name":"actual"}`}},
+		"duplicate normalized folder": {`{"packageName":"other","projectFolder":"packages/good/."}`, nil},
+		"duplicate package name":      {`{"packageName":"@acme/good","projectFolder":"packages/other"}`, map[string]string{"packages/other/package.json": `{"name":"@acme/good"}`}},
+		"exact duplicate":             {`{"packageName":"@acme/good","projectFolder":"packages/good"}`, nil},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeWorkspaceFile(t, root, "rush.json", `{"projects":[{"packageName":"@acme/app","projectFolder":"apps/app"},{"packageName":"@acme/good","projectFolder":"packages/good"},`+tt.entry+`]}`)
+			writeWorkspaceFile(t, root, "apps/app/package.json", `{"name":"@acme/app"}`)
+			writeWorkspaceFile(t, root, "packages/good/package.json", `{"name":"@acme/good","exports":"./index.ts"}`)
+			for path, body := range tt.files {
+				writeWorkspaceFile(t, root, path, body)
+			}
+			writeWorkspaceFiles(t, root, "apps/app/main.ts", "packages/good/index.ts")
+
+			graph := buildWorkspaceGraph(t, root, workspaceAnalysis("apps/app/main.ts", "@acme/good"))
+			assertWorkspaceImports(t, graph, "apps/app/main.ts", nil)
+		})
+	}
+}
+
 func TestJSWorkspaceResolverUsesExplicitFilters(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceFile(t, root, ".codemap/config.json", `{"exclude":["packages/web"]}`)
@@ -141,7 +204,7 @@ func TestBuildJSWorkspaceResolverHonorsCancellation(t *testing.T) {
 	}
 }
 
-func TestAddJSWorkspaceMembersHonorsMidBuildCancellation(t *testing.T) {
+func TestJSWorkspaceMemberBuildersHonorMidBuildCancellation(t *testing.T) {
 	ctx := &cancelAfterContext{Context: context.Background(), remaining: 1}
 	workspace := newJSPackageWorkspace("")
 	members := map[string]*jsWorkspaceManifest{
@@ -154,6 +217,13 @@ func TestAddJSWorkspaceMembersHonorsMidBuildCancellation(t *testing.T) {
 	}
 	if len(workspace.packages) > 1 {
 		t.Fatalf("added %d packages after cancellation boundary, want at most 1", len(workspace.packages))
+	}
+
+	ctx = &cancelAfterContext{Context: context.Background(), remaining: 1}
+	projects := []jsRushProject{{name: "a", root: "packages/a"}, {name: "b", root: "packages/b"}}
+	packages := map[string]*jsWorkspaceManifest{"packages/a": members["a"], "packages/b": members["b"]}
+	if _, _, err := validateRushProjects(ctx, projects, packages); err != context.Canceled {
+		t.Fatalf("validateRushProjects() error = %v, want context.Canceled", err)
 	}
 }
 
