@@ -518,6 +518,36 @@ func TestCargoMetadataFailurePreservesLegacyBinaryRoot(t *testing.T) {
 	}
 }
 
+func TestCargoMetadataFailurePreservesLegacySelfAndSuperPaths(t *testing.T) {
+	root := t.TempDir()
+	writeRustCargoFixture(t, root, map[string]string{
+		"Cargo.toml":          "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+		"src/main.rs":         "fn main() {}\n",
+		"src/helper.rs":       "pub fn run() {}\n",
+		"src/branch.rs":       "pub fn run() {}\n",
+		"src/branch/child.rs": "pub fn run() {}\n",
+	})
+	analyses := []FileAnalysis{
+		{Path: "src/branch.rs", Language: "rust", References: []ImportReference{{Path: "self::child::run", Kind: "rust-path"}}},
+		{Path: "src/branch/child.rs", Language: "rust", References: []ImportReference{{Path: "super::super::helper::run", Kind: "rust-path"}}},
+		{Path: "src/helper.rs", Language: "rust"},
+	}
+	graph, err := buildFileGraphFromAnalysesWithCargoMetadata(context.Background(), root, analyses, func(context.Context, string) ([]byte, error) {
+		return nil, errors.New("cargo unavailable")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for from, want := range map[string][]string{
+		"src/branch.rs":       {"src/branch/child.rs"},
+		"src/branch/child.rs": {"src/helper.rs"},
+	} {
+		if got := graph.Imports[from]; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s fallback imports = %#v, want %#v", from, got, want)
+		}
+	}
+}
+
 func TestCargoMetadataHonorsCallerCancellation(t *testing.T) {
 	root := t.TempDir()
 	writeRustCargoFixture(t, root, map[string]string{

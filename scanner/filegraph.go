@@ -121,12 +121,12 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 			}
 		}
 	}
-	rustWorkspace, cargoOutcome := buildRustWorkspaceIndex(ctx, absRoot, analyses, files, loader)
+	rustWorkspace, cargoOutcome, err := buildRustWorkspaceIndex(ctx, absRoot, analyses, files, loader)
+	if err != nil {
+		return nil, err
+	}
 	if cargoOutcome != nil {
 		fg.Coverage.AddSource(*cargoOutcome)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
 	}
 
 	// Build file index for fast fuzzy matching

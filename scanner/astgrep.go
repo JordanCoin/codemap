@@ -324,14 +324,23 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 			}
 		}
 
-		if m.RuleID == "rust-mod-imports" || m.RuleID == "rust-path-imports" || m.RuleID == "rust-use-imports" {
+		if m.RuleID == "rust-mod-imports" || m.RuleID == "rust-path-module-imports" || m.RuleID == "rust-path-imports" || m.RuleID == "rust-use-imports" {
 			var path string
+			var explicitTarget string
 			kind := "rust-path"
 			switch m.RuleID {
 			case "rust-mod-imports":
 				kind = "rust-module"
 				if pathVar, ok := m.MetaVariables.Single["PATH"]; ok {
 					path = pathVar.Text
+				}
+			case "rust-path-module-imports":
+				kind = "rust-path-module"
+				if pathVar, ok := m.MetaVariables.Single["PATH"]; ok {
+					path = pathVar.Text
+				}
+				if targetVar, ok := m.MetaVariables.Single["TARGET"]; ok {
+					explicitTarget = targetVar.Text
 				}
 			case "rust-path-imports":
 				path = m.Text
@@ -345,9 +354,10 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 					fileMap[relPath].Imports = append(fileMap[relPath].Imports, path)
 				}
 				fileMap[relPath].References = append(fileMap[relPath].References, ImportReference{
-					Path: path,
-					Kind: kind,
-					Line: m.Range.Start.Line,
+					Path:           path,
+					Kind:           kind,
+					Line:           m.Range.Start.Line,
+					ExplicitTarget: explicitTarget,
 				})
 			}
 		} else if strings.HasSuffix(m.RuleID, "-imports") {

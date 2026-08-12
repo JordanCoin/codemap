@@ -99,15 +99,21 @@ func parseCargoMetadata(data []byte) (cargoMetadata, error) {
 	return metadata, nil
 }
 
-func buildRustWorkspaceIndex(ctx context.Context, root string, analyses []FileAnalysis, files []FileInfo, loader cargoMetadataLoader) (*rustWorkspaceIndex, *ScanSourceOutcome) {
+func buildRustWorkspaceIndex(ctx context.Context, root string, analyses []FileAnalysis, files []FileInfo, loader cargoMetadataLoader) (*rustWorkspaceIndex, *ScanSourceOutcome, error) {
 	index := buildRustFallbackWorkspaceIndex(root, analyses)
-	manifestPaths := discoverCargoManifests(root, files)
+	manifestPaths, err := discoverCargoManifests(ctx, root, files)
+	if err != nil {
+		return nil, nil, err
+	}
 	if len(manifestPaths) == 0 {
-		return index, nil
+		return index, nil, nil
 	}
 	if loader == nil {
+		if err := index.buildRustModuleLocations(ctx, root, files); err != nil {
+			return nil, nil, err
+		}
 		outcome := cargoMetadataOutcome(0, len(manifestPaths))
-		return index, &outcome
+		return index, &outcome, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, cargoMetadataTimeout)
 	defer cancel()
@@ -120,6 +126,9 @@ func buildRustWorkspaceIndex(ctx context.Context, root string, analyses []FileAn
 	handledManifests := make(map[string]bool)
 
 	for _, manifestPath := range manifestPaths {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
 		manifestPath = filepath.Clean(manifestPath)
 		if handledManifests[manifestPath] {
 			continue
@@ -193,8 +202,11 @@ func buildRustWorkspaceIndex(ctx context.Context, root string, analyses []FileAn
 			handled++
 		}
 	}
+	if err := index.buildRustModuleLocations(ctx, root, files); err != nil {
+		return nil, nil, err
+	}
 	outcome := cargoMetadataOutcome(handled, len(manifestPaths))
-	return index, &outcome
+	return index, &outcome, nil
 }
 
 func cargoMetadataOutcome(handled, total int) ScanSourceOutcome {
@@ -211,10 +223,13 @@ func cargoMetadataOutcome(handled, total int) ScanSourceOutcome {
 	return outcome
 }
 
-func discoverCargoManifests(root string, files []FileInfo) []string {
+func discoverCargoManifests(ctx context.Context, root string, files []FileInfo) ([]string, error) {
 	root = filepath.Clean(root)
 	seen := make(map[string]bool)
 	for _, file := range files {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if !strings.EqualFold(filepath.Ext(file.Path), ".rs") {
 			continue
 		}
@@ -223,6 +238,9 @@ func discoverCargoManifests(root string, files []FileInfo) []string {
 			continue
 		}
 		for dir := filepath.Dir(path); ; dir = filepath.Dir(dir) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			manifestPath := filepath.Join(dir, "Cargo.toml")
 			if info, err := os.Stat(manifestPath); err == nil && !info.IsDir() {
 				seen[filepath.Clean(manifestPath)] = true
@@ -238,6 +256,9 @@ func discoverCargoManifests(root string, files []FileInfo) []string {
 	}
 	manifests := make([]string, 0, len(seen))
 	for path := range seen {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		manifests = append(manifests, path)
 	}
 	sort.Slice(manifests, func(i, j int) bool {
@@ -248,7 +269,10 @@ func discoverCargoManifests(root string, files []FileInfo) []string {
 		}
 		return pathDepth(left) < pathDepth(right)
 	})
-	return manifests
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return manifests, nil
 }
 
 func rustPackageFromCargoMetadata(root string, metadata cargoMetadataPackage) (rustPackage, []pendingRustDependency, bool) {

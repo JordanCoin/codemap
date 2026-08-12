@@ -69,7 +69,10 @@ func scanForGraphOutcomeWithFilters(ctx context.Context, root string, filters Fi
 }
 
 func buildCargoFallbackOutcome(ctx context.Context, root string, files []FileInfo, loader cargoMetadataLoader) (ScanOutcome, error) {
-	manifests := discoverCargoManifests(root, files)
+	manifests, err := discoverCargoManifests(ctx, root, files)
+	if err != nil {
+		return ScanOutcome{}, err
+	}
 	if len(manifests) == 0 || loader == nil {
 		return ScanOutcome{}, errCargoFallbackUnavailable
 	}

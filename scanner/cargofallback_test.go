@@ -207,6 +207,22 @@ func TestCargoFallbackMetadataArgsAreLocked(t *testing.T) {
 	}
 }
 
+func TestCargoFallbackPropagatesCanceledDiscovery(t *testing.T) {
+	root := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := buildCargoFallbackOutcome(ctx, root, []FileInfo{
+		{Path: "src/lib.rs"},
+	}, func(context.Context, string) ([]byte, error) {
+		t.Fatal("Cargo metadata loader called after context cancellation")
+		return nil, nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Cargo fallback error = %v, want context.Canceled", err)
+	}
+}
+
 func TestCargoFallbackAcceptsDevDependencyFromLibraryTarget(t *testing.T) {
 	// #98 merged all-non-build-target dev-dependency resolution; the fallback
 	// must treat dev dependencies on source targets as proven edges.
