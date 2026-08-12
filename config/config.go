@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"codemap/internal/projectpath"
 	"codemap/limits"
 )
 
@@ -226,7 +227,7 @@ func (c ProjectConfig) RoutingTopKOrDefault() int {
 
 // ConfigPath returns the path to .codemap/config.json for the given root.
 func ConfigPath(root string) string {
-	return filepath.Join(root, ".codemap", "config.json")
+	return filepath.Join(projectpath.CodemapDir(root), "config.json")
 }
 
 // Load reads .codemap/config.json from root.

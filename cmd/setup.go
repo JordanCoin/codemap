@@ -77,6 +77,7 @@ type ensureHooksResult struct {
 	CreatedFile    bool
 	WroteFile      bool
 	AddedHooks     int
+	RemovedHooks   int
 	ExistingHooks  int
 	TotalCodemap   int
 	TargetIsGlobal bool
@@ -345,10 +346,12 @@ func configureHooks(label string, pathFor func(string, bool) (string, error), en
 		fmt.Fprintf(os.Stderr, "%s hooks: failed (%v)\n", label, err)
 		return err
 	}
-	if result.AddedHooks == 0 {
+	if result.AddedHooks == 0 && result.RemovedHooks == 0 {
 		fmt.Printf("%s hooks: already configured (%s)\n", label, result.SettingsPath)
 	} else if result.CreatedFile {
 		fmt.Printf("%s hooks: created %s (+%d codemap hooks)\n", label, result.SettingsPath, result.AddedHooks)
+	} else if result.RemovedHooks > 0 {
+		fmt.Printf("%s hooks: reconciled %s (+%d, -%d stale codemap hooks)\n", label, result.SettingsPath, result.AddedHooks, result.RemovedHooks)
 	} else {
 		fmt.Printf("%s hooks: updated %s (+%d codemap hooks)\n", label, result.SettingsPath, result.AddedHooks)
 	}
@@ -560,11 +563,17 @@ func ensureClaudeHooksWithExecutable(settingsPath string, global bool, executabl
 
 func ensureCodexHooksWithExecutable(settingsPath string, global bool, executable string) (ensureHooksResult, error) {
 	specs := generatedCodexHooks(executable)
-	return ensureHooks(settingsPath, global, specs, codexHookCommandAliases(specs))
+	return ensureHooksWithReconciler(settingsPath, global, specs, codexHookCommandAliases(specs), reconcileCodexHooks)
 }
 
 func codexHookCommandAliases(specs []claudeHookSpec) map[string]string {
-	return map[string]string{
+	aliases := map[string]string{
+		"codemap hook session-start":                        specs[0].Command,
+		"codemap hook pre-edit":                             specs[1].Command,
+		"codemap hook post-edit":                            specs[2].Command,
+		"codemap hook prompt-submit":                        specs[3].Command,
+		"codemap hook pre-compact":                          specs[4].Command,
+		"codemap hook session-stop":                         specs[5].Command,
 		"CODEX=1 codemap hook session-start":                specs[0].Command,
 		"CODEX=1 codemap hook pre-edit":                     specs[1].Command,
 		"CODEX=1 codemap hook post-edit":                    specs[2].Command,
@@ -576,9 +585,106 @@ func codexHookCommandAliases(specs []claudeHookSpec) map[string]string {
 		"CODEX=1 codemap hook session-stop 2> /dev/null":    specs[5].Command,
 		"CODEX=1 codemap hook session-stop >/dev/null 2>&1": specs[5].Command,
 	}
+	return aliases
+}
+
+// reconcileCodexHooks removes Codex-owned legacy, misplaced, and duplicate
+// commands while retaining one exact canonical hook for each event/matcher.
+// Non-command and non-Codex hooks, including hooks sharing an entry, remain
+// untouched.
+func reconcileCodexHooks(hooksByEvent map[string]any, specs []claudeHookSpec) (bool, int, error) {
+	aliases := codexHookCommandAliases(specs)
+	canonicalSeen := make([]bool, len(specs))
+	changed := false
+	removed := 0
+
+	for event := range hooksByEvent {
+		entries, err := rawHookEntries(hooksByEvent, event)
+		if err != nil {
+			return false, 0, err
+		}
+		keptEntries := make([]any, 0, len(entries))
+		for entryIndex, rawEntry := range entries {
+			entry, ok := rawEntry.(map[string]any)
+			if !ok {
+				return false, 0, fmt.Errorf("event %q entry %d must be an object", event, entryIndex)
+			}
+			rawHooks, exists := entry["hooks"]
+			if !exists || rawHooks == nil {
+				keptEntries = append(keptEntries, rawEntry)
+				continue
+			}
+			hooks, ok := rawHooks.([]any)
+			if !ok {
+				return false, 0, fmt.Errorf("event %q entry %d hooks must be an array", event, entryIndex)
+			}
+			keptHooks := make([]any, 0, len(hooks))
+			removedFromEntry := false
+			for hookIndex, rawHook := range hooks {
+				hook, ok := rawHook.(map[string]any)
+				if !ok {
+					return false, 0, fmt.Errorf("event %q entry %d hook %d must be an object", event, entryIndex, hookIndex)
+				}
+				typeName, _ := hook["type"].(string)
+				if !strings.EqualFold(strings.TrimSpace(typeName), "command") {
+					keptHooks = append(keptHooks, rawHook)
+					continue
+				}
+				command, _ := hook["command"].(string)
+				specIndex := codexOwnedHookSpecIndex(strings.TrimSpace(command), aliases, specs)
+				if specIndex < 0 {
+					keptHooks = append(keptHooks, rawHook)
+					continue
+				}
+				spec := specs[specIndex]
+				matcher, _ := entry["matcher"].(string)
+				canonical := event == spec.Event && strings.EqualFold(strings.TrimSpace(matcher), strings.TrimSpace(spec.Matcher)) && strings.TrimSpace(command) == strings.TrimSpace(spec.Command)
+				if canonical && !canonicalSeen[specIndex] {
+					canonicalSeen[specIndex] = true
+					keptHooks = append(keptHooks, rawHook)
+				} else {
+					changed = true
+					removed++
+					removedFromEntry = true
+				}
+			}
+			if len(keptHooks) == 0 && removedFromEntry {
+				changed = true
+				continue
+			}
+			entry["hooks"] = keptHooks
+			keptEntries = append(keptEntries, rawEntry)
+		}
+		if len(keptEntries) != len(entries) {
+			hooksByEvent[event] = keptEntries
+		}
+	}
+	return changed, removed, nil
+}
+
+func codexOwnedHookSpecIndex(command string, aliases map[string]string, specs []claudeHookSpec) int {
+	if target, ok := aliases[command]; ok {
+		for index, spec := range specs {
+			if target == spec.Command {
+				return index
+			}
+		}
+	}
+	for index, spec := range specs {
+		if _, ok := migrateOwnedHookCommand(command, spec.Command); ok {
+			return index
+		}
+	}
+	return -1
 }
 
 func ensureHooks(settingsPath string, global bool, specs []claudeHookSpec, commandAliases map[string]string) (ensureHooksResult, error) {
+	return ensureHooksWithReconciler(settingsPath, global, specs, commandAliases, nil)
+}
+
+type hookReconciler func(map[string]any, []claudeHookSpec) (changed bool, removed int, err error)
+
+func ensureHooksWithReconciler(settingsPath string, global bool, specs []claudeHookSpec, commandAliases map[string]string, reconcile hookReconciler) (ensureHooksResult, error) {
 	result := ensureHooksResult{
 		SettingsPath:   settingsPath,
 		TotalCodemap:   len(specs),
@@ -614,7 +720,14 @@ func ensureHooks(settingsPath string, global bool, specs []claudeHookSpec, comma
 			return result, fmt.Errorf("parse hooks in %s: hooks must be an object", settingsPath)
 		}
 	}
-	migrated, err := migrateRawHookCommands(hooksByEvent, commandAliases, specs)
+	migrated := false
+	if reconcile != nil {
+		var removed int
+		migrated, removed, err = reconcile(hooksByEvent, specs)
+		result.RemovedHooks = removed
+	} else {
+		migrated, err = migrateRawHookCommands(hooksByEvent, commandAliases, specs)
+	}
 	if err != nil {
 		return result, fmt.Errorf("parse hooks in %s: %w", settingsPath, err)
 	}

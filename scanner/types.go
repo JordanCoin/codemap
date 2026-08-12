@@ -45,9 +45,10 @@ type FileAnalysis struct {
 
 // ImportReference preserves language-specific import semantics for graph resolution.
 type ImportReference struct {
-	Path string
-	Kind string
-	Line int
+	Path           string
+	Kind           string
+	Line           int
+	ExplicitTarget string
 }
 
 // DepsProject is the JSON output for --deps mode.

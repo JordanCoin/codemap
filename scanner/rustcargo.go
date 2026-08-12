@@ -34,10 +34,12 @@ type cargoMetadataTarget struct {
 }
 
 type cargoMetadataDependency struct {
-	Name   string `json:"name"`
-	Rename string `json:"rename"`
-	Path   string `json:"path"`
-	Kind   string `json:"kind"`
+	Name     string          `json:"name"`
+	Rename   string          `json:"rename"`
+	Path     string          `json:"path"`
+	Kind     string          `json:"kind"`
+	Optional bool            `json:"optional"`
+	Target   json.RawMessage `json:"target"`
 }
 
 type pendingRustDependency struct {
@@ -47,13 +49,21 @@ type pendingRustDependency struct {
 }
 
 func loadCargoMetadata(ctx context.Context, manifestPath string) ([]byte, error) {
+	return runCargoMetadata(ctx, manifestPath, cargoMetadataArgs(manifestPath))
+}
+
+func loadCargoFallbackMetadata(ctx context.Context, manifestPath string) ([]byte, error) {
+	return runCargoMetadata(ctx, manifestPath, cargoFallbackMetadataArgs(manifestPath))
+}
+
+func runCargoMetadata(ctx context.Context, manifestPath string, args []string) ([]byte, error) {
 	cargo, err := exec.LookPath("cargo")
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, cargoMetadataTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, cargo, cargoMetadataArgs(manifestPath)...)
+	cmd := exec.CommandContext(ctx, cargo, args...)
 	cmd.Dir = filepath.Dir(manifestPath)
 	output, err := cmd.Output()
 	if ctx.Err() != nil {
@@ -69,21 +79,41 @@ func cargoMetadataArgs(manifestPath string) []string {
 	}
 }
 
-func parseCargoMetadata(data []byte) (cargoMetadata, error) {
-	var metadata cargoMetadata
-	err := json.Unmarshal(data, &metadata)
-	return metadata, err
+func cargoFallbackMetadataArgs(manifestPath string) []string {
+	return append(cargoMetadataArgs(manifestPath), "--locked")
 }
 
-func buildRustWorkspaceIndex(ctx context.Context, root string, analyses []FileAnalysis, files []FileInfo, loader cargoMetadataLoader) (*rustWorkspaceIndex, *ScanSourceOutcome) {
+func parseCargoMetadata(data []byte) (cargoMetadata, error) {
+	var metadata cargoMetadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return metadata, err
+	}
+	for packageIndex := range metadata.Packages {
+		for dependencyIndex := range metadata.Packages[packageIndex].Dependencies {
+			dependency := &metadata.Packages[packageIndex].Dependencies[dependencyIndex]
+			if strings.TrimSpace(string(dependency.Target)) == "null" {
+				dependency.Target = nil
+			}
+		}
+	}
+	return metadata, nil
+}
+
+func buildRustWorkspaceIndex(ctx context.Context, root string, analyses []FileAnalysis, files []FileInfo, loader cargoMetadataLoader) (*rustWorkspaceIndex, *ScanSourceOutcome, error) {
 	index := buildRustFallbackWorkspaceIndex(root, analyses)
-	manifestPaths := discoverCargoManifests(root, files)
+	manifestPaths, err := discoverCargoManifests(ctx, root, files)
+	if err != nil {
+		return nil, nil, err
+	}
 	if len(manifestPaths) == 0 {
-		return index, nil
+		return index, nil, nil
 	}
 	if loader == nil {
+		if err := index.buildRustModuleLocations(ctx, root, files); err != nil {
+			return nil, nil, err
+		}
 		outcome := cargoMetadataOutcome(0, len(manifestPaths))
-		return index, &outcome
+		return index, &outcome, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, cargoMetadataTimeout)
 	defer cancel()
@@ -96,6 +126,9 @@ func buildRustWorkspaceIndex(ctx context.Context, root string, analyses []FileAn
 	handledManifests := make(map[string]bool)
 
 	for _, manifestPath := range manifestPaths {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
 		manifestPath = filepath.Clean(manifestPath)
 		if handledManifests[manifestPath] {
 			continue
@@ -169,8 +202,11 @@ func buildRustWorkspaceIndex(ctx context.Context, root string, analyses []FileAn
 			handled++
 		}
 	}
+	if err := index.buildRustModuleLocations(ctx, root, files); err != nil {
+		return nil, nil, err
+	}
 	outcome := cargoMetadataOutcome(handled, len(manifestPaths))
-	return index, &outcome
+	return index, &outcome, nil
 }
 
 func cargoMetadataOutcome(handled, total int) ScanSourceOutcome {
@@ -187,10 +223,13 @@ func cargoMetadataOutcome(handled, total int) ScanSourceOutcome {
 	return outcome
 }
 
-func discoverCargoManifests(root string, files []FileInfo) []string {
+func discoverCargoManifests(ctx context.Context, root string, files []FileInfo) ([]string, error) {
 	root = filepath.Clean(root)
 	seen := make(map[string]bool)
 	for _, file := range files {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if !strings.EqualFold(filepath.Ext(file.Path), ".rs") {
 			continue
 		}
@@ -199,6 +238,9 @@ func discoverCargoManifests(root string, files []FileInfo) []string {
 			continue
 		}
 		for dir := filepath.Dir(path); ; dir = filepath.Dir(dir) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			manifestPath := filepath.Join(dir, "Cargo.toml")
 			if info, err := os.Stat(manifestPath); err == nil && !info.IsDir() {
 				seen[filepath.Clean(manifestPath)] = true
@@ -214,6 +256,9 @@ func discoverCargoManifests(root string, files []FileInfo) []string {
 	}
 	manifests := make([]string, 0, len(seen))
 	for path := range seen {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		manifests = append(manifests, path)
 	}
 	sort.Slice(manifests, func(i, j int) bool {
@@ -224,7 +269,10 @@ func discoverCargoManifests(root string, files []FileInfo) []string {
 		}
 		return pathDepth(left) < pathDepth(right)
 	})
-	return manifests
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return manifests, nil
 }
 
 func rustPackageFromCargoMetadata(root string, metadata cargoMetadataPackage) (rustPackage, []pendingRustDependency, bool) {

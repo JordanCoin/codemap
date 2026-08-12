@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"codemap/internal/projectpath"
 	"codemap/limits"
 )
 
@@ -162,6 +163,67 @@ func TestConfigPath(t *testing.T) {
 	if got != want {
 		t.Errorf("ConfigPath = %q, want %q", got, want)
 	}
+}
+
+func TestConfigPathAndLoadUseSelectedSetupRoot(t *testing.T) {
+	projectpath.ResetSetupRoot()
+	t.Cleanup(projectpath.ResetSetupRoot)
+
+	primary, linked := makeLinkedConfigWorktreeFixture(t)
+	primaryConfigDir := filepath.Join(primary, ".codemap")
+	if err := os.WriteFile(filepath.Join(primaryConfigDir, "config.json"), []byte(`{"only":["primary-only"]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := ConfigPath(linked), filepath.Join(primaryConfigDir, "config.json"); got != want {
+		t.Fatalf("linked ConfigPath() = %q, want %q", got, want)
+	}
+	if got := Load(linked); len(got.Only) != 1 || got.Only[0] != "primary-only" {
+		t.Fatalf("linked Load() = %+v, want primary config", got)
+	}
+
+	explicit := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(explicit, ".codemap"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(explicit, ".codemap", "config.json"), []byte(`{"only":["explicit-only"]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	projectpath.SetSetupRoot(explicit)
+	if got, want := ConfigPath(linked), filepath.Join(explicit, ".codemap", "config.json"); got != want {
+		t.Fatalf("explicit ConfigPath() = %q, want %q", got, want)
+	}
+	if got := Load(linked); len(got.Only) != 1 || got.Only[0] != "explicit-only" {
+		t.Fatalf("explicit Load() = %+v, want explicit config", got)
+	}
+}
+
+func makeLinkedConfigWorktreeFixture(t *testing.T) (primary, linked string) {
+	t.Helper()
+	primary = t.TempDir()
+	gitDir := filepath.Join(primary, ".git", "worktrees", "agent")
+	if err := os.MkdirAll(gitDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(primary, ".codemap"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "commondir"), []byte("../..\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	linked = t.TempDir()
+	if err := os.WriteFile(filepath.Join(linked, ".git"), []byte("gitdir: "+gitDir+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	primary, err := filepath.EvalSymlinks(primary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked, err = filepath.EvalSymlinks(linked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return primary, linked
 }
 
 func TestPolicyDefaultsAndClamps(t *testing.T) {

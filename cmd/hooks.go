@@ -822,7 +822,7 @@ func hookPromptSubmit(root string) error {
 
 	// Extract mentioned files and classify intent
 	filesMentioned := extractMentionedFiles(prompt, topK)
-	intent := classifyIntent(prompt, filesMentioned, info, projCfg)
+	intent := classifyIntent(prompt, filesMentioned, nil, projCfg)
 
 	// Emit structured intent marker (machine-readable for tools) only when the
 	// classification is trustworthy — a zero/low-confidence category is a

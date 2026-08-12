@@ -69,8 +69,6 @@ func TestBuildContextEnvelopeRespectsConfiguredFilters(t *testing.T) {
 	mustWriteFile(t, filepath.Join(root, "schema.ts"), "export const schema = 1\n")
 	mustWriteFile(t, filepath.Join(root, "generated", "hidden.go"), "package generated\n")
 
-	cachedFileCount = -1
-	t.Cleanup(func() { cachedFileCount = -1 })
 	envelope := buildContextEnvelope(root, "", true)
 
 	if envelope.Project.FileCount != 1 {
@@ -78,16 +76,6 @@ func TestBuildContextEnvelopeRespectsConfiguredFilters(t *testing.T) {
 	}
 	if !reflect.DeepEqual(envelope.Project.Languages, []string{"go"}) {
 		t.Fatalf("languages = %#v, want [go]", envelope.Project.Languages)
-	}
-}
-
-func TestCountSourceFilesReturnsZeroWhenConfiguredScanFails(t *testing.T) {
-	cachedFileCount = -1
-	t.Cleanup(func() { cachedFileCount = -1 })
-
-	missingRoot := filepath.Join(t.TempDir(), "missing")
-	if got := countSourceFiles(missingRoot); got != 0 {
-		t.Fatalf("countSourceFiles(missing root) = %d, want 0", got)
 	}
 }
 
@@ -106,8 +94,6 @@ func TestBuildContextEnvelopeFallsBackToConfiguredScanForLegacyState(t *testing.
 	}
 	mustWriteFile(t, filepath.Join(root, ".codemap", "state.json"), string(legacyState))
 
-	cachedFileCount = -1
-	t.Cleanup(func() { cachedFileCount = -1 })
 	envelope := buildContextEnvelope(root, "", true)
 
 	if envelope.Project.FileCount != 1 {
