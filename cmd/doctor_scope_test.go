@@ -230,7 +230,7 @@ func TestRunDoctorFindsLocalScopedClaudeMCP(t *testing.T) {
 	}
 	server := map[string]any{
 		"command": binary,
-		"args":    managedMCPArgs("1.0.0", "claude-setup"),
+		"args":    managedMCPArgs(root, "1.0.0", "claude-setup"),
 	}
 	payload := map[string]any{
 		"mcpServers": map[string]any{},

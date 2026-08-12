@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"codemap/internal/projectpath"
 )
 
 func TestParseFrontmatter(t *testing.T) {
@@ -331,4 +333,59 @@ My custom instructions.`
 	if s.Meta.Priority != 20 {
 		t.Errorf("expected priority 20 from override, got %d", s.Meta.Priority)
 	}
+}
+
+func TestLoadSkillsUsesSelectedSetupRoot(t *testing.T) {
+	projectpath.ResetSetupRoot()
+	t.Cleanup(projectpath.ResetSetupRoot)
+
+	primary, linked := makeLinkedSkillsWorktreeFixture(t)
+	primarySkillsDir := filepath.Join(primary, ".codemap", "skills")
+	if err := os.WriteFile(filepath.Join(primarySkillsDir, "linked-primary.md"), []byte("---\nname: linked-primary\n---\n\nPrimary linked skill."), 0644); err != nil {
+		t.Fatal(err)
+	}
+	idx, err := LoadSkills(linked)
+	if err != nil {
+		t.Fatalf("linked LoadSkills() error: %v", err)
+	}
+	if skill := idx.ByName["linked-primary"]; skill == nil || skill.Source != projectSource || !strings.Contains(skill.Body, "Primary linked skill") {
+		t.Fatalf("linked LoadSkills() did not load primary skill: %#v", skill)
+	}
+
+	explicit := t.TempDir()
+	explicitSkillsDir := filepath.Join(explicit, ".codemap", "skills")
+	if err := os.MkdirAll(explicitSkillsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(explicitSkillsDir, "explicit-only.md"), []byte("---\nname: explicit-only\n---\n\nExplicit setup skill."), 0644); err != nil {
+		t.Fatal(err)
+	}
+	projectpath.SetSetupRoot(explicit)
+	idx, err = LoadSkills(linked)
+	if err != nil {
+		t.Fatalf("explicit LoadSkills() error: %v", err)
+	}
+	if skill := idx.ByName["explicit-only"]; skill == nil || skill.Source != projectSource || !strings.Contains(skill.Body, "Explicit setup skill") {
+		t.Fatalf("explicit LoadSkills() did not load explicit skill: %#v", skill)
+	}
+}
+
+func makeLinkedSkillsWorktreeFixture(t *testing.T) (primary, linked string) {
+	t.Helper()
+	primary = t.TempDir()
+	gitDir := filepath.Join(primary, ".git", "worktrees", "agent")
+	if err := os.MkdirAll(filepath.Join(primary, ".codemap", "skills"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(gitDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "commondir"), []byte("../..\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	linked = t.TempDir()
+	if err := os.WriteFile(filepath.Join(linked, ".git"), []byte("gitdir: "+gitDir+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return primary, linked
 }

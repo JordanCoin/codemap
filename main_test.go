@@ -60,6 +60,8 @@ func TestHelpFlag(t *testing.T) {
 		"--diff",
 		"--ref",
 		"blast-radius",
+		"-C, --project-root <repo> Operate on code in <repo>.",
+		"--setup-root <repo> Reuse state from <repo>/.codemap.",
 	}
 
 	for _, expected := range expectedStrings {

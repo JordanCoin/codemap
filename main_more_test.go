@@ -15,6 +15,7 @@ import (
 	"codemap/analysis"
 	"codemap/config"
 	"codemap/handoff"
+	"codemap/internal/projectpath"
 	"codemap/scanner"
 	"codemap/watch"
 )
@@ -25,6 +26,128 @@ type fakeWatchProcess struct {
 	stopped   bool
 	fileCount int
 	events    []watch.Event
+}
+
+func TestApplyGlobalRootOptions(t *testing.T) {
+	launchDir := t.TempDir()
+	projectRoot := filepath.Join(launchDir, "worktree")
+	setupRoot := filepath.Join(launchDir, "original")
+	for _, root := range []string{projectRoot, setupRoot} {
+		if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	projectNested := filepath.Join(projectRoot, "pkg")
+	setupNested := filepath.Join(setupRoot, "cmd")
+	for _, dir := range []string{projectNested, setupNested} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(launchDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalDir) })
+	projectpath.ResetSetupRoot()
+	t.Cleanup(projectpath.ResetSetupRoot)
+
+	args, err := applyGlobalRootOptions([]string{
+		"context", "--project-root", projectNested,
+		"--setup-root", setupNested, "--compact",
+	})
+	if err != nil {
+		t.Fatalf("applyGlobalRootOptions() error: %v", err)
+	}
+	if got := strings.Join(args, "|"); got != "context|--compact" {
+		t.Fatalf("args = %q, want context|--compact", got)
+	}
+	gotDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDir, err := filepath.EvalSymlinks(projectRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotDir != wantDir {
+		t.Fatalf("working directory = %q, want %q", gotDir, wantDir)
+	}
+	wantSetup, err := filepath.EvalSymlinks(setupRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := projectpath.SetupRoot(projectRoot); got != wantSetup {
+		t.Fatalf("setup root = %q, want %q", got, wantSetup)
+	}
+}
+
+func TestApplyGlobalRootOptionsDirectoryKeepsAutomaticLinkedSelection(t *testing.T) {
+	launchDir := t.TempDir()
+	primary := filepath.Join(launchDir, "primary")
+	gitDir := filepath.Join(primary, ".git", "worktrees", "agent")
+	if err := os.MkdirAll(gitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(primary, ".codemap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "commondir"), []byte("../..\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linked := filepath.Join(launchDir, "linked")
+	if err := os.MkdirAll(filepath.Join(linked, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(linked, ".git"), []byte("gitdir: "+gitDir+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalDir) })
+	projectpath.ResetSetupRoot()
+	t.Cleanup(projectpath.ResetSetupRoot)
+
+	if _, err := applyGlobalRootOptions([]string{"-C", filepath.Join(linked, "pkg"), "context"}); err != nil {
+		t.Fatalf("applyGlobalRootOptions() error: %v", err)
+	}
+	if got := projectpath.ConfiguredSetupRoot(); got != "" {
+		t.Fatalf("ConfiguredSetupRoot() = %q, want no explicit override", got)
+	}
+	selection, err := projectpath.Select(linked)
+	if err != nil {
+		t.Fatalf("Select() error: %v", err)
+	}
+	primary, _ = filepath.EvalSymlinks(primary)
+	if selection.SetupRoot != primary || selection.Source != projectpath.SourceLinkedWorktree {
+		t.Fatalf("Select() = %#v, want automatic setup %q", selection, primary)
+	}
+}
+
+func TestApplyGlobalRootOptionsRejectsMalformedLinkedMetadataWithoutFlags(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".git"), []byte("not a gitdir\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalDir) })
+
+	if _, err := applyGlobalRootOptions([]string{"context"}); err == nil || !strings.Contains(err.Error(), "resolve linked worktree setup") {
+		t.Fatalf("applyGlobalRootOptions() error = %v, want bounded linked-worktree error", err)
+	}
 }
 
 func (f *fakeWatchProcess) Start() error {
@@ -293,6 +416,65 @@ func TestRunWatchSubcommandMessages(t *testing.T) {
 	stdout, _ = captureMainStreams(t, func() { runWatchSubcommand("stop", root) })
 	if !strings.Contains(stdout, "Watch daemon not running") {
 		t.Fatalf("expected stop to report not running, got:\n%s", stdout)
+	}
+}
+
+func TestRunWatchSubcommandUsesNearestGitRootFromNestedDirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeMainWatchState(t, root, watch.State{
+		UpdatedAt: time.Now(),
+		FileCount: 4,
+		Hubs:      []string{"pkg/types.go"},
+	}, true)
+
+	nested := filepath.Join(root, "pkg", "feature")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _ := captureMainStreams(t, func() { runWatchSubcommand("status", nested) })
+	for _, check := range []string{"Watch daemon running", "Files: 4", "Hubs: 1"} {
+		if !strings.Contains(stdout, check) {
+			t.Fatalf("expected %q in nested watch status output, got:\n%s", check, stdout)
+		}
+	}
+}
+
+func TestRunWatchStartPreservesSetupRoot(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	setupRoot := t.TempDir()
+	projectpath.SetSetupRoot(setupRoot)
+	t.Cleanup(projectpath.ResetSetupRoot)
+
+	var gotArgs []string
+	withMainRuntimeStubs(
+		t,
+		nil,
+		nil,
+		func(_ string, args ...string) *exec.Cmd {
+			gotArgs = append([]string(nil), args...)
+			return exec.Command("sh", "-c", "exit 0")
+		},
+		func() (string, error) { return "/tmp/codemap", nil },
+		func(string) bool { return false },
+		nil,
+		nil,
+	)
+
+	captureMainStreams(t, func() { runWatchSubcommand("start", root) })
+	wantRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"--setup-root", setupRoot, "watch", "daemon", wantRoot}
+	if strings.Join(gotArgs, "|") != strings.Join(want, "|") {
+		t.Fatalf("watch daemon args = %v, want %v", gotArgs, want)
 	}
 }
 
@@ -659,7 +841,10 @@ func TestRunWatchModeRunDaemonAndWatchStart(t *testing.T) {
 		if gotName != "/tmp/codemap-test" {
 			t.Fatalf("watch start executable = %q, want /tmp/codemap-test", gotName)
 		}
-		absRoot, _ := filepath.Abs(root)
+		absRoot, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			t.Fatal(err)
+		}
 		wantArgs := []string{"watch", "daemon", absRoot}
 		if strings.Join(gotArgs, "|") != strings.Join(wantArgs, "|") {
 			t.Fatalf("watch start args = %v, want %v", gotArgs, wantArgs)

@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"codemap/internal/projectpath"
 	"gopkg.in/yaml.v3"
 )
 
@@ -31,7 +32,7 @@ func LoadSkills(root string) (*SkillIndex, error) {
 	all = append(all, builtins...)
 
 	// 2. Project-local skills
-	projectDir := filepath.Join(root, ".codemap", "skills")
+	projectDir := filepath.Join(projectpath.CodemapDir(root), "skills")
 	projectSkills, _ := loadSkillsFromDir(projectDir, projectSource)
 	all = append(all, projectSkills...)
 

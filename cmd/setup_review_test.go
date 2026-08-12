@@ -23,7 +23,7 @@ func TestEnsureClaudeMCPPreservesLargeIntegersAndUnknownKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	changed, err := ensureClaudeMCPWithExecutable(path, filepath.Join(dir, "codemap"))
+	changed, err := ensureClaudeMCPWithExecutable(path, filepath.Join(dir, "codemap"), dir)
 	if err != nil {
 		t.Fatalf("ensureClaudeMCPWithExecutable: %v", err)
 	}

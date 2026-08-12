@@ -14,6 +14,7 @@ import (
 
 	"codemap/config"
 	"codemap/handoff"
+	"codemap/internal/projectpath"
 	"codemap/limits"
 	"codemap/watch"
 )
@@ -651,6 +652,32 @@ func TestFindChildReposAndSessionStartVariants(t *testing.T) {
 	})
 }
 
+func TestRunHookUsesNearestGitRootFromNestedDirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(root, "pkg", "feature")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var hookErr error
+	out := captureOutput(func() { hookErr = RunHook("session-start", nested) })
+	if hookErr != nil {
+		t.Fatalf("RunHook() error: %v", hookErr)
+	}
+	if !strings.Contains(out, "Project Context") {
+		t.Fatalf("expected hook output to include project context, got:\n%s", out)
+	}
+	if strings.Contains(out, "Not a git repository") {
+		t.Fatalf("expected hook output to avoid nested non-git fallback, got:\n%s", out)
+	}
+}
+
 func TestHookSessionStopSummaryBranches(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -752,6 +779,33 @@ func TestDaemonCommandHelpersAndMultiRepoShellout(t *testing.T) {
 		}
 	})
 
+	t.Run("daemon shellouts preserve configured setup root", func(t *testing.T) {
+		projectpath.SetSetupRoot("/setup/repo")
+		t.Cleanup(projectpath.ResetSetupRoot)
+		var calls [][]string
+		withHookRuntimeStubs(
+			t,
+			func() (string, error) { return "/tmp/codemap-hook", nil },
+			func(_ string, args ...string) *exec.Cmd {
+				calls = append(calls, append([]string(nil), args...))
+				return exec.Command("sh", "-c", "exit 0")
+			},
+			func(string) bool { return true },
+			func(time.Duration) {},
+		)
+
+		startDaemon("/project")
+		stopDaemon("/project")
+		want := []string{"--setup-root", "/setup/repo", "watch", "start", "/project"}
+		if len(calls) != 2 || strings.Join(calls[0], "|") != strings.Join(want, "|") {
+			t.Fatalf("start daemon args = %v, want %v", calls, want)
+		}
+		want[3] = "stop"
+		if strings.Join(calls[1], "|") != strings.Join(want, "|") {
+			t.Fatalf("stop daemon args = %v, want %v", calls[1], want)
+		}
+	})
+
 	t.Run("multi repo start shells out for each child repo", func(t *testing.T) {
 		root := t.TempDir()
 		for _, repo := range []string{"svc-a", "svc-b"} {
@@ -829,4 +883,81 @@ func TestDaemonCommandHelpersAndMultiRepoShellout(t *testing.T) {
 			t.Fatalf("expected config-setup guidance in multi-repo output, got:\n%s", out)
 		}
 	})
+}
+
+func TestHookFilesUseSetupRoot(t *testing.T) {
+	projectRoot := t.TempDir()
+	setupRoot := t.TempDir()
+	projectpath.SetSetupRoot(setupRoot)
+	t.Cleanup(projectpath.ResetSetupRoot)
+	codemapDir := filepath.Join(setupRoot, ".codemap")
+	if err := os.MkdirAll(codemapDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(codemapDir, "events.log"), []byte("setup event\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	events := getLastSessionEvents(projectRoot)
+	if len(events) != 1 || events[0] != "setup event" {
+		t.Fatalf("getLastSessionEvents() = %#v, want setup event", events)
+	}
+
+	writeStatuslineState(projectRoot, TaskIntent{Category: "feature", RiskLevel: "low"})
+	data, err := os.ReadFile(filepath.Join(codemapDir, "status"))
+	if err != nil {
+		t.Fatalf("read setup-root status: %v", err)
+	}
+	if string(data) != "feature" {
+		t.Fatalf("status = %q, want feature", data)
+	}
+}
+
+func TestAutomaticLinkedWorktreeUsesLocalHookState(t *testing.T) {
+	projectpath.ResetSetupRoot()
+	t.Cleanup(projectpath.ResetSetupRoot)
+	primary := t.TempDir()
+	gitDir := filepath.Join(primary, ".git", "worktrees", "agent")
+	if err := os.MkdirAll(gitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(primary, ".codemap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(primary, ".codemap", "events.log"), []byte("primary event\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "commondir"), []byte("../..\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linked := filepath.Join(t.TempDir(), "linked")
+	if err := os.MkdirAll(filepath.Join(linked, ".codemap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(linked, ".git"), []byte("gitdir: "+gitDir+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(linked, ".codemap", "events.log"), []byte("linked event\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linked, _ = filepath.EvalSymlinks(linked)
+
+	events := getLastSessionEvents(linked)
+	if len(events) != 1 || events[0] != "linked event" {
+		t.Fatalf("getLastSessionEvents() = %#v, want linked event", events)
+	}
+	writeStatuslineState(linked, TaskIntent{Category: "feature", RiskLevel: "low"})
+	if _, err := os.Stat(filepath.Join(linked, ".codemap", "status")); err != nil {
+		t.Fatalf("linked status missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(primary, ".codemap", "status")); !os.IsNotExist(err) {
+		t.Fatalf("primary status unexpectedly created: %v", err)
+	}
+	if err := updateSessionLease(linked, "session-1", true, time.Now(), nil); err != nil {
+		t.Fatalf("updateSessionLease() error: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(linked, ".codemap", "sessions"))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("linked session lease entries = %d, err = %v", len(entries), err)
+	}
 }

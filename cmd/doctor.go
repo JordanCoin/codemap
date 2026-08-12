@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"codemap/config"
 	"codemap/internal/buildinfo"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -71,10 +72,20 @@ func RunDoctor(args []string, defaultRoot string) int {
 	if fs.NArg() == 1 {
 		root = fs.Arg(0)
 	}
-	root, err := filepath.Abs(root)
+	root, _, err := ResolveNearestGitRoot(root)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error resolving path: %v\n", err)
 		return 1
+	}
+	root, err = ValidateProjectPath(root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error resolving path: %v\n", err)
+		return 1
+	}
+	// Canonicalize so doctor paths, config, and hooks agree (e.g. macOS
+	// /tmp -> /private/tmp, /var -> /private/var).
+	if canonical, err := filepath.EvalSymlinks(root); err == nil {
+		root = canonical
 	}
 
 	failures := 0
@@ -100,7 +111,7 @@ func RunDoctor(args []string, defaultRoot string) int {
 		fmt.Printf("OK   %s: %s\n", label, path)
 	}
 
-	checkFile("project config", filepath.Join(root, ".codemap", "config.json"), validateJSONFile)
+	checkFile("project config", config.ConfigPath(root), validateJSONFile)
 	claudeSettings, claudeSettingsErr := claudeSettingsPath(root, *global)
 	claudeMCP, claudeMCPErr := claudeMCPPath(root, *global)
 	codexHooks, codexHooksErr := codexHooksPath(root, *global)
@@ -481,7 +492,19 @@ func splitHookCommand(command string) (executable, args string, ok bool) {
 func hookExecutableIsCodemap(path string) bool {
 	normalized := strings.ReplaceAll(path, `\`, "/")
 	name := strings.ToLower(normalized[strings.LastIndex(normalized, "/")+1:])
-	return name == "codemap" || name == "codemap.exe"
+	if name == "codemap" || name == "codemap.exe" {
+		return true
+	}
+	// The running binary is codemap even when it is a test binary or a
+	// renamed deploy artifact; accept the exact executable that wrote the hook.
+	if running, err := os.Executable(); err == nil {
+		if abs, err := filepath.Abs(path); err == nil {
+			if runningAbs, err := filepath.Abs(running); err == nil && abs == runningAbs {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func validateClaudeMCP(path string) error {
@@ -523,6 +546,17 @@ func validateClaudeLocalMCP(projectRoot string) func(string) error {
 			return fmt.Errorf("no project-scoped MCP servers registered")
 		}
 		project, ok := projects[projectRoot].(map[string]any)
+		if !ok {
+			// The stored key may use the logical or canonical spelling of the
+			// same directory; match the canonical form either way.
+			for key, value := range projects {
+				keyCanonical, err := filepath.EvalSymlinks(key)
+				if err == nil && keyCanonical == projectRoot {
+					project, ok = value.(map[string]any)
+					break
+				}
+			}
+		}
 		if !ok {
 			return fmt.Errorf("no MCP servers registered for %s", projectRoot)
 		}
@@ -605,14 +639,18 @@ func parseDoctorManagedLaunch(raw any, agent string) (doctorManagedLaunch, error
 		return doctorManagedLaunch{}, fmt.Errorf("codemap MCP command must be a non-empty string")
 	}
 	args := mcpServerArgs(server)
-	launch := doctorManagedLaunch{command: command, args: args, integration: doctorManagedIntegration(args)}
+	_, managedArgs, err := ParseGlobalRootOptions(args)
+	if err != nil {
+		return doctorManagedLaunch{}, fmt.Errorf("invalid codemap root arguments: %w", err)
+	}
+	launch := doctorManagedLaunch{command: command, args: args, integration: doctorManagedIntegration(managedArgs)}
 	if command == "codemap" && stringSlicesEqual(args, []string{"mcp"}) {
 		return launch, fmt.Errorf("legacy PATH-relative codemap MCP definition is stale")
 	}
-	if len(args) != 5 || args[0] != "mcp" || args[1] != "--configured-version" || args[2] == "" || args[3] != "--integration" {
+	if len(managedArgs) != 5 || managedArgs[0] != "mcp" || managedArgs[1] != "--configured-version" || managedArgs[2] == "" || managedArgs[3] != "--integration" {
 		return launch, fmt.Errorf("unrecognized codemap MCP arguments")
 	}
-	launch.configuredVersion = args[2]
+	launch.configuredVersion = managedArgs[2]
 	if !filepath.IsAbs(command) {
 		return launch, fmt.Errorf("codemap MCP command is not absolute: %q", command)
 	}

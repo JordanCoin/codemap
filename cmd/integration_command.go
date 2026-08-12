@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"codemap/internal/projectpath"
 )
 
 var (
@@ -80,6 +82,13 @@ func quoteHookExecutable(path, goos string) string {
 	return `'` + strings.ReplaceAll(path, `'`, `'"'"'`) + `'`
 }
 
-func managedMCPArgs(version, integration string) []string {
-	return []string{"mcp", "--configured-version", version, "--integration", integration}
+func managedMCPArgs(projectRoot, version, integration string) []string {
+	args := make([]string, 0, 9)
+	if projectRoot != "" {
+		args = append(args, "--project-root", projectRoot)
+	}
+	if setupRoot := projectpath.ConfiguredSetupRoot(); setupRoot != "" {
+		args = append(args, "--setup-root", setupRoot)
+	}
+	return append(args, "mcp", "--configured-version", version, "--integration", integration)
 }

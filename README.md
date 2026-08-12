@@ -69,7 +69,10 @@ curl -fsSL "https://github.com/JordanCoin/codemap/releases/download/v${CODEMAP_V
 
 ## Setup
 
-Run from your git repo root — hooks resolve project context from the working directory.
+Run setup anywhere inside your git repo. Repo-scoped commands such as
+`setup`, `doctor`, `config`, `watch`, `skill`, `context`, `serve`, and
+managed hooks resolve the nearest git root automatically, including linked
+worktrees with a `.git` file.
 
 ```bash
 cd /path/to/your/project
@@ -163,8 +166,37 @@ codemap --version
 
 ### Options
 
+Standard linked Git worktrees automatically reuse the primary worktree's
+`.codemap/config.json` and project skills. Create the worktree with Git, an IDE,
+or any manager that uses standard linked-worktree metadata, then give the agent
+its absolute path:
+
+```bash
+git worktree add <path> -b <branch> <base>
+codemap -C /tmp/feature-worktree context
+```
+
+Normal CLI and plugin MCP calls need no `--setup-root`: central config and skills
+come from the primary worktree, while handoffs, watcher files, and hook/session
+state remain in the linked worktree. Independent clones have no trusted Git
+metadata linking them, so sharing setup between them still requires an explicit
+override:
+
+```bash
+codemap -C /tmp/independent-clone --setup-root /path/to/original context
+```
+
+`-C`/`--project-root` selects the repository Codemap operates on.
+`--setup-root` explicitly reuses `<repository>/.codemap` policy and runtime state
+from another checkout. Both accept a repository or subdirectory; relative setup
+paths resolve from the project root.
+
+| Flag | Description |
+
 | Flag | Description |
 |------|-------------|
+| `-C, --project-root <repo>` | Operate on code in `<repo>` |
+| `--setup-root <repo>` | Explicitly reuse policy and runtime state from `<repo>/.codemap` |
 | `--depth, -d <n>` | Limit tree depth (0 = unlimited) |
 | `--only <exts>` | Only include files with these extensions |
 | `--exclude <patterns>` | Exclude files matching patterns |
