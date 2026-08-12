@@ -52,6 +52,11 @@ type jsWorkspaceManifest struct {
 	workspaces []string
 }
 
+type jsRushProject struct {
+	name string
+	root string
+}
+
 type jsSpecifierMap struct {
 	exact   map[string]jsSpecifierTarget
 	dynamic []jsSpecifierTarget
@@ -72,6 +77,7 @@ func buildJSWorkspaceResolver(ctx context.Context, root string, files []FileInfo
 	denoConfigs := make(map[string]*jsWorkspaceManifest)
 	tsConfigs := make(map[string]map[string]any)
 	pnpmWorkspaces := make(map[string][]string)
+	rushWorkspaces := make(map[string][]jsRushProject)
 	for _, file := range files {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -85,6 +91,14 @@ func buildJSWorkspaceResolver(ctx context.Context, root string, files []FileInfo
 		if name == "tsconfig.json" {
 			if doc, ok := readJSWorkspaceManifest(filepath.Join(root, file.Path)); ok {
 				tsConfigs[manifestRoot] = doc
+			}
+			continue
+		}
+		if name == "rush.json" {
+			if doc, ok := readJSWorkspaceManifest(filepath.Join(root, file.Path)); ok {
+				if projects, ok := parseRushProjects(manifestRoot, doc); ok {
+					rushWorkspaces[manifestRoot] = projects
+				}
 			}
 			continue
 		}
@@ -181,6 +195,23 @@ func buildJSWorkspaceResolver(ctx context.Context, root string, files []FileInfo
 			return nil, err
 		}
 	}
+	for ownerRoot, projects := range rushWorkspaces {
+		members, ok, err := validateRushProjects(ctx, projects, packages)
+		if err != nil {
+			return nil, err
+		}
+		if !ok || len(members) == 0 {
+			continue
+		}
+		workspace := workspaces[ownerRoot]
+		if workspace == nil {
+			workspace = newJSPackageWorkspace(ownerRoot)
+			workspaces[ownerRoot] = workspace
+		}
+		for _, member := range members {
+			workspace.add(member.pkg)
+		}
+	}
 	for _, workspace := range workspaces {
 		resolver.workspaces = append(resolver.workspaces, *workspace)
 	}
@@ -203,6 +234,71 @@ func addJSWorkspaceMembers(ctx context.Context, workspace *jsPackageWorkspace, o
 		}
 	}
 	return nil
+}
+
+func parseRushProjects(ownerRoot string, doc map[string]any) ([]jsRushProject, bool) {
+	items, ok := doc["projects"].([]any)
+	if !ok {
+		return nil, false
+	}
+	projects := make([]jsRushProject, 0, len(items))
+	names := make(map[string]bool, len(items))
+	roots := make(map[string]bool, len(items))
+	for _, item := range items {
+		project, ok := item.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		name, nameOK := project["packageName"].(string)
+		folder, folderOK := project["projectFolder"].(string)
+		name = strings.TrimSpace(name)
+		folder, folderOK = normalizeRushProjectFolder(folder, folderOK)
+		if !nameOK || name == "" || !folderOK || names[name] || roots[folder] {
+			return nil, false
+		}
+		names[name], roots[folder] = true, true
+		projects = append(projects, jsRushProject{
+			name: name,
+			root: cleanRepoPath(filepath.Join(repoPath(ownerRoot), filepath.FromSlash(folder))),
+		})
+	}
+	return projects, true
+}
+
+func normalizeRushProjectFolder(folder string, ok bool) (string, bool) {
+	if !ok {
+		return "", false
+	}
+	folder = strings.TrimSpace(strings.ReplaceAll(folder, `\`, "/"))
+	folder = strings.TrimPrefix(folder, "./")
+	if folder == "" || strings.HasPrefix(folder, "!") || path.IsAbs(folder) || hasDrivePrefix(folder) || strings.ContainsAny(folder, "*?[\x00") {
+		return "", false
+	}
+	for _, part := range strings.Split(folder, "/") {
+		if part == ".." {
+			return "", false
+		}
+	}
+	folder = path.Clean(folder)
+	if folder == "." || path.IsAbs(folder) || hasDrivePrefix(folder) {
+		return "", false
+	}
+	return folder, true
+}
+
+func validateRushProjects(ctx context.Context, projects []jsRushProject, packages map[string]*jsWorkspaceManifest) ([]*jsWorkspaceManifest, bool, error) {
+	members := make([]*jsWorkspaceManifest, 0, len(projects))
+	for _, project := range projects {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
+		member := packages[project.root]
+		if member == nil || member.pkg == nil || member.pkg.name != project.name {
+			return nil, false, nil
+		}
+		members = append(members, member)
+	}
+	return members, true, nil
 }
 
 func newJSPackageWorkspace(root string) *jsPackageWorkspace {
