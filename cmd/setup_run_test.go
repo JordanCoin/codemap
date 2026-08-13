@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -135,5 +136,31 @@ func TestRunSetupUsesNearestGitRootFromNestedDirectory(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(nested, ".codemap", "config.json")); !os.IsNotExist(err) {
 		t.Fatalf("expected nested config to be absent, got err=%v", err)
+	}
+}
+
+func TestRunSetupAddsOnlyLocalCodemapIgnore(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root := makeGitRepo(t)
+	t.Setenv("HOME", t.TempDir())
+
+	out := captureOutput(func() {
+		RunSetup([]string{"--agent", "codex", "--no-config", "--no-mcp", root}, ".")
+	})
+	if !strings.Contains(out, "Added .codemap/ to .git/info/exclude") {
+		t.Fatalf("expected local-ignore notice, got:\n%s", out)
+	}
+	exclude, err := infoExcludePath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(exclude)
+	if err != nil || !strings.Contains(string(data), ".codemap/\n") {
+		t.Fatalf("expected .codemap/ in %s, data=%q, err=%v", exclude, data, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".gitignore")); !os.IsNotExist(err) {
+		t.Fatalf("setup must not create tracked .gitignore, err=%v", err)
 	}
 }

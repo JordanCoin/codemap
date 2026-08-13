@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
 	"io"
@@ -11,29 +10,14 @@ import (
 	"strings"
 )
 
-// ignoreMode selects where ensureCodemapIgnored writes a rule when one is
-// needed.
-type ignoreMode int
-
-const (
-	// ignoreTracked writes ".codemap/" to the repo's tracked .gitignore so the
-	// whole team (and every future clone) ignores it. This creates a diff.
-	ignoreTracked ignoreMode = iota
-	// ignoreLocal writes ".codemap/" to .git/info/exclude, which is local to
-	// this clone and never tracked — no diff, no surprise for collaborators.
-	ignoreLocal
-)
-
-// ignoreEntry is the rule we add. The trailing slash scopes it to the
-// directory, matching how codemap's own repo ignores its runtime state.
+// ignoreEntry keeps the runtime-state directory out of git. The trailing
+// slash scopes the rule to the directory.
 const ignoreEntry = ".codemap/"
 
 // reportEnsureIgnored ensures .codemap/ is ignored for root and reports the
-// outcome to w: a one-line notice when a rule was added, a warning when the
-// check/write failed, and nothing when git already ignored it (or root is not
-// a git repo). Both "config init" and "setup" funnel through here.
-func reportEnsureIgnored(w io.Writer, root string, mode ignoreMode) {
-	wrote, err := ensureCodemapIgnored(root, mode)
+// outcome to w (notice, warning, or nothing).
+func reportEnsureIgnored(w io.Writer, root string) {
+	wrote, err := ensureCodemapIgnored(root)
 	if err != nil {
 		fmt.Fprintf(w, "Warning: could not update ignore rules: %v\n", err)
 		return
@@ -42,45 +26,47 @@ func reportEnsureIgnored(w io.Writer, root string, mode ignoreMode) {
 		return
 	}
 	rel := wrote
-	if r, relErr := filepath.Rel(root, wrote); relErr == nil {
+	if r, relErr := filepath.Rel(root, wrote); relErr == nil && !strings.HasPrefix(r, "..") {
 		rel = r
 	}
 	fmt.Fprintf(w, "Added %s to %s\n", ignoreEntry, rel)
 }
 
-// ensureCodemapIgnored makes sure the .codemap/ directory at the given git root
-// is ignored by git. It is a no-op when git already ignores .codemap through
-// any mechanism (a global exclude, an existing .gitignore, a parent rule), and
-// a silent no-op when root is not inside a git working tree.
-//
-// It returns the path of the file it wrote to, or "" when nothing was written.
-func ensureCodemapIgnored(root string, mode ignoreMode) (string, error) {
+// ensureCodemapIgnored ensures .codemap/ is ignored for root by writing
+// ignoreEntry to the clone-local info/exclude. It returns the file written,
+// or "" when the entry already exists or root is not a git work tree.
+func ensureCodemapIgnored(root string) (string, error) {
 	if !isGitWorkTree(root) {
 		return "", nil
 	}
-
-	ignored, err := gitCheckIgnore(root, ignoreEntry)
+	target, present, err := localCodemapIgnore(root)
 	if err != nil {
 		return "", err
 	}
-	if ignored {
+	if present {
 		return "", nil
 	}
-
-	var target string
-	if mode == ignoreLocal {
-		target, err = infoExcludePath(root)
-		if err != nil {
-			return "", err
-		}
-	} else {
-		target = filepath.Join(root, ".gitignore")
-	}
-
 	if err := appendIgnoreEntry(target, ignoreEntry); err != nil {
 		return "", err
 	}
 	return target, nil
+}
+
+// localCodemapIgnore reports whether root's info/exclude already lists
+// ignoreEntry.
+func localCodemapIgnore(root string) (string, bool, error) {
+	target, err := infoExcludePath(root)
+	if err != nil {
+		return "", false, err
+	}
+	data, err := os.ReadFile(target)
+	if os.IsNotExist(err) {
+		return target, false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return target, hasIgnoreLine(data, ignoreEntry), nil
 }
 
 // isGitWorkTree reports whether root sits inside a git working tree.
@@ -91,23 +77,29 @@ func isGitWorkTree(root string) bool {
 	return err == nil && strings.TrimSpace(string(out)) == "true"
 }
 
-// gitCheckIgnore reports whether git would ignore the given path at root.
-func gitCheckIgnore(root, path string) (bool, error) {
-	cmd := exec.Command("git", "check-ignore", "-q", path)
+// gitCheckIgnoreVerbose reports whether git would ignore path at root and, if
+// so, the <source>:<line>:<pattern> rule that matched, across every ignore
+// source (tracked .gitignore, local exclude, global excludes, parent repos).
+func gitCheckIgnoreVerbose(root, path string) (bool, string, error) {
+	cmd := exec.Command("git", "check-ignore", "-v", path)
 	cmd.Dir = root
-	err := cmd.Run()
+	out, err := cmd.Output()
 	if err == nil {
-		return true, nil
+		line := strings.TrimSpace(string(out))
+		if i := strings.IndexByte(line, '\t'); i >= 0 {
+			line = line[:i]
+		}
+		return true, line, nil
 	}
 	// Exit code 1 means "not ignored"; anything else is a real error.
 	if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 {
-		return false, nil
+		return false, "", nil
 	}
-	return false, fmt.Errorf("git check-ignore: %w", err)
+	return false, "", fmt.Errorf("git check-ignore: %w", err)
 }
 
-// infoExcludePath resolves <git-common-dir>/info/exclude for root, so all
-// worktrees of a repo share one local exclude file.
+// infoExcludePath resolves <git-common-dir>/info/exclude for root, so every
+// worktree of a repo shares one local exclude file.
 func infoExcludePath(root string) (string, error) {
 	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
 	cmd.Dir = root
@@ -122,10 +114,10 @@ func infoExcludePath(root string) (string, error) {
 	return filepath.Join(commonDir, "info", "exclude"), nil
 }
 
-// appendIgnoreEntry adds entry as its own line in the ignore file at path,
-// creating the file (and its parent dir) if needed. It leaves the file
-// untouched if entry is already present verbatim, and guarantees the entry
-// lands on a fresh line even when the file lacks a trailing newline.
+// appendIgnoreEntry adds entry on its own line to the ignore file at path,
+// creating the file if needed. No-op when entry is already listed; never
+// glues onto a partial last line. Atomic write, so a symlinked exclude is
+// replaced rather than written through.
 func appendIgnoreEntry(path, entry string) error {
 	existing, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
@@ -147,15 +139,14 @@ func appendIgnoreEntry(path, entry string) error {
 	buf.WriteString(entry)
 	buf.WriteByte('\n')
 
-	return os.WriteFile(path, buf.Bytes(), 0644)
+	return writeFileAtomic(path, buf.Bytes(), 0644)
 }
 
-// hasIgnoreLine reports whether data already contains entry as a standalone,
-// non-comment line.
+// hasIgnoreLine reports whether data lists entry as a standalone, uncommented
+// line.
 func hasIgnoreLine(data []byte, entry string) bool {
-	scanner := bufio.NewScanner(bytes.NewReader(data))
-	for scanner.Scan() {
-		if strings.TrimSpace(scanner.Text()) == entry {
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		if strings.TrimSpace(string(line)) == entry {
 			return true
 		}
 	}

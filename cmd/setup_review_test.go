@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -474,6 +475,28 @@ func TestRunDoctorReportsUnconfiguredProject(t *testing.T) {
 	}
 }
 
+func TestRunDoctorReportsMissingLocalCodemapIgnore(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root := makeGitRepo(t)
+	if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".codemap", "config.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var code int
+	out := captureOutput(func() { code = RunDoctor([]string{root}, ".") })
+	if code == 0 {
+		t.Fatalf("RunDoctor exit code = 0, want missing local ignore to fail\n%s", out)
+	}
+	if !strings.Contains(out, "MISS local Codemap ignore") {
+		t.Fatalf("expected missing local-ignore diagnosis, got:\n%s", out)
+	}
+}
+
 func TestDiscoverWindowsBundledCodexCLICandidates(t *testing.T) {
 	programFiles := t.TempDir()
 	t.Setenv("ProgramFiles", programFiles)
@@ -516,5 +539,59 @@ func TestDetectInstalledAgentsUsesHomeMarkers(t *testing.T) {
 	claude, codex = detectInstalledAgents()
 	if !claude || !codex {
 		t.Fatalf("detection = (%v, %v), want both", claude, codex)
+	}
+}
+
+func TestRunDoctorReportsLocalCodemapIgnorePresent(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root := makeGitRepo(t)
+	if _, err := ensureCodemapIgnored(root); err != nil {
+		t.Fatal(err)
+	}
+	out := captureOutput(func() { RunDoctor([]string{root}, ".") })
+	if !strings.Contains(out, "OK   local Codemap ignore") {
+		t.Fatalf("expected OK local-ignore diagnosis, got:\n%s", out)
+	}
+	if strings.Contains(out, "MISS local Codemap ignore") {
+		t.Fatalf("unexpected MISS local-ignore diagnosis:\n%s", out)
+	}
+}
+
+// TestRunDoctorReportsOKWhenTrackedIgnoreIsEffective locks in the maintainer
+// case: .codemap/ ignored by a tracked .gitignore (no local exclude entry)
+// must be reported OK, since the effective configuration is what matters.
+func TestRunDoctorReportsOKWhenTrackedIgnoreIsEffective(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root := makeGitRepo(t)
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("node_modules/\n.codemap/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureOutput(func() { RunDoctor([]string{root}, ".") })
+	if !strings.Contains(out, "OK   local Codemap ignore: effective via") {
+		t.Fatalf("expected effective-ignore OK, got:\n%s", out)
+	}
+	if strings.Contains(out, "MISS local Codemap ignore") {
+		t.Fatalf("unexpected MISS local-ignore diagnosis:\n%s", out)
+	}
+}
+
+// The helper must fail the check (not panic) when git cannot answer at all,
+// e.g. when the root is not a repository.
+func TestDoctorCheckLocalCodemapIgnoreFailsWhenGitUnavailable(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	failures := 0
+	out := captureOutput(func() { doctorCheckLocalCodemapIgnore(t.TempDir(), &failures) })
+	if failures != 1 {
+		t.Fatalf("failures = %d, want 1", failures)
+	}
+	if !strings.Contains(out, "MISS local Codemap ignore") {
+		t.Fatalf("expected MISS local-ignore diagnosis, got:\n%s", out)
 	}
 }

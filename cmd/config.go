@@ -80,7 +80,7 @@ func configInit(root string) {
 	}
 
 	fmt.Printf("Created %s\n", result.Path)
-	reportEnsureIgnored(os.Stdout, root, ignoreTracked)
+	reportEnsureIgnored(os.Stdout, root)
 	fmt.Println()
 	if len(result.TopExts) == 0 {
 		fmt.Println("No code extensions detected — wrote empty config.")
