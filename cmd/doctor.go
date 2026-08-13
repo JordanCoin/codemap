@@ -112,6 +112,9 @@ func RunDoctor(args []string, defaultRoot string) int {
 	}
 
 	checkFile("project config", config.ConfigPath(root), validateJSONFile)
+	if isGitWorkTree(root) {
+		doctorCheckLocalCodemapIgnore(root, &failures)
+	}
 	claudeSettings, claudeSettingsErr := claudeSettingsPath(root, *global)
 	claudeMCP, claudeMCPErr := claudeMCPPath(root, *global)
 	codexHooks, codexHooksErr := codexHooksPath(root, *global)
@@ -172,6 +175,31 @@ func RunDoctor(args []string, defaultRoot string) int {
 	}
 	fmt.Println("\nCodemap integration prerequisites are valid.")
 	return 0
+}
+
+// doctorCheckLocalCodemapIgnore verifies .codemap/ is ignored in this working
+// tree. Git's check-ignore reflects the rules that actually apply, so it is
+// the authority: report OK when the directory is ignored and MISS only when
+// it genuinely is not, naming the local exclude and a minimal repair hint.
+func doctorCheckLocalCodemapIgnore(root string, failures *int) {
+	ignored, mechanism, err := gitCheckIgnoreVerbose(root, ignoreEntry)
+	if err != nil {
+		fmt.Printf("MISS local Codemap ignore: %v\n", err)
+		*failures++
+		return
+	}
+	if ignored {
+		fmt.Printf("OK   local Codemap ignore: effective via %s\n", mechanism)
+		return
+	}
+	path, _, err := localCodemapIgnore(root)
+	if err != nil {
+		fmt.Printf("MISS local Codemap ignore: %v\n", err)
+		*failures++
+		return
+	}
+	fmt.Printf("MISS local Codemap ignore: %s does not ignore %s; repair with `codemap setup --no-hooks --no-mcp --no-config %s`\n", path, ignoreEntry, root)
+	*failures++
 }
 
 func reportCodexRuntimeVersions(cliPath string) bool {

@@ -268,7 +268,7 @@ func RunSetup(args []string, defaultRoot string) int {
 		}
 	}
 
-	reportEnsureIgnored(os.Stdout, absRoot, ignoreTracked)
+	reportEnsureIgnored(os.Stdout, absRoot)
 
 	if *skipHooks {
 		fmt.Println("Hooks: skipped (--no-hooks)")
