@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"codemap/config"
 	"codemap/handoff"
@@ -284,11 +285,31 @@ func Run(ctx context.Context, options RuntimeOptions) error {
 }
 
 func textResult(text string) *mcp.CallToolResult {
+	return rawTextResult(boundedMCPText(text))
+}
+
+func completeJSONResult(text string) *mcp.CallToolResult {
+	return rawTextResult(text)
+}
+
+func rawTextResult(text string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			&mcp.TextContent{Text: text},
 		},
 	}
+}
+
+func boundedMCPText(text string) string {
+	if len(text) <= limits.MaxContextOutputBytes {
+		return text
+	}
+	const marker = "\n... [truncated]\n"
+	end := limits.MaxContextOutputBytes - len(marker)
+	for end > 0 && !utf8.RuneStart(text[end]) {
+		end--
+	}
+	return text[:end] + marker
 }
 
 func errorResult(text string) *mcp.CallToolResult {
@@ -309,6 +330,9 @@ func mustSchemaFor[T any]() *jsonschema.Schema {
 }
 
 func traversalRoot(path string) (string, *mcp.CallToolResult) {
+	if strings.HasPrefix(path, "~/") {
+		path = filepath.Join(os.Getenv("HOME"), path[2:])
+	}
 	absRoot, err := filepath.Abs(path)
 	if err != nil {
 		return "", errorResult("Invalid path: " + err.Error())
@@ -396,7 +420,10 @@ func handleGetStructure(ctx context.Context, req *mcp.CallToolRequest, input Str
 	if len(hubs) > 0 {
 		output += "\n⚠️  HUB FILES (high-impact, 3+ dependents):\n"
 		sort.Slice(hubs, func(i, j int) bool {
-			return len(importers[hubs[i]]) > len(importers[hubs[j]])
+			if len(importers[hubs[i]]) != len(importers[hubs[j]]) {
+				return len(importers[hubs[i]]) > len(importers[hubs[j]])
+			}
+			return hubs[i] < hubs[j]
 		})
 		for i, hub := range hubs {
 			if i >= 5 {
@@ -556,6 +583,7 @@ func handleStatus(ctx context.Context, req *mcp.CallToolRequest, input EmptyInpu
 		watchedPaths = append(watchedPaths, path)
 	}
 	watchersMu.RUnlock()
+	sort.Strings(watchedPaths)
 
 	watchStatus := "none"
 	if activeWatchers > 0 {
@@ -569,19 +597,7 @@ Working directory: %s
 Home directory: %s
 Active watchers: %s
 
-Available tools:
-  list_projects    - Discover projects in a directory
-  get_structure    - Project tree view
-  get_dependencies - Import/function analysis
-  get_diff         - Changed files vs branch
-  find_file        - Search by filename
-  get_importers    - Find what imports a file
-  get_handoff      - Build/read cross-agent handoff summary
-
-Live watch tools:
-  start_watch      - Start watching a project for changes
-  stop_watch       - Stop watching a project
-  get_activity     - See recent coding activity (hot files, edits, timeline)`, buildinfo.Current(), cwd, home, watchStatus)), nil, nil
+Tools: run tools/list for the full tool inventory.`, buildinfo.Current(), cwd, home, watchStatus)), nil, nil
 }
 
 func statusHandler(guidance string) func(context.Context, *mcp.CallToolRequest, EmptyInput) (*mcp.CallToolResult, any, error) {
@@ -592,7 +608,7 @@ func statusHandler(guidance string) func(context.Context, *mcp.CallToolRequest, 
 		}
 		content, ok := result.Content[0].(*mcp.TextContent)
 		if ok {
-			content.Text += "\n\n" + guidance
+			content.Text = boundedMCPText(content.Text + "\n\n" + guidance)
 		}
 		return result, output, nil
 	}
@@ -814,7 +830,8 @@ func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input Imp
 	}
 
 	file := normalizeImporterFile(absRoot, input.File)
-	importers := fg.Importers[file]
+	importers := append([]string(nil), fg.Importers[file]...)
+	sort.Strings(importers)
 	structured := newImportersOutput(absRoot, file, fg)
 	if len(importers) == 0 {
 		return textResult("No files import '" + file + "'" + mcpCoverageText(fg)), structured, nil
@@ -926,7 +943,7 @@ func handleGetHandoff(ctx context.Context, req *mcp.CallToolRequest, input Hando
 			if err != nil {
 				return errorResult("Failed to serialize handoff detail: " + err.Error()), nil, nil
 			}
-			return textResult(string(data)), structured, nil
+			return completeJSONResult(string(data)), structured, nil
 		}
 		out := handoff.RenderFileDetailMarkdown(detail)
 		out = limits.TruncateAtLineBoundary(out, limits.MaxHandoffDetailBytes, "\n\n... (handoff detail truncated)\n")
@@ -952,7 +969,7 @@ func handleGetHandoff(ctx context.Context, req *mcp.CallToolRequest, input Hando
 		if err != nil {
 			return errorResult("Failed to serialize handoff: " + err.Error()), nil, nil
 		}
-		return textResult(string(data)), structured, nil
+		return completeJSONResult(string(data)), structured, nil
 	}
 
 	var out string
@@ -1146,7 +1163,10 @@ The user may be:
 		})
 	}
 	sort.Slice(summaries, func(i, j int) bool {
-		return summaries[i].edits > summaries[j].edits
+		if summaries[i].edits != summaries[j].edits {
+			return summaries[i].edits > summaries[j].edits
+		}
+		return summaries[i].path < summaries[j].path
 	})
 
 	// Build output
@@ -1247,7 +1267,10 @@ func handleGetHubs(ctx context.Context, req *mcp.CallToolRequest, input PathInpu
 
 	// Sort by importer count
 	sort.Slice(hubs, func(i, j int) bool {
-		return len(fg.Importers[hubs[i]]) > len(fg.Importers[hubs[j]])
+		if len(fg.Importers[hubs[i]]) != len(fg.Importers[hubs[j]]) {
+			return len(fg.Importers[hubs[i]]) > len(fg.Importers[hubs[j]])
+		}
+		return hubs[i] < hubs[j]
 	})
 
 	var sb strings.Builder
@@ -1255,7 +1278,8 @@ func handleGetHubs(ctx context.Context, req *mcp.CallToolRequest, input PathInpu
 	sb.WriteString("These files are imported by 3+ other files. Changes here have wide impact.\n\n")
 
 	for _, hub := range hubs {
-		importers := fg.Importers[hub]
+		importers := append([]string(nil), fg.Importers[hub]...)
+		sort.Strings(importers)
 		sb.WriteString(fmt.Sprintf("  %s (%d importers)\n", hub, len(importers)))
 		// Show first few importers
 		for i, imp := range importers {
@@ -1286,11 +1310,14 @@ func handleGetFileContext(ctx context.Context, req *mcp.CallToolRequest, input I
 		return errorResult("Failed to build file graph: " + err.Error()), nil, nil
 	}
 
-	file := input.File
-	imports := fg.Imports[file]
-	importers := fg.Importers[file]
+	file := normalizeImporterFile(absRoot, input.File)
+	imports := append([]string(nil), fg.Imports[file]...)
+	importers := append([]string(nil), fg.Importers[file]...)
 	isHub := fg.IsHub(file)
 	connected := fg.ConnectedFiles(file)
+	sort.Strings(imports)
+	sort.Strings(importers)
+	sort.Strings(connected)
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("=== File Context: %s ===\n\n", file))
