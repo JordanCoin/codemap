@@ -268,3 +268,40 @@ func TestAnalyzeImpactEmpty(t *testing.T) {
 		t.Errorf("Expected nil impacts for empty slice, got %v", impacts)
 	}
 }
+
+func TestGitDiffInfoIgnoresStderrWarningsOnSuccess(t *testing.T) {
+	// git warns on stderr ("refname 'dup' is ambiguous.") with exit 0 when a
+	// branch and a tag share a name; the warning must not become a changed file.
+	root := setupGitRepo(t)
+	git := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("config", "user.email", "t@t")
+	git("config", "user.name", "t")
+	if err := os.WriteFile(filepath.Join(root, "f.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "f.txt")
+	git("commit", "-qm", "one")
+	git("branch", "dup")
+	git("tag", "-m", "t", "dup")
+	// An uncommitted change makes `git diff dup` emit a real row alongside the warning.
+	if err := os.WriteFile(filepath.Join(root, "f.txt"), []byte("x\ny\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := GitDiffInfo(context.Background(), root, "dup")
+	if err != nil {
+		t.Fatalf("GitDiffInfo: %v", err)
+	}
+	if !info.Changed["f.txt"] {
+		t.Fatalf("expected f.txt in changed set, got %v", info.Changed)
+	}
+	if len(info.Changed) != 1 {
+		t.Fatalf("changed set = %v, want exactly {f.txt} (stderr warning leaked into the parser)", info.Changed)
+	}
+}

@@ -37,8 +37,7 @@ func NewDaemon(root string, verbose bool) (*Daemon, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid root path: %w", err)
 	}
-	// Canonicalize so d.root, the runtime dir, and fsnotify event paths agree
-	// (e.g. macOS /tmp -> /private/tmp, /var -> /private/var).
+	// Canonicalize so d.root, the runtime dir, and fsnotify paths agree.
 	if canonical, err := filepath.EvalSymlinks(absRoot); err == nil {
 		absRoot = canonical
 	}

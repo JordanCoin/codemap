@@ -35,12 +35,17 @@ func GitDiffInfo(ctx context.Context, root, ref string) (*DiffInfo, error) {
 	cmd := exec.CommandContext(ctx, "git", "diff", "--numstat", ref)
 	cmd.WaitDelay = gitContextWaitDelay
 	cmd.Dir = root
-	output, err := cmd.CombinedOutput()
+	// stdout is numstat rows only; read the error text from stderr.
+	output, err := cmd.Output()
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
-		if detail := strings.TrimSpace(string(output)); detail != "" {
+		var detail string
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			detail = strings.TrimSpace(string(exitErr.Stderr))
+		}
+		if detail != "" {
 			return nil, fmt.Errorf("%w: %s", err, detail)
 		}
 		return nil, err
@@ -51,7 +56,8 @@ func GitDiffInfo(ctx context.Context, root, ref string) (*DiffInfo, error) {
 			continue
 		}
 		parts := strings.Fields(line)
-		if len(parts) >= 3 {
+		// numstat rows are "<added>\t<removed>\t<path>"; reject anything else.
+		if len(parts) >= 3 && isNumstatCount(parts[0]) && isNumstatCount(parts[1]) {
 			var added, removed int
 			if parts[0] != "-" {
 				fmt.Sscanf(parts[0], "%d", &added)
@@ -87,6 +93,19 @@ func GitDiffInfo(ctx context.Context, root, ref string) (*DiffInfo, error) {
 	}
 
 	return info, nil
+}
+
+// isNumstatCount reports whether s is a numstat count: all digits or "-".
+func isNumstatCount(s string) bool {
+	if s == "-" {
+		return true
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // DiffStat returns +/- line counts for changed files
