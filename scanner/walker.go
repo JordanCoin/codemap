@@ -363,10 +363,8 @@ func filterConfiguredAnalyses(root string, analyses []FileAnalysis) []FileAnalys
 	return filtered
 }
 
-// ScanForDeps performs dependency analysis with explicit filters, provenance,
-// and caller cancellation. When the primary ast-grep scan fails with an
-// incomplete outcome, the Go parser fallback recovers what dependency
-// references it can and the outcome stays provenance-annotated.
+// ScanForDeps runs dependency analysis with explicit filters and cancellation,
+// falling back to the Go parser when ast-grep fails.
 func ScanForDeps(ctx context.Context, root string, filters Filters) (ScanOutcome, error) {
 	outcome, _, err := scanForGraphOutcomeWithFilters(ctx, root, filters, func(r string) (ScanOutcome, error) {
 		return scanForDepsPrimaryOutcome(ctx, r)

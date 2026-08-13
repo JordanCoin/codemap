@@ -59,12 +59,20 @@ func scanForGraphOutcome(ctx context.Context, root string, scan dependencyOutcom
 
 func scanForGraphOutcomeWithFilters(ctx context.Context, root string, filters Filters, scan dependencyOutcomeScanner, loader cargoMetadataLoader, allowCargoOnly bool) (ScanOutcome, bool, error) {
 	outcome, err := scan(root)
+	degraded := false
 	if err == nil {
-		outcome.Analyses, err = filterAnalysesContext(ctx, outcome.Analyses, filters)
-		if err != nil {
-			return ScanOutcome{}, false, err
+		// A degraded ast-grep outcome (timeout/failure) carries a nil error;
+		// treat it like an incomplete scan so the fallback still runs.
+		if incomplete := degradedAstGrepError(outcome); incomplete != nil {
+			err = incomplete
+			degraded = true
+		} else {
+			outcome.Analyses, err = filterAnalysesContext(ctx, outcome.Analyses, filters)
+			if err != nil {
+				return ScanOutcome{}, false, err
+			}
+			return outcome, false, nil
 		}
-		return outcome, false, nil
 	}
 
 	var incomplete *IncompleteScanError
@@ -101,9 +109,32 @@ func scanForGraphOutcomeWithFilters(ctx context.Context, root string, filters Fi
 		return ScanOutcome{}, false, err
 	}
 	if !recovered {
+		if degraded {
+			// Nothing recovered from a degraded scan: fail closed with the
+			// degraded outcome, not a hard error.
+			return outcome, false, nil
+		}
 		return ScanOutcome{}, false, err
 	}
 	return fallback, true, nil
+}
+
+// degradedAstGrepError turns a fail-closed ast-grep outcome into the
+// incomplete error the fallback gate recognizes, unless it already recovered
+// analyses.
+func degradedAstGrepError(outcome ScanOutcome) *IncompleteScanError {
+	if len(outcome.Analyses) > 0 {
+		return nil
+	}
+	for _, source := range outcome.Sources {
+		if source.Name != "ast-grep" {
+			continue
+		}
+		if source.Status == ScanSourceTimeout || source.Status == ScanSourceFailed {
+			return &IncompleteScanError{Outcome: source, Err: errors.New(source.Detail)}
+		}
+	}
+	return nil
 }
 
 func mergeFallbackOutcome(dst *ScanOutcome, src ScanOutcome) {
@@ -198,7 +229,9 @@ func buildCargoFallbackOutcome(ctx context.Context, root string, files []FileInf
 		Sources: []ScanSourceOutcome{{
 			Name:   "cargo-metadata",
 			Status: ScanSourceFallback,
-			Detail: fmt.Sprintf("Cargo metadata fallback recovered %d dependency edges from %d of %d manifests", len(edges), handled, len(manifests)),
+			// Recovered edges only reach the file graph, so don't claim them
+			// in the `--deps` payload.
+			Detail: fmt.Sprintf("Cargo metadata fallback used for %d of %d manifests", handled, len(manifests)),
 		}},
 		precomputedEdges: edges,
 	}, nil

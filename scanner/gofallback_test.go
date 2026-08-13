@@ -49,9 +49,10 @@ func TestFeature(t *testing.T) {}
 	}
 	want := []FileAnalysis{
 		{
-			Path:      filepath.FromSlash("cmd/main.go"),
-			Language:  "go",
-			Functions: []string{"main", "Run"},
+			Path:     filepath.FromSlash("cmd/main.go"),
+			Language: "go",
+			// `Run` is a method; ast-grep only reports function_declaration.
+			Functions: []string{"main"},
 			Imports:   []string{"example.com/lib", "example.com/side-effect"},
 		},
 		{
@@ -67,7 +68,7 @@ func TestFeature(t *testing.T) {}
 	if len(outcome.Sources) != 1 || outcome.Sources[0].Name != "go-parser" || outcome.Sources[0].Status != ScanSourceFallback {
 		t.Fatalf("sources = %#v, want Go parser fallback", outcome.Sources)
 	}
-	if !strings.Contains(outcome.Sources[0].Detail, "2 of 3 Go files") || !strings.Contains(outcome.Sources[0].Detail, "skipped 1") {
+	if !strings.Contains(outcome.Sources[0].Detail, "2 of 2 Go files with dependency references") || !strings.Contains(outcome.Sources[0].Detail, "skipped 1") {
 		t.Fatalf("detail = %q, want recovered and skipped counts", outcome.Sources[0].Detail)
 	}
 }
@@ -135,6 +136,37 @@ func TestBuildGoFallbackOutcomeUnavailable(t *testing.T) {
 				t.Fatalf("error = %v, want %v", err, errGoFallbackUnavailable)
 			}
 		})
+	}
+}
+
+// The recovery note's denominator counts only dependency-bearing files, so
+// type/const-only files (which ast-grep omits too) don't read as data loss.
+func TestBuildGoFallbackOutcomeDenominatorExcludesTypeOnlyFiles(t *testing.T) {
+	root := t.TempDir()
+	writeRustCargoFixture(t, root, map[string]string{
+		"cmd/main.go":      "package main\n\nimport \"fmt\"\n\nfunc main() {}\n",
+		"cmd/types.go":     "package main\n\ntype Worker struct{}\n\nconst Max = 3\n",
+		"cmd/broken.go":    "package main\nfunc broken(",
+		"cmd/constants.go": "package main\n\nconst Version = \"v1\"\n",
+	})
+	files := []FileInfo{
+		{Path: "cmd/types.go"},
+		{Path: "cmd/main.go"},
+		{Path: "cmd/broken.go"},
+		{Path: "cmd/constants.go"},
+	}
+	outcome, err := buildGoFallbackOutcome(context.Background(), root, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(outcome.Sources[0].Detail, "1 of 1 Go files with dependency references") {
+		t.Fatalf("detail = %q, want 1 of 1 dependency-bearing files", outcome.Sources[0].Detail)
+	}
+	if !strings.Contains(outcome.Sources[0].Detail, "skipped 1") {
+		t.Fatalf("detail = %q, want skipped parse-error count", outcome.Sources[0].Detail)
+	}
+	if strings.Contains(outcome.Sources[0].Detail, "of 4 Go files") {
+		t.Fatalf("detail = %q, must not count type/const-only files in the denominator", outcome.Sources[0].Detail)
 	}
 }
 

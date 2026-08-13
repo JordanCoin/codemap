@@ -42,15 +42,10 @@ func BuildFileGraph(ctx context.Context, root string, filters Filters) (*FileGra
 	}, loadCargoFallbackMetadata)
 }
 
-// BuildFileGraphFromOutcome builds a file graph from a scan outcome without
-// dropping scanner provenance.
+// BuildFileGraphFromOutcome builds a file graph from a scan outcome, reusing
+// the Cargo dedup guard so a fallback outcome doesn't re-run cargo metadata.
 func BuildFileGraphFromOutcome(ctx context.Context, root string, outcome ScanOutcome, filters Filters) (*FileGraph, error) {
-	fg, err := buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx, root, outcome.Analyses, filters, loadCargoMetadata, outcome.Sources...)
-	if err != nil {
-		return nil, err
-	}
-	applyPrecomputedFileEdges(fg, outcome.precomputedEdges)
-	return fg, nil
+	return buildFileGraphFromOutcomeWithCargoMetadataAndFilters(ctx, root, outcome, filters, loadCargoMetadata)
 }
 
 // BuildFileGraphFromAnalyses builds a file graph from pre-computed analyses
@@ -92,8 +87,12 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 		Packages:    make(map[string][]string),
 		PathAliases: make(map[string][]string),
 	}
+	hasCargoSource := false
 	for _, source := range sources {
 		fg.Coverage.AddSource(source)
+		if source.Name == "cargo-metadata" {
+			hasCargoSource = true
+		}
 	}
 
 	// Detect module name from go.mod (for Go import resolution)
@@ -125,7 +124,9 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	if cargoOutcome != nil {
+	// The outcome already carries cargo provenance; keep exactly one
+	// cargo-metadata source per graph.
+	if cargoOutcome != nil && !hasCargoSource {
 		fg.Coverage.AddSource(*cargoOutcome)
 	}
 

@@ -197,6 +197,117 @@ func TestBuildFileGraphFromFallbackOutcomePreservesCargoEdgesWithoutReload(t *te
 	}
 }
 
+// A degraded ast-grep outcome (timeout/failure, nil error) must still fire
+// the fallback: ScanDirectory fails closed, so the gate checks provenance.
+func TestScanForGraphOutcomeFiresFallbackOnDegradedAstGrepOutcome(t *testing.T) {
+	root := t.TempDir()
+	writeRustCargoFixture(t, root, map[string]string{
+		"main.go": "package main\n\nimport \"fmt\"\n\nfunc main() {}\n",
+	})
+	outcome, usedFallback, err := scanForGraphOutcome(
+		context.Background(),
+		root,
+		func(string) (ScanOutcome, error) {
+			// Degraded outcome, nil error — what ScanDirectory returns on
+			// invalid JSON. The leading non-ast-grep source exercises the
+			// skip branch.
+			return ScanOutcome{
+				Sources: []ScanSourceOutcome{
+					{Name: "other", Status: ScanSourceFailed, Detail: "unrelated"},
+					{Name: "ast-grep", Status: ScanSourceFailed, Detail: "ast-grep produced invalid JSON results"},
+				},
+			}, nil
+		},
+		nil,
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !usedFallback {
+		t.Fatal("degraded ast-grep outcome did not trigger the fallback")
+	}
+	if len(outcome.Analyses) != 1 || outcome.Analyses[0].Path != "main.go" {
+		t.Fatalf("analyses = %#v, want Go fallback recovery", outcome.Analyses)
+	}
+	if len(outcome.Sources) != 2 ||
+		outcome.Sources[0].Name != "ast-grep" || outcome.Sources[0].Status != ScanSourceFailed ||
+		outcome.Sources[1].Name != "go-parser" || outcome.Sources[1].Status != ScanSourceFallback {
+		t.Fatalf("sources = %#v, want degraded ast-grep followed by Go parser fallback", outcome.Sources)
+	}
+}
+
+// An unrecoverable degraded primary stays fail-closed (nil error).
+func TestScanForGraphOutcomeDegradedPrimaryStaysFailClosedWhenUnrecoverable(t *testing.T) {
+	root := t.TempDir()
+	writeRustCargoFixture(t, root, map[string]string{
+		"main.ts": "export const value = 1;\n",
+	})
+	primary := ScanOutcome{
+		Sources: []ScanSourceOutcome{{Name: "ast-grep", Status: ScanSourceTimeout, Detail: "ast-grep timed out after 30s"}},
+	}
+	outcome, usedFallback, err := scanForGraphOutcome(
+		context.Background(),
+		root,
+		func(string) (ScanOutcome, error) { return primary, nil },
+		nil,
+		false,
+	)
+	if err != nil {
+		t.Fatalf("unrecoverable degraded primary must fail closed, got error %v", err)
+	}
+	if usedFallback {
+		t.Fatal("unrecoverable degraded primary must not report fallback use")
+	}
+	if !reflect.DeepEqual(outcome, primary) {
+		t.Fatalf("outcome = %#v, want degraded primary preserved", outcome)
+	}
+}
+
+// BuildFileGraphFromOutcome (the --deps graph path) must apply the Cargo
+// dedup guard: one cargo-metadata source, no second cargo metadata run.
+func TestBuildFileGraphFromOutcomeDedupesFallbackCargoSource(t *testing.T) {
+	root, metadata := cargoFallbackFixture(t, map[string]any{
+		"name": "core", "path": "core", "kind": nil,
+	})
+	writeRustCargoFixture(t, root, map[string]string{
+		"main.go": "package main\n\nimport \"fmt\"\n\nfunc main() {}\n",
+	})
+	outcome, _, err := scanForGraphOutcome(
+		context.Background(),
+		root,
+		func(string) (ScanOutcome, error) {
+			return ScanOutcome{}, newIncompleteScanError("ast-grep", ScanSourceUnavailable, "ast-grep unavailable", ErrAstGrepNotFound)
+		},
+		func(context.Context, string) ([]byte, error) { return metadata, nil },
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	loads := 0
+	graph, err := BuildFileGraphFromOutcome(context.Background(), root, outcome, Filters{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loads != 0 {
+		t.Fatalf("cargo metadata loads = %d, want 0 (dedup guard must apply)", loads)
+	}
+	var cargoSources int
+	for _, source := range graph.Coverage.Sources {
+		if source.Name == "cargo-metadata" {
+			cargoSources++
+		}
+	}
+	if cargoSources != 1 {
+		t.Fatalf("cargo-metadata sources = %d, want exactly 1 (got %#v)", cargoSources, graph.Coverage.Sources)
+	}
+	if got, want := graph.Imports["app/src/lib.rs"], []string{"core/src/lib.rs"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("fallback imports = %#v, want %#v", got, want)
+	}
+}
+
 func TestScanForDepsOutcomeRejectsCargoOnlyEmptyRecovery(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires shell script execution")

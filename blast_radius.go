@@ -1314,8 +1314,13 @@ func renderImportersReportString(report scanner.ImportersReport) string {
 func renderImportersReportCLI(w io.Writer, report scanner.ImportersReport) {
 	if len(report.Importers) == 0 && len(report.HubImports) == 0 {
 		fmt.Fprintf(w, "No files import %s.\n", report.File)
-		fmt.Fprintln(w, "   Note: files in the same package never import each other (Go resolves")
-		fmt.Fprintln(w, "   imports at package level), so only cross-package importers appear here.")
+		if strings.EqualFold(filepath.Ext(report.File), ".go") {
+			fmt.Fprintln(w, "   Note: files in the same package never import each other (Go resolves")
+			fmt.Fprintln(w, "   imports at package level), so only cross-package importers appear here.")
+		}
+		// Show scan provenance even for an empty answer, so a partial scan
+		// isn't read as a confident negative.
+		renderCoverage(w, report.CoverageStatus, report.CoverageNotes)
 		return
 	}
 	renderImportersReport(w, report)
