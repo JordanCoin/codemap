@@ -324,7 +324,7 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 			}
 		}
 
-		if m.RuleID == "rust-mod-imports" || m.RuleID == "rust-path-module-imports" || m.RuleID == "rust-path-imports" || m.RuleID == "rust-use-imports" || m.RuleID == "rust-askama-template-imports" {
+		if m.RuleID == "rust-mod-imports" || m.RuleID == "rust-path-module-imports" || m.RuleID == "rust-path-imports" || m.RuleID == "rust-use-imports" || m.RuleID == "rust-askama-template-imports" || m.RuleID == "rust-include-imports" {
 			var path string
 			var explicitTarget string
 			kind := "rust-path"
@@ -355,6 +355,12 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 						path = targetVar.Text
 						explicitTarget = targetVar.Text
 					}
+				}
+			case "rust-include-imports":
+				kind = "rust-include"
+				if pathVar, ok := m.MetaVariables.Single["PATH"]; ok {
+					explicitTarget = pathVar.Text
+					path, _ = parseRustStringLiteral(explicitTarget)
 				}
 			}
 			if path != "" {

@@ -501,6 +501,26 @@ func resolveRustExplicitModule(root, declaringFile, literal string) string {
 	return filepath.Clean(rel)
 }
 
+// resolveRustInclude resolves include!(...) relative to the declaring file.
+// byExact also indexes files under their extension-stripped key, so accept
+// only when the target itself is indexed exactly once.
+func resolveRustInclude(root, declaringFile, literal string, idx *fileIndex) string {
+	target := resolveRustExplicitModule(root, declaringFile, literal)
+	if target == "" {
+		return ""
+	}
+	exact := 0
+	for _, file := range idx.byExact[target] {
+		if file == target {
+			exact++
+		}
+	}
+	if exact != 1 {
+		return ""
+	}
+	return target
+}
+
 func parseRustStringLiteral(literal string) (string, bool) {
 	literal = strings.TrimSpace(literal)
 	if strings.HasPrefix(literal, "r") {
@@ -649,6 +669,10 @@ func resolveRustReferences(root string, analysis FileAnalysis, idx *fileIndex, w
 			}
 		case "rust-askama-template":
 			if target := resolveRustAskamaTemplate(root, analysis.Path, ref.ExplicitTarget, idx, workspace); target != "" && target != analysis.Path {
+				resolved = append(resolved, target)
+			}
+		case "rust-include":
+			if target := resolveRustInclude(root, analysis.Path, ref.ExplicitTarget, idx); target != "" && target != analysis.Path {
 				resolved = append(resolved, target)
 			}
 		}
