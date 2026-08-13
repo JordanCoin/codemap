@@ -597,6 +597,37 @@ func parseRustCookedString(literal string) (string, bool) {
 	return value.String(), true
 }
 
+func resolveRustAskamaTemplate(root, fromFile, literal string, idx *fileIndex, workspace *rustWorkspaceIndex) string {
+	value, ok := parseRustStringLiteral(literal)
+	if !ok || value == "" {
+		return ""
+	}
+	path := filepath.FromSlash(value)
+	if filepath.IsAbs(path) {
+		return ""
+	}
+	pkg, ok := workspace.packageForFile(fromFile)
+	if !ok || !pkg.authoritative {
+		return ""
+	}
+	if _, ok := workspace.targetForFile(fromFile, idx); !ok {
+		return ""
+	}
+	if _, err := os.Stat(filepath.Join(root, pkg.root, "askama.toml")); !os.IsNotExist(err) {
+		return ""
+	}
+	templateRoot := filepath.Clean(filepath.Join(pkg.root, "templates"))
+	target := filepath.Clean(filepath.Join(templateRoot, path))
+	if !pathWithin(target, templateRoot) {
+		return ""
+	}
+	files := idx.byExact[target]
+	if len(files) != 1 || files[0] != target {
+		return ""
+	}
+	return files[0]
+}
+
 func resolveRustReferences(root string, analysis FileAnalysis, idx *fileIndex, workspace *rustWorkspaceIndex) []string {
 	var resolved []string
 	for _, ref := range analysis.References {
@@ -614,6 +645,10 @@ func resolveRustReferences(root string, analysis FileAnalysis, idx *fileIndex, w
 			}
 		case "rust-path":
 			if target := resolveRustPath(ref.Path, analysis.Path, idx, workspace); target != "" && target != analysis.Path {
+				resolved = append(resolved, target)
+			}
+		case "rust-askama-template":
+			if target := resolveRustAskamaTemplate(root, analysis.Path, ref.ExplicitTarget, idx, workspace); target != "" && target != analysis.Path {
 				resolved = append(resolved, target)
 			}
 		}
@@ -1015,14 +1050,18 @@ func skipRustTriviaBackward(lines []string, line int) (int, bool) {
 }
 
 func rustAttributeAssignsPath(attribute string) bool {
+	return rustAttributeAssigns(attribute, "path")
+}
+
+func rustAttributeAssigns(attribute, name string) bool {
 	for offset := 0; offset < len(attribute); {
-		relative := strings.Index(attribute[offset:], "path")
+		relative := strings.Index(attribute[offset:], name)
 		if relative < 0 {
 			return false
 		}
 		i := offset + relative
 		beforeOK := i == 0 || !isRustIdentifierByte(attribute[i-1])
-		j := i + len("path")
+		j := i + len(name)
 		afterOK := j == len(attribute) || !isRustIdentifierByte(attribute[j])
 		if beforeOK && afterOK {
 			for j < len(attribute) && (attribute[j] == ' ' || attribute[j] == '\t' || attribute[j] == '\n' || attribute[j] == '\r') {
@@ -1032,7 +1071,7 @@ func rustAttributeAssignsPath(attribute string) bool {
 				return true
 			}
 		}
-		offset = i + len("path")
+		offset = i + len(name)
 	}
 	return false
 }

@@ -324,7 +324,7 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 			}
 		}
 
-		if m.RuleID == "rust-mod-imports" || m.RuleID == "rust-path-module-imports" || m.RuleID == "rust-path-imports" || m.RuleID == "rust-use-imports" {
+		if m.RuleID == "rust-mod-imports" || m.RuleID == "rust-path-module-imports" || m.RuleID == "rust-path-imports" || m.RuleID == "rust-use-imports" || m.RuleID == "rust-askama-template-imports" {
 			var path string
 			var explicitTarget string
 			kind := "rust-path"
@@ -348,9 +348,17 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 				if pathVar, ok := m.MetaVariables.Single["PATH"]; ok {
 					path = pathVar.Text
 				}
+			case "rust-askama-template-imports":
+				kind = "rust-askama-template"
+				if targetVar, ok := m.MetaVariables.Single["TARGET"]; ok && !rustAttributeAssigns(m.Text, "config") {
+					if _, literal := parseRustStringLiteral(targetVar.Text); literal {
+						path = targetVar.Text
+						explicitTarget = targetVar.Text
+					}
+				}
 			}
 			if path != "" {
-				if m.RuleID != "rust-path-imports" {
+				if m.RuleID != "rust-path-imports" && m.RuleID != "rust-askama-template-imports" {
 					fileMap[relPath].Imports = append(fileMap[relPath].Imports, path)
 				}
 				fileMap[relPath].References = append(fileMap[relPath].References, ImportReference{
