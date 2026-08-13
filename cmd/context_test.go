@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"codemap/internal/projectpath"
 	"codemap/watch"
 )
 
@@ -92,7 +93,7 @@ func TestBuildContextEnvelopeFallsBackToConfiguredScanForLegacyState(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	mustWriteFile(t, filepath.Join(root, ".codemap", "state.json"), string(legacyState))
+	mustWriteFile(t, filepath.Join(projectpath.ProjectRuntimeDir(root), "state.json"), string(legacyState))
 
 	envelope := buildContextEnvelope(root, "", true)
 

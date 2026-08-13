@@ -372,3 +372,17 @@ func TestRuntimeRootAndCheckedRuntimeCodemapDir(t *testing.T) {
 		t.Fatalf("RuntimeRoot() fallback = %q, want %q", got, filepath.Clean(missing))
 	}
 }
+
+func TestProjectKeyScopesProjectsAndSharesRepoKey(t *testing.T) {
+	a := filepath.Join(t.TempDir(), "projA")
+	if err := os.MkdirAll(filepath.Join(a, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	b := filepath.Join(t.TempDir(), "projB")
+	if ProjectKey(a) == ProjectKey(b) {
+		t.Fatal("distinct projects must not share a project key")
+	}
+	if ProjectKey(a) != ProjectKey(filepath.Join(a, "pkg", "sub")) {
+		t.Fatal("a subdirectory must share its repo root's project key")
+	}
+}

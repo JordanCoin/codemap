@@ -61,7 +61,7 @@ func NewDaemon(root string, verbose bool) (*Daemon, error) {
 		gitCache: gitCache,
 		verbose:  verbose,
 		done:     make(chan struct{}),
-		eventLog: filepath.Join(projectpath.RuntimeCodemapDir(absRoot), "events.log"),
+		eventLog: filepath.Join(projectpath.ProjectRuntimeDir(absRoot), "events.log"),
 		graph: &Graph{
 			Root:            absRoot,
 			Files:           make(map[string]*scanner.FileInfo),
@@ -79,9 +79,10 @@ func NewDaemon(root string, verbose bool) (*Daemon, error) {
 
 // Start begins watching and returns immediately
 func (d *Daemon) Start() error {
-	// Ensure .codemap directory exists
-	codemapDir := projectpath.RuntimeCodemapDir(d.root)
-	if err := os.MkdirAll(codemapDir, 0755); err != nil {
+	// Ensure the config directory exists; it is watched so config edits can
+	// refresh the configured-file inventory.
+	configDir := projectpath.CodemapDir(d.root)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return fmt.Errorf("failed to create .codemap dir: %w", err)
 	}
 
@@ -103,9 +104,7 @@ func (d *Daemon) Start() error {
 	if err := d.addWatchDirs(); err != nil {
 		return fmt.Errorf("failed to add watch dirs: %w", err)
 	}
-	// The hidden state directory is otherwise skipped. Watch it so config edits
-	// can refresh the configured-file inventory; other state files stay ignored.
-	if err := d.watcher.Add(codemapDir); err != nil {
+	if err := d.watcher.Add(configDir); err != nil {
 		return fmt.Errorf("failed to watch .codemap dir: %w", err)
 	}
 

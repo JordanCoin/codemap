@@ -13,6 +13,7 @@ import (
 
 	"codemap/config"
 	"codemap/handoff"
+	"codemap/internal/projectpath"
 	"codemap/limits"
 	"codemap/watch"
 )
@@ -243,7 +244,7 @@ func TestShouldRestartDaemon(t *testing.T) {
 	t.Run("running without state returns true", func(t *testing.T) {
 		withOwnedDaemonProcess(t, func(string) bool { return true })
 		root := t.TempDir()
-		codemapDir := filepath.Join(root, ".codemap")
+		codemapDir := projectpath.ProjectRuntimeDir(root)
 		if err := os.MkdirAll(codemapDir, 0755); err != nil {
 			t.Fatal(err)
 		}
@@ -802,7 +803,7 @@ func captureOutput(f func()) string {
 // and a PID file pointing to the current process so IsRunning returns true.
 func writeWatchState(t *testing.T, root string, state watch.State) {
 	t.Helper()
-	codemapDir := filepath.Join(root, ".codemap")
+	codemapDir := projectpath.ProjectRuntimeDir(root)
 	if err := os.MkdirAll(codemapDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -830,7 +831,7 @@ func TestGetLastSessionEvents(t *testing.T) {
 
 	t.Run("empty file returns nil", func(t *testing.T) {
 		root := t.TempDir()
-		codemapDir := filepath.Join(root, ".codemap")
+		codemapDir := projectpath.ProjectRuntimeDir(root)
 		if err := os.MkdirAll(codemapDir, 0755); err != nil {
 			t.Fatal(err)
 		}
@@ -844,7 +845,7 @@ func TestGetLastSessionEvents(t *testing.T) {
 
 	t.Run("returns all lines when fewer than 20", func(t *testing.T) {
 		root := t.TempDir()
-		codemapDir := filepath.Join(root, ".codemap")
+		codemapDir := projectpath.ProjectRuntimeDir(root)
 		os.MkdirAll(codemapDir, 0755)
 		lines := "ts|WRITE|a.go\nts|WRITE|b.go\nts|WRITE|c.go"
 		os.WriteFile(filepath.Join(codemapDir, "events.log"), []byte(lines), 0644)
@@ -857,7 +858,7 @@ func TestGetLastSessionEvents(t *testing.T) {
 
 	t.Run("caps at 20 lines for large log (context bloat protection)", func(t *testing.T) {
 		root := t.TempDir()
-		codemapDir := filepath.Join(root, ".codemap")
+		codemapDir := projectpath.ProjectRuntimeDir(root)
 		os.MkdirAll(codemapDir, 0755)
 
 		var sb strings.Builder
@@ -881,7 +882,7 @@ func TestGetLastSessionEvents(t *testing.T) {
 
 	t.Run("reads only tail of huge event log and still returns latest 20", func(t *testing.T) {
 		root := t.TempDir()
-		codemapDir := filepath.Join(root, ".codemap")
+		codemapDir := projectpath.ProjectRuntimeDir(root)
 		os.MkdirAll(codemapDir, 0755)
 
 		var sb strings.Builder
@@ -904,7 +905,7 @@ func TestGetLastSessionEvents(t *testing.T) {
 
 	t.Run("skips blank lines when counting", func(t *testing.T) {
 		root := t.TempDir()
-		codemapDir := filepath.Join(root, ".codemap")
+		codemapDir := projectpath.ProjectRuntimeDir(root)
 		os.MkdirAll(codemapDir, 0755)
 		// 5 real entries surrounded by blank lines
 		content := "\nts|WRITE|a.go\n\nts|WRITE|b.go\n\n\nts|WRITE|c.go\n\nts|WRITE|d.go\nts|WRITE|e.go\n"
@@ -1141,7 +1142,7 @@ func TestHookPreCompact(t *testing.T) {
 		if out != "" {
 			t.Errorf("expected no output when no hubs, got %q", out)
 		}
-		hubsFile := filepath.Join(root, ".codemap", "hubs.txt")
+		hubsFile := filepath.Join(projectpath.ProjectRuntimeDir(root), "hubs.txt")
 		if _, err := os.Stat(hubsFile); !os.IsNotExist(err) {
 			t.Error("expected no hubs.txt when hub list is empty")
 		}
@@ -1173,7 +1174,7 @@ func TestHookPreCompact(t *testing.T) {
 			t.Errorf("expected hubs.txt mention, got %q", out)
 		}
 
-		hubsFile := filepath.Join(root, ".codemap", "hubs.txt")
+		hubsFile := filepath.Join(projectpath.ProjectRuntimeDir(root), "hubs.txt")
 		content, err := os.ReadFile(hubsFile)
 		if err != nil {
 			t.Fatalf("expected hubs.txt to be created: %v", err)

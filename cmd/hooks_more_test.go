@@ -129,7 +129,7 @@ func mustJSONInput(t *testing.T, v any) string {
 func writeProjectConfig(t *testing.T, root string, cfg config.ProjectConfig) {
 	t.Helper()
 
-	if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
+	if err := os.MkdirAll(projectpath.ProjectRuntimeDir(root), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	data, err := json.Marshal(cfg)
@@ -144,14 +144,14 @@ func writeProjectConfig(t *testing.T, root string, cfg config.ProjectConfig) {
 func writeStateOnly(t *testing.T, root string, state watch.State) {
 	t.Helper()
 
-	if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
+	if err := os.MkdirAll(projectpath.ProjectRuntimeDir(root), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	data, err := json.Marshal(state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".codemap", "state.json"), data, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(projectpath.ProjectRuntimeDir(root), "state.json"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -180,12 +180,12 @@ func TestWaitForDaemonState(t *testing.T) {
 	go func() {
 		defer close(done)
 		time.Sleep(150 * time.Millisecond)
-		_ = os.MkdirAll(filepath.Join(root, ".codemap"), 0o755)
+		_ = os.MkdirAll(projectpath.ProjectRuntimeDir(root), 0o755)
 		data, _ := json.Marshal(watch.State{
 			UpdatedAt: time.Now(),
 			FileCount: 7,
 		})
-		_ = os.WriteFile(filepath.Join(root, ".codemap", "state.json"), data, 0o644)
+		_ = os.WriteFile(filepath.Join(projectpath.ProjectRuntimeDir(root), "state.json"), data, 0o644)
 	}()
 
 	state := waitForDaemonState(root, time.Second)
@@ -890,7 +890,7 @@ func TestHookFilesUseSetupRoot(t *testing.T) {
 	setupRoot := t.TempDir()
 	projectpath.SetSetupRoot(setupRoot)
 	t.Cleanup(projectpath.ResetSetupRoot)
-	codemapDir := filepath.Join(setupRoot, ".codemap")
+	codemapDir := projectpath.ProjectRuntimeDir(projectRoot)
 	if err := os.MkdirAll(codemapDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -921,23 +921,29 @@ func TestAutomaticLinkedWorktreeUsesLocalHookState(t *testing.T) {
 	if err := os.MkdirAll(gitDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(primary, ".codemap"), 0o755); err != nil {
+	if err := os.MkdirAll(projectpath.ProjectRuntimeDir(primary), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(primary, ".codemap", "events.log"), []byte("primary event\n"), 0o644); err != nil {
+	if err := os.MkdirAll(projectpath.ProjectRuntimeDir(primary), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectpath.ProjectRuntimeDir(primary), "events.log"), []byte("primary event\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(gitDir, "commondir"), []byte("../..\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	linked := filepath.Join(t.TempDir(), "linked")
-	if err := os.MkdirAll(filepath.Join(linked, ".codemap"), 0o755); err != nil {
+	if err := os.MkdirAll(projectpath.ProjectRuntimeDir(linked), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(linked, ".git"), []byte("gitdir: "+gitDir+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(linked, ".codemap", "events.log"), []byte("linked event\n"), 0o644); err != nil {
+	if err := os.MkdirAll(projectpath.ProjectRuntimeDir(linked), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectpath.ProjectRuntimeDir(linked), "events.log"), []byte("linked event\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	linked, _ = filepath.EvalSymlinks(linked)
@@ -947,7 +953,7 @@ func TestAutomaticLinkedWorktreeUsesLocalHookState(t *testing.T) {
 		t.Fatalf("getLastSessionEvents() = %#v, want linked event", events)
 	}
 	writeStatuslineState(linked, TaskIntent{Category: "feature", RiskLevel: "low"})
-	if _, err := os.Stat(filepath.Join(linked, ".codemap", "status")); err != nil {
+	if _, err := os.Stat(filepath.Join(projectpath.ProjectRuntimeDir(linked), "status")); err != nil {
 		t.Fatalf("linked status missing: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(primary, ".codemap", "status")); !os.IsNotExist(err) {
@@ -956,7 +962,7 @@ func TestAutomaticLinkedWorktreeUsesLocalHookState(t *testing.T) {
 	if err := updateSessionLease(linked, "session-1", true, time.Now(), nil); err != nil {
 		t.Fatalf("updateSessionLease() error: %v", err)
 	}
-	entries, err := os.ReadDir(filepath.Join(linked, ".codemap", "sessions"))
+	entries, err := os.ReadDir(filepath.Join(projectpath.ProjectRuntimeDir(linked), "sessions"))
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("linked session lease entries = %d, err = %v", len(entries), err)
 	}

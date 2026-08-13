@@ -36,7 +36,7 @@ func canonicalRoot(root string) string {
 }
 
 func ReadState(root string) *State {
-	stateFile := filepath.Join(projectpath.RuntimeCodemapDir(root), "state.json")
+	stateFile := filepath.Join(projectpath.ProjectRuntimeDir(root), "state.json")
 	data, err := os.ReadFile(stateFile)
 	if err != nil {
 		return nil
@@ -70,13 +70,16 @@ func ReadState(root string) *State {
 
 // WritePID writes the daemon PID to .codemap/watch.pid
 func WritePID(root string) error {
-	pidFile := filepath.Join(projectpath.RuntimeCodemapDir(root), "watch.pid")
+	if err := os.MkdirAll(projectpath.ProjectRuntimeDir(root), 0o755); err != nil {
+		return err
+	}
+	pidFile := filepath.Join(projectpath.ProjectRuntimeDir(root), "watch.pid")
 	return os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644)
 }
 
 // ReadPID reads the daemon PID from .codemap/watch.pid
 func ReadPID(root string) (int, error) {
-	pidFile := filepath.Join(projectpath.RuntimeCodemapDir(root), "watch.pid")
+	pidFile := filepath.Join(projectpath.ProjectRuntimeDir(root), "watch.pid")
 	data, err := os.ReadFile(pidFile)
 	if err != nil {
 		return 0, err
@@ -88,7 +91,7 @@ func ReadPID(root string) (int, error) {
 
 // RemovePID removes the PID file
 func RemovePID(root string) {
-	pidFile := filepath.Join(projectpath.RuntimeCodemapDir(root), "watch.pid")
+	pidFile := filepath.Join(projectpath.ProjectRuntimeDir(root), "watch.pid")
 	os.Remove(pidFile)
 }
 

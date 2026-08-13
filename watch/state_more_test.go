@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"codemap/internal/projectpath"
 )
 
 func shouldSkipProcessCommandError(err error) bool {
@@ -40,7 +42,7 @@ func TestReadStateMissingAndInvalid(t *testing.T) {
 		t.Fatal("expected nil for missing state file")
 	}
 
-	codemapDir := filepath.Join(root, ".codemap")
+	codemapDir := projectpath.ProjectRuntimeDir(root)
 	if err := os.MkdirAll(codemapDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +103,7 @@ func TestIsOwnedDaemonMatchesCommandLine(t *testing.T) {
 	}
 
 	root := t.TempDir()
-	codemapDir := filepath.Join(root, ".codemap")
+	codemapDir := projectpath.ProjectRuntimeDir(root)
 	if err := os.MkdirAll(codemapDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +134,7 @@ func TestIsOwnedDaemonMatchesCommandLine(t *testing.T) {
 
 func TestReadPIDInvalidContent(t *testing.T) {
 	root := t.TempDir()
-	codemapDir := filepath.Join(root, ".codemap")
+	codemapDir := projectpath.ProjectRuntimeDir(root)
 	if err := os.MkdirAll(codemapDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +162,7 @@ func TestIsOwnedDaemonInvalidPIDInputs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
-			codemapDir := filepath.Join(root, ".codemap")
+			codemapDir := projectpath.ProjectRuntimeDir(root)
 			if err := os.MkdirAll(codemapDir, 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -191,7 +193,7 @@ func TestIsRunningInvalidPIDInputs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
-			codemapDir := filepath.Join(root, ".codemap")
+			codemapDir := projectpath.ProjectRuntimeDir(root)
 			if err := os.MkdirAll(codemapDir, 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -217,7 +219,7 @@ func TestStopWithoutPIDFileReturnsNoDaemonError(t *testing.T) {
 
 func TestStopTerminatesProcessAndRemovesPID(t *testing.T) {
 	root := t.TempDir()
-	codemapDir := filepath.Join(root, ".codemap")
+	codemapDir := projectpath.ProjectRuntimeDir(root)
 	if err := os.MkdirAll(codemapDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

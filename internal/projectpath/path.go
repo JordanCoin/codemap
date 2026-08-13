@@ -2,6 +2,7 @@
 package projectpath
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
@@ -132,6 +133,47 @@ func RuntimeRoot(projectRoot string) string {
 		return selection.RuntimeRoot
 	}
 	return filepath.Clean(projectRoot)
+}
+
+// ProjectKey returns a stable identifier for a project root, so projects that
+// share a setup root get separate mutable-state paths. Subdirectories resolve
+// to their nearest git root so they share the project's key.
+func ProjectKey(projectRoot string) string {
+	root, err := canonicalProjectRoot(projectRoot)
+	if err != nil {
+		root = filepath.Clean(projectRoot)
+	}
+	if gitRoot, ok := nearestGitRoot(root); ok {
+		// Canonicalize so the symlink-resolved project root and a subdirectory
+		// resolve to the same key (e.g. macOS /var -> /private/var).
+		root = gitRoot
+		if canonical, err := canonicalProjectRoot(gitRoot); err == nil {
+			root = canonical
+		}
+	}
+	sum := sha256.Sum256([]byte(root))
+	return fmt.Sprintf("%x", sum[:6])
+}
+
+// nearestGitRoot walks up from root to the nearest ancestor containing a .git
+// entry (directory or file, e.g. linked worktrees).
+func nearestGitRoot(root string) (string, bool) {
+	for dir := root; ; dir = filepath.Dir(dir) {
+		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+			return dir, true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+	}
+}
+
+// ProjectRuntimeDir returns the per-project mutable-state directory: the
+// shared runtime area (e.g. a setup root) scoped to this project, so projects
+// sharing a setup root never collide on pid, state, events, or handoff files.
+func ProjectRuntimeDir(projectRoot string) string {
+	return filepath.Join(RuntimeCodemapDir(projectRoot), "projects", ProjectKey(projectRoot))
 }
 
 // RuntimeCodemapDir returns the .codemap directory for mutable project state.

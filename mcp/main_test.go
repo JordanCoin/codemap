@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"codemap/handoff"
+	"codemap/internal/projectpath"
 	"codemap/scanner"
 	"codemap/watch"
 
@@ -300,7 +301,10 @@ func TestHandleGetStructureUsesStateHubs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".codemap", "state.json"), data, 0o644); err != nil {
+	if err := os.MkdirAll(projectpath.ProjectRuntimeDir(root), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectpath.ProjectRuntimeDir(root), "state.json"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 

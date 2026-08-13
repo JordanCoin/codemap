@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"codemap/internal/projectpath"
 )
 
 func TestEnsureClaudeMCPPreservesLargeIntegersAndUnknownKeys(t *testing.T) {
@@ -219,7 +221,7 @@ func TestUpdateSessionLeaseTracksActiveSessionsAndPrunesStale(t *testing.T) {
 	}
 
 	// Age session-b's lease past the TTL; the next update must reclaim it.
-	leaseDir := filepath.Join(root, ".codemap", "sessions")
+	leaseDir := filepath.Join(projectpath.ProjectRuntimeDir(root), "sessions")
 	entries, err := os.ReadDir(leaseDir)
 	if err != nil {
 		t.Fatal(err)
@@ -247,7 +249,7 @@ func TestUpdateSessionLeaseTracksActiveSessionsAndPrunesStale(t *testing.T) {
 
 func TestUpdateSessionLeaseReclaimsStaleLock(t *testing.T) {
 	root := t.TempDir()
-	lockPath := filepath.Join(root, ".codemap", "sessions.lock")
+	lockPath := filepath.Join(projectpath.ProjectRuntimeDir(root), "sessions.lock")
 	if err := os.MkdirAll(lockPath, 0o700); err != nil {
 		t.Fatal(err)
 	}

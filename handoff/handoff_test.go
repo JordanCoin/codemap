@@ -339,7 +339,7 @@ func TestStoragePathsUseSetupRoot(t *testing.T) {
 	projectpath.SetSetupRoot(setupRoot)
 	t.Cleanup(projectpath.ResetSetupRoot)
 
-	want := filepath.Join(setupRoot, ".codemap", latestFilename)
+	want := filepath.Join(projectpath.ProjectRuntimeDir(projectRoot), latestFilename)
 	if got := LatestPath(projectRoot); got != want {
 		t.Fatalf("LatestPath() = %q, want %q", got, want)
 	}
@@ -373,10 +373,10 @@ func TestAutomaticLinkedWorktreesUseDistinctHandoffStorage(t *testing.T) {
 	linkedA := makeLinked("a")
 	linkedB := makeLinked("b")
 
-	if got, want := LatestPath(linkedA), filepath.Join(linkedA, ".codemap", latestFilename); got != want {
+	if got, want := LatestPath(linkedA), filepath.Join(projectpath.ProjectRuntimeDir(linkedA), latestFilename); got != want {
 		t.Fatalf("LatestPath(A) = %q, want %q", got, want)
 	}
-	if got, want := LatestPath(linkedB), filepath.Join(linkedB, ".codemap", latestFilename); got != want {
+	if got, want := LatestPath(linkedB), filepath.Join(projectpath.ProjectRuntimeDir(linkedB), latestFilename); got != want {
 		t.Fatalf("LatestPath(B) = %q, want %q", got, want)
 	}
 	if LatestPath(linkedA) == LatestPath(linkedB) {

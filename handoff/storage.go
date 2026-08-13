@@ -19,42 +19,42 @@ const (
 
 // LatestPath returns the absolute location of the latest handoff artifact.
 func LatestPath(root string) string {
-	runtimeRoot := projectpath.RuntimeRoot(root)
+	runtimeRoot := projectpath.ProjectRuntimeDir(root)
 	absRoot, err := filepath.Abs(runtimeRoot)
 	if err != nil {
-		return filepath.Join(runtimeRoot, ".codemap", latestFilename)
+		return filepath.Join(runtimeRoot, latestFilename)
 	}
-	return filepath.Join(absRoot, ".codemap", latestFilename)
+	return filepath.Join(absRoot, latestFilename)
 }
 
 // PrefixPath returns the absolute location of the prefix snapshot.
 func PrefixPath(root string) string {
-	runtimeRoot := projectpath.RuntimeRoot(root)
+	runtimeRoot := projectpath.ProjectRuntimeDir(root)
 	absRoot, err := filepath.Abs(runtimeRoot)
 	if err != nil {
-		return filepath.Join(runtimeRoot, ".codemap", prefixFilename)
+		return filepath.Join(runtimeRoot, prefixFilename)
 	}
-	return filepath.Join(absRoot, ".codemap", prefixFilename)
+	return filepath.Join(absRoot, prefixFilename)
 }
 
 // DeltaPath returns the absolute location of the delta snapshot.
 func DeltaPath(root string) string {
-	runtimeRoot := projectpath.RuntimeRoot(root)
+	runtimeRoot := projectpath.ProjectRuntimeDir(root)
 	absRoot, err := filepath.Abs(runtimeRoot)
 	if err != nil {
-		return filepath.Join(runtimeRoot, ".codemap", deltaFilename)
+		return filepath.Join(runtimeRoot, deltaFilename)
 	}
-	return filepath.Join(absRoot, ".codemap", deltaFilename)
+	return filepath.Join(absRoot, deltaFilename)
 }
 
 // MetricsPath returns the absolute location of the handoff metrics log.
 func MetricsPath(root string) string {
-	runtimeRoot := projectpath.RuntimeRoot(root)
+	runtimeRoot := projectpath.ProjectRuntimeDir(root)
 	absRoot, err := filepath.Abs(runtimeRoot)
 	if err != nil {
-		return filepath.Join(runtimeRoot, ".codemap", metricsFilename)
+		return filepath.Join(runtimeRoot, metricsFilename)
 	}
-	return filepath.Join(absRoot, ".codemap", metricsFilename)
+	return filepath.Join(absRoot, metricsFilename)
 }
 
 // ReadLatest reads the latest handoff artifact if it exists.

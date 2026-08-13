@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"codemap/internal/projectpath"
 	"codemap/watch"
 )
 
@@ -29,10 +30,10 @@ func writeProvenanceState(t *testing.T, root string, paths []string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
+	if err := os.MkdirAll(projectpath.ProjectRuntimeDir(root), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".codemap", "state.json"), data, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(projectpath.ProjectRuntimeDir(root), "state.json"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -636,6 +636,9 @@ func (d *Daemon) logEvent(e Event) {
 func (d *Daemon) writeState() {
 	d.graph.mu.RLock()
 	defer d.graph.mu.RUnlock()
+	if err := os.MkdirAll(projectpath.ProjectRuntimeDir(d.root), 0o755); err != nil {
+		return
+	}
 
 	// Keep state snapshots small and deterministic for hook reads.
 	events := d.graph.Events
@@ -671,7 +674,7 @@ func (d *Daemon) writeState() {
 		return
 	}
 
-	stateFile := filepath.Join(projectpath.RuntimeCodemapDir(d.root), "state.json")
+	stateFile := filepath.Join(projectpath.ProjectRuntimeDir(d.root), "state.json")
 	os.WriteFile(stateFile, data, 0644)
 }
 

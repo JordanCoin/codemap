@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"codemap/analysis"
+	"codemap/internal/projectpath"
 	"codemap/scanner"
 	"codemap/watch"
 )
@@ -252,7 +253,7 @@ func TestHookPromptSubmitDoesNotClaimRiskFromCachedGraph(t *testing.T) {
 		}
 	})
 
-	status, err := os.ReadFile(filepath.Join(root, ".codemap", "status"))
+	status, err := os.ReadFile(filepath.Join(projectpath.ProjectRuntimeDir(root), "status"))
 	if err != nil {
 		t.Fatal(err)
 	}

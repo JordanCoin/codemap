@@ -19,7 +19,7 @@ func TestReadStateStaleButRunning(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	codemapDir := filepath.Join(tmpDir, ".codemap")
+	codemapDir := projectpath.ProjectRuntimeDir(tmpDir)
 	if err := os.MkdirAll(codemapDir, 0755); err != nil {
 		t.Fatalf("Failed to create .codemap dir: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestReadStateStaleAndNotRunning(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	codemapDir := filepath.Join(tmpDir, ".codemap")
+	codemapDir := projectpath.ProjectRuntimeDir(tmpDir)
 	if err := os.MkdirAll(codemapDir, 0755); err != nil {
 		t.Fatalf("Failed to create .codemap dir: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestWatchStorageUsesSetupRoot(t *testing.T) {
 	if err := WritePID(projectRoot); err != nil {
 		t.Fatalf("WritePID() error: %v", err)
 	}
-	wantPID := filepath.Join(setupRoot, ".codemap", "watch.pid")
+	wantPID := filepath.Join(projectpath.ProjectRuntimeDir(projectRoot), "watch.pid")
 	if _, err := os.Stat(wantPID); err != nil {
 		t.Fatalf("setup-root PID missing: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestWatchStorageUsesSetupRoot(t *testing.T) {
 		t.Fatalf("NewDaemon() error: %v", err)
 	}
 	defer d.watcher.Close()
-	wantLog := filepath.Join(setupRoot, ".codemap", "events.log")
+	wantLog := filepath.Join(projectpath.ProjectRuntimeDir(projectRoot), "events.log")
 	if d.eventLog != wantLog {
 		t.Fatalf("eventLog = %q, want %q", d.eventLog, wantLog)
 	}
@@ -201,10 +201,10 @@ func TestAutomaticLinkedWorktreeUsesLocalWatchStorage(t *testing.T) {
 	if err := WritePID(linked); err != nil {
 		t.Fatalf("WritePID() error: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(linked, ".codemap", "watch.pid")); err != nil {
+	if _, err := os.Stat(filepath.Join(projectpath.ProjectRuntimeDir(linked), "watch.pid")); err != nil {
 		t.Fatalf("linked-worktree PID missing: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(primary, ".codemap", "watch.pid")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(projectpath.ProjectRuntimeDir(primary), "watch.pid")); !os.IsNotExist(err) {
 		t.Fatalf("primary PID unexpectedly created: %v", err)
 	}
 
@@ -213,11 +213,11 @@ func TestAutomaticLinkedWorktreeUsesLocalWatchStorage(t *testing.T) {
 		t.Fatalf("NewDaemon() error: %v", err)
 	}
 	defer d.watcher.Close()
-	if want := filepath.Join(linked, ".codemap", "events.log"); d.eventLog != want {
+	if want := filepath.Join(projectpath.ProjectRuntimeDir(linked), "events.log"); d.eventLog != want {
 		t.Fatalf("eventLog = %q, want %q", d.eventLog, want)
 	}
 	d.WriteInitialState()
-	if _, err := os.Stat(filepath.Join(linked, ".codemap", "state.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(projectpath.ProjectRuntimeDir(linked), "state.json")); err != nil {
 		t.Fatalf("linked-worktree state missing: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(primary, ".codemap", "state.json")); !os.IsNotExist(err) {
@@ -250,6 +250,9 @@ func TestReadStateRejectsForeignRootAndAcceptsDescendants(t *testing.T) {
 	// A shared setup root makes every project read the same runtime dir, so
 	// the State.Root check is what separates one project's state from another.
 	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	setupRoot := t.TempDir()
 	projectpath.SetSetupRoot(setupRoot)
 	t.Cleanup(projectpath.ResetSetupRoot)
@@ -275,5 +278,27 @@ func TestReadStateRejectsForeignRootAndAcceptsDescendants(t *testing.T) {
 	foreign := t.TempDir()
 	if got := ReadState(foreign); got != nil {
 		t.Fatalf("ReadState(foreign root) = %v, want nil (never serve another project's state)", got)
+	}
+}
+
+func TestTwoProjectsSharingSetupRootDoNotCollideOnPID(t *testing.T) {
+	setupRoot := t.TempDir()
+	projectpath.SetSetupRoot(setupRoot)
+	t.Cleanup(projectpath.ResetSetupRoot)
+	projA := filepath.Join(t.TempDir(), "projA")
+	projB := filepath.Join(t.TempDir(), "projB")
+	for _, p := range []string{projA, projB} {
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if pidA, pidB := projectpath.ProjectRuntimeDir(projA), projectpath.ProjectRuntimeDir(projB); pidA == pidB {
+		t.Fatalf("projects under one setup root collide on the pid path: %s", pidA)
+	}
+	if err := WritePID(projA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadPID(projB); err == nil {
+		t.Fatal("projB read projA's pid — the collision is not fixed")
 	}
 }

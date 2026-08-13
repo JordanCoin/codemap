@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"codemap/internal/projectpath"
 	"codemap/limits"
 	"codemap/scanner"
 
@@ -79,7 +80,7 @@ func TestGetGraphWriteInitialStateAndFindRelatedHot(t *testing.T) {
 	}
 
 	d.WriteInitialState()
-	data, err := os.ReadFile(filepath.Join(root, ".codemap", "state.json"))
+	data, err := os.ReadFile(filepath.Join(projectpath.ProjectRuntimeDir(root), "state.json"))
 	if err != nil {
 		t.Fatalf("expected state file to be written: %v", err)
 	}
@@ -187,7 +188,7 @@ func TestConfiguredFileCountTracksConfiguredFilesAcrossEvents(t *testing.T) {
 
 func TestConfiguredFileCountTracksLiveFilterChanges(t *testing.T) {
 	root := t.TempDir()
-	codemapDir := filepath.Join(root, ".codemap")
+	codemapDir := projectpath.CodemapDir(root)
 	if err := os.MkdirAll(codemapDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
