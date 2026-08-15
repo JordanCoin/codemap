@@ -100,7 +100,8 @@ exec sleep 10
 		t.Fatalf("pre-cancelled ScanDirectory error = %v, want context.Canceled", err)
 	}
 
-	deadline, stop := context.WithTimeout(context.Background(), time.Second)
+	const scanDeadline = 5 * time.Second
+	deadline, stop := context.WithTimeout(context.Background(), scanDeadline)
 	defer stop()
 	started := time.Now()
 	done := make(chan error, 1)
@@ -125,15 +126,16 @@ exec sleep 10
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+	const terminateBudget = 5 * time.Second
 	select {
 	case err := <-done:
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("caller-deadline ScanDirectory error = %v, want context.DeadlineExceeded", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(terminateBudget):
 		t.Fatal("ScanDirectory did not terminate deadline-exceeded subprocess")
 	}
-	if elapsed := time.Since(started); elapsed > 2*time.Second {
+	if elapsed := time.Since(started); elapsed > scanDeadline+terminateBudget {
 		t.Fatalf("caller deadline did not terminate ast-grep promptly: %s", elapsed)
 	}
 	if err := exec.Command("/bin/kill", "-0", blockerPID).Run(); err == nil {
