@@ -32,6 +32,7 @@ func TestAstGrepRustBuildScriptInputExtraction(t *testing.T) {
     println!("cargo:rerun-if-changed={path}");
     println!("cargo:rerun-if-changed={}", "schema.proto");
     println!("cargo:rerun-if-changed=schema.proto\nother.proto");
+    println!("plain output without directive");
 }
 const DOC: &str = r##"
 println!("cargo:rerun-if-changed=documented.proto");
@@ -44,6 +45,7 @@ println!("cargo:rerun-if-changed=documented.proto");
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(astScanner.Close)
 	outcome, err := astScanner.ScanDirectory(context.Background(), root)
 	if err != nil {
 		t.Fatal(err)
@@ -58,10 +60,17 @@ println!("cargo:rerun-if-changed=documented.proto");
 			}
 		}
 	}
+	for _, analysis := range outcome.Analyses {
+		for _, ref := range analysis.References {
+			if ref.Kind == "rust-build-input" && len(analysis.Imports) != 0 {
+				t.Fatalf("directive paths leaked into imports: %v", analysis.Imports)
+			}
+		}
+	}
 	sort.Slice(got, func(i, j int) bool { return got[i].Path < got[j].Path })
 	want := []ImportReference{
-		{Path: "assets/default.policy", Kind: "rust-build-input", ExplicitTarget: `"cargo::rerun-if-changed=assets/default.policy"`},
-		{Path: "schema.proto", Kind: "rust-build-input", ExplicitTarget: `"cargo:rerun-if-changed=schema.proto"`},
+		{Path: "assets/default.policy", Kind: "rust-build-input"},
+		{Path: "schema.proto", Kind: "rust-build-input"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Cargo build input references = %#v, want %#v", got, want)
@@ -105,6 +114,9 @@ func TestRustBuildScriptResolvesStaticCargoInputs(t *testing.T) {
 	}
 
 	got := append([]string(nil), graph.Imports["app/build.rs"]...)
+	for i := range got {
+		got[i] = filepath.ToSlash(got[i])
+	}
 	sort.Strings(got)
 	want := []string{"app/assets/default.policy", "app/schema.proto"}
 	if !reflect.DeepEqual(got, want) {

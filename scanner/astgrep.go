@@ -455,8 +455,7 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 			case "rust-cargo-rerun-imports":
 				kind = "rust-build-input"
 				if pathVar, ok := m.MetaVariables.Single["PATH"]; ok {
-					explicitTarget = pathVar.Text
-					path, _ = parseRustBuildScriptInput(explicitTarget)
+					path, _ = parseRustBuildScriptInput(pathVar.Text)
 				}
 			case "rust-askama-template-imports":
 				kind = "rust-askama-template"
@@ -474,7 +473,7 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 				}
 			}
 			if path != "" {
-				if m.RuleID != "rust-path-imports" && m.RuleID != "rust-askama-template-imports" {
+				if m.RuleID != "rust-path-imports" && m.RuleID != "rust-askama-template-imports" && m.RuleID != "rust-cargo-rerun-imports" {
 					fileMap[relPath].Imports = append(fileMap[relPath].Imports, path)
 				}
 				fileMap[relPath].References = append(fileMap[relPath].References, ImportReference{
