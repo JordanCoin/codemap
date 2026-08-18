@@ -348,6 +348,9 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 				if pathVar, ok := m.MetaVariables.Single["PATH"]; ok {
 					path = pathVar.Text
 				}
+				if len(expandRustUsePaths(path)) > 0 {
+					kind = "rust-use"
+				}
 			case "rust-askama-template-imports":
 				kind = "rust-askama-template"
 				if targetVar, ok := m.MetaVariables.Single["TARGET"]; ok && !rustAttributeAssigns(m.Text, "config") {
