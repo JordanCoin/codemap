@@ -4,6 +4,8 @@ rule:
   any:
     - pattern: use $PATH;
     - pattern: use $PATH::$$$_;
+    - pattern: pub use $PATH;
+    - pattern: pub use $PATH::$$$_;
 ---
 id: rust-mod-imports
 language: rust

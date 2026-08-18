@@ -50,6 +50,10 @@ func TestExpandRustUsePaths(t *testing.T) {
 			path: "crate::{/* note */ alpha, beta}",
 		},
 		{
+			name: "empty group stays partial",
+			path: "crate::{}",
+		},
+		{
 			name: "empty path segment stays partial",
 			path: "crate::{alpha::::Thing, beta}",
 		},
@@ -75,7 +79,7 @@ func TestAstGrepRustUseTreeExtraction(t *testing.T) {
 	}
 
 	root := t.TempDir()
-	source := "use crate::{alpha::Thing, beta as renamed};\nuse dependency::{External, Other};\n"
+	source := "use crate::{alpha::Thing, beta as renamed};\nuse crate::{/* note */ alpha::Thing, beta};\nuse crate::{};\nuse dependency::{External, Other};\nuse crate::exports;\npub use crate::{alpha::Thing, beta};\npub use crate::re_export;\n"
 	if err := os.WriteFile(filepath.Join(root, "lib.rs"), []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -96,9 +100,51 @@ func TestAstGrepRustUseTreeExtraction(t *testing.T) {
 			}
 		}
 	}
-	want := []ImportReference{{Path: "crate::{alpha::Thing, beta as renamed}", Kind: "rust-use"}}
+	want := []ImportReference{
+		{Path: "crate::{alpha::Thing, beta as renamed}", Kind: "rust-use"},
+		{Path: "crate::{/* note */ alpha::Thing, beta}", Kind: "rust-use"},
+		{Path: "crate::{}", Kind: "rust-use"},
+		{Path: "dependency::{External, Other}", Kind: "rust-use"},
+		{Path: "crate::exports", Kind: "rust-use"},
+		{Path: "crate::{alpha::Thing, beta}", Kind: "rust-use"},
+		{Path: "crate::re_export", Kind: "rust-use"},
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("whole Rust use references = %#v, want %#v", got, want)
+	}
+}
+
+func TestRustUseMalformedTreesDoNotEmitCrateRootEdge(t *testing.T) {
+	root := t.TempDir()
+	writeRustCargoFixture(t, root, map[string]string{
+		"Cargo.toml":    "[package]\nname = \"malformed\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+		"src/lib.rs":    "mod caller;\n",
+		"src/caller.rs": "use crate::{/* note */ alpha::Thing, beta};\nuse crate::{};\n",
+	})
+	analyses := []FileAnalysis{
+		{Path: "src/lib.rs", Language: "rust", References: []ImportReference{
+			{Path: "caller", Kind: "rust-module"},
+		}},
+		{Path: "src/caller.rs", Language: "rust", References: []ImportReference{
+			{Path: "crate::{/* note */ alpha::Thing, beta}", Kind: "rust-use"},
+			{Path: "crate::{}", Kind: "rust-use"},
+		}},
+	}
+	loader := func(context.Context, string) ([]byte, error) {
+		return nil, errors.New("force manifest fallback")
+	}
+	graph, err := buildFileGraphFromAnalysesWithCargoMetadata(context.Background(), root, analyses, loader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := graph.Imports["src/caller.rs"]
+	for _, target := range got {
+		if target == "src/lib.rs" {
+			t.Fatalf("malformed use trees emitted a false crate-root edge: %v", got)
+		}
+	}
+	if len(got) != 0 {
+		t.Fatalf("malformed use trees resolved to %v, want none", got)
 	}
 }
 
