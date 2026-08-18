@@ -421,7 +421,7 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 			}
 		}
 
-		if m.RuleID == "rust-mod-imports" || m.RuleID == "rust-path-module-imports" || m.RuleID == "rust-path-imports" || m.RuleID == "rust-use-imports" || m.RuleID == "rust-askama-template-imports" || m.RuleID == "rust-include-imports" {
+		if m.RuleID == "rust-mod-imports" || m.RuleID == "rust-path-module-imports" || m.RuleID == "rust-path-imports" || m.RuleID == "rust-use-imports" || m.RuleID == "rust-askama-template-imports" || m.RuleID == "rust-include-imports" || m.RuleID == "rust-cargo-rerun-imports" {
 			var path string
 			var explicitTarget string
 			kind := "rust-path"
@@ -451,6 +451,12 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 					// resolver emits nothing instead of rust-path splitting
 					// the raw braces into a false crate-root edge.
 					kind = "rust-use"
+				}
+			case "rust-cargo-rerun-imports":
+				kind = "rust-build-input"
+				if pathVar, ok := m.MetaVariables.Single["PATH"]; ok {
+					explicitTarget = pathVar.Text
+					path, _ = parseRustBuildScriptInput(explicitTarget)
 				}
 			case "rust-askama-template-imports":
 				kind = "rust-askama-template"

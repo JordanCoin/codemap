@@ -60,6 +60,11 @@ language: rust
 rule:
   pattern: include!($PATH)
 ---
+id: rust-cargo-rerun-imports
+language: rust
+rule:
+  pattern: println!($PATH)
+---
 id: rust-functions
 language: rust
 rule:
