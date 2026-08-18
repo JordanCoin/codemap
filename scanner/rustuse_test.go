@@ -204,7 +204,6 @@ func TestExpandRustUsePathsBoundedAtMaxDepth(t *testing.T) {
 	}()
 	select {
 	case <-done:
-		// Requirement is termination without panic or hang.
 	case <-time.After(5 * time.Second):
 		t.Fatal("expandRustUsePaths did not terminate on deep nesting")
 	}
