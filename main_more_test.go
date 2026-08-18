@@ -289,14 +289,14 @@ func runGitMainTestCmd(t *testing.T, dir string, args ...string) {
 func writeMainWatchState(t *testing.T, root string, state watch.State, running bool) {
 	t.Helper()
 
-	if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
+	if err := os.MkdirAll(projectpath.ProjectRuntimeDir(root), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	data, err := json.Marshal(state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".codemap", "state.json"), data, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(projectpath.ProjectRuntimeDir(root), "state.json"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if running {
@@ -813,7 +813,7 @@ func TestRunWatchModeRunDaemonAndWatchStart(t *testing.T) {
 		if !fake.started || !fake.stopped {
 			t.Fatalf("expected fake daemon to start and stop, got %+v", fake)
 		}
-		if _, err := os.Stat(filepath.Join(root, ".codemap", "watch.pid")); !os.IsNotExist(err) {
+		if _, err := os.Stat(filepath.Join(projectpath.ProjectRuntimeDir(root), "watch.pid")); !os.IsNotExist(err) {
 			t.Fatalf("expected pid file to be removed after daemon stops, got err=%v", err)
 		}
 	})

@@ -8,24 +8,35 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"codemap/internal/projectpath"
 )
 
-// ErrForeignDaemonPID is returned by Stop when the PID in watch.pid is alive and
-// its command line was read but does NOT match this repo's watch daemon — i.e. a
-// stale PID the OS reused for an unrelated process. Callers can treat it as
-// "nothing of ours to stop" and safely discard the pid file.
+// ErrForeignDaemonPID: the PID in watch.pid is alive but belongs to another
+// process; callers treat it as nothing of ours and discard the pid file.
 var ErrForeignDaemonPID = errors.New("watch.pid points to a live process that is not this repo's codemap watch daemon (stale or reused PID)")
 
-// ErrDaemonOwnershipUnknown is returned by Stop when the PID is alive but its
-// ownership could not be determined (the process command line was unavailable,
-// e.g. introspection was denied). We refuse to kill it AND keep the pid file, so
-// a real daemon is never orphaned or an unrelated process killed.
+// ErrDaemonOwnershipUnknown: the PID is alive but ownership can't be verified;
+// refuse to kill and keep the pid file.
 var ErrDaemonOwnershipUnknown = errors.New("could not verify that watch.pid belongs to this repo's codemap watch daemon; refusing to stop it")
 
 // ReadState reads the daemon state from disk (for hooks to use).
 // Returns nil if state doesn't exist or if it's stale and daemon is not running.
+// canonicalRoot returns root as an absolute, symlink-resolved path; on error
+// it returns the absolute path unchanged.
+func canonicalRoot(root string) string {
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return root
+	}
+	if canonical, err := filepath.EvalSymlinks(abs); err == nil {
+		return canonical
+	}
+	return abs
+}
+
 func ReadState(root string) *State {
-	stateFile := filepath.Join(root, ".codemap", "state.json")
+	stateFile := filepath.Join(projectpath.ProjectRuntimeDir(root), "state.json")
 	data, err := os.ReadFile(stateFile)
 	if err != nil {
 		return nil
@@ -34,6 +45,18 @@ func ReadState(root string) *State {
 	var state State
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nil
+	}
+
+	// Reject state owned by another project: a shared runtime dir (e.g. one
+	// setup root serving several sandboxes) must never serve a different
+	// project's daemon state as truth. Callers inside the daemon's project
+	// (subdirectories) still see it.
+	if state.Root != "" {
+		caller := canonicalRoot(root)
+		rel, err := filepath.Rel(state.Root, caller)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+			return nil
+		}
 	}
 
 	// If state is stale, still allow it when daemon is alive.
@@ -47,13 +70,16 @@ func ReadState(root string) *State {
 
 // WritePID writes the daemon PID to .codemap/watch.pid
 func WritePID(root string) error {
-	pidFile := filepath.Join(root, ".codemap", "watch.pid")
+	if err := os.MkdirAll(projectpath.ProjectRuntimeDir(root), 0o755); err != nil {
+		return err
+	}
+	pidFile := filepath.Join(projectpath.ProjectRuntimeDir(root), "watch.pid")
 	return os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644)
 }
 
 // ReadPID reads the daemon PID from .codemap/watch.pid
 func ReadPID(root string) (int, error) {
-	pidFile := filepath.Join(root, ".codemap", "watch.pid")
+	pidFile := filepath.Join(projectpath.ProjectRuntimeDir(root), "watch.pid")
 	data, err := os.ReadFile(pidFile)
 	if err != nil {
 		return 0, err
@@ -65,7 +91,7 @@ func ReadPID(root string) (int, error) {
 
 // RemovePID removes the PID file
 func RemovePID(root string) {
-	pidFile := filepath.Join(root, ".codemap", "watch.pid")
+	pidFile := filepath.Join(projectpath.ProjectRuntimeDir(root), "watch.pid")
 	os.Remove(pidFile)
 }
 
@@ -146,12 +172,8 @@ func Stop(root string) error {
 	// verifies the PID belongs to this repo's daemon (guarding against a reused
 	// stale PID) before killing, returning ErrForeignDaemonPID otherwise.
 	if err := terminateDaemon(root, proc); err != nil {
-		if errors.Is(err, ErrForeignDaemonPID) {
-			// The recorded PID isn't our daemon (stale or reused). Clear the
-			// bogus pid file so status stops reporting it, but never kill a
-			// process we can't confirm is ours.
-			RemovePID(root)
-		}
+		// Never remove the pid file on ErrForeignDaemonPID: the PID is alive
+		// and unverified, so clearing it could orphan a real daemon.
 		return err
 	}
 	// Clean up PID file

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"codemap/internal/projectpath"
 )
 
 const (
@@ -17,38 +19,42 @@ const (
 
 // LatestPath returns the absolute location of the latest handoff artifact.
 func LatestPath(root string) string {
-	absRoot, err := filepath.Abs(root)
+	runtimeRoot := projectpath.ProjectRuntimeDir(root)
+	absRoot, err := filepath.Abs(runtimeRoot)
 	if err != nil {
-		return filepath.Join(root, ".codemap", latestFilename)
+		return filepath.Join(runtimeRoot, latestFilename)
 	}
-	return filepath.Join(absRoot, ".codemap", latestFilename)
+	return filepath.Join(absRoot, latestFilename)
 }
 
 // PrefixPath returns the absolute location of the prefix snapshot.
 func PrefixPath(root string) string {
-	absRoot, err := filepath.Abs(root)
+	runtimeRoot := projectpath.ProjectRuntimeDir(root)
+	absRoot, err := filepath.Abs(runtimeRoot)
 	if err != nil {
-		return filepath.Join(root, ".codemap", prefixFilename)
+		return filepath.Join(runtimeRoot, prefixFilename)
 	}
-	return filepath.Join(absRoot, ".codemap", prefixFilename)
+	return filepath.Join(absRoot, prefixFilename)
 }
 
 // DeltaPath returns the absolute location of the delta snapshot.
 func DeltaPath(root string) string {
-	absRoot, err := filepath.Abs(root)
+	runtimeRoot := projectpath.ProjectRuntimeDir(root)
+	absRoot, err := filepath.Abs(runtimeRoot)
 	if err != nil {
-		return filepath.Join(root, ".codemap", deltaFilename)
+		return filepath.Join(runtimeRoot, deltaFilename)
 	}
-	return filepath.Join(absRoot, ".codemap", deltaFilename)
+	return filepath.Join(absRoot, deltaFilename)
 }
 
 // MetricsPath returns the absolute location of the handoff metrics log.
 func MetricsPath(root string) string {
-	absRoot, err := filepath.Abs(root)
+	runtimeRoot := projectpath.ProjectRuntimeDir(root)
+	absRoot, err := filepath.Abs(runtimeRoot)
 	if err != nil {
-		return filepath.Join(root, ".codemap", metricsFilename)
+		return filepath.Join(runtimeRoot, metricsFilename)
 	}
-	return filepath.Join(absRoot, ".codemap", metricsFilename)
+	return filepath.Join(absRoot, metricsFilename)
 }
 
 // ReadLatest reads the latest handoff artifact if it exists.
