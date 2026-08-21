@@ -60,6 +60,14 @@ language: rust
 rule:
   pattern: include!($PATH)
 ---
+id: rust-cargo-rerun-imports
+language: rust
+rule:
+  pattern: println!($PATH)
+constraints:
+  PATH:
+    regex: 'cargo::?rerun-if-changed='
+---
 id: rust-functions
 language: rust
 rule:

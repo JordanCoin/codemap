@@ -681,6 +681,10 @@ func resolveRustReferences(root string, analysis FileAnalysis, idx *fileIndex, w
 			if target := resolveRustInclude(root, analysis.Path, ref.ExplicitTarget, idx); target != "" && target != analysis.Path {
 				resolved = append(resolved, target)
 			}
+		case "rust-build-input":
+			if target := resolveRustBuildScriptInput(analysis.Path, ref.Path, idx, workspace); target != "" && target != analysis.Path {
+				resolved = append(resolved, target)
+			}
 		}
 	}
 	return dedupe(resolved)
