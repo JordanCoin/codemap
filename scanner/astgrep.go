@@ -348,6 +348,13 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 				if pathVar, ok := m.MetaVariables.Single["PATH"]; ok {
 					path = pathVar.Text
 				}
+				if len(expandRustUsePaths(path)) > 0 || strings.ContainsAny(path, "{}") {
+					// Brace trees that fail to expand (comments in the group,
+					// empty groups, external groups) stay rust-use: the
+					// resolver emits nothing instead of rust-path splitting
+					// the raw braces into a false crate-root edge.
+					kind = "rust-use"
+				}
 			case "rust-askama-template-imports":
 				kind = "rust-askama-template"
 				if targetVar, ok := m.MetaVariables.Single["TARGET"]; ok && !rustAttributeAssigns(m.Text, "config") {

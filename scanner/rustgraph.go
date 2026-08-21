@@ -663,6 +663,12 @@ func resolveRustReferences(root string, analysis FileAnalysis, idx *fileIndex, w
 			if target := resolveRustModule(ref.Path, analysis.Path, idx, workspace); target != "" && target != analysis.Path {
 				resolved = append(resolved, target)
 			}
+		case "rust-use":
+			for _, path := range expandRustUsePaths(ref.Path) {
+				if target := resolveRustPath(path, analysis.Path, idx, workspace); target != "" && target != analysis.Path {
+					resolved = append(resolved, target)
+				}
+			}
 		case "rust-path":
 			if target := resolveRustPath(ref.Path, analysis.Path, idx, workspace); target != "" && target != analysis.Path {
 				resolved = append(resolved, target)

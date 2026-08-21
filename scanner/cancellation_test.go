@@ -126,13 +126,16 @@ exec sleep 10
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+	// Anchor the termination budget to the deadline: it runs concurrently
+	// with the deadline, so a bare budget leaves only the spawn latency
+	// of slack after the deadline fires.
 	const terminateBudget = 5 * time.Second
 	select {
 	case err := <-done:
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("caller-deadline ScanDirectory error = %v, want context.DeadlineExceeded", err)
 		}
-	case <-time.After(terminateBudget):
+	case <-time.After(scanDeadline + terminateBudget):
 		t.Fatal("ScanDirectory did not terminate deadline-exceeded subprocess")
 	}
 	if elapsed := time.Since(started); elapsed > scanDeadline+terminateBudget {
