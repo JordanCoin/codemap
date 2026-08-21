@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -46,6 +48,9 @@ type AstGrepScanner struct {
 	rulesDir    string
 	inlineRules string
 	binary      string // "sg" or "ast-grep", whichever is available
+
+	mu           sync.Mutex
+	shimRulesDir string // materialized rules for cmd.exe shims, cleaned up in Close
 }
 
 // NewAstGrepScanner creates a scanner using the embedded rules.
@@ -84,16 +89,94 @@ func extractJSONArray(data []byte) []byte {
 	return data[idx:]
 }
 
+// astGrepCommand builds the exec.Cmd for an ast-grep binary path. Windows
+// cmd/bat shims (created by `npm install -g @ast-grep/cli`) cannot be
+// executed by CreateProcess directly, so they are wrapped in cmd.exe /c.
+func astGrepCommand(ctx context.Context, path string, args ...string) *exec.Cmd {
+	if runtime.GOOS == "windows" {
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".cmd", ".bat":
+			wrapped := append([]string{"/c", path}, args...)
+			return exec.CommandContext(ctx, "cmd.exe", wrapped...)
+		}
+	}
+	return exec.CommandContext(ctx, path, args...)
+}
+
 func isAstGrepBinary(path string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	out, err := exec.CommandContext(ctx, path, "--version").CombinedOutput()
+	out, err := astGrepCommand(ctx, path, "--version").CombinedOutput()
 	if err != nil && len(out) == 0 {
 		return false
 	}
 
 	return strings.Contains(strings.ToLower(string(out)), "ast-grep")
+}
+
+// isWindowsCmdShim reports whether path is a Windows cmd/bat script that must
+// run through cmd.exe and cannot reliably carry long multi-line arguments
+// such as --inline-rules.
+func isWindowsCmdShim(path string) bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".cmd", ".bat":
+		return true
+	}
+	return false
+}
+
+// ensureShimRules materializes the embedded rules into a temp directory once
+// so the scan can pass a short --config path instead of the multi-line
+// --inline-rules string, which cmd.exe shims mangle. The directory is
+// removed by Close.
+func (s *AstGrepScanner) ensureShimRules() (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.shimRulesDir != "" {
+		return s.shimRulesDir, nil
+	}
+
+	dir, err := os.MkdirTemp("", "codemap-sg-rules-")
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "rules"), 0o755); err != nil {
+		os.RemoveAll(dir)
+		return "", err
+	}
+	// ast-grep does not load rules from the directory that contains
+	// sgconfig.yml itself (ruleDirs: ["."] is a no-op), so rules are
+	// materialized into a "rules" subdirectory next to a generated config.
+	err = fs.WalkDir(sgRules, "sg-rules", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		base := filepath.Base(p)
+		if !strings.HasSuffix(base, ".yml") || base == "sgconfig.yml" {
+			return nil
+		}
+		content, readErr := sgRules.ReadFile(p)
+		if readErr != nil {
+			return readErr
+		}
+		return os.WriteFile(filepath.Join(dir, "rules", base), content, 0o644)
+	})
+	if err != nil {
+		os.RemoveAll(dir)
+		return "", err
+	}
+	sgconfig := "ruleDirs:\n  - rules\n"
+	if err := os.WriteFile(filepath.Join(dir, "sgconfig.yml"), []byte(sgconfig), 0o644); err != nil {
+		os.RemoveAll(dir)
+		return "", err
+	}
+	s.shimRulesDir = dir
+	return dir, nil
 }
 
 func bundledAstGrepNames() []string {
@@ -176,6 +259,9 @@ func findAstGrepBinary() string {
 func (s *AstGrepScanner) Close() {
 	if s.rulesDir != "" {
 		os.RemoveAll(s.rulesDir)
+	}
+	if s.shimRulesDir != "" {
+		os.RemoveAll(s.shimRulesDir)
 	}
 }
 
@@ -263,7 +349,18 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 
 	// Build command args, excluding nested git repos that ast-grep would
 	// treat as separate repo boundaries (ignoring parent .gitignore)
-	args := []string{"scan", "--inline-rules", inlineRules, "--json"}
+	args := []string{"scan", "--json"}
+	if isWindowsCmdShim(s.binary) {
+		// cmd.exe shims mangle long multi-line arguments, so pass a short
+		// --config path to materialized rules instead of --inline-rules.
+		rulesDir, err := s.ensureShimRules()
+		if err != nil {
+			return nil, newIncompleteScanError("ast-grep", ScanSourceFailed, fmt.Sprintf("failed to materialize rules for cmd shim: %v", err), err)
+		}
+		args = append(args, "--config", filepath.Join(rulesDir, "sgconfig.yml"))
+	} else {
+		args = append(args, "--inline-rules", inlineRules)
+	}
 	for _, repo := range findNestedGitRepos(root) {
 		args = append(args, "--globs", "!"+repo+"/**")
 	}
@@ -272,7 +369,7 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 	ctx, cancel := context.WithTimeout(parent, astGrepScanTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, s.binary, args...)
+	cmd := astGrepCommand(ctx, s.binary, args...)
 	cmd.WaitDelay = 100 * time.Millisecond
 	out, err := cmd.Output()
 	if err != nil {

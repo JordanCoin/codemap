@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"codemap/analysis"
 )
 
 func canonicalTestPath(path string) string {
@@ -442,5 +444,60 @@ func TestFindBundledAstGrepBinaryPrefersSiblingAstGrep(t *testing.T) {
 
 	if got != canonicalTestPath(bundled) {
 		t.Fatalf("expected bundled ast-grep %q, got %q", canonicalTestPath(bundled), got)
+	}
+}
+
+func TestAstGrepCommandExecutesCmdShim(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows-only: cmd.exe shims")
+	}
+
+	tmpDir := t.TempDir()
+	shim := filepath.Join(tmpDir, "ast-grep.cmd")
+	script := "@echo ast-grep 0.45.1\n"
+	if err := os.WriteFile(shim, []byte(script), 0644); err != nil {
+		t.Fatalf("failed to create fake ast-grep.cmd shim: %v", err)
+	}
+
+	if !isAstGrepBinary(shim) {
+		t.Fatalf("isAstGrepBinary should accept a working ast-grep.cmd shim: %s", shim)
+	}
+}
+
+func TestScanDirectoryUsesCmdShimBinary(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows-only: cmd.exe shims")
+	}
+
+	tmpDir := t.TempDir()
+	scanned := filepath.Join(tmpDir, "project")
+	if err := os.MkdirAll(scanned, 0755); err != nil {
+		t.Fatalf("failed to create scan target: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(scanned, "main.ts"), []byte("import x from \"./y\";\n"), 0644); err != nil {
+		t.Fatalf("failed to create source file: %v", err)
+	}
+
+	shim := filepath.Join(tmpDir, "ast-grep.cmd")
+	// `exit 0` after printing the JSON array; cmd echo needs delayed expansion
+	// avoided — the array is static.
+	script := "@echo []\r\n@exit /b 0\r\n"
+	if err := os.WriteFile(shim, []byte(script), 0644); err != nil {
+		t.Fatalf("failed to create fake ast-grep.cmd shim: %v", err)
+	}
+
+	s, err := NewAstGrepScanner()
+	if err != nil {
+		t.Fatalf("NewAstGrepScanner: %v", err)
+	}
+	t.Cleanup(s.Close)
+	s.binary = shim
+
+	outcome, err := s.ScanDirectory(context.Background(), scanned)
+	if err != nil {
+		t.Fatalf("ScanDirectory via cmd shim failed: %v", err)
+	}
+	if outcome.Sources[0].Status != analysis.SourceAuthoritative {
+		t.Fatalf("expected authoritative source status, got %v", outcome.Sources[0].Status)
 	}
 }
