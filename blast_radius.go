@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"codemap/analysis"
+	"codemap/cmd"
 	"codemap/config"
 	"codemap/render"
 	"codemap/scanner"
@@ -231,6 +232,10 @@ func executeBlastRadiusSubcommand(args []string) int {
 		return 1
 	}
 	defer cleanup()
+	if _, err := cmd.ValidateProjectPath(absRoot); err != nil {
+		fmt.Fprintf(os.Stderr, "Error preparing root: %v\n", err)
+		return 1
+	}
 
 	bundle, err := buildBlastRadiusBundle(absRoot, *ref, limits)
 	if err != nil {

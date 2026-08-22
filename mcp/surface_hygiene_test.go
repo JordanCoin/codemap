@@ -457,13 +457,13 @@ func assertPathsOrdered(t *testing.T, text string, paths []string) {
 	}
 }
 
-func TestTraversalRootRejectsInaccessiblePath(t *testing.T) {
+func TestValidateProjectPathRejectsInaccessiblePath(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "does-not-exist")
-	root, result := traversalRoot(missing)
+	root, result := validateProjectPath(missing)
 	if root != "" || result == nil || !result.IsError {
-		t.Fatalf("traversalRoot(%q) = %q, %v; want error", missing, root, result)
+		t.Fatalf("validateProjectPath(%q) = %q, %v; want error", missing, root, result)
 	}
-	if !strings.Contains(resultText(t, result), "not an accessible directory") {
+	if !strings.Contains(resultText(t, result), "Invalid project path") {
 		t.Fatalf("unexpected rejection: %q", resultText(t, result))
 	}
 	home := t.TempDir()
@@ -471,8 +471,8 @@ func TestTraversalRootRejectsInaccessiblePath(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, "proj"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	expanded, result := traversalRoot("~/proj")
+	expanded, result := validateProjectPath("~/proj")
 	if result != nil || expanded != filepath.Join(home, "proj") {
-		t.Fatalf("traversalRoot(~/) = %q, %v; want %q", expanded, result, filepath.Join(home, "proj"))
+		t.Fatalf("validateProjectPath(~/) = %q, %v; want %q", expanded, result, filepath.Join(home, "proj"))
 	}
 }
