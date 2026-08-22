@@ -60,6 +60,13 @@ language: rust
 rule:
   pattern: include!($PATH)
 ---
+id: rust-embedded-file-imports
+language: rust
+rule:
+  any:
+    - pattern: include_str!($PATH)
+    - pattern: include_bytes!($PATH)
+---
 id: rust-cargo-rerun-imports
 language: rust
 rule:
