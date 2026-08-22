@@ -9,14 +9,32 @@ const maxRustUseTreeDepth = 64
 
 func expandRustUsePaths(path string) []string {
 	path = strings.TrimSpace(path)
-	root := path
-	if end := strings.IndexAny(root, ":{ 	\r\n"); end >= 0 {
-		root = root[:end]
-	}
+	root := rustUseRoot(path)
 	if root != "crate" && root != "self" && root != "super" {
 		return nil
 	}
+	return expandRustUseTreePaths(path)
+}
 
+func expandRustUseReferencePaths(path string) []string {
+	path = strings.TrimSpace(path)
+	if paths := expandRustUsePaths(path); len(paths) > 0 {
+		return paths
+	}
+	if !strings.Contains(path, "{") || !validRustUseIdentifier(rustUseRoot(path)) {
+		return nil
+	}
+	return expandRustUseTreePaths(path)
+}
+
+func rustUseRoot(path string) string {
+	if end := strings.IndexAny(path, ":{ 	\r\n"); end >= 0 {
+		return path[:end]
+	}
+	return path
+}
+
+func expandRustUseTreePaths(path string) []string {
 	paths, ok := expandRustUseTree(path, "", 0)
 	if !ok {
 		return nil

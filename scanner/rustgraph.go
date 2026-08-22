@@ -664,13 +664,13 @@ func resolveRustReferences(root string, analysis FileAnalysis, idx *fileIndex, w
 				resolved = append(resolved, target)
 			}
 		case "rust-use":
-			for _, path := range expandRustUsePaths(ref.Path) {
-				if target := resolveRustPath(path, analysis.Path, idx, workspace); target != "" && target != analysis.Path {
+			for _, path := range expandRustUseReferencePaths(ref.Path) {
+				if target := resolveRustUsePath(path, analysis.Path, idx, workspace); target != "" && target != analysis.Path {
 					resolved = append(resolved, target)
 				}
 			}
 		case "rust-path":
-			if target := resolveRustPath(ref.Path, analysis.Path, idx, workspace); target != "" && target != analysis.Path {
+			if target := resolveRustReferencePath(ref.Path, analysis.Path, idx, workspace); target != "" && target != analysis.Path {
 				resolved = append(resolved, target)
 			}
 		case "rust-askama-template":
@@ -811,6 +811,46 @@ func resolveRustPath(path, fromFile string, idx *fileIndex, workspace *rustWorks
 		parts = parts[1:]
 	}
 
+	return resolveRustPathParts(current, parts, rootFallback, idx, workspace)
+}
+
+func resolveRustReferencePath(path, fromFile string, idx *fileIndex, workspace *rustWorkspaceIndex) string {
+	path = strings.TrimPrefix(strings.TrimSpace(path), "::")
+	root, _, ok := strings.Cut(path, "::")
+	if !ok {
+		return ""
+	}
+	pkg, found := workspace.packageForFile(fromFile)
+	if !found || pkg.crateID != strings.TrimPrefix(root, "r#") {
+		return resolveRustPath(path, fromFile, idx, workspace)
+	}
+	if !pkg.authoritative {
+		return ""
+	}
+	return resolveRustUsePath(path, fromFile, idx, workspace)
+}
+
+func resolveRustUsePath(path, fromFile string, idx *fileIndex, workspace *rustWorkspaceIndex) string {
+	path = strings.TrimPrefix(strings.TrimSpace(path), "::")
+	parts := strings.Split(path, "::")
+	if len(parts) < 2 || parts[0] == "crate" || parts[0] == "self" || parts[0] == "super" {
+		return resolveRustPath(path, fromFile, idx, workspace)
+	}
+	pkg, ok := workspace.packageForFile(fromFile)
+	if !ok || !pkg.authoritative {
+		return ""
+	}
+	if pkg.lib == nil || pkg.crateID != strings.TrimPrefix(parts[0], "r#") || !rustTargetIndexed(*pkg.lib, idx) {
+		return resolveRustPath(path, fromFile, idx, workspace)
+	}
+	callerTarget, ok := workspace.targetForFile(fromFile, idx)
+	if !ok || callerTarget.rootFile == pkg.lib.rootFile || callerTarget.kind == rustTargetCustomBuild {
+		return resolveRustPath(path, fromFile, idx, workspace)
+	}
+	return resolveRustPathParts(pkg.lib.rootFile, parts[1:], true, idx, workspace)
+}
+
+func resolveRustPathParts(current string, parts []string, rootFallback bool, idx *fileIndex, workspace *rustWorkspaceIndex) string {
 	resolvedChild := false
 	for _, part := range parts {
 		child := resolveRustModule(part, current, idx, workspace)
