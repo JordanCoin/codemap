@@ -23,6 +23,12 @@ func buildFileGraphWithFallback(ctx context.Context, root string, scan dependenc
 }
 
 func buildFileGraphFromOutcomeWithCargoMetadataAndFilters(ctx context.Context, root string, outcome ScanOutcome, filters Filters, loader cargoMetadataLoader) (*FileGraph, error) {
+	for _, source := range outcome.Sources {
+		if source.Name == "cargo-metadata" && source.Status == ScanSourceFallback {
+			loader = nil
+			break
+		}
+	}
 	fg, err := buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx, root, outcome.Analyses, filters, loader, outcome.Sources...)
 	if err != nil {
 		return nil, err
@@ -32,7 +38,7 @@ func buildFileGraphFromOutcomeWithCargoMetadataAndFilters(ctx context.Context, r
 }
 
 func buildFileGraphWithFallbackWithFilters(ctx context.Context, root string, filters Filters, scan dependencyOutcomeScanner, loader cargoMetadataLoader) (*FileGraph, error) {
-	outcome, usedFallback, err := scanForGraphOutcomeWithFilters(ctx, root, filters, scan, loader)
+	outcome, usedFallback, err := scanForGraphOutcomeWithFilters(ctx, root, filters, scan, loader, true)
 	if err != nil {
 		return nil, err
 	}
@@ -43,10 +49,30 @@ func buildFileGraphWithFallbackWithFilters(ctx context.Context, root string, fil
 	return buildFileGraphFromOutcomeWithCargoMetadataAndFilters(ctx, root, outcome, filters, graphLoader)
 }
 
-func scanForGraphOutcomeWithFilters(ctx context.Context, root string, filters Filters, scan dependencyOutcomeScanner, loader cargoMetadataLoader) (ScanOutcome, bool, error) {
+func scanForGraphOutcome(ctx context.Context, root string, scan dependencyOutcomeScanner, loader cargoMetadataLoader, allowCargoOnly ...bool) (ScanOutcome, bool, error) {
+	allow := true
+	if len(allowCargoOnly) > 0 {
+		allow = allowCargoOnly[0]
+	}
+	return scanForGraphOutcomeWithFilters(ctx, root, Filters{}, scan, loader, allow)
+}
+
+func scanForGraphOutcomeWithFilters(ctx context.Context, root string, filters Filters, scan dependencyOutcomeScanner, loader cargoMetadataLoader, allowCargoOnly bool) (ScanOutcome, bool, error) {
 	outcome, err := scan(root)
+	degraded := false
 	if err == nil {
-		return outcome, false, nil
+		// A degraded ast-grep outcome (timeout/failure) carries a nil error;
+		// treat it like an incomplete scan so the fallback still runs.
+		if incomplete := degradedAstGrepError(outcome); incomplete != nil {
+			err = incomplete
+			degraded = true
+		} else {
+			outcome.Analyses, err = filterAnalysesContext(ctx, outcome.Analyses, filters)
+			if err != nil {
+				return ScanOutcome{}, false, err
+			}
+			return outcome, false, nil
+		}
 	}
 
 	var incomplete *IncompleteScanError
@@ -60,12 +86,61 @@ func scanForGraphOutcomeWithFilters(ctx context.Context, root string, filters Fi
 		}
 		return ScanOutcome{}, false, err
 	}
-	fallback, fallbackErr := buildCargoFallbackOutcome(ctx, root, files, loader)
-	if fallbackErr != nil {
+	fallback := ScanOutcome{
+		Sources: []ScanSourceOutcome{incomplete.Outcome},
+	}
+	recovered := false
+	if goFallback, fallbackErr := buildGoFallbackOutcome(ctx, root, files); fallbackErr == nil {
+		mergeFallbackOutcome(&fallback, goFallback)
+		recovered = true
+	} else if ctx.Err() != nil {
+		return ScanOutcome{}, false, ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
 		return ScanOutcome{}, false, err
 	}
-	fallback.Sources = append([]ScanSourceOutcome{incomplete.Outcome}, fallback.Sources...)
+	if recovered || allowCargoOnly {
+		if cargoFallback, fallbackErr := buildCargoFallbackOutcome(ctx, root, files, loader); fallbackErr == nil {
+			mergeFallbackOutcome(&fallback, cargoFallback)
+			recovered = true
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return ScanOutcome{}, false, err
+	}
+	if !recovered {
+		if degraded {
+			// Nothing recovered from a degraded scan: fail closed with the
+			// degraded outcome, not a hard error.
+			return outcome, false, nil
+		}
+		return ScanOutcome{}, false, err
+	}
 	return fallback, true, nil
+}
+
+// degradedAstGrepError turns a fail-closed ast-grep outcome into the
+// incomplete error the fallback gate recognizes, unless it already recovered
+// analyses.
+func degradedAstGrepError(outcome ScanOutcome) *IncompleteScanError {
+	if len(outcome.Analyses) > 0 {
+		return nil
+	}
+	for _, source := range outcome.Sources {
+		if source.Name != "ast-grep" {
+			continue
+		}
+		if source.Status == ScanSourceTimeout || source.Status == ScanSourceFailed {
+			return &IncompleteScanError{Outcome: source, Err: errors.New(source.Detail)}
+		}
+	}
+	return nil
+}
+
+func mergeFallbackOutcome(dst *ScanOutcome, src ScanOutcome) {
+	dst.Analyses = append(dst.Analyses, src.Analyses...)
+	dst.Sources = append(dst.Sources, src.Sources...)
+	dst.precomputedEdges = append(dst.precomputedEdges, src.precomputedEdges...)
 }
 
 func buildCargoFallbackOutcome(ctx context.Context, root string, files []FileInfo, loader cargoMetadataLoader) (ScanOutcome, error) {
@@ -154,7 +229,9 @@ func buildCargoFallbackOutcome(ctx context.Context, root string, files []FileInf
 		Sources: []ScanSourceOutcome{{
 			Name:   "cargo-metadata",
 			Status: ScanSourceFallback,
-			Detail: fmt.Sprintf("Cargo metadata fallback recovered %d dependency edges from %d of %d manifests", len(edges), handled, len(manifests)),
+			// Recovered edges only reach the file graph, so don't claim them
+			// in the `--deps` payload.
+			Detail: fmt.Sprintf("Cargo metadata fallback used for %d of %d manifests", handled, len(manifests)),
 		}},
 		precomputedEdges: edges,
 	}, nil

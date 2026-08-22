@@ -31,6 +31,31 @@ func TestRenderImportersReportExplainsEmptyResult(t *testing.T) {
 	}
 }
 
+// A partial scan must not read as a confident negative: the empty importers
+// branch shows coverage and skips the Go same-package note for non-Go files.
+func TestRenderImportersReportCLIEmitsCoverageInEmptyBranch(t *testing.T) {
+	report := scanner.ImportersReport{
+		Root:           "/repo",
+		Mode:           "importers",
+		File:           "web/util.ts",
+		CoverageStatus: "partial",
+		CoverageNotes:  []string{"ast-grep not found (checked bundled tools and PATH)", "Go parser fallback recovered 1 of 1 Go files"},
+	}
+
+	var buf strings.Builder
+	renderImportersReportCLI(&buf, report)
+	out := buf.String()
+	if !strings.Contains(out, "No files import web/util.ts") {
+		t.Fatalf("empty importers result must say so:\n%q", out)
+	}
+	if !strings.Contains(out, "Coverage: partial") {
+		t.Fatalf("empty result must carry the coverage provenance:\n%q", out)
+	}
+	if strings.Contains(out, "same package") {
+		t.Fatalf("Go same-package note must not be printed about a TypeScript file:\n%q", out)
+	}
+}
+
 func TestNonexistentPathGetsFriendlyError(t *testing.T) {
 	_, stderr, err := runCodemapWithInput("", "drift")
 	if err == nil {

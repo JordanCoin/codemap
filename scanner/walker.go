@@ -363,9 +363,16 @@ func filterConfiguredAnalyses(root string, analyses []FileAnalysis) []FileAnalys
 	return filtered
 }
 
-// ScanForDeps performs dependency analysis with explicit filters, provenance,
-// and caller cancellation.
+// ScanForDeps runs dependency analysis with explicit filters and cancellation,
+// falling back to the Go parser when ast-grep fails.
 func ScanForDeps(ctx context.Context, root string, filters Filters) (ScanOutcome, error) {
+	outcome, _, err := scanForGraphOutcomeWithFilters(ctx, root, filters, func(r string) (ScanOutcome, error) {
+		return scanForDepsPrimaryOutcome(ctx, r)
+	}, loadCargoFallbackMetadata, false)
+	return outcome, err
+}
+
+func scanForDepsPrimaryOutcome(ctx context.Context, root string) (ScanOutcome, error) {
 	if err := ctx.Err(); err != nil {
 		return ScanOutcome{}, err
 	}
@@ -374,14 +381,5 @@ func ScanForDeps(ctx context.Context, root string, filters Filters) (ScanOutcome
 		return ScanOutcome{}, err
 	}
 	defer astScanner.Close()
-
-	outcome, err := astScanner.ScanDirectory(ctx, root)
-	if err != nil {
-		return ScanOutcome{}, err
-	}
-	outcome.Analyses, err = filterAnalysesContext(ctx, outcome.Analyses, filters)
-	if err != nil {
-		return ScanOutcome{}, err
-	}
-	return outcome, nil
+	return astScanner.ScanDirectory(ctx, root)
 }

@@ -3,8 +3,10 @@ package scanner
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 )
 
@@ -60,6 +62,346 @@ func TestBuildFileGraphUsesCargoFallbackOnce(t *testing.T) {
 	}
 	if len(graph.Coverage.Sources) < 2 {
 		t.Fatalf("sources = %#v, want primary and fallback outcomes", graph.Coverage.Sources)
+	}
+}
+
+func TestScanForGraphOutcomeUsesGoFallbackWithoutCargo(t *testing.T) {
+	root := t.TempDir()
+	writeRustCargoFixture(t, root, map[string]string{
+		"main.go": "package main\n\nimport \"fmt\"\n\nfunc main() {}\n",
+	})
+	loads := 0
+	outcome, usedFallback, err := scanForGraphOutcome(
+		context.Background(),
+		root,
+		func(string) (ScanOutcome, error) {
+			return ScanOutcome{}, newIncompleteScanError("ast-grep", ScanSourceUnavailable, "ast-grep unavailable", ErrAstGrepNotFound)
+		},
+		func(context.Context, string) ([]byte, error) {
+			loads++
+			return nil, errors.New("unexpected Cargo fallback")
+		},
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !usedFallback {
+		t.Fatal("Go-only recovery did not report fallback use")
+	}
+	if loads != 0 {
+		t.Fatalf("Cargo metadata loads = %d, want 0", loads)
+	}
+	want := []FileAnalysis{{
+		Path:      "main.go",
+		Language:  "go",
+		Functions: []string{"main"},
+		Imports:   []string{"fmt"},
+	}}
+	if !reflect.DeepEqual(outcome.Analyses, want) {
+		t.Fatalf("analyses = %#v, want %#v", outcome.Analyses, want)
+	}
+	if len(outcome.Sources) != 2 {
+		t.Fatalf("sources = %#v, want ast-grep and Go parser", outcome.Sources)
+	}
+	if outcome.Sources[0].Name != "ast-grep" || outcome.Sources[1].Name != "go-parser" {
+		t.Fatalf("sources = %#v, want ast-grep then Go parser", outcome.Sources)
+	}
+}
+
+func TestScanForGraphOutcomeCombinesGoAndCargoFallbacks(t *testing.T) {
+	root, metadata := cargoFallbackFixture(t, map[string]any{
+		"name": "core", "path": "core", "kind": nil,
+	})
+	writeRustCargoFixture(t, root, map[string]string{
+		"main.go": "package main\n\nfunc main() {}\n",
+	})
+
+	outcome, usedFallback, err := scanForGraphOutcome(
+		context.Background(),
+		root,
+		func(string) (ScanOutcome, error) {
+			return ScanOutcome{}, newIncompleteScanError("ast-grep", ScanSourceFailed, "ast-grep failed", errors.New("scan failure"))
+		},
+		func(context.Context, string) ([]byte, error) {
+			return metadata, nil
+		},
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !usedFallback {
+		t.Fatal("mixed recovery did not report fallback use")
+	}
+	if got, want := outcome.Analyses, []FileAnalysis{{
+		Path:      "main.go",
+		Language:  "go",
+		Functions: []string{"main"},
+		Imports:   []string{},
+	}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("analyses = %#v, want %#v", got, want)
+	}
+	if got, want := outcome.precomputedEdges, []fileEdge{{from: "app/src/lib.rs", to: "core/src/lib.rs"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("edges = %#v, want %#v", got, want)
+	}
+	if len(outcome.Sources) != 3 ||
+		outcome.Sources[0].Name != "ast-grep" ||
+		outcome.Sources[1].Name != "go-parser" ||
+		outcome.Sources[2].Name != "cargo-metadata" {
+		t.Fatalf("sources = %#v, want ast-grep, Go parser, and Cargo metadata", outcome.Sources)
+	}
+}
+
+func TestBuildFileGraphFromFallbackOutcomePreservesCargoEdgesWithoutReload(t *testing.T) {
+	root, metadata := cargoFallbackFixture(t, map[string]any{
+		"name": "core", "path": "core", "kind": nil,
+	})
+	writeRustCargoFixture(t, root, map[string]string{
+		"main.go": "package main\n\nfunc main() {}\n",
+	})
+	outcome, _, err := scanForGraphOutcome(
+		context.Background(),
+		root,
+		func(string) (ScanOutcome, error) {
+			return ScanOutcome{}, newIncompleteScanError("ast-grep", ScanSourceUnavailable, "ast-grep unavailable", ErrAstGrepNotFound)
+		},
+		func(context.Context, string) ([]byte, error) {
+			return metadata, nil
+		},
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	loads := 0
+	graph, err := buildFileGraphFromOutcomeWithCargoMetadataAndFilters(
+		context.Background(),
+		root,
+		outcome,
+		Filters{},
+		func(context.Context, string) ([]byte, error) {
+			loads++
+			return metadata, nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loads != 0 {
+		t.Fatalf("Cargo metadata reloads = %d, want 0", loads)
+	}
+	if got, want := graph.Imports["app/src/lib.rs"], []string{"core/src/lib.rs"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("fallback imports = %#v, want %#v", got, want)
+	}
+}
+
+// A degraded ast-grep outcome (timeout/failure, nil error) must still fire
+// the fallback: ScanDirectory fails closed, so the gate checks provenance.
+func TestScanForGraphOutcomeFiresFallbackOnDegradedAstGrepOutcome(t *testing.T) {
+	root := t.TempDir()
+	writeRustCargoFixture(t, root, map[string]string{
+		"main.go": "package main\n\nimport \"fmt\"\n\nfunc main() {}\n",
+	})
+	outcome, usedFallback, err := scanForGraphOutcome(
+		context.Background(),
+		root,
+		func(string) (ScanOutcome, error) {
+			// Degraded outcome, nil error — what ScanDirectory returns on
+			// invalid JSON. The leading non-ast-grep source exercises the
+			// skip branch.
+			return ScanOutcome{
+				Sources: []ScanSourceOutcome{
+					{Name: "other", Status: ScanSourceFailed, Detail: "unrelated"},
+					{Name: "ast-grep", Status: ScanSourceFailed, Detail: "ast-grep produced invalid JSON results"},
+				},
+			}, nil
+		},
+		nil,
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !usedFallback {
+		t.Fatal("degraded ast-grep outcome did not trigger the fallback")
+	}
+	if len(outcome.Analyses) != 1 || outcome.Analyses[0].Path != "main.go" {
+		t.Fatalf("analyses = %#v, want Go fallback recovery", outcome.Analyses)
+	}
+	if len(outcome.Sources) != 2 ||
+		outcome.Sources[0].Name != "ast-grep" || outcome.Sources[0].Status != ScanSourceFailed ||
+		outcome.Sources[1].Name != "go-parser" || outcome.Sources[1].Status != ScanSourceFallback {
+		t.Fatalf("sources = %#v, want degraded ast-grep followed by Go parser fallback", outcome.Sources)
+	}
+}
+
+// An unrecoverable degraded primary stays fail-closed (nil error).
+func TestScanForGraphOutcomeDegradedPrimaryStaysFailClosedWhenUnrecoverable(t *testing.T) {
+	root := t.TempDir()
+	writeRustCargoFixture(t, root, map[string]string{
+		"main.ts": "export const value = 1;\n",
+	})
+	primary := ScanOutcome{
+		Sources: []ScanSourceOutcome{{Name: "ast-grep", Status: ScanSourceTimeout, Detail: "ast-grep timed out after 30s"}},
+	}
+	outcome, usedFallback, err := scanForGraphOutcome(
+		context.Background(),
+		root,
+		func(string) (ScanOutcome, error) { return primary, nil },
+		nil,
+		false,
+	)
+	if err != nil {
+		t.Fatalf("unrecoverable degraded primary must fail closed, got error %v", err)
+	}
+	if usedFallback {
+		t.Fatal("unrecoverable degraded primary must not report fallback use")
+	}
+	if !reflect.DeepEqual(outcome, primary) {
+		t.Fatalf("outcome = %#v, want degraded primary preserved", outcome)
+	}
+}
+
+// BuildFileGraphFromOutcome (the --deps graph path) must apply the Cargo
+// dedup guard: one cargo-metadata source, no second cargo metadata run.
+func TestBuildFileGraphFromOutcomeDedupesFallbackCargoSource(t *testing.T) {
+	root, metadata := cargoFallbackFixture(t, map[string]any{
+		"name": "core", "path": "core", "kind": nil,
+	})
+	writeRustCargoFixture(t, root, map[string]string{
+		"main.go": "package main\n\nimport \"fmt\"\n\nfunc main() {}\n",
+	})
+	outcome, _, err := scanForGraphOutcome(
+		context.Background(),
+		root,
+		func(string) (ScanOutcome, error) {
+			return ScanOutcome{}, newIncompleteScanError("ast-grep", ScanSourceUnavailable, "ast-grep unavailable", ErrAstGrepNotFound)
+		},
+		func(context.Context, string) ([]byte, error) { return metadata, nil },
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	loads := 0
+	graph, err := BuildFileGraphFromOutcome(context.Background(), root, outcome, Filters{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loads != 0 {
+		t.Fatalf("cargo metadata loads = %d, want 0 (dedup guard must apply)", loads)
+	}
+	var cargoSources int
+	for _, source := range graph.Coverage.Sources {
+		if source.Name == "cargo-metadata" {
+			cargoSources++
+		}
+	}
+	if cargoSources != 1 {
+		t.Fatalf("cargo-metadata sources = %d, want exactly 1 (got %#v)", cargoSources, graph.Coverage.Sources)
+	}
+	if got, want := graph.Imports["app/src/lib.rs"], []string{"core/src/lib.rs"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("fallback imports = %#v, want %#v", got, want)
+	}
+}
+
+func TestScanForDepsOutcomeRejectsCargoOnlyEmptyRecovery(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires shell script execution")
+	}
+
+	root, metadata := cargoFallbackFixture(t, map[string]any{
+		"name": "core", "path": "core", "kind": nil,
+	})
+	binDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(binDir, "sg"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "cargo"), []byte("#!/bin/sh\n/bin/cat \"$CODEMAP_TEST_CARGO_METADATA\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	metadataPath := filepath.Join(t.TempDir(), "metadata.json")
+	if err := os.WriteFile(metadataPath, metadata, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	t.Setenv("CODEMAP_TEST_CARGO_METADATA", metadataPath)
+
+	outcome, err := ScanForDeps(context.Background(), root, Filters{})
+	if !errors.Is(err, ErrAstGrepNotFound) {
+		t.Fatalf("error = %v, want %v", err, ErrAstGrepNotFound)
+	}
+	if len(outcome.Analyses) != 0 {
+		t.Fatalf("analyses = %#v, want no false successful analyses", outcome.Analyses)
+	}
+}
+
+func TestScanForGraphOutcomeHonorsCancellationDuringFallback(t *testing.T) {
+	root := t.TempDir()
+	writeRustCargoFixture(t, root, map[string]string{
+		"Cargo.toml": "package = \"broken\"\n",
+		"main.go":    "package main\n\nfunc main() {}\n",
+		"src/lib.rs": "pub fn value() {}\n",
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+
+	_, _, err := scanForGraphOutcome(
+		ctx,
+		root,
+		func(string) (ScanOutcome, error) {
+			return ScanOutcome{}, newIncompleteScanError("ast-grep", ScanSourceFailed, "ast-grep failed", errors.New("scan failure"))
+		},
+		func(context.Context, string) ([]byte, error) {
+			cancel()
+			return nil, errors.New("metadata canceled")
+		},
+		false,
+	)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want %v", err, context.Canceled)
+	}
+}
+
+func TestScanForGraphOutcomeHonorsPreCanceledContext(t *testing.T) {
+	root := t.TempDir()
+	writeRustCargoFixture(t, root, map[string]string{
+		"main.go": "package main\n\nfunc main() {}\n",
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, _, err := scanForGraphOutcome(
+		ctx,
+		root,
+		func(string) (ScanOutcome, error) {
+			return ScanOutcome{}, newIncompleteScanError("ast-grep", ScanSourceFailed, "ast-grep failed", errors.New("scan failure"))
+		},
+		nil,
+		false,
+	)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want %v", err, context.Canceled)
+	}
+}
+
+func TestScanForGraphOutcomePreservesPrimaryErrorWhenFileScanFails(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "missing")
+	primaryErr := newIncompleteScanError("ast-grep", ScanSourceFailed, "ast-grep failed", errors.New("scan failure"))
+
+	_, _, err := scanForGraphOutcome(
+		context.Background(),
+		root,
+		func(string) (ScanOutcome, error) {
+			return ScanOutcome{}, primaryErr
+		},
+		nil,
+		false,
+	)
+	if err != primaryErr {
+		t.Fatalf("error = %v, want original %v", err, primaryErr)
 	}
 }
 
