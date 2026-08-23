@@ -170,7 +170,7 @@ func Depgraph(ctx context.Context, w io.Writer, project scanner.DepsProject) {
 
 	// Format dep lines
 	var depLines []string
-	langOrder := []string{"go", "javascript", "python", "swift", "rust", "ruby", "bash", "kotlin", "csharp", "php", "lua", "scala", "elixir", "solidity"}
+	langOrder := []string{"go", "javascript", "python", "swift", "dart", "rust", "ruby", "bash", "kotlin", "csharp", "php", "lua", "scala", "elixir", "solidity"}
 
 	for _, lang := range langOrder {
 		if names, ok := extByLang[lang]; ok {

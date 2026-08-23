@@ -144,6 +144,7 @@ func TestDetectLanguage(t *testing.T) {
 	}{
 		{name: "go extension", path: "main.go", expected: "go"},
 		{name: "uppercase extension", path: "handler.PY", expected: "python"},
+		{name: "dart extension", path: "widget.dart", expected: "dart"},
 		{name: "unknown extension", path: "README.md", expected: ""},
 		{name: "no extension", path: "Makefile", expected: ""},
 	}
@@ -551,6 +552,7 @@ func TestLanguageCompatibility(t *testing.T) {
 		{name: "go singleton", importer: "go", candidate: "go", want: true},
 		{name: "rust singleton", importer: "rust", candidate: "rust", want: true},
 		{name: "swift singleton", importer: "swift", candidate: "swift", want: true},
+		{name: "dart singleton", importer: "dart", candidate: "dart", want: true},
 		{name: "ruby singleton", importer: "ruby", candidate: "ruby", want: true},
 		{name: "php singleton", importer: "php", candidate: "php", want: true},
 		{name: "lua singleton", importer: "lua", candidate: "lua", want: true},

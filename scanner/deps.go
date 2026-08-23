@@ -6,7 +6,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // MCPManifestByteBudget bounds each manifest read performed for one MCP request.
@@ -14,7 +17,7 @@ const MCPManifestByteBudget int64 = 1 << 20
 
 var errManifestBudgetExceeded = errors.New("manifest exceeds byte budget")
 
-// ReadExternalDeps reads manifest files (go.mod, requirements.txt, package.json)
+// ReadExternalDeps reads supported dependency manifests throughout the project
 // while honoring caller cancellation. A positive manifestByteBudget skips
 // individual oversized manifests; zero keeps the legacy unbounded behavior
 // used by CLI and blast-radius callers.
@@ -62,6 +65,8 @@ func ReadExternalDeps(ctx context.Context, root string, manifestByteBudget int64
 			deps["swift"] = append(deps["swift"], parsePodfile(string(content))...)
 		case "Package.swift":
 			deps["swift"] = append(deps["swift"], parsePackageSwift(string(content))...)
+		case "pubspec.yaml":
+			deps["dart"] = append(deps["dart"], parsePubspec(string(content))...)
 		case "packages.config":
 			deps["csharp"] = append(deps["csharp"], parsePackagesConfig(string(content))...)
 		default:
@@ -86,7 +91,7 @@ func ReadExternalDeps(ctx context.Context, root string, manifestByteBudget int64
 
 func isDependencyManifest(name string) bool {
 	switch name {
-	case "go.mod", "requirements.txt", "package.json", "Podfile", "Package.swift", "packages.config":
+	case "go.mod", "requirements.txt", "package.json", "Podfile", "Package.swift", "packages.config", "pubspec.yaml":
 		return true
 	default:
 		return strings.HasSuffix(name, ".csproj")
@@ -132,6 +137,40 @@ func budgetCapacity(budget int64) int64 {
 		return 64 * 1024
 	}
 	return budget
+}
+
+type pubspecManifest struct {
+	Name            string         `yaml:"name"`
+	Dependencies    map[string]any `yaml:"dependencies"`
+	DevDependencies map[string]any `yaml:"dev_dependencies"`
+}
+
+func decodePubspec(content []byte) (pubspecManifest, error) {
+	var manifest pubspecManifest
+	err := yaml.Unmarshal(content, &manifest)
+	return manifest, err
+}
+
+func parsePubspec(content string) []string {
+	manifest, err := decodePubspec([]byte(content))
+	if err != nil {
+		return nil
+	}
+
+	dependencySet := make(map[string]struct{}, len(manifest.Dependencies)+len(manifest.DevDependencies))
+	for name := range manifest.Dependencies {
+		dependencySet[name] = struct{}{}
+	}
+	for name := range manifest.DevDependencies {
+		dependencySet[name] = struct{}{}
+	}
+
+	dependencies := make([]string, 0, len(dependencySet))
+	for name := range dependencySet {
+		dependencies = append(dependencies, name)
+	}
+	sort.Strings(dependencies)
+	return dependencies
 }
 
 func parseGoMod(c string) (deps []string) {

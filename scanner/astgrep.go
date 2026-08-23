@@ -535,6 +535,7 @@ var ruleIDToLang = map[string]string{
 	"js": "javascript", "jsx": "javascript", "py": "python",
 	"rust": "rust", "java": "java", "ruby": "ruby",
 	"swift": "swift", "kotlin": "kotlin", "c": "c", "cpp": "cpp",
+	"dart": "dart",
 	"bash": "bash", "csharp": "csharp",
 	"php": "php", "lua": "lua", "scala": "scala",
 	"elixir": "elixir", "solidity": "solidity",
@@ -744,6 +745,22 @@ func extractFunctionName(text string, lang string) string {
 						name = name[:bracket]
 					}
 					return strings.TrimSpace(name)
+				}
+			}
+		}
+
+	case "dart":
+		// Dart top-level functions and class methods.
+		if paren := strings.Index(text, "("); paren > 0 {
+			before := strings.TrimSpace(text[:paren])
+			parts := strings.Fields(before)
+			if len(parts) > 0 {
+				name := parts[len(parts)-1]
+				if bracket := strings.Index(name, "<"); bracket > 0 {
+					name = name[:bracket]
+				}
+				if isValidIdentifier(name) {
+					return name
 				}
 			}
 		}

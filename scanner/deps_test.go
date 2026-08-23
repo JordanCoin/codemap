@@ -912,3 +912,47 @@ func TestReadExternalDepsPackagesConfig(t *testing.T) {
 		t.Errorf("Expected csharp deps %v, got %v", expected, csDeps)
 	}
 }
+
+func TestParsePubspecFlutterDependencies(t *testing.T) {
+	pubspec := `name: example_app
+environment:
+  sdk: ^3.8.0
+dependencies:
+  flutter:
+    sdk: flutter
+  provider: ^6.1.0
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  provider: ^6.1.0
+`
+
+	got := parsePubspec(pubspec)
+	want := []string{"flutter", "flutter_test", "provider"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parsePubspec() = %#v, want %#v", got, want)
+	}
+}
+
+func TestReadExternalDepsFindsPubspec(t *testing.T) {
+	root := t.TempDir()
+	pubspec := "name: example_app\ndependencies:\n  flutter:\n    sdk: flutter\n  riverpod: ^3.0.0\n"
+	if err := os.WriteFile(filepath.Join(root, "pubspec.yaml"), []byte(pubspec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps, err := ReadExternalDeps(context.Background(), root, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"flutter", "riverpod"}
+	if !reflect.DeepEqual(deps["dart"], want) {
+		t.Fatalf("Dart dependencies = %#v, want %#v", deps["dart"], want)
+	}
+}
+
+func TestParsePubspecRejectsMalformedYAML(t *testing.T) {
+	if got := parsePubspec("dependencies: ["); got != nil {
+		t.Fatalf("parsePubspec() = %#v, want nil for malformed YAML", got)
+	}
+}

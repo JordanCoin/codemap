@@ -136,6 +136,7 @@ var IgnoredDirs = map[string]bool{
 	"target":         true,
 	".gradle":        true,
 	".cargo":         true,
+	".dart_tool":     true,
 	".grammar-build": true,
 	"grammars":       true,
 }

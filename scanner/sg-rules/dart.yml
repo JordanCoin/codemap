@@ -1,0 +1,14 @@
+id: dart-imports
+language: dart
+rule:
+  kind: uri
+---
+id: dart-functions
+language: dart
+rule:
+  kind: function_declaration
+---
+id: dart-method-functions
+language: dart
+rule:
+  kind: method_declaration

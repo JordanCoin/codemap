@@ -102,9 +102,10 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 	fg.PathAliases, fg.BaseURL = detectPathAliases(absRoot)
 
 	useJSWorkspace := needsJSWorkspaceResolver(analyses)
+	useDartWorkspace := needsDartWorkspaceResolver(analyses)
 	gitCache := NewGitIgnoreCache(root)
 	scanOnly := filters.Only
-	if useJSWorkspace {
+	if useJSWorkspace || useDartWorkspace {
 		scanOnly = nil
 	}
 	allFiles, err := ScanFiles(ctx, root, gitCache, scanOnly, filters.Exclude)
@@ -112,7 +113,7 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 		return nil, err
 	}
 	files := allFiles
-	if useJSWorkspace {
+	if useJSWorkspace || useDartWorkspace {
 		files = make([]FileInfo, 0, len(allFiles))
 		for _, file := range allFiles {
 			if MatchesFilters(file.Path, filepath.Ext(file.Path), filters.Only, nil) {
@@ -156,6 +157,14 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 		}
 	}
 
+	var dartResolver *dartWorkspaceResolver
+	if useDartWorkspace {
+		dartResolver, err = buildDartWorkspaceResolver(ctx, absRoot, allFiles)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Resolve imports to files using universal fuzzy matching
 	for _, a := range analyses {
 		if err := ctx.Err(); err != nil {
@@ -170,7 +179,12 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 				if err := ctx.Err(); err != nil {
 					return nil, err
 				}
-				resolved := fuzzyResolveWithWorkspace(imp, a.Path, idx, fg.Module, fg.PathAliases, fg.BaseURL, jsResolver)
+				var resolved []string
+				if DetectLanguage(a.Path) == "dart" {
+					resolved = dartResolver.resolve(imp, a.Path, idx)
+				} else {
+					resolved = fuzzyResolveWithWorkspace(imp, a.Path, idx, fg.Module, fg.PathAliases, fg.BaseURL, jsResolver)
+				}
 				// Exclude multi-file Go package imports to avoid inflating hub counts.
 				// Go package imports start with the module prefix and resolve to all
 				// files in that package. For all other imports (e.g., C# namespace
@@ -212,6 +226,15 @@ func applyPrecomputedFileEdges(fg *FileGraph, edges []fileEdge) {
 func needsJSWorkspaceResolver(analyses []FileAnalysis) bool {
 	for _, analysis := range analyses {
 		if isJavaScriptLanguage(DetectLanguage(analysis.Path)) {
+			return true
+		}
+	}
+	return false
+}
+
+func needsDartWorkspaceResolver(analyses []FileAnalysis) bool {
+	for _, file := range analyses {
+		if DetectLanguage(file.Path) == "dart" {
 			return true
 		}
 	}

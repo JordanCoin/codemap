@@ -501,3 +501,71 @@ func TestScanDirectoryUsesCmdShimBinary(t *testing.T) {
 		t.Fatalf("expected authoritative source status, got %v", outcome.Sources[0].Status)
 	}
 }
+
+func TestAstGrepDartFlutter(t *testing.T) {
+	analyzer := NewAstGrepAnalyzer()
+	if !analyzer.Available() {
+		t.Skip("ast-grep not available")
+	}
+
+	tmpDir := t.TempDir()
+	dartFile := filepath.Join(tmpDir, "main.dart")
+	source := `import 'dart:async';
+import 'package:flutter/material.dart';
+import 'src/platform_stub.dart'
+    if (dart.library.io) 'src/platform_io.dart';
+export 'src/routes.dart';
+part 'main.g.dart';
+
+T identity<T>(T value) => value;
+
+void main() {}
+
+class App extends StatelessWidget {
+  Widget build(BuildContext context) {
+    return const SizedBox();
+  }
+}
+`
+	if err := os.WriteFile(dartFile, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := analyzer.AnalyzeFile(dartFile)
+	if err != nil {
+		t.Fatalf("AnalyzeFile() error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("AnalyzeFile() returned nil")
+	}
+	if got.Language != "dart" {
+		t.Fatalf("language = %q, want dart", got.Language)
+	}
+
+	functions := make(map[string]bool)
+	for _, name := range got.Functions {
+		functions[name] = true
+	}
+	for _, want := range []string{"main", "identity", "build"} {
+		if !functions[want] {
+			t.Errorf("functions = %#v, missing %q", got.Functions, want)
+		}
+	}
+
+	imports := make(map[string]bool)
+	for _, path := range got.Imports {
+		imports[path] = true
+	}
+	for _, want := range []string{
+		"dart:async",
+		"package:flutter/material.dart",
+		"src/platform_stub.dart",
+		"src/platform_io.dart",
+		"src/routes.dart",
+		"main.g.dart",
+	} {
+		if !imports[want] {
+			t.Errorf("imports = %#v, missing %q", got.Imports, want)
+		}
+	}
+}
