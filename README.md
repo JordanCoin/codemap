@@ -143,7 +143,7 @@ The JSON payload is versioned (`schema_version: codemap.analysis/v1`) so consume
 
 ### Supported languages
 
-21 language rules for dependency analysis: Go, Python, JavaScript, JSX, TypeScript, TSX, Rust, Ruby, C, C++, Java, Swift, Dart, Kotlin, C#, PHP, Bash, Lua, Scala, Elixir, Solidity. Dart projects, including Flutter apps and packages, also get `pubspec.yaml` dependency discovery.
+21 ast-grep language rules for dependency analysis: Go, Python, JavaScript, JSX, TypeScript, TSX, Rust, Ruby, C, C++, Java, Swift, Dart, Kotlin, C#, PHP, Bash, Lua, Scala, Elixir, Solidity. Dart projects, including Flutter apps and packages, also get `pubspec.yaml` dependency discovery. CUE files also contribute module-scoped package edges through lexical import extraction; CUE is not an ast-grep rule.
 
 > Powered by [ast-grep](https://ast-grep.github.io/). Installed automatically with the Homebrew formula.
 

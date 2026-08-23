@@ -34,6 +34,7 @@ func TestGetFileColor(t *testing.T) {
 		{".yaml", Red},
 		{".yml", Red},
 		{".toml", Red},
+		{".cue", Red},
 		{".xml", Red},
 		{".rb", Red},
 		// Shell scripts
@@ -120,7 +121,7 @@ func TestIsAssetExtension(t *testing.T) {
 func TestIsAssetExtensionSourceFiles(t *testing.T) {
 	sourceExts := []string{
 		".go", ".py", ".js", ".ts", ".rs", ".c", ".cpp",
-		".java", ".swift", ".kt", ".rb", ".php", ".html", ".css",
+		".java", ".swift", ".kt", ".rb", ".php", ".html", ".css", ".cue",
 	}
 
 	for _, ext := range sourceExts {

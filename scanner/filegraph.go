@@ -26,10 +26,12 @@ type FileGraph struct {
 
 // fileIndex provides fast lookup of files by various import-like keys
 type fileIndex struct {
-	byExact  map[string][]string // exact path -> files
-	bySuffix map[string][]string // path suffix -> files (for nested packages)
-	byDir    map[string][]string // directory -> files in it
-	goPkgs   map[string][]string // Go package path -> files
+	byExact   map[string][]string // exact path -> files
+	bySuffix  map[string][]string // path suffix -> files (for nested packages)
+	byDir     map[string][]string // directory -> files in it
+	goPkgs    map[string][]string // Go package path -> files
+	cueModule string              // CUE module path from cue.mod/module.cue
+	cueRoot   string              // repository-relative root of the CUE module
 }
 
 // BuildFileGraph scans a project with explicit filters and builds its file
@@ -136,6 +138,7 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
+	idx.cueModule, idx.cueRoot = detectCUEModuleWithFiles(absRoot, files)
 	fg.Packages = idx.goPkgs
 	for _, file := range files {
 		if err := ctx.Err(); err != nil {
@@ -341,6 +344,23 @@ func fuzzyResolveWithWorkspace(
 	}
 	if sourceLanguage == "dart" {
 		return dartResolver.resolve(imp, fromFile, idx)
+	}
+
+	// CUE imports name packages, not individual files. Resolve only packages
+	// under the project's declared module to avoid linking external modules by
+	// suffix coincidence.
+	if sourceLanguage == "cue" {
+		if idx.cueModule == "" {
+			return nil
+		}
+		imp = strings.Trim(imp, "\"'`")
+		if imp != idx.cueModule && !strings.HasPrefix(imp, idx.cueModule+"/") {
+			return nil
+		}
+		packagePath := strings.TrimPrefix(strings.TrimPrefix(imp, idx.cueModule), "/")
+		packagePath = filepath.Join(idx.cueRoot, filepath.FromSlash(packagePath))
+		files := idx.byDir[filepath.FromSlash(packagePath)]
+		return compatibleFiles(sourceLanguage, files)
 	}
 
 	// Normalize the import path

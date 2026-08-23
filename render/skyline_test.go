@@ -36,10 +36,11 @@ func TestSkylineFilterCodeFiles(t *testing.T) {
 			name: "returns only code files when present",
 			files: []scanner.FileInfo{
 				{Path: "main.go", Ext: ".go"},
+				{Path: "schema.cue", Ext: ".cue"},
 				{Path: "photo.png", Ext: ".png"},
 				{Path: "Dockerfile"},
 			},
-			expected: 2,
+			expected: 3,
 		},
 		{
 			name: "returns original files when no code files found",

@@ -581,7 +581,7 @@ func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFil
 	if graph != nil {
 		coverageSources = graph.Coverage.Sources
 	}
-	depsProject := scanner.NewDepsProjectWithCoverage(absRoot, outcome.Analyses, externalDeps, diffRef, scanner.CoverageFromSources(coverageSources))
+	depsProject := scanner.NewDepsProjectWithCoverageAndFilters(absRoot, outcome.Analyses, externalDeps, diffRef, scanner.CoverageFromSources(coverageSources), filters)
 
 	// Render or output JSON
 	if jsonMode {

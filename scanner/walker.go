@@ -3,6 +3,7 @@ package scanner
 import (
 	"bufio"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -377,10 +378,23 @@ func scanForDepsPrimaryOutcome(ctx context.Context, root string) (ScanOutcome, e
 	if err := ctx.Err(); err != nil {
 		return ScanOutcome{}, err
 	}
+	cueOutcome, err := scanCUEFiles(ctx, root)
+	if err != nil {
+		return ScanOutcome{}, err
+	}
 	astScanner, err := NewAstGrepScanner()
 	if err != nil {
 		return ScanOutcome{}, err
 	}
 	defer astScanner.Close()
-	return astScanner.ScanDirectory(ctx, root)
+	astOutcome, err := astScanner.ScanDirectory(ctx, root)
+	if err != nil {
+		if len(cueOutcome.Sources) > 0 && errors.Is(err, ErrAstGrepNotFound) {
+			return cueOutcome, nil
+		}
+		return ScanOutcome{}, err
+	}
+	astOutcome.Analyses = append(astOutcome.Analyses, cueOutcome.Analyses...)
+	astOutcome.Sources = append(astOutcome.Sources, cueOutcome.Sources...)
+	return astOutcome, nil
 }

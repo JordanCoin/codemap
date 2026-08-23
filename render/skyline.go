@@ -26,7 +26,7 @@ var codeExtensions = map[string]bool{
 	".swift": true, ".kt": true, ".scala": true, ".c": true, ".cpp": true, ".h": true, ".hpp": true, ".cs": true, ".fs": true,
 	".php": true, ".lua": true, ".r": true, ".dart": true, ".vue": true, ".svelte": true, ".elm": true, ".ex": true, ".exs": true,
 	".hs": true, ".ml": true, ".clj": true, ".erl": true, ".sh": true, ".bash": true, ".zsh": true, ".fish": true, ".ps1": true,
-	".html": true, ".css": true, ".scss": true, ".sass": true, ".less": true,
+	".html": true, ".css": true, ".scss": true, ".sass": true, ".less": true, ".cue": true,
 	".sql": true, ".graphql": true, ".proto": true,
 }
 

@@ -54,7 +54,7 @@ func GetFileColor(ext string) string {
 	case ext == ".md" || ext == ".txt" || ext == ".rst" || ext == ".adoc":
 		return Green
 	case ext == ".json" || ext == ".yaml" || ext == ".yml" || ext == ".toml" ||
-		ext == ".xml" || ext == ".csv" || ext == ".ini" || ext == ".conf" ||
+		ext == ".xml" || ext == ".csv" || ext == ".ini" || ext == ".conf" || ext == ".cue" ||
 		ext == ".env" || ext == ".rb" || ext == ".erb" || ext == ".gemspec":
 		return Red
 	case ext == ".sh" || ext == ".bat" || ext == ".ps1" ||
