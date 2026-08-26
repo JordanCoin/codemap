@@ -750,20 +750,7 @@ func extractFunctionName(text string, lang string) string {
 		}
 
 	case "dart":
-		// Dart top-level functions and class methods.
-		if paren := strings.Index(text, "("); paren > 0 {
-			before := strings.TrimSpace(text[:paren])
-			parts := strings.Fields(before)
-			if len(parts) > 0 {
-				name := parts[len(parts)-1]
-				if bracket := strings.Index(name, "<"); bracket > 0 {
-					name = name[:bracket]
-				}
-				if isValidIdentifier(name) {
-					return name
-				}
-			}
-		}
+		return extractDartFunctionName(text)
 
 	case "c", "cpp":
 		// type name(...) - find last identifier before (
@@ -793,6 +780,35 @@ func extractFunctionName(text string, lang string) string {
 	}
 
 	return ""
+}
+
+func extractDartFunctionName(text string) string {
+	depth := 0
+	name := ""
+	for i := range len(text) {
+		switch text[i] {
+		case '(':
+			if depth == 0 {
+				before := strings.TrimSpace(text[:i])
+				parts := strings.Fields(before)
+				if len(parts) > 0 {
+					candidate := parts[len(parts)-1]
+					if bracket := strings.Index(candidate, "<"); bracket > 0 {
+						candidate = candidate[:bracket]
+					}
+					if isValidIdentifier(candidate) {
+						name = candidate
+					}
+				}
+			}
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		}
+	}
+	return name
 }
 
 func isValidIdentifier(s string) bool {

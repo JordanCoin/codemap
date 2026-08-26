@@ -925,10 +925,14 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   provider: ^6.1.0
+dependency_overrides:
+  local_package:
+    path: ../local_package
+  provider: ^6.1.1
 `
 
 	got := parsePubspec(pubspec)
-	want := []string{"flutter", "flutter_test", "provider"}
+	want := []string{"flutter", "flutter_test", "local_package", "provider"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("parsePubspec() = %#v, want %#v", got, want)
 	}

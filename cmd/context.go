@@ -271,7 +271,7 @@ func detectManifestLanguages(root string) map[string]bool {
 	langs := make(map[string]bool)
 	manifests := map[string][]string{
 		"go.mod": {"go"}, "package.json": {"javascript"}, "Cargo.toml": {"rust"},
-		"pyproject.toml": {"python"}, "Package.swift": {"swift"},
+		"pyproject.toml": {"python"}, "Package.swift": {"swift"}, "pubspec.yaml": {"dart"},
 		"build.gradle": {"java"}, "build.gradle.kts": {"kotlin", "java"},
 	}
 	for file, signalLangs := range manifests {
@@ -307,6 +307,7 @@ func detectLanguagesFromFiles(root string) map[string]bool {
 		"build.gradle.kts": {"kotlin", "java"},
 		"pom.xml":          {"java"},
 		"Package.swift":    {"swift"},
+		"pubspec.yaml":     {"dart"},
 		"Podfile":          {"swift"},
 		"mix.exs":          {"elixir"},
 		"composer.json":    {"php"},

@@ -140,9 +140,10 @@ func budgetCapacity(budget int64) int64 {
 }
 
 type pubspecManifest struct {
-	Name            string         `yaml:"name"`
-	Dependencies    map[string]any `yaml:"dependencies"`
-	DevDependencies map[string]any `yaml:"dev_dependencies"`
+	Name                string         `yaml:"name"`
+	Dependencies        map[string]any `yaml:"dependencies"`
+	DevDependencies     map[string]any `yaml:"dev_dependencies"`
+	DependencyOverrides map[string]any `yaml:"dependency_overrides"`
 }
 
 func decodePubspec(content []byte) (pubspecManifest, error) {
@@ -157,11 +158,14 @@ func parsePubspec(content string) []string {
 		return nil
 	}
 
-	dependencySet := make(map[string]struct{}, len(manifest.Dependencies)+len(manifest.DevDependencies))
+	dependencySet := make(map[string]struct{}, len(manifest.Dependencies)+len(manifest.DevDependencies)+len(manifest.DependencyOverrides))
 	for name := range manifest.Dependencies {
 		dependencySet[name] = struct{}{}
 	}
 	for name := range manifest.DevDependencies {
+		dependencySet[name] = struct{}{}
+	}
+	for name := range manifest.DependencyOverrides {
 		dependencySet[name] = struct{}{}
 	}
 

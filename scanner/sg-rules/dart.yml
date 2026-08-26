@@ -6,9 +6,6 @@ rule:
 id: dart-functions
 language: dart
 rule:
-  kind: function_declaration
----
-id: dart-method-functions
-language: dart
-rule:
-  kind: method_declaration
+  any:
+    - kind: function_signature
+    - kind: method_signature

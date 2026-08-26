@@ -37,13 +37,23 @@ func TestDetectLanguagesFromFiles_ManifestSignals(t *testing.T) {
 	mustWriteFile(t, filepath.Join(root, "tsconfig.json"), "{}")
 	mustWriteFile(t, filepath.Join(root, "Makefile"), "CC=gcc\nCXX=g++\n")
 	mustWriteFile(t, filepath.Join(root, "packages", "ui", "package.json"), "{}")
+	mustWriteFile(t, filepath.Join(root, "pubspec.yaml"), "name: app\n")
 
 	langs := detectLanguagesFromFiles(root)
 
-	for _, want := range []string{"csharp", "kotlin", "java", "swift", "typescript", "javascript", "c", "cpp"} {
+	for _, want := range []string{"csharp", "kotlin", "java", "swift", "typescript", "javascript", "dart", "c", "cpp"} {
 		if !langs[want] {
 			t.Fatalf("expected %q to be detected, got %#v", want, langs)
 		}
+	}
+}
+
+func TestDetectManifestLanguages_Pubspec(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "pubspec.yaml"), "name: app\n")
+
+	if langs := detectManifestLanguages(root); !langs["dart"] {
+		t.Fatalf("expected Dart manifest signal, got %#v", langs)
 	}
 }
 

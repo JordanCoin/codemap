@@ -112,6 +112,7 @@ Doctor checks project scope and falls back to user scope, reporting which one sa
 | **Go** | module path from `go.mod`; stdlib and third-party imports are not fuzzy-matched into local files |
 | **Rust** | `cargo metadata` — workspace membership, target kinds (lib/bin/test/bench/example/build), and `dev-dependencies` reachable from `#[cfg(test)]` blocks |
 | **JS/TS** | `package.json` `exports`/`imports` maps, npm/pnpm/Bun workspaces, Deno import maps, and `tsconfig` `rootDir`/`outDir` remapping (including `extends`) |
+| **Dart/Flutter** | `pubspec.yaml` package names and declared dependencies; `package:` URIs resolve within the owning package's `lib/`, while undeclared or duplicate package names fail closed |
 | **Everything else** | ast-grep import extraction with suffix and directory matching |
 
 ### The coverage contract

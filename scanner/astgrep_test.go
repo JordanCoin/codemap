@@ -518,6 +518,7 @@ export 'src/routes.dart';
 part 'main.g.dart';
 
 T identity<T>(T value) => value;
+void Function(int) makeCallback() => print;
 
 void main() {}
 
@@ -546,10 +547,13 @@ class App extends StatelessWidget {
 	for _, name := range got.Functions {
 		functions[name] = true
 	}
-	for _, want := range []string{"main", "identity", "build"} {
+	for _, want := range []string{"main", "identity", "makeCallback", "build"} {
 		if !functions[want] {
 			t.Errorf("functions = %#v, missing %q", got.Functions, want)
 		}
+	}
+	if functions["Function"] {
+		t.Errorf("functions = %#v, extracted return type as function name", got.Functions)
 	}
 
 	imports := make(map[string]bool)
