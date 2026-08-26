@@ -50,10 +50,6 @@ func TestExpandRustUsePaths(t *testing.T) {
 			path: "crate::{/* note */ alpha, beta}",
 		},
 		{
-			name: "empty group stays partial",
-			path: "crate::{}",
-		},
-		{
 			name: "empty path segment stays partial",
 			path: "crate::{alpha::::Thing, beta}",
 		},
@@ -68,6 +64,26 @@ func TestExpandRustUsePaths(t *testing.T) {
 	}
 }
 
+func TestExpandRustUseReferencePathsAllowsBareGroupsOnly(t *testing.T) {
+	tests := []struct {
+		path string
+		want []string
+	}{
+		{
+			path: "app_core::{alpha::Thing, beta as renamed}",
+			want: []string{"app_core::alpha::Thing", "app_core::beta"},
+		},
+		{path: "app_core::alpha::Thing"},
+		{path: "app_core::{alpha, beta"},
+	}
+
+	for _, tt := range tests {
+		if got := expandRustUseReferencePaths(tt.path); !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("expandRustUseReferencePaths(%q) = %#v, want %#v", tt.path, got, tt.want)
+		}
+	}
+}
+
 func TestAstGrepRustUseTreeExtraction(t *testing.T) {
 	scanner, err := NewAstGrepScanner()
 	if err != nil {
@@ -79,7 +95,7 @@ func TestAstGrepRustUseTreeExtraction(t *testing.T) {
 	}
 
 	root := t.TempDir()
-	source := "use crate::{alpha::Thing, beta as renamed};\nuse crate::{/* note */ alpha::Thing, beta};\nuse crate::{};\nuse dependency::{External, Other};\nuse crate::exports;\npub use crate::{alpha::Thing, beta};\npub use crate::re_export;\n"
+	source := "use crate::{alpha::Thing, beta as renamed};\nuse dependency::{External, Other};\n"
 	if err := os.WriteFile(filepath.Join(root, "lib.rs"), []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -102,49 +118,159 @@ func TestAstGrepRustUseTreeExtraction(t *testing.T) {
 	}
 	want := []ImportReference{
 		{Path: "crate::{alpha::Thing, beta as renamed}", Kind: "rust-use"},
-		{Path: "crate::{/* note */ alpha::Thing, beta}", Kind: "rust-use"},
-		{Path: "crate::{}", Kind: "rust-use"},
 		{Path: "dependency::{External, Other}", Kind: "rust-use"},
-		{Path: "crate::exports", Kind: "rust-use"},
-		{Path: "crate::{alpha::Thing, beta}", Kind: "rust-use"},
-		{Path: "crate::re_export", Kind: "rust-use"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("whole Rust use references = %#v, want %#v", got, want)
 	}
 }
 
-func TestRustUseMalformedTreesDoNotEmitCrateRootEdge(t *testing.T) {
+func TestRustUseReferencesResolveCurrentPackageLibraryFromBinary(t *testing.T) {
 	root := t.TempDir()
 	writeRustCargoFixture(t, root, map[string]string{
-		"Cargo.toml":    "[package]\nname = \"malformed\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-		"src/lib.rs":    "mod caller;\n",
-		"src/caller.rs": "use crate::{/* note */ alpha::Thing, beta};\nuse crate::{};\n",
+		"Cargo.toml":   "[package]\nname = \"app-core\"\nversion = \"0.1.0\"\n",
+		"src/lib.rs":   "pub mod alpha;\npub mod beta;\npub mod gamma;\n",
+		"src/alpha.rs": "pub struct Thing;\n",
+		"src/beta.rs":  "pub fn run() {}\n",
+		"src/gamma.rs": "pub struct Thing;\n",
+		"src/main.rs":  "use app_core::{alpha::Thing, beta as renamed};\nuse app_core::gamma::Thing as Gamma;\n",
+		"build.rs":     "use app_core::{alpha::Thing, beta as renamed};\nuse app_core::gamma::Thing as Gamma;\n",
+	})
+	metadata := cargoMetadataJSON(t, root, []map[string]any{
+		cargoPackageWithTargets(root, ".", "app-core", []map[string]any{
+			cargoTargetJSON(root, "src/lib.rs", "app_core", rustTargetLib),
+			cargoTargetJSON(root, "src/main.rs", "app", rustTargetBin),
+			cargoTargetJSON(root, "build.rs", "build-script-build", rustTargetCustomBuild),
+		}, nil),
 	})
 	analyses := []FileAnalysis{
 		{Path: "src/lib.rs", Language: "rust", References: []ImportReference{
-			{Path: "caller", Kind: "rust-module"},
+			{Path: "alpha", Kind: "rust-module"},
+			{Path: "beta", Kind: "rust-module"},
+			{Path: "gamma", Kind: "rust-module"},
 		}},
-		{Path: "src/caller.rs", Language: "rust", References: []ImportReference{
-			{Path: "crate::{/* note */ alpha::Thing, beta}", Kind: "rust-use"},
-			{Path: "crate::{}", Kind: "rust-use"},
+		{Path: "src/alpha.rs", Language: "rust"},
+		{Path: "src/beta.rs", Language: "rust"},
+		{Path: "src/gamma.rs", Language: "rust"},
+		{Path: "src/main.rs", Language: "rust", References: []ImportReference{
+			{Path: "app_core::{alpha::Thing, beta as renamed}", Kind: "rust-use"},
+			{Path: "app_core::gamma::Thing", Kind: "rust-path"},
+		}},
+		{Path: "build.rs", Language: "rust", References: []ImportReference{
+			{Path: "app_core::{alpha::Thing, beta as renamed}", Kind: "rust-use"},
+			{Path: "app_core::gamma::Thing", Kind: "rust-path"},
 		}},
 	}
-	loader := func(context.Context, string) ([]byte, error) {
-		return nil, errors.New("force manifest fallback")
-	}
-	graph, err := buildFileGraphFromAnalysesWithCargoMetadata(context.Background(), root, analyses, loader)
+	graph, err := buildFileGraphFromAnalysesWithCargoMetadata(context.Background(), root, analyses, func(context.Context, string) ([]byte, error) {
+		return metadata, nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := graph.Imports["src/caller.rs"]
-	for _, target := range got {
-		if target == "src/lib.rs" {
-			t.Fatalf("malformed use trees emitted a false crate-root edge: %v", got)
-		}
+	got := append([]string(nil), graph.Imports["src/main.rs"]...)
+	sort.Strings(got)
+	want := []string{"src/alpha.rs", "src/beta.rs", "src/gamma.rs"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("current-package imports = %#v, want %#v", got, want)
 	}
-	if len(got) != 0 {
-		t.Fatalf("malformed use trees resolved to %v, want none", got)
+	if got := graph.Imports["build.rs"]; len(got) != 0 {
+		t.Fatalf("build-script current-package imports = %#v, want none", got)
+	}
+	graph, err = buildFileGraphFromAnalysesWithCargoMetadata(context.Background(), root, analyses, func(context.Context, string) ([]byte, error) {
+		return nil, errors.New("cargo unavailable")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := graph.Imports["src/main.rs"]; len(got) != 0 {
+		t.Fatalf("fallback current-package imports = %#v, want none", got)
+	}
+}
+
+func TestRustPathMetadataFailurePreservesExternalFallback(t *testing.T) {
+	root := t.TempDir()
+	writeRustCargoFixture(t, root, map[string]string{
+		"Cargo.toml":      "[workspace]\nmembers = [\"app\", \"core\"]\n",
+		"app/Cargo.toml":  "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+		"app/src/lib.rs":  "use core_lib::api::Thing;\n",
+		"core/Cargo.toml": "[package]\nname = \"core-lib\"\nversion = \"0.1.0\"\n",
+		"core/src/lib.rs": "pub mod api;\n",
+		"core/src/api.rs": "pub struct Thing;\n",
+	})
+	analyses := []FileAnalysis{
+		{Path: "app/src/lib.rs", Language: "rust", References: []ImportReference{
+			{Path: "core_lib::api::Thing", Kind: "rust-path"},
+			{Path: "single", Kind: "rust-path"},
+		}},
+		{Path: "core/src/lib.rs", Language: "rust", References: []ImportReference{{
+			Path: "api", Kind: "rust-module",
+		}}},
+		{Path: "core/src/api.rs", Language: "rust"},
+	}
+	graph, err := buildFileGraphFromAnalysesWithCargoMetadata(context.Background(), root, analyses, func(context.Context, string) ([]byte, error) {
+		return nil, errors.New("cargo unavailable")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := graph.Imports["app/src/lib.rs"], []string{"core/src/api.rs"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("fallback external imports = %#v, want %#v", got, want)
+	}
+}
+
+func TestRustUseReferencesResolveOnlyOneLocalDependencyAlias(t *testing.T) {
+	root := t.TempDir()
+	writeRustCargoFixture(t, root, map[string]string{
+		"Cargo.toml":        "[workspace]\n",
+		"app/Cargo.toml":    "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+		"app/src/lib.rs":    "use facade::{api::Thing, util as renamed};\nuse serde::{Serialize, Deserialize};\nuse shared::{api::Other, api as duplicate};\n",
+		"core/Cargo.toml":   "[package]\nname = \"core-lib\"\nversion = \"0.1.0\"\n",
+		"core/src/lib.rs":   "pub mod api;\npub mod util;\n",
+		"core/src/api.rs":   "pub struct Thing;\n",
+		"core/src/util.rs":  "pub fn run() {}\n",
+		"first/Cargo.toml":  "[package]\nname = \"first\"\nversion = \"0.1.0\"\n",
+		"first/src/lib.rs":  "pub mod api;\n",
+		"first/src/api.rs":  "pub struct Other;\n",
+		"second/Cargo.toml": "[package]\nname = \"second\"\nversion = \"0.1.0\"\n",
+		"second/src/lib.rs": "pub mod api;\n",
+		"second/src/api.rs": "pub struct Other;\n",
+	})
+	metadata := cargoMetadataJSON(t, root, []map[string]any{
+		cargoPackage(root, "app", "app", "app", []map[string]any{
+			{"name": "core-lib", "rename": "facade", "path": filepath.Join(root, "core"), "kind": nil},
+			{"name": "first", "rename": "shared", "path": filepath.Join(root, "first"), "kind": nil},
+			{"name": "second", "rename": "shared", "path": filepath.Join(root, "second"), "kind": nil},
+		}),
+		cargoPackage(root, "core", "core-lib", "core_lib", nil),
+		cargoPackage(root, "first", "first", "first", nil),
+		cargoPackage(root, "second", "second", "second", nil),
+	})
+	analyses := []FileAnalysis{
+		{Path: "app/src/lib.rs", Language: "rust", References: []ImportReference{
+			{Path: "facade::{api::Thing, util as renamed}", Kind: "rust-use"},
+			{Path: "serde::{Serialize, Deserialize}", Kind: "rust-use"},
+			{Path: "shared::{api::Other, api as duplicate}", Kind: "rust-use"},
+		}},
+		{Path: "core/src/lib.rs", Language: "rust", References: []ImportReference{
+			{Path: "api", Kind: "rust-module"},
+			{Path: "util", Kind: "rust-module"},
+		}},
+		{Path: "core/src/api.rs", Language: "rust"},
+		{Path: "core/src/util.rs", Language: "rust"},
+		{Path: "first/src/lib.rs", Language: "rust", References: []ImportReference{{Path: "api", Kind: "rust-module"}}},
+		{Path: "second/src/lib.rs", Language: "rust", References: []ImportReference{{Path: "api", Kind: "rust-module"}}},
+	}
+	graph, err := buildFileGraphFromAnalysesWithCargoMetadata(context.Background(), root, analyses, func(context.Context, string) ([]byte, error) {
+		return metadata, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := append([]string(nil), graph.Imports["app/src/lib.rs"]...)
+	sort.Strings(got)
+	want := []string{"core/src/api.rs", "core/src/util.rs"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("local dependency grouped imports = %#v, want %#v", got, want)
 	}
 }
 
@@ -188,20 +314,41 @@ func TestRustUseReferencesResolveGroupedLocalModules(t *testing.T) {
 	}
 }
 
+func TestRustUseMalformedTreesDoNotEmitCrateRootEdge(t *testing.T) {
+	root := t.TempDir()
+	writeRustCargoFixture(t, root, map[string]string{
+		"Cargo.toml":    "[package]\nname = \"malformed\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+		"src/lib.rs":    "mod caller;\n",
+		"src/caller.rs": "use crate::{/* note */ alpha::Thing, beta};\nuse crate::{};\n",
+	})
+	analyses := []FileAnalysis{
+		{Path: "src/lib.rs", Language: "rust", References: []ImportReference{{Path: "caller", Kind: "rust-module"}}},
+		{Path: "src/caller.rs", Language: "rust", References: []ImportReference{
+			{Path: "crate::{/* note */ alpha::Thing, beta}", Kind: "rust-use"},
+			{Path: "crate::{}", Kind: "rust-use"},
+		}},
+	}
+	graph, err := buildFileGraphFromAnalysesWithCargoMetadata(context.Background(), root, analyses, func(context.Context, string) ([]byte, error) {
+		return nil, errors.New("force manifest fallback")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := graph.Imports["src/caller.rs"]; len(got) != 0 {
+		t.Fatalf("malformed use trees resolved to %v, want none", got)
+	}
+}
+
 func TestExpandRustUsePathsBoundedAtMaxDepth(t *testing.T) {
-	// Past maxRustUseTreeDepth the expansion must reject instead of recursing.
 	if paths, ok := expandRustUseTree("a::{b}", "", maxRustUseTreeDepth+1); ok || paths != nil {
 		t.Fatalf("expected depth bound to reject, got ok=%v paths=%v", ok, paths)
 	}
-	// A pathological deeply nested use tree must terminate without a hang.
 	nested := "crate::a"
 	for i := 0; i < 70; i++ {
 		nested = "outer" + string(rune('a'+i%26)) + "::{" + nested + "}"
 	}
 	done := make(chan []string, 1)
-	go func() {
-		done <- expandRustUsePaths(nested)
-	}()
+	go func() { done <- expandRustUsePaths(nested) }()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):

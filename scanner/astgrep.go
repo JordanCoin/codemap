@@ -445,11 +445,9 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 				if pathVar, ok := m.MetaVariables.Single["PATH"]; ok {
 					path = pathVar.Text
 				}
-				if len(expandRustUsePaths(path)) > 0 || strings.ContainsAny(path, "{}") {
-					// Brace trees that fail to expand (comments in the group,
-					// empty groups, external groups) stay rust-use: the
-					// resolver emits nothing instead of rust-path splitting
-					// the raw braces into a false crate-root edge.
+				if len(expandRustUseReferencePaths(path)) > 0 || strings.ContainsAny(path, "{}") {
+					// Unexpandable brace trees stay rust-use; raw braces must not
+					// create crate-root edges.
 					kind = "rust-use"
 				}
 			case "rust-cargo-rerun-imports":
