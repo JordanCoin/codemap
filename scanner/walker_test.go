@@ -15,7 +15,7 @@ func TestIgnoredDirs(t *testing.T) {
 	// Verify common directories are in the ignored list
 	expectedIgnored := []string{
 		".git", "node_modules", "vendor", "__pycache__",
-		".venv", "dist", "target", ".gradle",
+		".venv", "dist", "target", ".gradle", ".dart_tool",
 	}
 
 	for _, dir := range expectedIgnored {

@@ -1,0 +1,11 @@
+id: dart-imports
+language: dart
+rule:
+  kind: uri
+---
+id: dart-functions
+language: dart
+rule:
+  any:
+    - kind: function_signature
+    - kind: method_signature

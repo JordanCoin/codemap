@@ -533,6 +533,7 @@ var ruleIDToLang = map[string]string{
 	"js": "javascript", "jsx": "javascript", "py": "python",
 	"rust": "rust", "java": "java", "ruby": "ruby",
 	"swift": "swift", "kotlin": "kotlin", "c": "c", "cpp": "cpp",
+	"dart": "dart",
 	"bash": "bash", "csharp": "csharp",
 	"php": "php", "lua": "lua", "scala": "scala",
 	"elixir": "elixir", "solidity": "solidity",
@@ -746,6 +747,9 @@ func extractFunctionName(text string, lang string) string {
 			}
 		}
 
+	case "dart":
+		return extractDartFunctionName(text)
+
 	case "c", "cpp":
 		// type name(...) - find last identifier before (
 		if paren := strings.Index(text, "("); paren > 0 {
@@ -774,6 +778,35 @@ func extractFunctionName(text string, lang string) string {
 	}
 
 	return ""
+}
+
+func extractDartFunctionName(text string) string {
+	depth := 0
+	name := ""
+	for i := range len(text) {
+		switch text[i] {
+		case '(':
+			if depth == 0 {
+				before := strings.TrimSpace(text[:i])
+				parts := strings.Fields(before)
+				if len(parts) > 0 {
+					candidate := parts[len(parts)-1]
+					if bracket := strings.Index(candidate, "<"); bracket > 0 {
+						candidate = candidate[:bracket]
+					}
+					if isValidIdentifier(candidate) {
+						name = candidate
+					}
+				}
+			}
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		}
+	}
+	return name
 }
 
 func isValidIdentifier(s string) bool {

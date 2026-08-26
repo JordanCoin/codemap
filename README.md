@@ -112,6 +112,7 @@ Doctor checks project scope and falls back to user scope, reporting which one sa
 | **Go** | module path from `go.mod`; stdlib and third-party imports are not fuzzy-matched into local files |
 | **Rust** | `cargo metadata` — workspace membership, target kinds (lib/bin/test/bench/example/build), and `dev-dependencies` reachable from `#[cfg(test)]` blocks |
 | **JS/TS** | `package.json` `exports`/`imports` maps, npm/pnpm/Bun workspaces, Deno import maps, and `tsconfig` `rootDir`/`outDir` remapping (including `extends`) |
+| **Dart/Flutter** | `pubspec.yaml` package names and declared dependencies; `package:` URIs resolve within the owning package's `lib/`, while undeclared or duplicate package names fail closed |
 | **Everything else** | ast-grep import extraction with suffix and directory matching |
 
 ### The coverage contract
@@ -142,7 +143,7 @@ The JSON payload is versioned (`schema_version: codemap.analysis/v1`) so consume
 
 ### Supported languages
 
-20 language rules for dependency analysis: Go, Python, JavaScript, JSX, TypeScript, TSX, Rust, Ruby, C, C++, Java, Swift, Kotlin, C#, PHP, Bash, Lua, Scala, Elixir, Solidity.
+21 language rules for dependency analysis: Go, Python, JavaScript, JSX, TypeScript, TSX, Rust, Ruby, C, C++, Java, Swift, Dart, Kotlin, C#, PHP, Bash, Lua, Scala, Elixir, Solidity. Dart projects, including Flutter apps and packages, also get `pubspec.yaml` dependency discovery.
 
 > Powered by [ast-grep](https://ast-grep.github.io/). Installed automatically with the Homebrew formula.
 

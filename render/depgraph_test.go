@@ -83,6 +83,7 @@ func TestDepgraphRendersExternalDepsAndSummarySection(t *testing.T) {
 		ExternalDeps: map[string][]string{
 			"go":         {"github.com/acme/module/v2", "github.com/acme/pkg", "github.com/acme/pkg"},
 			"javascript": {"react", "react"},
+			"dart":       {"flutter", "riverpod"},
 		},
 	}
 
@@ -94,6 +95,7 @@ func TestDepgraphRendersExternalDepsAndSummarySection(t *testing.T) {
 		"Dependency Flow",
 		"Go: module, pkg",
 		"JavaScript: react",
+		"Dart: flutter, riverpod",
 		"Src",
 		"+1 standalone files",
 		"1 files",

@@ -102,9 +102,10 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 	fg.PathAliases, fg.BaseURL = detectPathAliases(absRoot)
 
 	useJSWorkspace := needsJSWorkspaceResolver(analyses)
+	useDartWorkspace := needsDartWorkspaceResolver(analyses)
 	gitCache := NewGitIgnoreCache(root)
 	scanOnly := filters.Only
-	if useJSWorkspace {
+	if useJSWorkspace || useDartWorkspace {
 		scanOnly = nil
 	}
 	allFiles, err := ScanFiles(ctx, root, gitCache, scanOnly, filters.Exclude)
@@ -112,7 +113,7 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 		return nil, err
 	}
 	files := allFiles
-	if useJSWorkspace {
+	if len(filters.Only) > 0 && (useJSWorkspace || useDartWorkspace) {
 		files = make([]FileInfo, 0, len(allFiles))
 		for _, file := range allFiles {
 			if MatchesFilters(file.Path, filepath.Ext(file.Path), filters.Only, nil) {
@@ -156,6 +157,14 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 		}
 	}
 
+	var dartResolver *dartWorkspaceResolver
+	if useDartWorkspace {
+		dartResolver, err = buildDartWorkspaceResolver(ctx, absRoot, allFiles)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Resolve imports to files using universal fuzzy matching
 	for _, a := range analyses {
 		if err := ctx.Err(); err != nil {
@@ -166,17 +175,20 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 		if a.Language == "rust" {
 			resolvedImports = resolveRustReferences(absRoot, a, idx, rustWorkspace)
 		} else {
+			sourceLanguage := DetectLanguage(a.Path)
 			for _, imp := range a.Imports {
 				if err := ctx.Err(); err != nil {
 					return nil, err
 				}
-				resolved := fuzzyResolveWithWorkspace(imp, a.Path, idx, fg.Module, fg.PathAliases, fg.BaseURL, jsResolver)
+				resolved := fuzzyResolveWithWorkspace(
+					imp, a.Path, idx, fg.Module, fg.PathAliases, fg.BaseURL, jsResolver, dartResolver,
+				)
 				// Exclude multi-file Go package imports to avoid inflating hub counts.
 				// Go package imports start with the module prefix and resolve to all
 				// files in that package. For all other imports (e.g., C# namespace
 				// imports that resolve via directory matching), allow multi-file
 				// resolution so inter-namespace dependencies are tracked.
-				isGoPkg := DetectLanguage(a.Path) == "go" && isLocalGoImport(imp, fg.Module) && len(resolved) > 1
+				isGoPkg := sourceLanguage == "go" && isLocalGoImport(imp, fg.Module) && len(resolved) > 1
 				if !isGoPkg && len(resolved) > 0 {
 					resolvedImports = append(resolvedImports, resolved...)
 				}
@@ -212,6 +224,15 @@ func applyPrecomputedFileEdges(fg *FileGraph, edges []fileEdge) {
 func needsJSWorkspaceResolver(analyses []FileAnalysis) bool {
 	for _, analysis := range analyses {
 		if isJavaScriptLanguage(DetectLanguage(analysis.Path)) {
+			return true
+		}
+	}
+	return false
+}
+
+func needsDartWorkspaceResolver(analyses []FileAnalysis) bool {
+	for _, file := range analyses {
+		if DetectLanguage(file.Path) == "dart" {
 			return true
 		}
 	}
@@ -286,10 +307,18 @@ func buildFileIndexContext(ctx context.Context, files []FileInfo, goModule strin
 
 // fuzzyResolve converts an import path to compatible local file paths.
 func fuzzyResolve(imp, fromFile string, idx *fileIndex, goModule string, pathAliases map[string][]string, baseURL string) []string {
-	return fuzzyResolveWithWorkspace(imp, fromFile, idx, goModule, pathAliases, baseURL, nil)
+	return fuzzyResolveWithWorkspace(imp, fromFile, idx, goModule, pathAliases, baseURL, nil, nil)
 }
 
-func fuzzyResolveWithWorkspace(imp, fromFile string, idx *fileIndex, goModule string, pathAliases map[string][]string, baseURL string, jsResolver *jsWorkspaceResolver) []string {
+func fuzzyResolveWithWorkspace(
+	imp, fromFile string,
+	idx *fileIndex,
+	goModule string,
+	pathAliases map[string][]string,
+	baseURL string,
+	jsResolver *jsWorkspaceResolver,
+	dartResolver *dartWorkspaceResolver,
+) []string {
 	sourceLanguage := DetectLanguage(fromFile)
 	if sourceLanguage == "" {
 		return nil
@@ -309,6 +338,9 @@ func fuzzyResolveWithWorkspace(imp, fromFile string, idx *fileIndex, goModule st
 			return nil
 		}
 		return idx.goPkgs[strings.Trim(imp, "\"'`")]
+	}
+	if sourceLanguage == "dart" {
+		return dartResolver.resolve(imp, fromFile, idx)
 	}
 
 	// Normalize the import path
