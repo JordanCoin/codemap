@@ -34,9 +34,10 @@ func TestGetFileColor(t *testing.T) {
 		{".yaml", Red},
 		{".yml", Red},
 		{".toml", Red},
-		{".cue", Red},
 		{".xml", Red},
 		{".rb", Red},
+		// CUE
+		{".cue", BoldRed},
 		// Shell scripts
 		{".sh", BoldWhite},
 		{".bat", BoldWhite},

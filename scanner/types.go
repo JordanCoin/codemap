@@ -38,6 +38,7 @@ type Project struct {
 type FileAnalysis struct {
 	Path       string            `json:"path"`
 	Language   string            `json:"language"`
+	Package    string            `json:"-"`
 	Functions  []string          `json:"functions"`
 	Imports    []string          `json:"imports"`
 	References []ImportReference `json:"-"`

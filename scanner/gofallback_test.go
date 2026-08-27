@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"codemap/analysis"
 )
 
 func TestBuildGoFallbackOutcome(t *testing.T) {
@@ -87,27 +89,29 @@ func TestScanForDepsOutcomeUsesGoFallbackWithoutAstGrep(t *testing.T) {
 	root := t.TempDir()
 	writeRustCargoFixture(t, root, map[string]string{
 		"cmd/main.go": "package main\n\nimport \"example.com/lib\"\n\nfunc main() {}\n",
+		"docs.cue":    "package docs\nimport \"example.com/acme/templates\"\n",
 	})
 
 	outcome, err := ScanForDeps(context.Background(), root, Filters{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []FileAnalysis{{
-		Path:      filepath.FromSlash("cmd/main.go"),
-		Language:  "go",
-		Functions: []string{"main"},
-		Imports:   []string{"example.com/lib"},
-	}}
+	want := []FileAnalysis{
+		{Path: filepath.FromSlash("cmd/main.go"), Language: "go", Functions: []string{"main"}, Imports: []string{"example.com/lib"}},
+		{Path: "docs.cue", Language: "cue", Package: "docs", Imports: []string{"example.com/acme/templates"}},
+	}
 	if !reflect.DeepEqual(outcome.Analyses, want) {
 		t.Fatalf("analyses = %#v, want %#v", outcome.Analyses, want)
 	}
-	if len(outcome.Sources) != 2 ||
+	if len(outcome.Sources) != 3 ||
 		outcome.Sources[0].Name != "ast-grep" ||
 		outcome.Sources[0].Status != ScanSourceUnavailable ||
 		outcome.Sources[1].Name != "go-parser" ||
 		outcome.Sources[1].Status != ScanSourceFallback {
-		t.Fatalf("sources = %#v, want unavailable ast-grep followed by Go parser fallback", outcome.Sources)
+		t.Fatalf("sources = %#v, want unavailable ast-grep, Go fallback, and CUE source", outcome.Sources)
+	}
+	if outcome.Sources[2].Name != "cue-imports" || CoverageFromSources(outcome.Sources).Status != analysis.CoveragePartial {
+		t.Fatalf("sources = %#v, want CUE provenance with partial coverage", outcome.Sources)
 	}
 }
 

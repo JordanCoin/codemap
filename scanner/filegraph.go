@@ -26,12 +26,12 @@ type FileGraph struct {
 
 // fileIndex provides fast lookup of files by various import-like keys
 type fileIndex struct {
-	byExact   map[string][]string // exact path -> files
-	bySuffix  map[string][]string // path suffix -> files (for nested packages)
-	byDir     map[string][]string // directory -> files in it
-	goPkgs    map[string][]string // Go package path -> files
-	cueModule string              // CUE module path from cue.mod/module.cue
-	cueRoot   string              // repository-relative root of the CUE module
+	byExact     map[string][]string // exact path -> files
+	bySuffix    map[string][]string // path suffix -> files (for nested packages)
+	byDir       map[string][]string // directory -> files in it
+	goPkgs      map[string][]string // Go package path -> files
+	cueModules  []cueModuleInfo
+	cuePackages map[string]string
 }
 
 // BuildFileGraph scans a project with explicit filters and builds its file
@@ -138,7 +138,23 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	idx.cueModule, idx.cueRoot = detectCUEModuleWithFiles(absRoot, files)
+	idx.cueModules = detectCUEModulesWithFiles(absRoot, files)
+	idx.cuePackages = make(map[string]string)
+	for _, file := range files {
+		if DetectLanguage(file.Path) != "cue" {
+			continue
+		}
+		path := filepath.ToSlash(filepath.Clean(file.Path))
+		data, readErr := os.ReadFile(filepath.Join(absRoot, filepath.FromSlash(path)))
+		if readErr == nil {
+			idx.cuePackages[path], _ = cueHeader(data)
+		}
+	}
+	for _, analysis := range analyses {
+		if analysis.Language == "cue" && analysis.Package != "" {
+			idx.cuePackages[filepath.ToSlash(filepath.Clean(analysis.Path))] = analysis.Package
+		}
+	}
 	fg.Packages = idx.goPkgs
 	for _, file := range files {
 		if err := ctx.Err(); err != nil {
@@ -347,20 +363,22 @@ func fuzzyResolveWithWorkspace(
 	}
 
 	// CUE imports name packages, not individual files. Resolve only packages
-	// under the project's declared module to avoid linking external modules by
+	// under a declared CUE module to avoid linking external modules by
 	// suffix coincidence.
 	if sourceLanguage == "cue" {
-		if idx.cueModule == "" {
+		module, ok := nearestCUEModule(fromFile, idx.cueModules)
+		if !ok {
 			return nil
 		}
 		imp = strings.Trim(imp, "\"'`")
-		if imp != idx.cueModule && !strings.HasPrefix(imp, idx.cueModule+"/") {
+		imp, selector := splitCUEImport(imp)
+		if imp != module.path && !strings.HasPrefix(imp, module.path+"/") {
 			return nil
 		}
-		packagePath := strings.TrimPrefix(strings.TrimPrefix(imp, idx.cueModule), "/")
-		packagePath = filepath.Join(idx.cueRoot, filepath.FromSlash(packagePath))
-		files := idx.byDir[filepath.FromSlash(packagePath)]
-		return compatibleFiles(sourceLanguage, files)
+		packagePath := strings.TrimPrefix(strings.TrimPrefix(imp, module.path), "/")
+		packagePath = filepath.Join(module.root, filepath.FromSlash(packagePath))
+		files := idx.byDir[packagePath]
+		return resolveCUEPackage(files, idx.cuePackages, selector)
 	}
 
 	// Normalize the import path
@@ -401,6 +419,55 @@ func fuzzyResolveWithWorkspace(
 	}
 
 	return nil
+}
+
+func nearestCUEModule(fromFile string, modules []cueModuleInfo) (cueModuleInfo, bool) {
+	fromFile = filepath.ToSlash(filepath.Clean(fromFile))
+	for _, module := range modules {
+		if module.root == "" || fromFile == module.root || strings.HasPrefix(fromFile, module.root+"/") {
+			return module, true
+		}
+	}
+	return cueModuleInfo{}, false
+}
+
+func splitCUEImport(imp string) (string, string) {
+	separator := strings.LastIndex(imp, ":")
+	if separator <= strings.LastIndex(imp, "/") {
+		return imp, ""
+	}
+	return imp[:separator], imp[separator+1:]
+}
+
+func resolveCUEPackage(files []string, packages map[string]string, selector string) []string {
+	files = compatibleFiles("cue", files)
+	if len(files) == 0 {
+		return nil
+	}
+	known := make(map[string]bool)
+	for _, file := range files {
+		if pkg := packages[file]; pkg != "" {
+			known[pkg] = true
+		}
+	}
+	if selector == "" && len(known) > 1 {
+		base := filepath.Base(filepath.Dir(files[0]))
+		if known[base] {
+			selector = base
+		} else {
+			return nil
+		}
+	}
+	if selector == "" || len(known) == 0 {
+		return files
+	}
+	resolved := make([]string, 0, len(files))
+	for _, file := range files {
+		if packages[file] == selector {
+			resolved = append(resolved, file)
+		}
+	}
+	return resolved
 }
 
 func isLocalGoImport(imp, module string) bool {
