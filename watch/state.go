@@ -149,6 +149,8 @@ func ResolveActiveRuntime(root string) (ActiveRuntime, error) {
 	var stalePath string
 	for _, candidate := range []ActiveRuntime{
 		base,
+		// Keep the immediately-prior explicit setup-root layout readable during migration.
+		{Directory: filepath.Join(selection.LegacyDir, "projects", projectpath.ProjectKey(selection.ProjectRoot)), CanonicalRoot: selection.ProjectRoot, Legacy: true},
 		{Directory: selection.LegacyDir, CanonicalRoot: selection.ProjectRoot, Legacy: true},
 	} {
 		if candidate.Legacy && candidate.Directory == base.Directory {

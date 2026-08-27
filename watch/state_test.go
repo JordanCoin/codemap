@@ -308,6 +308,41 @@ func TestResolveActiveRuntimeUsesOnlyExactlyOwnedLiveLegacyDaemon(t *testing.T) 
 	}
 }
 
+func TestResolveActiveRuntimeFindsPriorExplicitSetupProjectDaemon(t *testing.T) {
+	setup := t.TempDir()
+	project := filepath.Join(t.TempDir(), "project")
+	if err := os.Mkdir(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	projectpath.SetSetupRoot(setup)
+	t.Cleanup(projectpath.ResetSetupRoot)
+	selection, err := projectpath.SelectRuntime(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyDir := filepath.Join(selection.LegacyDir, "projects", projectpath.ProjectKey(selection.ProjectRoot))
+	process := exec.Command(os.Args[0], "-test.run=TestHelperWatchDaemonProcess", "--", "watch", "daemon", selection.ProjectRoot)
+	process.Env = append(os.Environ(), "CODEMAP_TEST_WATCH_HELPER=1")
+	if err := process.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = process.Process.Kill(); _, _ = process.Process.Wait() })
+	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyDir, "watch.pid"), []byte(fmt.Sprint(process.Process.Pid)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	active, err := ResolveActiveRuntime(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.Directory != legacyDir || !active.Legacy || active.PID != process.Process.Pid {
+		t.Fatalf("ResolveActiveRuntime() = %#v, want prior setup-root daemon", active)
+	}
+}
+
 func TestTransitionLockSerializesStartsAndReleases(t *testing.T) {
 	root := t.TempDir()
 	first, err := AcquireTransition(root)
