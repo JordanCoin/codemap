@@ -307,6 +307,9 @@ func TestRunWatchStartWaitsForChildReadinessFailure(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "claim rejected") {
 		t.Fatalf("runWatchSubcommand(start) error = %v, want child readiness failure", err)
 	}
+	if _, statErr := os.Stat(filepath.Join(projectpath.ProjectRuntimeDir(root), "watch.pid")); !os.IsNotExist(statErr) {
+		t.Fatalf("readiness failure left daemon PID behind: %v", statErr)
+	}
 }
 
 func TestRunDaemonPublishesInitializationFailure(t *testing.T) {
@@ -939,6 +942,9 @@ func TestRunWatchModeRunDaemonAndWatchStart(t *testing.T) {
 		}
 		if !strings.Contains(stdout, "Watch daemon started (pid ") {
 			t.Fatalf("expected start output, got:\n%s", stdout)
+		}
+		if strings.Contains(stdout, "pid -1") {
+			t.Fatalf("start output used released process PID: %s", stdout)
 		}
 	})
 }

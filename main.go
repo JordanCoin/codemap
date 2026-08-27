@@ -795,7 +795,8 @@ func runWatchSubcommand(subCmd, root string) error {
 		if err := cmd.Start(); err != nil {
 			return fmt.Errorf("starting daemon: %w", err)
 		}
-		if err := writeWatchProcessPID(absRoot, cmd.Process.Pid); err != nil {
+		pid := cmd.Process.Pid
+		if err := writeWatchProcessPID(absRoot, pid); err != nil {
 			_ = cmd.Process.Kill()
 			_ = cmd.Process.Release()
 			return fmt.Errorf("publishing daemon PID: %w", err)
@@ -809,11 +810,11 @@ func runWatchSubcommand(subCmd, root string) error {
 		if err := waitWatchReadiness(readyPath, watchReadinessTimeout); err != nil {
 			_ = cmd.Process.Kill()
 			_ = cmd.Process.Release()
-			_ = watch.RemoveProcessPID(absRoot, cmd.Process.Pid)
+			_ = watch.RemoveProcessPID(absRoot, pid)
 			return fmt.Errorf("starting daemon: %w", err)
 		}
 		_ = cmd.Process.Release()
-		fmt.Printf("Watch daemon started (pid %d)\n", cmd.Process.Pid)
+		fmt.Printf("Watch daemon started (pid %d)\n", pid)
 
 	case "daemon":
 		// Internal: run as the actual daemon process
