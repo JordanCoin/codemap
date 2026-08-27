@@ -109,6 +109,52 @@ func TestScanForGraphOutcomeUsesGoFallbackWithoutCargo(t *testing.T) {
 	}
 }
 
+func TestScanForGraphOutcomeGoFallbackExcludesHiddenAndNestedRepoFiles(t *testing.T) {
+	// The Go fallback must scan the same file universe as the ast-grep
+	// primary: hidden directories and nested git repos are importer-eligible
+	// under plain ScanFiles but ast-grep (and findNestedGitRepos) exclude
+	// them, so leaving them in produces phantom importers.
+	root := t.TempDir()
+	writeRustCargoFixture(t, root, map[string]string{
+		"go.mod":        "module example.com/demo\n\ngo 1.22\n",
+		"lib/lib.go":    "package lib\n\nfunc Foo() {}\n",
+		"main.go":       "package main\n\nimport \"example.com/demo/lib\"\n\nfunc main() { lib.Foo() }\n",
+		".tools/gen.go": "package tools\n\nimport \"example.com/demo/lib\"\n\nfunc Gen() { lib.Foo() }\n",
+		"sub/cmd/x.go":  "package cmd\n\nimport \"example.com/demo/lib\"\n\nfunc X() { lib.Foo() }\n",
+	})
+	// sub/ is its own nested git repo, mirroring findNestedGitRepos' target.
+	if err := os.MkdirAll(filepath.Join(root, "sub", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	outcome, usedFallback, err := scanForGraphOutcome(
+		context.Background(),
+		root,
+		func(string) (ScanOutcome, error) {
+			return ScanOutcome{}, newIncompleteScanError("ast-grep", ScanSourceUnavailable, "ast-grep unavailable", ErrAstGrepNotFound)
+		},
+		func(context.Context, string) ([]byte, error) {
+			return nil, errors.New("unexpected Cargo fallback")
+		},
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !usedFallback {
+		t.Fatal("Go-only recovery did not report fallback use")
+	}
+
+	var paths []string
+	for _, analysis := range outcome.Analyses {
+		paths = append(paths, filepath.ToSlash(analysis.Path))
+	}
+	want := []string{"lib/lib.go", "main.go"}
+	if !reflect.DeepEqual(paths, want) {
+		t.Fatalf("analysis paths = %v, want %v (.tools/gen.go and sub/cmd/x.go must not leak into the Go fallback)", paths, want)
+	}
+}
+
 func TestScanForGraphOutcomeCombinesGoAndCargoFallbacks(t *testing.T) {
 	root, metadata := cargoFallbackFixture(t, map[string]any{
 		"name": "core", "path": "core", "kind": nil,

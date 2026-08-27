@@ -24,7 +24,15 @@ func buildGoFallbackOutcome(ctx context.Context, root string, files []FileInfo) 
 	skipped := 0
 	fset := token.NewFileSet()
 
+	// Unlike ScanFiles, the ast-grep primary excludes hidden directories and
+	// nested git repos (its own ignore behavior, plus findNestedGitRepos'
+	// --globs excludes); mirror that here so the fallback doesn't contribute
+	// phantom importers from files the primary would never have seen.
+	nestedRepos := findNestedGitRepos(root)
 	for _, file := range files {
+		if goFallbackFileExcluded(file.Path, nestedRepos) {
+			continue
+		}
 		if !strings.EqualFold(filepath.Ext(file.Path), ".go") {
 			continue
 		}
@@ -81,4 +89,24 @@ func buildGoFallbackOutcome(ctx context.Context, root string, files []FileInfo) 
 			Detail: detail,
 		}},
 	}, nil
+}
+
+// goFallbackFileExcluded reports whether path lies in a hidden directory or
+// under one of the given nested-repo subtrees, matching what the ast-grep
+// primary would have skipped.
+func goFallbackFileExcluded(path string, nestedRepos []string) bool {
+	dir := filepath.Dir(path)
+	if dir != "." {
+		for _, part := range strings.Split(dir, string(filepath.Separator)) {
+			if strings.HasPrefix(part, ".") {
+				return true
+			}
+		}
+	}
+	for _, repo := range nestedRepos {
+		if path == repo || strings.HasPrefix(path, repo+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
