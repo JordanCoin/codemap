@@ -339,6 +339,56 @@ func TestRustUseMalformedTreesDoNotEmitCrateRootEdge(t *testing.T) {
 	}
 }
 
+func TestRustUseSuperInsideInlineModDoesNotCreateFalseEdge(t *testing.T) {
+	astScanner, err := NewAstGrepScanner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(astScanner.Close)
+	if !astScanner.Available() {
+		t.Skip("ast-grep not available")
+	}
+
+	root := t.TempDir()
+	writeRustCargoFixture(t, root, map[string]string{
+		"Cargo.toml":    "[package]\nname = \"foocrate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+		"src/lib.rs":    "pub mod config;\npub mod foo;\npub mod control;\n",
+		"src/config.rs": "pub fn value() -> i32 { 1 }\n",
+		// foo's own `config` function shadows the sibling `config` module
+		// from `tests`' point of view: `super::config` there means foo's fn,
+		// not src/config.rs.
+		"src/foo.rs": "pub fn config() -> i32 { 42 }\n\npub fn other() -> i32 { 7 }\n\n" +
+			"#[cfg(test)]\nmod tests {\n    use super::{config, other};\n\n" +
+			"    fn use_both() -> i32 { config() + other() }\n}\n",
+		// Control: a plain top-level (non-nested) crate-rooted use still
+		// resolves to the sibling module.
+		"src/control.rs": "use crate::config;\n\npub fn call() -> i32 { config::value() }\n",
+	})
+
+	outcome, err := astScanner.ScanDirectory(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := cargoMetadataJSON(t, root, []map[string]any{
+		cargoPackage(root, ".", "foocrate", "foocrate", nil),
+	})
+	graph, err := buildFileGraphFromAnalysesWithCargoMetadata(context.Background(), root, outcome.Analyses, func(context.Context, string) ([]byte, error) {
+		return metadata, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, target := range graph.Imports["src/foo.rs"] {
+		if target == "src/config.rs" {
+			t.Fatalf("src/foo.rs imports = %#v, want no edge to src/config.rs (super::config inside mod tests is foo's own fn)", graph.Imports["src/foo.rs"])
+		}
+	}
+	if got, want := graph.Imports["src/control.rs"], []string{"src/config.rs"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("control top-level crate-rooted use = %#v, want %#v", got, want)
+	}
+}
+
 func TestExpandRustUsePathsBoundedAtMaxDepth(t *testing.T) {
 	if paths, ok := expandRustUseTree("a::{b}", "", maxRustUseTreeDepth+1); ok || paths != nil {
 		t.Fatalf("expected depth bound to reject, got ok=%v paths=%v", ok, paths)

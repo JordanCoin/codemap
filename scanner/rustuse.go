@@ -27,6 +27,14 @@ func expandRustUseReferencePaths(path string) []string {
 	return expandRustUseTreePaths(path)
 }
 
+// rustUseIsSelfOrSuperRooted reports whether a use-tree path's root is
+// `self` or `super`, which resolve relative to the enclosing module rather
+// than the file.
+func rustUseIsSelfOrSuperRooted(path string) bool {
+	root := rustUseRoot(strings.TrimSpace(path))
+	return root == "self" || root == "super"
+}
+
 func rustUseRoot(path string) string {
 	if end := strings.IndexAny(path, ":{ 	\r\n"); end >= 0 {
 		return path[:end]
