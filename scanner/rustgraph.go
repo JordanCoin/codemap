@@ -531,7 +531,17 @@ func resolveRustInclude(root, declaringFile, literal string, idx *fileIndex) str
 
 func resolveRustEmbeddedFile(root, declaringFile, literal string, idx *fileIndex) string {
 	target := resolveRustLiteralPath(root, declaringFile, literal)
-	if target == "" || len(idx.byExact[target]) != 1 {
+	if target == "" {
+		return ""
+	}
+	// Extensionless targets can be duplicated by the shared index; require one real path.
+	exact := 0
+	for _, file := range idx.byExact[target] {
+		if file == target {
+			exact++
+		}
+	}
+	if exact != 1 {
 		return ""
 	}
 	return target

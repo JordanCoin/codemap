@@ -479,7 +479,7 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 				}
 			}
 			if path != "" {
-				if m.RuleID != "rust-path-imports" && m.RuleID != "rust-askama-template-imports" && m.RuleID != "rust-cargo-rerun-imports" {
+				if m.RuleID != "rust-path-imports" && m.RuleID != "rust-askama-template-imports" && m.RuleID != "rust-embedded-file-imports" && m.RuleID != "rust-cargo-rerun-imports" {
 					fileMap[relPath].Imports = append(fileMap[relPath].Imports, path)
 				}
 				fileMap[relPath].References = append(fileMap[relPath].References, ImportReference{

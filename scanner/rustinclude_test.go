@@ -32,11 +32,7 @@ include_bytes!(env!("DATA_BIN"));
 	if err := os.WriteFile(filepath.Join(root, "lib.rs"), []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	astScanner, err := NewAstGrepScanner()
-	if err != nil {
-		t.Fatal(err)
-	}
-	outcome, err := astScanner.ScanDirectory(context.Background(), root)
+	outcome, err := scanner.ScanDirectory(context.Background(), root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +60,7 @@ include_bytes!(env!("DATA_BIN"));
 		t.Fatalf("literal Rust include references = %#v, want %#v", got, want)
 	}
 	sort.Strings(imports)
-	if want := []string{"assets/data.bin", "data.txt", "generated.rs", "nested/raw.rs", "nested/value.rs"}; !reflect.DeepEqual(imports, want) {
+	if want := []string{"generated.rs", "nested/raw.rs", "nested/value.rs"}; !reflect.DeepEqual(imports, want) {
 		t.Fatalf("literal Rust include imports = %#v, want %#v", imports, want)
 	}
 }
@@ -141,5 +137,33 @@ func TestResolveRustIncludeRequiresOneIndexedFile(t *testing.T) {
 	}
 	if target := resolveRustEmbeddedFile(root, "src/lib.rs", `"generated.rs"`, idx); target != "" {
 		t.Fatalf("multiply indexed embedded-file target = %q, want unresolved", target)
+	}
+}
+
+func TestResolveRustIncludeRequiresRealIndexedFile(t *testing.T) {
+	root := t.TempDir()
+	// The index aliases bindings.rs.in as bindings.rs, but no real target exists.
+	idx := buildFileIndex([]FileInfo{{Path: "src/bindings.rs.in"}, {Path: "src/main.rs"}}, "")
+	if target := resolveRustInclude(root, "src/main.rs", `"bindings.rs"`, idx); target != "" {
+		t.Fatalf("phantom include target = %q, want unresolved", target)
+	}
+	// A real matching file still resolves alongside the alias.
+	idx = buildFileIndex([]FileInfo{{Path: "src/bindings.rs"}, {Path: "src/bindings.rs.in"}, {Path: "src/main.rs"}}, "")
+	if target := resolveRustInclude(root, "src/main.rs", `"bindings.rs"`, idx); target != "src/bindings.rs" {
+		t.Fatalf("include target = %q, want src/bindings.rs", target)
+	}
+}
+
+func TestResolveRustEmbeddedFileRequiresRealIndexedFile(t *testing.T) {
+	root := t.TempDir()
+	// The index aliases shader.wgsl.tmpl as shader.wgsl, but no real target exists.
+	idx := buildFileIndex([]FileInfo{{Path: "src/shader.wgsl.tmpl"}, {Path: "src/lib.rs"}}, "")
+	if target := resolveRustEmbeddedFile(root, "src/lib.rs", `"shader.wgsl"`, idx); target != "" {
+		t.Fatalf("phantom embedded-file target = %q, want unresolved", target)
+	}
+	// A real matching file still resolves alongside the alias.
+	idx = buildFileIndex([]FileInfo{{Path: "src/shader.wgsl"}, {Path: "src/shader.wgsl.tmpl"}, {Path: "src/lib.rs"}}, "")
+	if target := resolveRustEmbeddedFile(root, "src/lib.rs", `"shader.wgsl"`, idx); target != "src/shader.wgsl" {
+		t.Fatalf("embedded-file target = %q, want src/shader.wgsl", target)
 	}
 }
