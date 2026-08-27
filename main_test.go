@@ -62,6 +62,8 @@ func TestHelpFlag(t *testing.T) {
 		"blast-radius",
 		"-C, --project-root <repo> Operate on code in <repo>.",
 		"--setup-root <repo> Reuse state from <repo>/.codemap.",
+		"--ecosystem <provider>",
+		"--module-file <file>",
 	}
 
 	for _, expected := range expectedStrings {

@@ -15,9 +15,12 @@ import (
 	"codemap/internal/runtimefile"
 	"codemap/limits"
 	"codemap/scanner"
+	"codemap/topology"
 
 	"github.com/fsnotify/fsnotify"
 )
+
+var isTopologyManifest = topology.IsManifestPath
 
 // eventDebouncer coalesces rapid successive WRITE events for the same path.
 // Non-WRITE operations are never debounced so create/remove transitions stay accurate.
@@ -236,11 +239,14 @@ func (d *Daemon) eventLoop() {
 			for _, pending := range debouncer.takeDueBeforeEvent(event, now) {
 				d.handleEvent(pending)
 			}
+			if d.handleTopologyControlEvent(event) {
+				continue
+			}
 
 			// Allow directory creates through (to add new dirs to watcher)
 			// but skip non-source files otherwise
 			isCreate := event.Op&fsnotify.Create != 0
-			if !d.isSourceFile(event.Name) {
+			if !d.isSourceFile(event.Name) && !isTopologyManifest(event.Name) {
 				// Check if it's a directory create - let those through
 				if isCreate {
 					if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
@@ -285,7 +291,7 @@ func (d *Daemon) eventLoop() {
 
 func (d *Daemon) filterControlEvent(path string) (resetIgnoreCache, control bool) {
 	clean := filepath.Clean(path)
-	if clean == filepath.Join(d.root, ".codemap", "config.json") {
+	if clean == filepath.Join(d.configDir, "config.json") {
 		return false, true
 	}
 	if filepath.Base(clean) == ".gitignore" {
@@ -320,6 +326,17 @@ func (d *Daemon) handleConfiguredMembershipEvent(event fsnotify.Event) {
 	if present != existed {
 		d.writeState()
 	}
+}
+
+func (d *Daemon) handleTopologyControlEvent(event fsnotify.Event) bool {
+	rel, err := filepath.Rel(d.configDir, event.Name)
+	if err != nil || filepath.Clean(rel) != "config.json" {
+		return false
+	}
+	if event.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Remove|fsnotify.Rename) != 0 {
+		d.computeTopology()
+	}
+	return true
 }
 
 func (d *Daemon) debounceAction(debouncer *eventDebouncer, event fsnotify.Event, now time.Time) debounceAction {
@@ -410,6 +427,8 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 		Path:     relPath,
 		Language: scanner.DetectLanguage(relPath),
 	}
+	topologyManifest := isTopologyManifest(relPath)
+	sourceMembershipChange := d.isSourceFile(relPath) && op != "WRITE"
 
 	// Update graph and calculate deltas
 	d.graph.mu.Lock()
@@ -512,6 +531,12 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 		// Find related hot files - connected files also edited recently (last 5 min)
 		event.RelatedHot = d.findRelatedHot(relPath, 5*time.Minute)
 	}
+	if d.graph.Topology != nil {
+		event.ModuleIDs = d.graph.Topology.OwnersForFile(relPath)
+		if len(event.ModuleIDs) == 1 {
+			event.ModuleDependents = countTopologyDependents(d.graph.Topology, event.ModuleIDs[0])
+		}
+	}
 
 	d.graph.Events = appendBoundedEvents(d.graph.Events, event)
 
@@ -526,6 +551,10 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 
 	// Log event
 	d.logEvent(event)
+
+	if topologyManifest || sourceMembershipChange {
+		d.computeTopology()
+	}
 
 	if d.verbose {
 		deltaStr := ""
@@ -546,6 +575,16 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 		}
 		fmt.Printf("[watch] %s %s %s%s%s%s%s\n", event.Time.Format("15:04:05"), op, relPath, deltaStr, dirtyStr, hubStr, hotStr)
 	}
+}
+
+func countTopologyDependents(graph *topology.Graph, id topology.ID) int {
+	dependents := make(map[topology.ID]bool)
+	for _, edge := range graph.Dependents[id] {
+		if edge.Kind == topology.EdgeDependency {
+			dependents[edge.From] = true
+		}
+	}
+	return len(dependents)
 }
 
 // findRelatedHot finds connected files that were also recently edited

@@ -224,6 +224,10 @@ func main() {
 	watchMode := flag.Bool("watch", false, "Live file watcher daemon (experimental)")
 	stdinMode := flag.Bool("stdin", false, "Read file manifest from stdin (use with --deps)")
 	importersMode := flag.String("importers", "", "Check file impact: who imports it, is it a hub?")
+	topologyMode := flag.Bool("topology", false, "Show project/module dependency topology")
+	moduleMode := flag.String("module", "", "Show context for one exact module ID or unique name")
+	moduleFileMode := flag.String("module-file", "", "Show context for the module owning a repository-relative file")
+	ecosystemMode := flag.String("ecosystem", "", "Filter topology to one provider/ecosystem")
 	helpMode := flag.Bool("help", false, "Show help")
 	flag.BoolVar(helpMode, "h", false, "Show help (shorthand)")
 	// Short flag aliases
@@ -253,6 +257,10 @@ func main() {
 		fmt.Println("  --json              Output machine-readable JSON")
 		fmt.Println("  --debug             Show scanner and path diagnostics")
 		fmt.Println("  --watch             Run the live file watcher daemon")
+		fmt.Println("  --topology          Project/module dependency topology")
+		fmt.Println("  --module <id|name>  Context for one module ID or unique name")
+		fmt.Println("  --module-file <file> Context for the module owning a file")
+		fmt.Println("  --ecosystem <provider> Filter topology by provider")
 		fmt.Println()
 		fmt.Println("Examples:")
 		fmt.Println("  codemap .                       # Basic tree view")
@@ -265,6 +273,8 @@ func main() {
 		fmt.Println("  codemap --only swift .          # Just Swift files")
 		fmt.Println("  codemap --exclude .xcassets,Fonts,.png  # Hide assets")
 		fmt.Println("  codemap --importers scanner/types.go  # Check file impact")
+		fmt.Println("  codemap --topology /path/to/repo      # Project/module topology")
+		fmt.Println("  codemap --module app /path/to/repo    # Context for module app")
 		fmt.Println("  echo '{...}' | codemap --deps --stdin  # Deps from file manifest")
 		fmt.Println()
 		fmt.Println("Remote repos (clones temporarily):")
@@ -402,6 +412,28 @@ func main() {
 	// Importers mode - check file impact
 	if *importersMode != "" {
 		runImportersMode(absRoot, *importersMode, *jsonMode, filters)
+		return
+	}
+
+	if *moduleMode != "" && *moduleFileMode != "" {
+		fmt.Fprintln(os.Stderr, "Error: specify either --module or --module-file, not both")
+		os.Exit(2)
+	}
+	requestedTopology := *topologyMode || *moduleMode != "" || *moduleFileMode != ""
+	if *ecosystemMode != "" && !requestedTopology {
+		fmt.Fprintln(os.Stderr, "Error: --ecosystem requires --topology, --module, or --module-file")
+		os.Exit(2)
+	}
+	if requestedTopology {
+		topologyRoot, err := canonicalTopologyRoot(absRoot)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error selecting topology project: %v\n", err)
+			os.Exit(1)
+		}
+		if err := runTopologyMode(context.Background(), topologyRoot, *moduleMode, *moduleFileMode, *ecosystemMode, *jsonMode, os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "Error building topology: %v\n", err)
+			os.Exit(1)
+		}
 		return
 	}
 
