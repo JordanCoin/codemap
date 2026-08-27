@@ -36,15 +36,26 @@ var (
 	newWatchProcess = func(root string, verbose bool) (watchProcess, error) {
 		return watch.NewDaemon(root, verbose)
 	}
-	watchIsRunning  = watch.IsRunning
-	stopWatchDaemon = watch.Stop
-	writeWatchPID   = watch.WritePID
-	removeWatchPID  = watch.RemovePID
-	executablePath  = os.Executable
-	execCommand     = exec.Command
-	notifySignals   = signal.Notify
-	terminalChecker = isTerminal
+	watchIsRunning         = watch.IsRunning
+	stopWatchDaemon        = watch.Stop
+	writeWatchPID          = watch.WritePID
+	executablePath         = os.Executable
+	execCommand            = exec.Command
+	notifySignals          = signal.Notify
+	terminalChecker        = isTerminal
+	acquireWatchTransition = watch.AcquireTransition
+	releaseWatchTransition = func(transition *watch.Transition) error { return transition.Release() }
+	writeWatchProcessPID   = watch.WriteProcessPID
 )
+
+const (
+	watchReadinessEnv     = "CODEMAP_WATCH_READINESS_FILE"
+	watchReadinessTimeout = 30 * time.Second
+)
+
+type watchReadiness struct {
+	Error string `json:"error,omitempty"`
+}
 
 func main() {
 	args, err := applyGlobalRootOptions(os.Args[1:])
@@ -69,7 +80,10 @@ func main() {
 		if len(os.Args) >= 4 {
 			root = os.Args[3]
 		}
-		runWatchSubcommand(subCmd, root)
+		if err := runWatchSubcommand(subCmd, root); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 		return
 	}
 
@@ -717,16 +731,14 @@ func runImportersMode(root, file string, jsonMode bool, filters scanner.Filters)
 	renderImportersReportCLI(os.Stdout, report)
 }
 
-func runWatchSubcommand(subCmd, root string) {
+func runWatchSubcommand(subCmd, root string) error {
 	absRoot, _, err := cmd.ResolveNearestGitRoot(root)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 	absRoot, err = cmd.ValidateProjectPath(absRoot)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 	// Canonicalize so the daemon identity and path comparisons agree (e.g.
 	// macOS /var -> /private/var).
@@ -736,50 +748,102 @@ func runWatchSubcommand(subCmd, root string) {
 
 	switch subCmd {
 	case "start":
-		if watchIsRunning(absRoot) {
+		transition, err := acquireWatchTransition(absRoot)
+		if err != nil {
+			return fmt.Errorf("starting daemon: %w", err)
+		}
+		defer func() {
+			if transition != nil {
+				_ = releaseWatchTransition(transition)
+			}
+		}()
+		active, err := watch.ResolveActiveRuntime(absRoot)
+		if err != nil {
+			return fmt.Errorf("starting daemon: %w", err)
+		}
+		if active.PID > 0 {
 			fmt.Println("Watch daemon already running")
-			return
+			return nil
+		}
+		if err := watch.PreserveStalePIDEvidence(active); err != nil {
+			return fmt.Errorf("preserving stale daemon PID: %w", err)
 		}
 		// Fork a background daemon
 		exe, err := executablePath()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			return err
 		}
 		args := projectpath.PrependSetupRootArgs("watch", "daemon", absRoot)
 		cmd := execCommand(exe, args...)
 		cmd.Stdout = nil
 		cmd.Stderr = nil
 		cmd.Stdin = nil
+		readyFile, err := os.CreateTemp("", "codemap-watch-ready-*")
+		if err != nil {
+			return fmt.Errorf("creating daemon readiness file: %w", err)
+		}
+		readyPath := readyFile.Name()
+		_ = readyFile.Close()
+		_ = os.Remove(readyPath)
+		defer os.Remove(readyPath)
+		if cmd.Env == nil {
+			cmd.Env = os.Environ()
+		}
+		cmd.Env = append(cmd.Env, watchReadinessEnv+"="+readyPath)
 		// Detach from parent process group (Unix only)
 		setSysProcAttr(cmd)
 		if err := cmd.Start(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error starting daemon: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("starting daemon: %w", err)
 		}
-		fmt.Printf("Watch daemon started (pid %d)\n", cmd.Process.Pid)
+		pid := cmd.Process.Pid
+		if err := writeWatchProcessPID(absRoot, pid); err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Process.Release()
+			return fmt.Errorf("publishing daemon PID: %w", err)
+		}
+		if err := releaseWatchTransition(transition); err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Process.Release()
+			return fmt.Errorf("releasing daemon transition: %w", err)
+		}
+		transition = nil
+		if err := waitWatchReadiness(readyPath, watchReadinessTimeout); err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Process.Release()
+			_ = watch.RemoveProcessPID(absRoot, pid)
+			return fmt.Errorf("starting daemon: %w", err)
+		}
+		_ = cmd.Process.Release()
+		fmt.Printf("Watch daemon started (pid %d)\n", pid)
 
 	case "daemon":
 		// Internal: run as the actual daemon process
-		runDaemon(absRoot)
+		return runDaemon(absRoot)
 
 	case "stop":
-		if !watchIsRunning(absRoot) {
+		active, resolveErr := watch.ResolveActiveRuntime(absRoot)
+		if resolveErr != nil {
+			return fmt.Errorf("stopping daemon: %w", resolveErr)
+		}
+		if active.PID <= 0 && !watchIsRunning(absRoot) {
 			fmt.Println("Watch daemon not running")
-			return
+			return nil
 		}
 		if err := stopWatchDaemon(absRoot); err != nil {
 			if errors.Is(err, watch.ErrForeignDaemonPID) {
 				fmt.Println("Watch daemon not running (cleared stale PID file)")
-				return
+				return nil
 			}
-			fmt.Fprintf(os.Stderr, "Error stopping daemon: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("stopping daemon: %w", err)
 		}
 		fmt.Println("Watch daemon stopped")
 
 	case "status":
-		if watchIsRunning(absRoot) {
+		active, err := watch.ResolveActiveRuntime(absRoot)
+		if err != nil {
+			return fmt.Errorf("watch daemon status unavailable: %w", err)
+		}
+		if active.PID > 0 {
 			state := watch.ReadState(absRoot)
 			if state != nil {
 				fmt.Printf("Watch daemon running\n")
@@ -794,10 +858,9 @@ func runWatchSubcommand(subCmd, root string) {
 		}
 
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown watch command: %s\n", subCmd)
-		fmt.Fprintln(os.Stderr, "Usage: codemap watch [start|stop|status]")
-		os.Exit(1)
+		return fmt.Errorf("unknown watch command %q (usage: codemap watch [start|stop|status])", subCmd)
 	}
+	return nil
 }
 
 func runHandoffSubcommand(args []string) {
@@ -935,28 +998,118 @@ func runHandoffSubcommand(args []string) {
 	}
 }
 
-func runDaemon(root string) {
+func runDaemon(root string) (runErr error) {
+	readyPath := os.Getenv(watchReadinessEnv)
+	readyPublished := false
+	defer func() {
+		if readyPath != "" && !readyPublished {
+			_ = publishWatchReadiness(readyPath, runErr)
+		}
+	}()
+	var transition *watch.Transition
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		var err error
+		transition, err = acquireWatchTransition(root)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, watch.ErrTransitionLocked) || time.Now().After(deadline) {
+			return fmt.Errorf("claiming daemon transition: %w", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	defer func() {
+		if transition != nil {
+			_ = releaseWatchTransition(transition)
+		}
+	}()
+	active, err := watch.ResolveActiveRuntime(root)
+	if err != nil {
+		return fmt.Errorf("resolving daemon runtime: %w", err)
+	}
+	if active.PID > 0 && active.PID != os.Getpid() {
+		return errors.New("another watch daemon is already running")
+	}
 	daemon, err := newWatchProcess(root, false)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	if err := daemon.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error starting watch: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("starting watch: %w", err)
 	}
 
 	// Write PID file
-	writeWatchPID(root)
-
+	if err := writeWatchPID(root); err != nil {
+		daemon.Stop()
+		return fmt.Errorf("publishing daemon PID: %w", err)
+	}
+	if err := releaseWatchTransition(transition); err != nil {
+		daemon.Stop()
+		_ = watch.RemoveProcessPID(root, os.Getpid())
+		return fmt.Errorf("releasing daemon transition: %w", err)
+	}
+	transition = nil
+	if readyPath != "" {
+		if err := publishWatchReadiness(readyPath, nil); err != nil {
+			daemon.Stop()
+			return fmt.Errorf("publishing daemon readiness: %w", err)
+		}
+		readyPublished = true
+	}
 	// Wait for stop signal (SIGTERM or state file removal)
 	sigChan := make(chan os.Signal, 1)
 	notifySignals(sigChan, syscall.SIGTERM, syscall.SIGINT)
 	<-sigChan
 
 	daemon.Stop()
-	removeWatchPID(root)
+	_ = watch.RemoveProcessPID(root, os.Getpid())
+	return nil
+}
+
+func publishWatchReadiness(path string, readinessErr error) error {
+	status := watchReadiness{}
+	if readinessErr != nil {
+		status.Error = readinessErr.Error()
+	}
+	data, err := json.Marshal(status)
+	if err != nil {
+		return err
+	}
+	tmp := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+func waitWatchReadiness(path string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			var status watchReadiness
+			if err := json.Unmarshal(data, &status); err != nil {
+				return fmt.Errorf("reading daemon readiness: %w", err)
+			}
+			if status.Error != "" {
+				return errors.New(status.Error)
+			}
+			return nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("reading daemon readiness: %w", err)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("daemon readiness timed out after %s", timeout)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // isGitHubURL checks if the input looks like a GitHub repo URL

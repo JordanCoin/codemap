@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -286,6 +287,66 @@ func runGitMainTestCmd(t *testing.T, dir string, args ...string) {
 	}
 }
 
+func TestMainWatchHelperProcess(t *testing.T) {
+	if os.Getenv("CODEMAP_MAIN_WATCH_HELPER") != "1" {
+		return
+	}
+	time.Sleep(time.Minute)
+}
+
+func TestRunWatchStartWaitsForChildReadinessFailure(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withMainRuntimeStubs(t, nil, nil, func(string, ...string) *exec.Cmd {
+		return exec.Command("sh", "-c", `printf '{"error":"claim rejected"}' > "$CODEMAP_WATCH_READINESS_FILE"`)
+	}, func() (string, error) { return os.Args[0], nil }, nil, nil, nil)
+
+	err := runWatchSubcommand("start", root)
+	if err == nil || !strings.Contains(err.Error(), "claim rejected") {
+		t.Fatalf("runWatchSubcommand(start) error = %v, want child readiness failure", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(projectpath.ProjectRuntimeDir(root), "watch.pid")); !os.IsNotExist(statErr) {
+		t.Fatalf("readiness failure left daemon PID behind: %v", statErr)
+	}
+}
+
+func TestRunDaemonPublishesInitializationFailure(t *testing.T) {
+	root := t.TempDir()
+	readyPath := filepath.Join(t.TempDir(), "ready.json")
+	t.Setenv(watchReadinessEnv, readyPath)
+	withMainRuntimeStubs(t, func(string, bool) (watchProcess, error) {
+		return &fakeWatchProcess{startErr: fmt.Errorf("watch init rejected")}, nil
+	}, nil, nil, nil, nil, nil, nil)
+
+	if err := runDaemon(root); err == nil || !strings.Contains(err.Error(), "watch init rejected") {
+		t.Fatalf("runDaemon() error = %v, want initialization failure", err)
+	}
+	if err := waitWatchReadiness(readyPath, time.Second); err == nil || !strings.Contains(err.Error(), "watch init rejected") {
+		t.Fatalf("waitWatchReadiness() error = %v, want published initialization failure", err)
+	}
+}
+
+func TestRunDaemonPublishesTransitionReleaseFailure(t *testing.T) {
+	root := t.TempDir()
+	readyPath := filepath.Join(t.TempDir(), "ready.json")
+	t.Setenv(watchReadinessEnv, readyPath)
+	previousRelease := releaseWatchTransition
+	releaseWatchTransition = func(*watch.Transition) error { return errors.New("release rejected") }
+	t.Cleanup(func() { releaseWatchTransition = previousRelease })
+	withMainRuntimeStubs(t, func(string, bool) (watchProcess, error) {
+		return &fakeWatchProcess{}, nil
+	}, nil, nil, nil, nil, nil, nil)
+
+	if err := runDaemon(root); err == nil || !strings.Contains(err.Error(), "release rejected") {
+		t.Fatalf("runDaemon() error = %v, want transition release failure", err)
+	}
+	if err := waitWatchReadiness(readyPath, time.Second); err == nil || !strings.Contains(err.Error(), "release rejected") {
+		t.Fatalf("waitWatchReadiness() error = %v, want published release failure", err)
+	}
+}
+
 func writeMainWatchState(t *testing.T, root string, state watch.State, running bool) {
 	t.Helper()
 
@@ -300,10 +361,23 @@ func writeMainWatchState(t *testing.T, root string, state watch.State, running b
 		t.Fatal(err)
 	}
 	if running {
-		if err := watch.WritePID(root); err != nil {
+		canonical, err := filepath.EvalSymlinks(root)
+		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { watch.RemovePID(root) })
+		process := exec.Command(os.Args[0], "-test.run=TestMainWatchHelperProcess", "--", "watch", "daemon", canonical)
+		process.Env = append(os.Environ(), "CODEMAP_MAIN_WATCH_HELPER=1")
+		if err := process.Start(); err != nil {
+			t.Fatal(err)
+		}
+		if err := watch.WriteProcessPID(root, process.Process.Pid); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			_ = process.Process.Kill()
+			_, _ = process.Process.Wait()
+			watch.RemovePID(root)
+		})
 	}
 }
 
@@ -443,6 +517,23 @@ func TestRunWatchSubcommandUsesNearestGitRootFromNestedDirectory(t *testing.T) {
 	}
 }
 
+func TestRunWatchSubcommandReturnsRuntimeRejection(t *testing.T) {
+	root := t.TempDir()
+	setup := t.TempDir()
+	projectpath.SetSetupRoot(setup)
+	t.Cleanup(projectpath.ResetSetupRoot)
+	selection, err := projectpath.SelectRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(selection.RuntimeDir, "project.json"), []byte(`{"canonical_root":"/other"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runWatchSubcommand("start", root); err == nil {
+		t.Fatal("watch start accepted a rejected runtime identity")
+	}
+}
+
 func TestRunWatchStartPreservesSetupRoot(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
@@ -459,7 +550,7 @@ func TestRunWatchStartPreservesSetupRoot(t *testing.T) {
 		nil,
 		func(_ string, args ...string) *exec.Cmd {
 			gotArgs = append([]string(nil), args...)
-			return exec.Command("sh", "-c", "exit 0")
+			return exec.Command("sh", "-c", `printf '{}' > "$CODEMAP_WATCH_READINESS_FILE"`)
 		},
 		func() (string, error) { return "/tmp/codemap", nil },
 		func(string) bool { return false },
@@ -829,7 +920,7 @@ func TestRunWatchModeRunDaemonAndWatchStart(t *testing.T) {
 			func(name string, args ...string) *exec.Cmd {
 				gotName = name
 				gotArgs = append([]string(nil), args...)
-				return exec.Command("sh", "-c", "exit 0")
+				return exec.Command("sh", "-c", `printf '{}' > "$CODEMAP_WATCH_READINESS_FILE"`)
 			},
 			func() (string, error) { return "/tmp/codemap-test", nil },
 			func(string) bool { return false },
@@ -851,6 +942,9 @@ func TestRunWatchModeRunDaemonAndWatchStart(t *testing.T) {
 		}
 		if !strings.Contains(stdout, "Watch daemon started (pid ") {
 			t.Fatalf("expected start output, got:\n%s", stdout)
+		}
+		if strings.Contains(stdout, "pid -1") {
+			t.Fatalf("start output used released process PID: %s", stdout)
 		}
 	})
 }

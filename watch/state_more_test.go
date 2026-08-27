@@ -103,12 +103,16 @@ func TestIsOwnedDaemonMatchesCommandLine(t *testing.T) {
 	}
 
 	root := t.TempDir()
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	codemapDir := projectpath.ProjectRuntimeDir(root)
 	if err := os.MkdirAll(codemapDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command(os.Args[0], "-test.run=TestOwnedDaemonHelperProcess", "watch", "daemon", root)
+	cmd := exec.Command(os.Args[0], "-test.run=TestOwnedDaemonHelperProcess", "watch", "daemon", canonicalRoot)
 	cmd.Env = append(os.Environ(), "CODEMAP_WATCH_HELPER=1")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start helper daemon: %v", err)
@@ -118,8 +122,7 @@ func TestIsOwnedDaemonMatchesCommandLine(t *testing.T) {
 		_, _ = cmd.Process.Wait()
 	}()
 
-	pidPath := filepath.Join(codemapDir, "watch.pid")
-	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)), 0o644); err != nil {
+	if err := WriteProcessPID(root, cmd.Process.Pid); err != nil {
 		t.Fatal(err)
 	}
 
@@ -217,7 +220,7 @@ func TestStopWithoutPIDFileReturnsNoDaemonError(t *testing.T) {
 	}
 }
 
-func TestStopTerminatesProcessAndRemovesPID(t *testing.T) {
+func TestStopRejectsForeignProcessAndRetainsPIDEvidence(t *testing.T) {
 	root := t.TempDir()
 	codemapDir := projectpath.ProjectRuntimeDir(root)
 	if err := os.MkdirAll(codemapDir, 0o755); err != nil {
@@ -238,10 +241,10 @@ func TestStopTerminatesProcessAndRemovesPID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Stop(root); err != nil {
-		t.Fatalf("Stop error: %v", err)
+	if err := Stop(root); !errors.Is(err, ErrForeignDaemonPID) {
+		t.Fatalf("Stop error = %v, want ErrForeignDaemonPID", err)
 	}
-	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
-		t.Fatalf("expected pid file to be removed, stat err=%v", err)
+	if _, err := os.Stat(pidPath); err != nil {
+		t.Fatalf("expected foreign pid evidence to remain, stat err=%v", err)
 	}
 }

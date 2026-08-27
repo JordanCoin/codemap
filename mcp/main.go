@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -33,13 +34,29 @@ import (
 
 // Global watcher registry - tracks active watchers per project
 var (
-	watchers   = make(map[string]*watch.Daemon)
-	watchersMu sync.RWMutex
+	watchers                = make(map[string]*watch.Daemon)
+	watchersMu              sync.RWMutex
+	runManagedWatchCommand  = managedWatchCommand
+	managedWatchExecCommand = exec.CommandContext
 
 	buildHandoffForMCP    = handoff.BuildContext
 	buildHandoffDetailMCP = handoff.BuildFileDetailContext
 	writeLatestForMCP     = handoff.WriteLatest
 )
+
+const managedWatchLifecycleTimeout = 35 * time.Second
+
+func managedWatchCommand(ctx context.Context, action, root string) (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	args := projectpath.PrependSetupRootArgs("watch", action, root)
+	lifecycleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), managedWatchLifecycleTimeout)
+	defer cancel()
+	out, err := managedWatchExecCommand(lifecycleCtx, exe, args...).CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
 
 const (
 	IntegrationClaudeSetup = "claude-setup"
@@ -1005,21 +1022,22 @@ func handleStartWatch(ctx context.Context, req *mcp.CallToolRequest, input Watch
 	defer watchersMu.Unlock()
 
 	// Check if already watching
-	if _, exists := watchers[absPath]; exists {
+	if daemon, exists := watchers[absPath]; exists && daemon != nil {
 		return textResult(fmt.Sprintf("Already watching: %s\nUse get_activity to see recent changes.", absPath)), nil, nil
 	}
 
-	// Start new watcher
-	daemon, err := watch.NewDaemon(absPath, false)
+	out, err := runManagedWatchCommand(ctx, "start", absPath)
 	if err != nil {
-		return errorResult("Failed to create watcher: " + err.Error()), nil, nil
+		return errorResult("Failed to start watcher: " + strings.TrimSpace(out+" "+err.Error())), nil, nil
 	}
-
-	if err := daemon.Start(); err != nil {
-		return errorResult("Failed to start watcher: " + err.Error()), nil, nil
+	if strings.Contains(out, "already running") {
+		return textResult(fmt.Sprintf("Already watching: %s\nUse get_activity to see recent changes.", absPath)), nil, nil
 	}
-
-	watchers[absPath] = daemon
+	state := watch.ReadState(absPath)
+	fileCount := 0
+	if state != nil {
+		fileCount = state.FileCount
+	}
 
 	return textResult(fmt.Sprintf(`Live watcher started for: %s
 Tracking %d files
@@ -1030,7 +1048,7 @@ The watcher is now running in background. I can now see:
 - Which files are "hot" (frequently edited)
 - What's uncommitted (dirty)
 
-Use get_activity to see what you've been working on.`, absPath, daemon.FileCount())), nil, nil
+Use get_activity to see what you've been working on.`, absPath, fileCount)), nil, nil
 }
 
 func handleStopWatch(ctx context.Context, req *mcp.CallToolRequest, input WatchInput) (*mcp.CallToolResult, any, error) {
@@ -1042,9 +1060,17 @@ func handleStopWatch(ctx context.Context, req *mcp.CallToolRequest, input WatchI
 	watchersMu.Lock()
 	defer watchersMu.Unlock()
 
-	daemon, exists := watchers[absPath]
-	if !exists {
-		return textResult("No active watcher for: " + absPath), nil, nil
+	daemon, registered := watchers[absPath]
+	if daemon == nil {
+		out, err := runManagedWatchCommand(ctx, "stop", absPath)
+		if err != nil {
+			return errorResult("Failed to stop watcher: " + strings.TrimSpace(out+" "+err.Error())), nil, nil
+		}
+		delete(watchers, absPath)
+		if !registered && strings.Contains(out, "not running") {
+			return textResult("No active watcher for: " + absPath), nil, nil
+		}
+		return textResult(fmt.Sprintf("Watcher stopped for: %s\nTotal events captured: %d", absPath, 0)), nil, nil
 	}
 
 	// Get final stats before stopping
@@ -1065,16 +1091,22 @@ func handleGetActivity(ctx context.Context, req *mcp.CallToolRequest, input Watc
 	daemon, exists := watchers[absPath]
 	watchersMu.RUnlock()
 
-	if !exists {
-		return errorResult(fmt.Sprintf("No active watcher for: %s\nUse start_watch first.", absPath)), nil, nil
-	}
-
 	minutes := input.Minutes
 	if minutes <= 0 {
 		minutes = 30
 	}
 
-	events := daemon.GetEvents(0)
+	var events []watch.Event
+	fileCount := 0
+	if exists && daemon != nil {
+		events = daemon.GetEvents(0)
+		fileCount = daemon.FileCount()
+	} else if state := watch.ReadState(absPath); state != nil {
+		events = state.RecentEvents
+		fileCount = state.FileCount
+	} else {
+		return errorResult(fmt.Sprintf("No active watcher for: %s\nUse start_watch first.", absPath)), nil, nil
+	}
 	cutoff := time.Now().Add(-time.Duration(minutes) * time.Minute)
 
 	// Filter to recent events
@@ -1096,7 +1128,7 @@ The user may be:
 - Reading code
 - Thinking/planning
 - Working in a different project
-- Taking a break`, minutes, absPath, daemon.FileCount(), len(events))), nil, nil
+- Taking a break`, minutes, absPath, fileCount, len(events))), nil, nil
 	}
 
 	// Aggregate by file

@@ -1,6 +1,9 @@
 package projectpath
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -201,9 +204,119 @@ func TestRuntimeCodemapDirSeparatesAutomaticAndExplicitStorage(t *testing.T) {
 	explicit := t.TempDir()
 	SetSetupRoot(explicit)
 	t.Cleanup(ResetSetupRoot)
-	if got, want := RuntimeCodemapDir(linked), filepath.Join(explicit, ".codemap"); got != want {
-		t.Fatalf("explicit RuntimeCodemapDir() = %q, want shared runtime dir %q", got, want)
+	digest := sha256.Sum256([]byte(linked))
+	want := filepath.Join(explicit, ".codemap", "runtime", hex.EncodeToString(digest[:]))
+	if got := RuntimeCodemapDir(linked); got != want {
+		t.Fatalf("explicit RuntimeCodemapDir() = %q, want project namespace %q", got, want)
 	}
+}
+
+func TestExplicitSetupRuntimeNamespacesAreDeterministicAndDistinct(t *testing.T) {
+	setup := t.TempDir()
+	projectA := makeProjectFixture(t)
+	projectB := makeProjectFixture(t)
+	SetSetupRoot(setup)
+	t.Cleanup(ResetSetupRoot)
+
+	a, err := SelectRuntime(projectA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := SelectRuntime(projectB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.PolicyDir != b.PolicyDir || a.PolicyDir != filepath.Join(setup, ".codemap") {
+		t.Fatalf("policy dirs = %q, %q; want shared setup policy", a.PolicyDir, b.PolicyDir)
+	}
+	if a.RuntimeDir == b.RuntimeDir {
+		t.Fatalf("runtime dirs both %q; want project isolation", a.RuntimeDir)
+	}
+	if a.LegacyDir != a.PolicyDir || b.LegacyDir != b.PolicyDir {
+		t.Fatalf("legacy dirs = %q, %q; want shared old location", a.LegacyDir, b.LegacyDir)
+	}
+	assertProjectMarker(t, a.RuntimeDir, a.ProjectRoot)
+	assertProjectMarker(t, b.RuntimeDir, b.ProjectRoot)
+
+	again, err := SelectRuntime(projectA)
+	if err != nil || again != a {
+		t.Fatalf("SelectRuntime() repeat = %#v, %v; want %#v", again, err, a)
+	}
+}
+
+func TestExplicitSetupRuntimeNamespaceCanonicalizesSymlinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks may require elevated privileges")
+	}
+	setup := t.TempDir()
+	project := makeProjectFixture(t)
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(project, alias); err != nil {
+		t.Fatal(err)
+	}
+	SetSetupRoot(setup)
+	t.Cleanup(ResetSetupRoot)
+
+	direct, err := SelectRuntime(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viaAlias, err := SelectRuntime(alias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if direct != viaAlias {
+		t.Fatalf("direct = %#v, alias = %#v", direct, viaAlias)
+	}
+}
+
+func TestExplicitSetupRuntimeRejectsMarkerMismatch(t *testing.T) {
+	setup := t.TempDir()
+	project := makeProjectFixture(t)
+	SetSetupRoot(setup)
+	t.Cleanup(ResetSetupRoot)
+
+	selection, err := SelectRuntime(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(selection.RuntimeDir, "project.json")
+	if err := os.WriteFile(marker, []byte(`{"canonical_root":"/different/project"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SelectRuntime(project); err == nil || !strings.Contains(err.Error(), "identity") {
+		t.Fatalf("SelectRuntime() error = %v, want identity mismatch", err)
+	}
+}
+
+func assertProjectMarker(t *testing.T, runtimeDir, wantRoot string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(runtimeDir, "project.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var marker struct {
+		CanonicalRoot string `json:"canonical_root"`
+	}
+	if err := json.Unmarshal(data, &marker); err != nil {
+		t.Fatal(err)
+	}
+	if marker.CanonicalRoot != wantRoot {
+		t.Fatalf("marker root = %q, want %q", marker.CanonicalRoot, wantRoot)
+	}
+}
+
+func makeProjectFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
 }
 
 func TestSelectRejectsNonstandardWorktreeMetadataDirectory(t *testing.T) {

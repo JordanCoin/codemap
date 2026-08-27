@@ -20,15 +20,23 @@ import (
 
 // Daemon is the watch daemon that keeps the graph updated
 type Daemon struct {
-	root     string
-	graph    *Graph
-	watcher  *fsnotify.Watcher
-	gitCache *scanner.GitIgnoreCache
-	eventLog string // path to event log file
-	verbose  bool
-	done     chan struct{}
+	root       string
+	runtimeDir string
+	graph      *Graph
+	watcher    *fsnotify.Watcher
+	gitCache   *scanner.GitIgnoreCache
+	eventLog   string
+	verbose    bool
+	done       chan struct{}
 
 	eventLoopWG sync.WaitGroup
+}
+
+func (d *Daemon) runtimeStateDir() (string, error) {
+	if d.runtimeDir != "" {
+		return d.runtimeDir, nil
+	}
+	return projectpath.CheckedRuntimeCodemapDir(d.root)
 }
 
 // NewDaemon creates a new watch daemon for the given root
@@ -41,13 +49,17 @@ func NewDaemon(root string, verbose bool) (*Daemon, error) {
 	if canonical, err := filepath.EvalSymlinks(absRoot); err == nil {
 		absRoot = canonical
 	}
+	runtimeDir, err := projectpath.CheckedRuntimeCodemapDir(absRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve runtime state: %w", err)
+	}
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create watcher: %w", err)
 	}
 
-	gitCache := scanner.NewGitIgnoreCache(root)
+	gitCache := scanner.NewGitIgnoreCache(absRoot)
 
 	// Check if git repo (fast, one-time)
 	isGitRepo := false
@@ -56,12 +68,13 @@ func NewDaemon(root string, verbose bool) (*Daemon, error) {
 	}
 
 	d := &Daemon{
-		root:     absRoot,
-		watcher:  watcher,
-		gitCache: gitCache,
-		verbose:  verbose,
-		done:     make(chan struct{}),
-		eventLog: filepath.Join(projectpath.ProjectRuntimeDir(absRoot), "events.log"),
+		root:       absRoot,
+		runtimeDir: runtimeDir,
+		watcher:    watcher,
+		gitCache:   gitCache,
+		verbose:    verbose,
+		done:       make(chan struct{}),
+		eventLog:   filepath.Join(runtimeDir, "events.log"),
 		graph: &Graph{
 			Root:            absRoot,
 			Files:           make(map[string]*scanner.FileInfo),
@@ -79,6 +92,12 @@ func NewDaemon(root string, verbose bool) (*Daemon, error) {
 
 // Start begins watching and returns immediately
 func (d *Daemon) Start() error {
+	// Keep project configuration in its configured .codemap directory while
+	// mutable daemon state uses the validated project runtime namespace.
+	codemapDir := d.runtimeDir
+	if err := os.MkdirAll(codemapDir, 0755); err != nil {
+		return fmt.Errorf("failed to create .codemap dir: %w", err)
+	}
 	// Ensure the config directory exists; it is watched so config edits can
 	// refresh the configured-file inventory.
 	configDir := projectpath.CodemapDir(d.root)
