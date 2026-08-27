@@ -40,7 +40,7 @@ type fileIndex struct {
 // and the graph is marked partial.
 func BuildFileGraph(ctx context.Context, root string, filters Filters) (*FileGraph, error) {
 	return buildFileGraphWithFallbackWithFilters(ctx, root, filters, func(r string) (ScanOutcome, error) {
-		return ScanForDeps(ctx, r, filters)
+		return scanForDepsPrimaryOutcome(ctx, r)
 	}, loadCargoFallbackMetadata)
 }
 
@@ -121,6 +121,22 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 			if MatchesFilters(file.Path, filepath.Ext(file.Path), filters.Only, nil) {
 				files = append(files, file)
 			}
+		}
+	}
+	if !hasCUEAnalyses(analyses) {
+		for _, file := range files {
+			if !strings.EqualFold(filepath.Ext(file.Path), ".cue") {
+				continue
+			}
+			cueOutcome, cueErr := scanCUEFilesFromFiles(ctx, absRoot, files)
+			if cueErr != nil {
+				return nil, cueErr
+			}
+			analyses = append(analyses, cueOutcome.Analyses...)
+			for _, source := range cueOutcome.Sources {
+				fg.Coverage.AddSource(source)
+			}
+			break
 		}
 	}
 	rustWorkspace, cargoOutcome, err := buildRustWorkspaceIndex(ctx, absRoot, analyses, files, loader)
@@ -429,6 +445,15 @@ func nearestCUEModule(fromFile string, modules []cueModuleInfo) (cueModuleInfo, 
 		}
 	}
 	return cueModuleInfo{}, false
+}
+
+func hasCUEAnalyses(analyses []FileAnalysis) bool {
+	for _, analysis := range analyses {
+		if analysis.Language == "cue" {
+			return true
+		}
+	}
+	return false
 }
 
 func splitCUEImport(imp string) (string, string) {

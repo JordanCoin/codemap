@@ -29,6 +29,27 @@ func TestBuildFileGraphFromAnalysesResolvesCUEPackage(t *testing.T) {
 	}
 }
 
+func TestBuildFileGraphScansCUEFromFileInventory(t *testing.T) {
+	astScanner, err := scanner.NewAstGrepScanner()
+	if err != nil || !astScanner.Available() {
+		t.Skip("ast-grep not available")
+	}
+	astScanner.Close()
+
+	root := t.TempDir()
+	writeCUE(t, root, "cue.mod/module.cue", "module: \"example.com/acme\"\n")
+	writeCUE(t, root, "main.cue", "package app\nimport \"example.com/acme/types\"\n")
+	writeCUE(t, root, "types/types.cue", "package types\n")
+
+	graph, err := scanner.BuildFileGraph(context.Background(), root, scanner.Filters{Only: []string{"cue"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := graph.Imports["main.cue"], []string{filepath.Join("types", "types.cue")}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("graph imports = %v, want %v", got, want)
+	}
+}
+
 func writeCUE(t *testing.T, root, name, content string) {
 	t.Helper()
 	path := filepath.Join(root, filepath.FromSlash(name))

@@ -68,6 +68,20 @@ func TestScanCUEFilesReturnsEmptyForNonCUERepo(t *testing.T) {
 	}
 }
 
+func TestScanCUEFilesFromFilesUsesProvidedInventory(t *testing.T) {
+	root := t.TempDir()
+	writeCueFile(t, root, "listed.cue", "package listed\n")
+	writeCueFile(t, root, "unlisted.cue", "package unlisted\n")
+
+	outcome, err := scanCUEFilesFromFiles(context.Background(), root, []FileInfo{{Path: "listed.cue"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outcome.Analyses) != 1 || outcome.Analyses[0].Path != "listed.cue" {
+		t.Fatalf("provided CUE inventory = %#v, want listed.cue only", outcome.Analyses)
+	}
+}
+
 func TestScanCUEFilesHonorsFilters(t *testing.T) {
 	root := t.TempDir()
 	writeCueFile(t, root, "keep.cue", "package keep\n")
