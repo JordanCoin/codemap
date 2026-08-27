@@ -547,7 +547,7 @@ func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFil
 			externalDeps = make(map[string][]string)
 		}
 	} else {
-		outcome, err = scanForDepsOutcomeWithHint(root, filters)
+		outcome, err = scanForDepsOutcomeWithHint(absRoot, filters)
 		if err != nil {
 			if errors.Is(err, scanner.ErrAstGrepNotFound) {
 				printAstGrepInstallHint(os.Stderr, err)

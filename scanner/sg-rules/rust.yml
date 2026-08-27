@@ -1,11 +1,29 @@
 id: rust-use-imports
 language: rust
 rule:
-  any:
-    - pattern: use $PATH;
-    - pattern: use $PATH::$$$_;
-    - pattern: pub use $PATH;
-    - pattern: pub use $PATH::$$$_;
+  all:
+    - any:
+        - pattern: use $PATH;
+        - pattern: use $PATH::$$$_;
+        - pattern: pub use $PATH;
+        - pattern: pub use $PATH::$$$_;
+    - not:
+        inside:
+          kind: mod_item
+          stopBy: end
+---
+id: rust-use-imports-nested
+language: rust
+rule:
+  all:
+    - any:
+        - pattern: use $PATH;
+        - pattern: use $PATH::$$$_;
+        - pattern: pub use $PATH;
+        - pattern: pub use $PATH::$$$_;
+    - inside:
+        kind: mod_item
+        stopBy: end
 ---
 id: rust-mod-imports
 language: rust

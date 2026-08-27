@@ -421,7 +421,7 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 			}
 		}
 
-		if m.RuleID == "rust-mod-imports" || m.RuleID == "rust-path-module-imports" || m.RuleID == "rust-path-imports" || m.RuleID == "rust-use-imports" || m.RuleID == "rust-askama-template-imports" || m.RuleID == "rust-include-imports" || m.RuleID == "rust-embedded-file-imports" || m.RuleID == "rust-cargo-rerun-imports" {
+		if m.RuleID == "rust-mod-imports" || m.RuleID == "rust-path-module-imports" || m.RuleID == "rust-path-imports" || m.RuleID == "rust-use-imports" || m.RuleID == "rust-use-imports-nested" || m.RuleID == "rust-askama-template-imports" || m.RuleID == "rust-include-imports" || m.RuleID == "rust-embedded-file-imports" || m.RuleID == "rust-cargo-rerun-imports" {
 			var path string
 			var explicitTarget string
 			kind := "rust-path"
@@ -441,11 +441,19 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 				}
 			case "rust-path-imports":
 				path = m.Text
-			case "rust-use-imports":
+			case "rust-use-imports", "rust-use-imports-nested":
 				if pathVar, ok := m.MetaVariables.Single["PATH"]; ok {
 					path = pathVar.Text
 				}
-				if len(expandRustUseReferencePaths(path)) > 0 || strings.ContainsAny(path, "{}") {
+				if m.RuleID == "rust-use-imports-nested" && rustUseIsSelfOrSuperRooted(path) {
+					// `use self::…`/`use super::…` inside an inline module
+					// (`mod tests { … }`) is relative to that module, not the
+					// file, and resolving it file-relative produced false
+					// edges. A missed edge beats a wrong one, so drop it;
+					// `use crate::…` means the same thing everywhere and
+					// still resolves below.
+					path = ""
+				} else if len(expandRustUseReferencePaths(path)) > 0 || strings.ContainsAny(path, "{}") {
 					// Unexpandable brace trees stay rust-use; raw braces must not
 					// create crate-root edges.
 					kind = "rust-use"
@@ -477,7 +485,7 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 				}
 			}
 			if path != "" {
-				if m.RuleID != "rust-path-imports" && m.RuleID != "rust-askama-template-imports" && m.RuleID != "rust-embedded-file-imports" && m.RuleID != "rust-cargo-rerun-imports" {
+				if m.RuleID != "rust-path-imports" && m.RuleID != "rust-use-imports" && m.RuleID != "rust-use-imports-nested" && m.RuleID != "rust-askama-template-imports" && m.RuleID != "rust-embedded-file-imports" && m.RuleID != "rust-cargo-rerun-imports" {
 					fileMap[relPath].Imports = append(fileMap[relPath].Imports, path)
 				}
 				fileMap[relPath].References = append(fileMap[relPath].References, ImportReference{

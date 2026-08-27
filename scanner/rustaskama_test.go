@@ -136,6 +136,37 @@ func TestRustAskamaTemplateResolvesWithinCargoPackage(t *testing.T) {
 	}
 }
 
+func TestRustAskamaTemplateResolvesWithExtensionSibling(t *testing.T) {
+	// idx.byExact also indexes files under their extension-stripped key, so
+	// "app/templates/template.html.orig" appears under the same
+	// "app/templates/template.html" key as the real target.
+	root := t.TempDir()
+	writeRustCargoFixture(t, root, map[string]string{
+		"Cargo.toml":                   "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+		"src/lib.rs":                   "pub fn app() {}\n",
+		"templates/template.html":      "real template\n",
+		"templates/template.html.orig": "backup\n",
+	})
+	metadata := cargoMetadataJSON(t, root, []map[string]any{
+		cargoPackage(root, ".", "app", "app", nil),
+	})
+	analyses := []FileAnalysis{
+		{Path: "src/lib.rs", Language: "rust", References: []ImportReference{
+			{Path: `"template.html"`, Kind: "rust-askama-template", ExplicitTarget: `"template.html"`},
+		}},
+		{Path: "templates/template.html", Language: "html"},
+		{Path: "templates/template.html.orig", Language: ""},
+	}
+	graph, err := buildFileGraphFromAnalysesWithCargoMetadata(context.Background(), root, analyses,
+		func(context.Context, string) ([]byte, error) { return metadata, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := sortedImports(graph, "src/lib.rs"), []string{"templates/template.html"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Askama imports = %#v, want %#v", got, want)
+	}
+}
+
 func TestRustAskamaTemplateRequiresAuthoritativeUnambiguousTarget(t *testing.T) {
 	idx := &fileIndex{byExact: map[string][]string{
 		filepath.FromSlash("app/templates/page.html"): {"app/templates/page.html", "app/templates/page.html"},

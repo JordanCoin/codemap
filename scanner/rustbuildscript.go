@@ -38,8 +38,18 @@ func resolveRustBuildScriptInput(fromFile, input string, idx *fileIndex, workspa
 		return ""
 	}
 	candidate := filepath.Clean(filepath.Join(pkg.root, path))
-	files := idx.byExact[candidate]
-	if len(files) != 1 || files[0] != candidate || candidate == fromFile {
+	if candidate == fromFile {
+		return ""
+	}
+	// byExact also indexes files under their extension-stripped key, so
+	// accept only when the target itself is indexed exactly once.
+	exact := 0
+	for _, file := range idx.byExact[candidate] {
+		if file == candidate {
+			exact++
+		}
+	}
+	if exact != 1 {
 		return ""
 	}
 	return candidate
