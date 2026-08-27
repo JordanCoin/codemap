@@ -124,6 +124,39 @@ func TestRustBuildScriptResolvesStaticCargoInputs(t *testing.T) {
 	}
 }
 
+func TestRustBuildScriptResolvesTargetWithExtensionSibling(t *testing.T) {
+	// idx.byExact also indexes files under their extension-stripped key, so
+	// "app/data.json.gz" appears under the same "app/data.json" key as the
+	// real target. The real directive must still resolve.
+	root := t.TempDir()
+	writeRustCargoFixture(t, root, map[string]string{
+		"Cargo.toml":   "[package]\nname = \"app\"\nversion = \"0.1.0\"\nbuild = \"build.rs\"\n",
+		"build.rs":     "fn main() {}\n",
+		"data.json":    "{}\n",
+		"data.json.gz": "not really gzip\n",
+	})
+
+	metadata := cargoMetadataJSON(t, root, []map[string]any{
+		cargoPackageWithTargets(root, ".", "app", []map[string]any{
+			cargoTargetJSON(root, "build.rs", "build-script-build", rustTargetCustomBuild),
+		}, nil),
+	})
+	graph, err := buildFileGraphFromAnalysesWithCargoMetadata(
+		context.Background(),
+		root,
+		[]FileAnalysis{{Path: "build.rs", Language: "rust", References: []ImportReference{
+			{Path: "data.json", Kind: "rust-build-input"},
+		}}},
+		func(context.Context, string) ([]byte, error) { return metadata, nil },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := graph.Imports["build.rs"], []string{"data.json"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("build script inputs = %#v, want %#v", got, want)
+	}
+}
+
 func TestRustBuildScriptInputsRequireCustomBuildTarget(t *testing.T) {
 	root := t.TempDir()
 	writeRustCargoFixture(t, root, map[string]string{

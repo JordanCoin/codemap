@@ -667,11 +667,18 @@ func resolveRustAskamaTemplate(root, fromFile, literal string, idx *fileIndex, w
 	if !pathWithin(target, templateRoot) {
 		return ""
 	}
-	files := idx.byExact[target]
-	if len(files) != 1 || files[0] != target {
+	// byExact also indexes files under their extension-stripped key, so
+	// accept only when the target itself is indexed exactly once.
+	exact := 0
+	for _, file := range idx.byExact[target] {
+		if file == target {
+			exact++
+		}
+	}
+	if exact != 1 {
 		return ""
 	}
-	return files[0]
+	return target
 }
 
 func resolveRustReferences(root string, analysis FileAnalysis, idx *fileIndex, workspace *rustWorkspaceIndex) []string {

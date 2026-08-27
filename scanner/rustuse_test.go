@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -122,6 +123,17 @@ func TestAstGrepRustUseTreeExtraction(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("whole Rust use references = %#v, want %#v", got, want)
+	}
+
+	// Rust graph edges come from References, not Imports; the raw brace text
+	// must not leak into the versioned imports array, where --diff's
+	// basename matching would treat it as noise.
+	for _, analysis := range outcome.Analyses {
+		for _, imp := range analysis.Imports {
+			if strings.ContainsAny(imp, "{}") {
+				t.Fatalf("Imports leaked raw rust-use brace text: %q in %#v", imp, analysis.Imports)
+			}
+		}
 	}
 }
 
