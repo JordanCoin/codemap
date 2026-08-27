@@ -38,6 +38,7 @@ type Project struct {
 type FileAnalysis struct {
 	Path       string            `json:"path"`
 	Language   string            `json:"language"`
+	Package    string            `json:"-"`
 	Functions  []string          `json:"functions"`
 	Imports    []string          `json:"imports"`
 	References []ImportReference `json:"-"`
@@ -60,6 +61,8 @@ type DepsProject struct {
 	Files         []FileAnalysis      `json:"files"`
 	ExternalDeps  map[string][]string `json:"external_deps"`
 	DiffRef       string              `json:"diff_ref,omitempty"`
+	// EffectiveFilters are the filters already applied by the caller.
+	EffectiveFilters *Filters `json:"-"`
 }
 
 // newDepsProject builds a DepsProject with default coverage derived from the
@@ -103,6 +106,17 @@ func newDepsProject(root string, files []FileAnalysis, externalDeps map[string][
 // NewDepsProjectWithCoverage builds a normalized DepsProject with caller-provided
 // provenance coverage, so degraded scans stay honest in the output.
 func NewDepsProjectWithCoverage(root string, files []FileAnalysis, externalDeps map[string][]string, diffRef string, coverage analysis.Coverage) DepsProject {
+	return newDepsProjectWithFilters(root, files, externalDeps, diffRef, coverage, nil)
+}
+
+// NewDepsProjectWithCoverageAndFilters preserves the caller's graph filters
+// for the text renderer without changing the JSON schema.
+func NewDepsProjectWithCoverageAndFilters(root string, files []FileAnalysis, externalDeps map[string][]string, diffRef string, coverage analysis.Coverage, filters Filters) DepsProject {
+	copy := Filters{Only: slices.Clone(filters.Only), Exclude: slices.Clone(filters.Exclude)}
+	return newDepsProjectWithFilters(root, files, externalDeps, diffRef, coverage, &copy)
+}
+
+func newDepsProjectWithFilters(root string, files []FileAnalysis, externalDeps map[string][]string, diffRef string, coverage analysis.Coverage, effectiveFilters *Filters) DepsProject {
 	files = slices.Clone(files)
 	if files == nil {
 		files = []FileAnalysis{}
@@ -143,6 +157,7 @@ func NewDepsProjectWithCoverage(root string, files []FileAnalysis, externalDeps 
 		SchemaVersion: analysis.SchemaVersion,
 		Coverage:      analysis.NormalizeCoverage(coverage),
 		Root:          root, Mode: "deps", Files: files, ExternalDeps: deps, DiffRef: diffRef,
+		EffectiveFilters: effectiveFilters,
 	}
 }
 
@@ -191,6 +206,7 @@ var extToLang = map[string]string{
 	".ex":    "elixir",
 	".exs":   "elixir",
 	".sol":   "solidity",
+	".cue":   "cue",
 }
 
 // DetectLanguage returns the language name for a file path
@@ -276,6 +292,7 @@ var resolverLanguageFamilies = map[string]string{
 	"elixir":     "elixir",
 	"solidity":   "solidity",
 	"bash":       "bash",
+	"cue":        "cue",
 }
 
 // languagesCompatible reports whether an import may resolve across the two
@@ -307,6 +324,7 @@ var LangDisplay = map[string]string{
 	"scala":      "Scala",
 	"elixir":     "Elixir",
 	"solidity":   "Solidity",
+	"cue":        "CUE",
 }
 
 // dedupe removes duplicate strings from a slice

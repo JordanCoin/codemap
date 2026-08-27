@@ -82,6 +82,7 @@ func TestDepgraphRendersExternalDepsAndSummarySection(t *testing.T) {
 		},
 		ExternalDeps: map[string][]string{
 			"go":         {"github.com/acme/module/v2", "github.com/acme/pkg", "github.com/acme/pkg"},
+			"cue":        {"cue.example/schema"},
 			"javascript": {"react", "react"},
 			"dart":       {"flutter", "riverpod"},
 		},
@@ -94,6 +95,7 @@ func TestDepgraphRendersExternalDepsAndSummarySection(t *testing.T) {
 	expectedSnippets := []string{
 		"Dependency Flow",
 		"Go: module, pkg",
+		"CUE: schema",
 		"JavaScript: react",
 		"Dart: flutter, riverpod",
 		"Src",
@@ -142,6 +144,31 @@ func TestDepgraphBuildsGraphFromAnalysesWithoutRescanning(t *testing.T) {
 	output := buf.String()
 	if !strings.Contains(output, "a ───▶ b") {
 		t.Fatalf("expected internal dep edge resolved from analyses, got:\n%s", output)
+	}
+}
+
+func TestDepgraphUsesEffectiveFiltersForCUEEdges(t *testing.T) {
+	root := t.TempDir()
+	writeDepgraphFile(t, root, ".codemap/config.json", `{"only":["go"]}`)
+	writeDepgraphFile(t, root, "cue.mod/module.cue", "module: \"timoni.sh/hilfe\"\n")
+	writeDepgraphFile(t, root, "timoni.cue", "package app\n\nimport \"timoni.sh/hilfe/templates\"\n")
+	writeDepgraphFile(t, root, "templates/admin.cue", "package templates\n")
+
+	project := scanner.DepsProject{
+		Root: root,
+		Files: []scanner.FileAnalysis{
+			{Path: "cue.mod/module.cue", Language: "cue"},
+			{Path: "timoni.cue", Language: "cue", Imports: []string{"timoni.sh/hilfe/templates"}},
+			{Path: "templates/admin.cue", Language: "cue"},
+		},
+		EffectiveFilters: &scanner.Filters{Only: []string{"cue"}},
+	}
+
+	var buf bytes.Buffer
+	Depgraph(context.Background(), &buf, project)
+	output := buf.String()
+	if !strings.Contains(output, "timoni ───▶ templates/admin") {
+		t.Fatalf("expected CUE edge with caller filters, got:\n%s", output)
 	}
 }
 

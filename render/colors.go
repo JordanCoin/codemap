@@ -61,7 +61,7 @@ func GetFileColor(ext string) string {
 		strings.ToLower(ext) == "makefile" || strings.ToLower(ext) == "dockerfile":
 		return BoldWhite
 	case ext == ".swift" || ext == ".kt" || ext == ".java" || ext == ".scala" ||
-		ext == ".groovy" || ext == ".rs" || ext == ".rlib":
+		ext == ".groovy" || ext == ".rs" || ext == ".rlib" || ext == ".cue":
 		return BoldRed
 	case ext == ".c" || ext == ".cpp" || ext == ".h" || ext == ".hpp" ||
 		ext == ".cc" || ext == ".m" || ext == ".mm" || ext == ".cs" || ext == ".fs":

@@ -370,7 +370,16 @@ func ScanForDeps(ctx context.Context, root string, filters Filters) (ScanOutcome
 	outcome, _, err := scanForGraphOutcomeWithFilters(ctx, root, filters, func(r string) (ScanOutcome, error) {
 		return scanForDepsPrimaryOutcome(ctx, r)
 	}, loadCargoFallbackMetadata, false)
-	return outcome, err
+	if err != nil {
+		return outcome, err
+	}
+	cueOutcome, err := scanCUEFiles(ctx, root, filters)
+	if err != nil {
+		return ScanOutcome{}, err
+	}
+	outcome.Analyses = append(outcome.Analyses, cueOutcome.Analyses...)
+	outcome.Sources = append(outcome.Sources, cueOutcome.Sources...)
+	return outcome, nil
 }
 
 func scanForDepsPrimaryOutcome(ctx context.Context, root string) (ScanOutcome, error) {

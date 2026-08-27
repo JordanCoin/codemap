@@ -26,10 +26,12 @@ type FileGraph struct {
 
 // fileIndex provides fast lookup of files by various import-like keys
 type fileIndex struct {
-	byExact  map[string][]string // exact path -> files
-	bySuffix map[string][]string // path suffix -> files (for nested packages)
-	byDir    map[string][]string // directory -> files in it
-	goPkgs   map[string][]string // Go package path -> files
+	byExact     map[string][]string // exact path -> files
+	bySuffix    map[string][]string // path suffix -> files (for nested packages)
+	byDir       map[string][]string // directory -> files in it
+	goPkgs      map[string][]string // Go package path -> files
+	cueModules  []cueModuleInfo
+	cuePackages map[string]string
 }
 
 // BuildFileGraph scans a project with explicit filters and builds its file
@@ -38,7 +40,7 @@ type fileIndex struct {
 // and the graph is marked partial.
 func BuildFileGraph(ctx context.Context, root string, filters Filters) (*FileGraph, error) {
 	return buildFileGraphWithFallbackWithFilters(ctx, root, filters, func(r string) (ScanOutcome, error) {
-		return ScanForDeps(ctx, r, filters)
+		return scanForDepsPrimaryOutcome(ctx, r)
 	}, loadCargoFallbackMetadata)
 }
 
@@ -121,6 +123,22 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 			}
 		}
 	}
+	if !hasCUEAnalyses(analyses) {
+		for _, file := range files {
+			if !strings.EqualFold(filepath.Ext(file.Path), ".cue") {
+				continue
+			}
+			cueOutcome, cueErr := scanCUEFilesFromFiles(ctx, absRoot, files)
+			if cueErr != nil {
+				return nil, cueErr
+			}
+			analyses = append(analyses, cueOutcome.Analyses...)
+			for _, source := range cueOutcome.Sources {
+				fg.Coverage.AddSource(source)
+			}
+			break
+		}
+	}
 	rustWorkspace, cargoOutcome, err := buildRustWorkspaceIndex(ctx, absRoot, analyses, files, loader)
 	if err != nil {
 		return nil, err
@@ -135,6 +153,23 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 	idx, err := buildFileIndexContext(ctx, files, fg.Module)
 	if err != nil {
 		return nil, err
+	}
+	idx.cueModules = detectCUEModulesWithFiles(absRoot, files)
+	idx.cuePackages = make(map[string]string)
+	for _, file := range files {
+		if DetectLanguage(file.Path) != "cue" {
+			continue
+		}
+		path := filepath.ToSlash(filepath.Clean(file.Path))
+		data, readErr := os.ReadFile(filepath.Join(absRoot, filepath.FromSlash(path)))
+		if readErr == nil {
+			idx.cuePackages[path], _ = cueHeader(data)
+		}
+	}
+	for _, analysis := range analyses {
+		if analysis.Language == "cue" && analysis.Package != "" {
+			idx.cuePackages[filepath.ToSlash(filepath.Clean(analysis.Path))] = analysis.Package
+		}
 	}
 	fg.Packages = idx.goPkgs
 	for _, file := range files {
@@ -343,6 +378,25 @@ func fuzzyResolveWithWorkspace(
 		return dartResolver.resolve(imp, fromFile, idx)
 	}
 
+	// CUE imports name packages, not individual files. Resolve only packages
+	// under a declared CUE module to avoid linking external modules by
+	// suffix coincidence.
+	if sourceLanguage == "cue" {
+		module, ok := nearestCUEModule(fromFile, idx.cueModules)
+		if !ok {
+			return nil
+		}
+		imp = strings.Trim(imp, "\"'`")
+		imp, selector := splitCUEImport(imp)
+		if imp != module.path && !strings.HasPrefix(imp, module.path+"/") {
+			return nil
+		}
+		packagePath := strings.TrimPrefix(strings.TrimPrefix(imp, module.path), "/")
+		packagePath = filepath.Join(module.root, filepath.FromSlash(packagePath))
+		files := idx.byDir[packagePath]
+		return resolveCUEPackage(files, idx.cuePackages, selector)
+	}
+
 	// Normalize the import path
 	normalized := normalizeImport(imp)
 
@@ -381,6 +435,64 @@ func fuzzyResolveWithWorkspace(
 	}
 
 	return nil
+}
+
+func nearestCUEModule(fromFile string, modules []cueModuleInfo) (cueModuleInfo, bool) {
+	fromFile = filepath.ToSlash(filepath.Clean(fromFile))
+	for _, module := range modules {
+		if module.root == "" || fromFile == module.root || strings.HasPrefix(fromFile, module.root+"/") {
+			return module, true
+		}
+	}
+	return cueModuleInfo{}, false
+}
+
+func hasCUEAnalyses(analyses []FileAnalysis) bool {
+	for _, analysis := range analyses {
+		if analysis.Language == "cue" {
+			return true
+		}
+	}
+	return false
+}
+
+func splitCUEImport(imp string) (string, string) {
+	separator := strings.LastIndex(imp, ":")
+	if separator <= strings.LastIndex(imp, "/") {
+		return imp, ""
+	}
+	return imp[:separator], imp[separator+1:]
+}
+
+func resolveCUEPackage(files []string, packages map[string]string, selector string) []string {
+	files = compatibleFiles("cue", files)
+	if len(files) == 0 {
+		return nil
+	}
+	known := make(map[string]bool)
+	for _, file := range files {
+		if pkg := packages[file]; pkg != "" {
+			known[pkg] = true
+		}
+	}
+	if selector == "" && len(known) > 1 {
+		base := filepath.Base(filepath.Dir(files[0]))
+		if known[base] {
+			selector = base
+		} else {
+			return nil
+		}
+	}
+	if selector == "" || len(known) == 0 {
+		return files
+	}
+	resolved := make([]string, 0, len(files))
+	for _, file := range files {
+		if packages[file] == selector {
+			resolved = append(resolved, file)
+		}
+	}
+	return resolved
 }
 
 func isLocalGoImport(imp, module string) bool {

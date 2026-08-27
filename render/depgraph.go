@@ -77,7 +77,11 @@ func Depgraph(ctx context.Context, w io.Writer, project scanner.DepsProject) {
 
 	// Build the graph from the analyses the caller already produced instead of
 	// re-scanning with BuildFileGraph, which would double the ast-grep work.
-	fg, err := scanner.BuildFileGraphFromAnalyses(ctx, project.Root, files, scanner.ConfiguredFilters(project.Root))
+	graphFilters := scanner.ConfiguredFilters(project.Root)
+	if project.EffectiveFilters != nil {
+		graphFilters = *project.EffectiveFilters
+	}
+	fg, err := scanner.BuildFileGraphFromAnalyses(ctx, project.Root, files, graphFilters)
 	var internalDeps map[string][]string
 	var depCounts map[string]int
 	if err == nil && fg != nil {
@@ -170,7 +174,7 @@ func Depgraph(ctx context.Context, w io.Writer, project scanner.DepsProject) {
 
 	// Format dep lines
 	var depLines []string
-	langOrder := []string{"go", "javascript", "python", "swift", "dart", "rust", "ruby", "bash", "kotlin", "csharp", "php", "lua", "scala", "elixir", "solidity"}
+	langOrder := []string{"go", "cue", "javascript", "python", "swift", "dart", "rust", "ruby", "bash", "kotlin", "csharp", "php", "lua", "scala", "elixir", "solidity"}
 
 	for _, lang := range langOrder {
 		if names, ok := extByLang[lang]; ok {
