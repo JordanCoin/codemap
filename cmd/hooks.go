@@ -1585,10 +1585,6 @@ func hookSessionStopContext(ctx context.Context, root string, out io.Writer) err
 	return ctx.Err()
 }
 
-func writeSessionHandoff(root string, state *watch.State) error {
-	return writeSessionHandoffContext(context.Background(), root, state)
-}
-
 func writeSessionHandoffContext(ctx context.Context, root string, state *watch.State) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -1691,18 +1687,10 @@ func resolveHandoffBaseRefContext(ctx context.Context, root string) string {
 	return "HEAD"
 }
 
-func gitRefExists(root, ref string) bool {
-	return gitRefExistsContext(context.Background(), root, ref)
-}
-
 func gitRefExistsContext(ctx context.Context, root, ref string) bool {
 	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", ref)
 	cmd.Dir = root
 	return cmd.Run() == nil
-}
-
-func gitSymbolicRef(root, ref string) (string, bool) {
-	return gitSymbolicRefContext(context.Background(), root, ref)
 }
 
 func gitSymbolicRefContext(ctx context.Context, root, ref string) (string, bool) {
@@ -1776,10 +1764,6 @@ func ensureSessionDaemon(root, sessionID string) {
 	if sessionID == "" || updateSessionLease(root, sessionID, true, time.Now(), manage) != nil {
 		manage(0)
 	}
-}
-
-func finishSessionDaemon(root, sessionID string) {
-	_ = finishSessionDaemonContext(context.Background(), root, sessionID)
 }
 
 func finishSessionDaemonContext(ctx context.Context, root, sessionID string) error {
@@ -1886,10 +1870,6 @@ func updateSessionLeaseContext(ctx context.Context, root, sessionID string, acti
 		action(count)
 	}
 	return nil
-}
-
-func acquireSessionLock(lockPath string) error {
-	return acquireSessionLockContext(context.Background(), lockPath)
 }
 
 func acquireSessionLockContext(ctx context.Context, lockPath string) error {
