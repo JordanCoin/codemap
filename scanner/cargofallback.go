@@ -58,6 +58,16 @@ func scanForGraphOutcome(ctx context.Context, root string, scan dependencyOutcom
 }
 
 func scanForGraphOutcomeWithFilters(ctx context.Context, root string, filters Filters, scan dependencyOutcomeScanner, loader cargoMetadataLoader, allowCargoOnly bool) (ScanOutcome, bool, error) {
+	// The Cargo fallback resolves each package's absolute manifest_path
+	// against root; a relative root (e.g. "." from the CLI) makes
+	// filepath.Rel fail and silently drops every recovered package, so
+	// absolutize here even though callers are expected to pass absRoot.
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return ScanOutcome{}, false, err
+	}
+	root = absRoot
+
 	outcome, err := scan(root)
 	degraded := false
 	if err == nil {

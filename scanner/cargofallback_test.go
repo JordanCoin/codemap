@@ -565,6 +565,65 @@ func TestCargoFallbackPropagatesCanceledDiscovery(t *testing.T) {
 	}
 }
 
+func TestScanForGraphOutcomeCargoFallbackResolvesRelativeRoot(t *testing.T) {
+	// A relative root (e.g. "." from `codemap --deps .`) must recover the
+	// same Cargo fallback edges as an absolute one: rustPackageFromCargoMetadata
+	// resolves each package's absolute manifest_path against root via
+	// projectRelativePath, which errors on filepath.Rel(".", "/abs/...").
+	root, metadata := cargoFallbackFixture(t, map[string]any{
+		"name": "core", "path": "core", "kind": nil,
+	})
+	writeRustCargoFixture(t, root, map[string]string{
+		"main.go": "package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println(\"x\") }\n",
+	})
+	t.Chdir(root)
+
+	outcome, usedFallback, err := scanForGraphOutcomeWithFilters(
+		context.Background(),
+		".",
+		Filters{},
+		func(string) (ScanOutcome, error) {
+			return ScanOutcome{}, newIncompleteScanError("ast-grep", ScanSourceUnavailable, "ast-grep unavailable", ErrAstGrepNotFound)
+		},
+		func(context.Context, string) ([]byte, error) {
+			return metadata, nil
+		},
+		true,
+	)
+	if err != nil {
+		t.Fatalf("scanForGraphOutcomeWithFilters with relative root: %v", err)
+	}
+	if !usedFallback {
+		t.Fatal("expected fallback to be used")
+	}
+
+	var cargoStatus ScanSourceStatus
+	found := false
+	for _, source := range outcome.Sources {
+		if source.Name == "cargo-metadata" {
+			cargoStatus = source.Status
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no cargo-metadata source in outcome: %#v", outcome.Sources)
+	}
+	if cargoStatus != ScanSourceFallback {
+		t.Fatalf("cargo-metadata status = %q, want %q", cargoStatus, ScanSourceFallback)
+	}
+
+	wantEdge := fileEdge{from: "app/src/lib.rs", to: "core/src/lib.rs"}
+	edgeFound := false
+	for _, edge := range outcome.precomputedEdges {
+		if edge == wantEdge {
+			edgeFound = true
+		}
+	}
+	if !edgeFound {
+		t.Fatalf("precomputed edges = %#v, want cross-crate edge %#v", outcome.precomputedEdges, wantEdge)
+	}
+}
+
 func TestCargoFallbackAcceptsDevDependencyFromLibraryTarget(t *testing.T) {
 	// #98 merged all-non-build-target dev-dependency resolution; the fallback
 	// must treat dev dependencies on source targets as proven edges.
