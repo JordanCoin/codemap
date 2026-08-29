@@ -134,6 +134,31 @@ let package = Package(
 	}
 }
 
+func TestSwiftPMParserSkipsStringsAndAcceptsLiteralStringForms(t *testing.T) {
+	parsed := parseSwiftPMManifest("Package.swift", []byte(`
+let documentation = """Package(name: "Fake", targets: ["Fake"])"""
+let package = Package(
+    name: #"Demo"#,
+    targets: [
+        .target(name: #"Core"#, sources: ["""Core.swift"""]),
+    ]
+)
+`))
+	if len(parsed.issues) != 0 {
+		t.Fatalf("issues = %#v", parsed.issues)
+	}
+	if len(parsed.targets) != 1 || parsed.targets[0].name != "Core" {
+		t.Fatalf("targets = %#v", parsed.targets)
+	}
+	if got := parsed.targets[0].memberRoots; !reflect.DeepEqual(got, []string{"Sources/Core/Core.swift"}) {
+		t.Fatalf("member roots = %#v", got)
+	}
+
+	if _, ok := swiftLiteralString(`"Core" + "Other"`); ok {
+		t.Fatal("accepted a computed string as a literal")
+	}
+}
+
 func TestSwiftPMProviderMetadata(t *testing.T) {
 	provider := swiftPMProvider{}
 	if provider.Name() != "swiftpm" || provider.Version() == "" {

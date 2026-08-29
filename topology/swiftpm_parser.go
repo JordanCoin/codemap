@@ -195,12 +195,14 @@ func parseSwiftPMDependency(text string) (swiftPMDependency, *Issue) {
 }
 
 func swiftCallBody(text, name string) (string, bool) {
-	for offset := 0; offset < len(text); {
-		index := strings.Index(text[offset:], name)
-		if index < 0 {
-			return "", false
+	for index := 0; index < len(text); index++ {
+		if end, recognized := swiftStringEnd(text, index); recognized {
+			index = end - 1
+			continue
 		}
-		index += offset
+		if text[index] != name[0] || !strings.HasPrefix(text[index:], name) {
+			continue
+		}
 		end := index + len(name)
 		if (index == 0 || !isSwiftIdentifierByte(text[index-1])) &&
 			(end == len(text) || !isSwiftIdentifierByte(text[end])) {
@@ -211,7 +213,6 @@ func swiftCallBody(text, name string) (string, bool) {
 				}
 			}
 		}
-		offset = end
 	}
 	return "", false
 }
@@ -258,22 +259,13 @@ func splitSwiftTopLevel(text string) []string {
 	var parts []string
 	start := 0
 	var parentheses, brackets, braces int
-	inString, escaped := false, false
 	for index := 0; index < len(text); index++ {
 		char := text[index]
-		if inString {
-			if escaped {
-				escaped = false
-			} else if char == '\\' {
-				escaped = true
-			} else if char == '"' {
-				inString = false
-			}
+		if end, recognized := swiftStringEnd(text, index); recognized {
+			index = end - 1
 			continue
 		}
 		switch char {
-		case '"':
-			inString = true
 		case '(':
 			parentheses++
 		case ')':
@@ -303,22 +295,13 @@ func splitSwiftTopLevel(text string) []string {
 
 func swiftTopLevelColon(text string) int {
 	var parentheses, brackets, braces int
-	inString, escaped := false, false
 	for index := 0; index < len(text); index++ {
-		char := text[index]
-		if inString {
-			if escaped {
-				escaped = false
-			} else if char == '\\' {
-				escaped = true
-			} else if char == '"' {
-				inString = false
-			}
+		if end, recognized := swiftStringEnd(text, index); recognized {
+			index = end - 1
 			continue
 		}
+		char := text[index]
 		switch char {
-		case '"':
-			inString = true
 		case '(':
 			parentheses++
 		case ')':
@@ -342,23 +325,12 @@ func swiftTopLevelColon(text string) int {
 
 func swiftBalancedBody(text string, start int, open, close byte) (string, int, bool) {
 	depth := 0
-	inString, escaped := false, false
 	for index := start; index < len(text); index++ {
+		if end, recognized := swiftStringEnd(text, index); recognized {
+			index = end - 1
+			continue
+		}
 		char := text[index]
-		if inString {
-			if escaped {
-				escaped = false
-			} else if char == '\\' {
-				escaped = true
-			} else if char == '"' {
-				inString = false
-			}
-			continue
-		}
-		if char == '"' {
-			inString = true
-			continue
-		}
 		if char == open {
 			depth++
 		} else if char == close {
@@ -373,12 +345,15 @@ func swiftBalancedBody(text string, start int, open, close byte) (string, int, b
 
 func swiftLiteralString(text string) (string, bool) {
 	text = strings.TrimSpace(text)
-	if len(text) < 2 || text[0] != '"' || text[len(text)-1] != '"' || strings.Contains(text, `\(`) {
+	valueStart, valueEnd, end, ok := swiftStringInfo(text, 0)
+	if !ok || end != len(text) || swiftHasInterpolation(text[valueStart:valueEnd]) {
 		return "", false
 	}
-	value := text[1 : len(text)-1]
-	value = strings.ReplaceAll(value, `\"`, `"`)
-	value = strings.ReplaceAll(value, `\\`, `\`)
+	value := text[valueStart:valueEnd]
+	if text[0] == '"' {
+		value = strings.ReplaceAll(value, `\"`, `"`)
+		value = strings.ReplaceAll(value, `\\`, `\`)
+	}
 	return value, true
 }
 
@@ -404,7 +379,7 @@ func swiftLiteralStringArray(text string) ([]string, bool) {
 
 func stripSwiftComments(text string) string {
 	var result strings.Builder
-	inString, escaped, lineComment, blockComment := false, false, false, false
+	lineComment, blockComment := false, false
 	for index := 0; index < len(text); index++ {
 		char := text[index]
 		next := byte(0)
@@ -429,18 +404,6 @@ func stripSwiftComments(text string) string {
 			} else {
 				result.WriteByte(' ')
 			}
-		case inString:
-			result.WriteByte(char)
-			if escaped {
-				escaped = false
-			} else if char == '\\' {
-				escaped = true
-			} else if char == '"' {
-				inString = false
-			}
-		case char == '"':
-			inString = true
-			result.WriteByte(char)
 		case char == '/' && next == '/':
 			result.WriteString("  ")
 			index++
@@ -450,10 +413,82 @@ func stripSwiftComments(text string) string {
 			index++
 			blockComment = true
 		default:
+			if end, recognized := swiftStringEnd(text, index); recognized {
+				result.WriteString(text[index:end])
+				index = end - 1
+				continue
+			}
 			result.WriteByte(char)
 		}
 	}
 	return result.String()
+}
+
+// swiftStringInfo recognizes normal, raw, and multiline Swift string literals.
+// The parser only needs their boundaries so punctuation inside a literal cannot
+// change package structure while still rejecting interpolated values below.
+func swiftStringInfo(text string, start int) (valueStart, valueEnd, end int, ok bool) {
+	quote, hashes, multiline, recognized := swiftStringStart(text, start)
+	if !recognized {
+		return 0, 0, start, false
+	}
+	valueStart = quote + 1
+	close := `"` + strings.Repeat("#", hashes)
+	if multiline {
+		valueStart = quote + 3
+		close = `"""` + strings.Repeat("#", hashes)
+	}
+	closeOffset := strings.Index(text[valueStart:], close)
+	if closeOffset < 0 {
+		return valueStart, len(text), len(text), false
+	}
+	valueEnd = valueStart + closeOffset
+	return valueStart, valueEnd, valueEnd + len(close), true
+}
+
+func swiftStringEnd(text string, start int) (int, bool) {
+	_, _, end, ok := swiftStringInfo(text, start)
+	if end == start {
+		return start, false
+	}
+	return end, ok || end == len(text)
+}
+
+func swiftStringStart(text string, start int) (quote, hashes int, multiline, ok bool) {
+	if start >= len(text) {
+		return 0, 0, false, false
+	}
+	quote = start
+	if text[start] == '#' {
+		quote = start
+		for quote < len(text) && text[quote] == '#' {
+			quote++
+		}
+		hashes = quote - start
+		if quote >= len(text) || text[quote] != '"' {
+			return 0, 0, false, false
+		}
+	} else if text[start] != '"' {
+		return 0, 0, false, false
+	}
+	multiline = quote+2 < len(text) && text[quote:quote+3] == `"""`
+	return quote, hashes, multiline, true
+}
+
+func swiftHasInterpolation(value string) bool {
+	for index := 0; index < len(value); index++ {
+		if value[index] != '\\' {
+			continue
+		}
+		index++
+		for index < len(value) && value[index] == '#' {
+			index++
+		}
+		if index < len(value) && value[index] == '(' {
+			return true
+		}
+	}
+	return false
 }
 
 func swiftPMConventionalRoot(packageRoot, call, name string) string {
