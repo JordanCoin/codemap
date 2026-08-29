@@ -911,6 +911,8 @@ func TestRunWatchModeRunDaemonAndWatchStart(t *testing.T) {
 
 	t.Run("watch start shells out to daemon entrypoint", func(t *testing.T) {
 		root := t.TempDir()
+		projectpath.ResetSetupRoot()
+		t.Cleanup(projectpath.ResetSetupRoot)
 		var gotName string
 		var gotArgs []string
 		withMainRuntimeStubs(
@@ -928,7 +930,11 @@ func TestRunWatchModeRunDaemonAndWatchStart(t *testing.T) {
 			nil,
 		)
 
-		stdout, _ := captureMainStreams(t, func() { runWatchSubcommand("start", root) })
+		var startErr error
+		stdout, stderr := captureMainStreams(t, func() { startErr = runWatchSubcommand("start", root) })
+		if startErr != nil {
+			t.Fatalf("watch start failed: %v\nstderr:\n%s", startErr, stderr)
+		}
 		if gotName != "/tmp/codemap-test" {
 			t.Fatalf("watch start executable = %q, want /tmp/codemap-test", gotName)
 		}
