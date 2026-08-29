@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"codemap/internal/projectpath"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -113,4 +114,28 @@ func TestControlEventBurstPreservesIgnoreCacheReset(t *testing.T) {
 	}
 
 	waitForWatchCondition(t, 5*time.Second, func() bool { return sawReset.Load() })
+}
+
+func TestFilterControlEventCanonicalizesAliasAndMissingLeaf(t *testing.T) {
+	if os.PathSeparator == '\\' {
+		t.Skip("symlinks may require elevated privileges")
+	}
+	d, _ := newControlEventDaemon(t)
+	alias := filepath.Join(t.TempDir(), "codemap-alias")
+	if err := os.Symlink(d.configDir, alias); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(alias, "config.json")
+	if _, control := d.filterControlEvent(configPath); !control {
+		t.Fatalf("alias config path %q was not classified as control", configPath)
+	}
+	if err := os.Remove(filepath.Join(d.configDir, "config.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, control := d.filterControlEvent(configPath); !control {
+		t.Fatalf("missing alias config path %q was not classified as control", configPath)
+	}
+	if got, want := projectpath.CanonicalPath(configPath), filepath.Join(projectpath.CanonicalPath(d.configDir), "config.json"); got != want {
+		t.Fatalf("CanonicalPath(%q) = %q, want %q", configPath, got, want)
+	}
 }

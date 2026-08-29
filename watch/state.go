@@ -23,17 +23,10 @@ var ErrDaemonOwnershipUnknown = errors.New("could not verify that watch.pid belo
 
 var ErrDaemonExitTimeout = errors.New("watch daemon did not exit before transition deadline")
 
-// canonicalRoot returns root as an absolute, symlink-resolved path; on error
-// it returns the absolute path unchanged.
+// canonicalRoot returns the same platform-normalized path identity used by
+// daemon setup and event handling.
 func canonicalRoot(root string) string {
-	abs, err := filepath.Abs(root)
-	if err != nil {
-		return root
-	}
-	if canonical, err := filepath.EvalSymlinks(abs); err == nil {
-		return canonical
-	}
-	return abs
+	return projectpath.CanonicalPath(root)
 }
 
 // ReadState reads daemon state for hooks and returns nil when it is unavailable
@@ -242,18 +235,13 @@ func daemonOwnershipForPID(root string, pid int) daemonOwnership {
 		return ownershipUnknown
 	}
 
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		absRoot = root
-	} else if canonicalRoot, canonicalErr := filepath.EvalSymlinks(absRoot); canonicalErr == nil {
-		absRoot = canonicalRoot
-	}
+	absRoot := projectpath.CanonicalPath(root)
 	const daemonMarker = " watch daemon "
 	marker := strings.LastIndex(cmdline, daemonMarker)
 	if marker >= 0 {
 		candidate := strings.Trim(strings.TrimSpace(cmdline[marker+len(daemonMarker):]), `"`)
-		candidate, canonicalErr := filepath.EvalSymlinks(candidate)
-		if canonicalErr == nil && filepath.Clean(candidate) == filepath.Clean(absRoot) {
+		candidate = projectpath.CanonicalPath(candidate)
+		if candidate == absRoot {
 			return ownershipOwned
 		}
 	}

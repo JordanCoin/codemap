@@ -486,6 +486,34 @@ func TestRuntimeRootAndCheckedRuntimeCodemapDir(t *testing.T) {
 	}
 }
 
+func TestCanonicalPathResolvesAliasesWithMissingLeaf(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks may require elevated privileges")
+	}
+	target := t.TempDir()
+	if err := os.WriteFile(filepath.Join(target, "existing.txt"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(target, alias); err != nil {
+		t.Fatal(err)
+	}
+	canonicalTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := map[string]string{
+		filepath.Join(alias, "existing.txt"):           filepath.Join(canonicalTarget, "existing.txt"),
+		filepath.Join(alias, "missing", "config.json"): filepath.Join(canonicalTarget, "missing", "config.json"),
+	}
+	for path, want := range tests {
+		if got := CanonicalPath(path); got != want {
+			t.Fatalf("CanonicalPath(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
 func TestProjectKeyScopesProjectsAndSharesRepoKey(t *testing.T) {
 	a := filepath.Join(t.TempDir(), "projA")
 	if err := os.MkdirAll(filepath.Join(a, ".git"), 0o755); err != nil {

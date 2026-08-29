@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"codemap/internal/projectpath"
 	"codemap/internal/runtimefile"
 	"codemap/limits"
 	"codemap/scanner"
@@ -228,6 +229,7 @@ func (d *Daemon) eventLoop() {
 			if !ok {
 				return
 			}
+			event.Name = projectpath.CanonicalPath(event.Name)
 			now := time.Now()
 			if resetIgnoreCache, control := d.filterControlEvent(event.Name); control {
 				// OR the flag across the burst: a coalesced refresh must still
@@ -290,8 +292,8 @@ func (d *Daemon) eventLoop() {
 }
 
 func (d *Daemon) filterControlEvent(path string) (resetIgnoreCache, control bool) {
-	clean := filepath.Clean(path)
-	if clean == filepath.Join(d.configDir, "config.json") {
+	clean := projectpath.CanonicalPath(path)
+	if clean == filepath.Join(projectpath.CanonicalPath(d.configDir), "config.json") {
 		return false, true
 	}
 	if filepath.Base(clean) == ".gitignore" {
@@ -301,7 +303,8 @@ func (d *Daemon) filterControlEvent(path string) (resetIgnoreCache, control bool
 }
 
 func (d *Daemon) handleConfiguredMembershipEvent(event fsnotify.Event) {
-	relPath, err := filepath.Rel(d.root, event.Name)
+	event.Name = projectpath.CanonicalPath(event.Name)
+	relPath, err := filepath.Rel(projectpath.CanonicalPath(d.root), event.Name)
 	if err != nil {
 		return
 	}
@@ -329,7 +332,8 @@ func (d *Daemon) handleConfiguredMembershipEvent(event fsnotify.Event) {
 }
 
 func (d *Daemon) handleTopologyControlEvent(event fsnotify.Event) bool {
-	rel, err := filepath.Rel(d.configDir, event.Name)
+	event.Name = projectpath.CanonicalPath(event.Name)
+	rel, err := filepath.Rel(projectpath.CanonicalPath(d.configDir), event.Name)
 	if err != nil || filepath.Clean(rel) != "config.json" {
 		return false
 	}
@@ -340,10 +344,11 @@ func (d *Daemon) handleTopologyControlEvent(event fsnotify.Event) bool {
 }
 
 func (d *Daemon) debounceAction(debouncer *eventDebouncer, event fsnotify.Event, now time.Time) debounceAction {
+	event.Name = projectpath.CanonicalPath(event.Name)
 	if !debouncer.shouldSkip(event, now) {
 		return debounceProcess
 	}
-	relPath, err := filepath.Rel(d.root, event.Name)
+	relPath, err := filepath.Rel(projectpath.CanonicalPath(d.root), event.Name)
 	if err != nil {
 		return debounceProcess
 	}
@@ -393,15 +398,16 @@ func isTransientFile(path string) bool {
 
 // handleEvent processes a single file event
 func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
-	absPath, absErr := filepath.Abs(fsEvent.Name)
-	if absErr == nil && d.gitCache != nil {
+	fsEvent.Name = projectpath.CanonicalPath(fsEvent.Name)
+	absPath := fsEvent.Name
+	if d.gitCache != nil {
 		// Ignore gitignored paths entirely so watcher churn cannot come from excluded trees.
 		if d.gitCache.ShouldIgnore(absPath) {
 			return
 		}
 	}
 
-	relPath, err := filepath.Rel(d.root, fsEvent.Name)
+	relPath, err := filepath.Rel(projectpath.CanonicalPath(d.root), fsEvent.Name)
 	if err != nil {
 		relPath = fsEvent.Name
 	}
@@ -451,10 +457,7 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 		if info.IsDir() {
 			name := filepath.Base(fsEvent.Name)
 			if d.gitCache != nil {
-				dirPath := fsEvent.Name
-				if absErr == nil {
-					dirPath = absPath
-				}
+				dirPath := absPath
 				d.gitCache.EnsureDir(dirPath)
 				if d.gitCache.ShouldIgnore(dirPath) {
 					d.graph.mu.Unlock()

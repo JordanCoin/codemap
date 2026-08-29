@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"codemap/internal/projectpath"
 )
 
 func TestIgnoredDirs(t *testing.T) {
@@ -739,11 +741,12 @@ func TestGitIgnoreCacheEnsureDir(t *testing.T) {
 				}
 				cache := NewGitIgnoreCache(root)
 				cache.EnsureDir(sub)
-				if _, ok := cache.cache[sub]; !ok {
-					t.Fatalf("expected gitignore cache for %q", sub)
+				canonicalSub := projectpath.CanonicalPath(sub)
+				if _, ok := cache.cache[canonicalSub]; !ok {
+					t.Fatalf("expected gitignore cache for %q", canonicalSub)
 				}
-				if _, ok := cache.patterns[sub]; !ok {
-					t.Fatalf("expected gitignore patterns for %q", sub)
+				if _, ok := cache.patterns[canonicalSub]; !ok {
+					t.Fatalf("expected gitignore patterns for %q", canonicalSub)
 				}
 				if !cache.ShouldIgnore(filepath.Join(sub, "file.tmp")) {
 					t.Fatal("expected nested .gitignore pattern to apply")
