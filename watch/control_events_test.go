@@ -10,9 +10,9 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-// startControlEventDaemon boots a daemon over a minimal Go project and returns
-// it with the path to its config file.
-func startControlEventDaemon(t *testing.T) (*Daemon, string) {
+// newControlEventDaemon creates a daemon over a minimal Go project without
+// starting its event loop.
+func newControlEventDaemon(t *testing.T) (*Daemon, string) {
 	t.Helper()
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
@@ -29,10 +29,18 @@ func startControlEventDaemon(t *testing.T) (*Daemon, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { d.Stop() })
+	return d, configPath
+}
+
+// startControlEventDaemon boots a daemon over a minimal Go project and returns
+// it with the path to its config file.
+func startControlEventDaemon(t *testing.T) (*Daemon, string) {
+	t.Helper()
+	d, configPath := newControlEventDaemon(t)
 	if err := d.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { d.Stop() })
 	return d, configPath
 }
 
@@ -50,18 +58,14 @@ func TestControlEventBurstTriggersOneRefresh(t *testing.T) {
 		return original(d, resetIgnoreCache)
 	}
 
-	d, configPath := startControlEventDaemon(t)
-	close(d.done)
-	_ = d.watcher.Close()
-	d.eventLoopWG.Wait()
+	d, _ := newControlEventDaemon(t)
 	d.watcher.Events = make(chan fsnotify.Event, 5)
 	d.watcher.Errors = make(chan error)
-	d.done = make(chan struct{})
-	d.eventLoopWG.Add(1)
-	go func() {
-		defer d.eventLoopWG.Done()
-		d.eventLoop()
-	}()
+	if err := d.Start(); err != nil {
+		t.Fatal(err)
+	}
+
+	configPath := filepath.Join(d.configDir, "config.json")
 
 	if err := os.WriteFile(configPath, []byte(`{"only":["go","md"]}`), 0o644); err != nil {
 		t.Fatal(err)
