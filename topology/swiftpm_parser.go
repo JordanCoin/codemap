@@ -331,9 +331,10 @@ func swiftBalancedBody(text string, start int, open, close byte) (string, int, b
 			continue
 		}
 		char := text[index]
-		if char == open {
+		switch char {
+		case open:
 			depth++
-		} else if char == close {
+		case close:
 			depth--
 			if depth == 0 {
 				return text[start+1 : index], index + 1, true
@@ -438,12 +439,19 @@ func swiftStringInfo(text string, start int) (valueStart, valueEnd, end int, ok 
 		valueStart = quote + 3
 		close = `"""` + strings.Repeat("#", hashes)
 	}
-	closeOffset := strings.Index(text[valueStart:], close)
-	if closeOffset < 0 {
-		return valueStart, len(text), len(text), false
+	for index := valueStart; index < len(text); index++ {
+		if text[index] == '\\' {
+			index++
+			for index < len(text) && text[index] == '#' {
+				index++
+			}
+			continue
+		}
+		if strings.HasPrefix(text[index:], close) {
+			return valueStart, index, index + len(close), true
+		}
 	}
-	valueEnd = valueStart + closeOffset
-	return valueStart, valueEnd, valueEnd + len(close), true
+	return valueStart, len(text), len(text), false
 }
 
 func swiftStringEnd(text string, start int) (int, bool) {
@@ -493,9 +501,10 @@ func swiftHasInterpolation(value string) bool {
 
 func swiftPMConventionalRoot(packageRoot, call, name string) string {
 	base := "Sources"
-	if call == "testTarget" {
+	switch call {
+	case "testTarget":
 		base = "Tests"
-	} else if call == "plugin" {
+	case "plugin":
 		base = "Plugins"
 	}
 	return filepath.Clean(filepath.Join(packageRoot, base, name))

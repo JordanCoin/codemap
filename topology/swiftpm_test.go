@@ -157,6 +157,9 @@ let package = Package(
 	if _, ok := swiftLiteralString(`"Core" + "Other"`); ok {
 		t.Fatal("accepted a computed string as a literal")
 	}
+	if got, ok := swiftLiteralString(`"a\"b"`); !ok || got != `a"b` {
+		t.Fatalf("escaped literal = %q, %v", got, ok)
+	}
 }
 
 func TestSwiftPMProviderMetadata(t *testing.T) {
