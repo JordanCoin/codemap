@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"codemap/scanner"
+	"codemap/topology"
 )
 
 // Event represents a file change event with timestamp and structural context
@@ -18,10 +19,12 @@ type Event struct {
 	SizeDelta int64     `json:"size_delta,omitempty"`
 	Dirty     bool      `json:"dirty,omitempty"` // uncommitted changes
 	// Structural context from deps
-	Importers  int      `json:"importers,omitempty"`   // how many files import this
-	Imports    int      `json:"imports,omitempty"`     // how many files this imports
-	IsHub      bool     `json:"is_hub,omitempty"`      // importers >= 3
-	RelatedHot []string `json:"related_hot,omitempty"` // connected files also edited recently
+	Importers        int           `json:"importers,omitempty"`   // how many files import this
+	Imports          int           `json:"imports,omitempty"`     // how many files this imports
+	IsHub            bool          `json:"is_hub,omitempty"`      // importers >= 3
+	RelatedHot       []string      `json:"related_hot,omitempty"` // connected files also edited recently
+	ModuleIDs        []topology.ID `json:"module_ids,omitempty"`
+	ModuleDependents int           `json:"module_dependents,omitempty"`
 }
 
 // FileState tracks lightweight per-file state for delta calculations
@@ -39,18 +42,20 @@ type DepContext struct {
 
 // Graph holds the live code graph state
 type Graph struct {
-	mu              sync.RWMutex
-	Root            string
-	Files           map[string]*scanner.FileInfo // path -> file info
-	ConfiguredFiles map[string]struct{}          // paths included by the active project filters
-	FileGraph       *scanner.FileGraph           // internal file-to-file dependencies
-	DepCtx          map[string]*DepContext       // path -> dependency context (precomputed)
-	State           map[string]*FileState        // path -> line/size cache for deltas
-	Events          []Event
-	WorkingSet      *WorkingSet // session working set
-	LastScan        time.Time
-	IsGitRepo       bool
-	HasDeps         bool // whether deps were successfully computed
+	mu               sync.RWMutex
+	Root             string
+	Files            map[string]*scanner.FileInfo // path -> file info
+	ConfiguredFiles  map[string]struct{}          // paths included by the active project filters
+	FileGraph        *scanner.FileGraph           // internal file-to-file dependencies
+	Topology         *topology.Graph              // independent project/module topology
+	TopologyIdentity topology.CacheIdentity       // cache identity for the current topology
+	DepCtx           map[string]*DepContext       // path -> dependency context (precomputed)
+	State            map[string]*FileState        // path -> line/size cache for deltas
+	Events           []Event
+	WorkingSet       *WorkingSet // session working set
+	LastScan         time.Time
+	IsGitRepo        bool
+	HasDeps          bool // whether deps were successfully computed
 }
 
 // State represents the daemon state that hooks can read

@@ -14,13 +14,20 @@ import (
 	"codemap/internal/projectpath"
 	"codemap/limits"
 	"codemap/scanner"
+	"codemap/topology"
 
 	"github.com/fsnotify/fsnotify"
+)
+
+var (
+	buildTopologyGraph = topology.BuildGraph
+	writeTopologyCache = topology.WriteCacheAt
 )
 
 // Daemon is the watch daemon that keeps the graph updated
 type Daemon struct {
 	root       string
+	configDir  string
 	runtimeDir string
 	graph      *Graph
 	watcher    *fsnotify.Watcher
@@ -49,10 +56,11 @@ func NewDaemon(root string, verbose bool) (*Daemon, error) {
 	if canonical, err := filepath.EvalSymlinks(absRoot); err == nil {
 		absRoot = canonical
 	}
-	runtimeDir, err := projectpath.CheckedRuntimeCodemapDir(absRoot)
+	selection, err := projectpath.SelectRuntime(absRoot)
 	if err != nil {
 		return nil, fmt.Errorf("resolve runtime state: %w", err)
 	}
+	runtimeDir := filepath.Join(selection.RuntimeDir, "projects", projectpath.ProjectKey(selection.ProjectRoot))
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -61,7 +69,6 @@ func NewDaemon(root string, verbose bool) (*Daemon, error) {
 
 	gitCache := scanner.NewGitIgnoreCache(absRoot)
 
-	// Check if git repo (fast, one-time)
 	isGitRepo := false
 	if _, err := os.Stat(filepath.Join(absRoot, ".git")); err == nil {
 		isGitRepo = true
@@ -69,6 +76,7 @@ func NewDaemon(root string, verbose bool) (*Daemon, error) {
 
 	d := &Daemon{
 		root:       absRoot,
+		configDir:  selection.PolicyDir,
 		runtimeDir: runtimeDir,
 		watcher:    watcher,
 		gitCache:   gitCache,
@@ -100,7 +108,7 @@ func (d *Daemon) Start() error {
 	}
 	// Ensure the config directory exists; it is watched so config edits can
 	// refresh the configured-file inventory.
-	configDir := projectpath.CodemapDir(d.root)
+	configDir := d.configDir
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return fmt.Errorf("failed to create .codemap dir: %w", err)
 	}
@@ -110,14 +118,10 @@ func (d *Daemon) Start() error {
 		return fmt.Errorf("initial scan failed: %w", err)
 	}
 
-	// Compute dependency graph (best effort). Skip on very large repos to avoid
-	// expensive startup memory/CPU spikes in background hook flows.
+	// Compute dependency and topology graphs (best effort). Skip on very large
+	// repos to avoid expensive startup memory/CPU spikes in background hook flows.
 	fileCount := d.ConfiguredFileCount()
-	if shouldComputeDependencyGraph(fileCount) {
-		d.computeDeps()
-	} else if d.verbose {
-		fmt.Printf("[watch] Skipping dependency graph for large repo (%d files)\n", fileCount)
-	}
+	d.computeInitialGraphs(fileCount)
 
 	// Add directories to watcher
 	if err := d.addWatchDirs(); err != nil {
@@ -138,6 +142,52 @@ func (d *Daemon) Start() error {
 	}()
 
 	return nil
+}
+
+func (d *Daemon) computeInitialGraphs(fileCount int) {
+	if fileCount > limits.LargeRepoFileCount {
+		if d.verbose {
+			fmt.Printf("[watch] Skipping dependency and topology graphs for large repo (%d files)\n", fileCount)
+		}
+		return
+	}
+	d.computeDeps()
+	d.computeTopology()
+}
+
+func (d *Daemon) computeTopology() {
+	start := time.Now()
+	graph, identity, err := buildTopologyGraph(context.Background(), d.root)
+	if err != nil {
+		if d.verbose {
+			fmt.Printf("[watch] Topology unavailable: %v\n", err)
+		}
+		return
+	}
+
+	d.graph.mu.Lock()
+	d.graph.Topology = graph
+	d.graph.TopologyIdentity = identity
+	d.graph.mu.Unlock()
+
+	if !topology.IsCacheable(graph) {
+		return
+	}
+	envelope := topology.CacheEnvelope{
+		Schema:      topology.CacheSchemaVersion,
+		GeneratedAt: time.Now().UTC(),
+		Identity:    identity,
+		Graph:       graph,
+	}
+	if err := writeTopologyCache(d.runtimeDir, envelope); err != nil {
+		if d.verbose {
+			fmt.Printf("[watch] Topology cache unavailable: %v\n", err)
+		}
+		return
+	}
+	if d.verbose {
+		fmt.Printf("[watch] Topology: %d modules in %v\n", len(graph.Nodes), time.Since(start))
+	}
 }
 
 // Stop gracefully shuts down the daemon
@@ -270,6 +320,7 @@ func (d *Daemon) refreshConfiguredFiles(resetIgnoreCache bool) error {
 	if shouldComputeDependencyGraph(len(configured)) {
 		d.computeDeps()
 	}
+	d.computeTopology()
 	return nil
 }
 

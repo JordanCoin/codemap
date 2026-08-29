@@ -140,17 +140,18 @@ type blastRadiusRendered struct {
 }
 
 type blastRadiusBundle struct {
-	Root                         string                 `json:"root"`
-	Ref                          string                 `json:"ref"`
-	Summary                      blastRadiusSummary     `json:"summary"`
-	Diff                         blastRadiusDiff        `json:"diff"`
-	Deps                         blastRadiusDeps        `json:"deps"`
-	Importers                    []blastRadiusImporters `json:"importers"`
-	Limits                       blastRadiusLimits      `json:"limits"`
-	ImpactedOutsideDiff          []blastRadiusRelation  `json:"impacted_outside_diff"`
-	DependencyContextOutsideDiff []blastRadiusRelation  `json:"dependency_context_outside_diff"`
-	Snippets                     []blastRadiusSnippet   `json:"snippets"`
-	Rendered                     blastRadiusRendered    `json:"rendered"`
+	Root                         string                    `json:"root"`
+	Ref                          string                    `json:"ref"`
+	Summary                      blastRadiusSummary        `json:"summary"`
+	Diff                         blastRadiusDiff           `json:"diff"`
+	Deps                         blastRadiusDeps           `json:"deps"`
+	Importers                    []blastRadiusImporters    `json:"importers"`
+	Limits                       blastRadiusLimits         `json:"limits"`
+	ImpactedOutsideDiff          []blastRadiusRelation     `json:"impacted_outside_diff"`
+	DependencyContextOutsideDiff []blastRadiusRelation     `json:"dependency_context_outside_diff"`
+	AffectedModules              []blastRadiusModuleImpact `json:"affected_modules,omitempty"`
+	Snippets                     []blastRadiusSnippet      `json:"snippets"`
+	Rendered                     blastRadiusRendered       `json:"rendered"`
 }
 
 type blastChangedMeta struct {
@@ -537,6 +538,7 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 	}
 
 	summary := buildBlastRadiusSummary(diffCapped.Files, diffTotal, impacted, rawImpacted, ctxRelations, rawContext, allReports)
+	affectedModules := collectTopologyImpacts(absRoot, changedFiles)
 
 	bundle := blastRadiusBundle{
 		Root:    absRoot,
@@ -568,6 +570,7 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 		Limits:                       limits,
 		ImpactedOutsideDiff:          impacted,
 		DependencyContextOutsideDiff: ctxRelations,
+		AffectedModules:              affectedModules,
 		Snippets:                     snippets,
 	}
 	bundle.Rendered = buildBlastRadiusRendered(diffCapped, depsCapped, shownReports, diffTotal, limits)
@@ -1057,18 +1060,18 @@ func renderBlastRadiusMarkdown(bundle blastRadiusBundle) string {
 
 	var summary strings.Builder
 	summary.WriteString("# Codemap Blast Radius\n\n")
-	summary.WriteString(fmt.Sprintf("- Root: `%s`\n", bundle.Root))
-	summary.WriteString(fmt.Sprintf("- Base ref: `%s`\n\n", bundle.Ref))
+	_, _ = fmt.Fprintf(&summary, "- Root: `%s`\n", bundle.Root)
+	_, _ = fmt.Fprintf(&summary, "- Base ref: `%s`\n\n", bundle.Ref)
 	summary.WriteString("## Summary\n\n")
-	summary.WriteString(fmt.Sprintf("- Changed files: %d shown of %d\n", bundle.Summary.ChangedFiles, bundle.Summary.ChangedFilesTotal))
-	summary.WriteString(fmt.Sprintf("- Changed files with direct dependents: %d\n", bundle.Summary.FilesWithDependents))
-	summary.WriteString(fmt.Sprintf("- Affected files outside diff: %d shown of %d\n", bundle.Summary.ImpactedOutsideDiffShown, bundle.Summary.ImpactedOutsideDiffTotal))
-	summary.WriteString(fmt.Sprintf("- Dependency context outside diff: %d shown of %d\n", bundle.Summary.DependencyContextOutsideDiffShown, bundle.Summary.DependencyContextOutsideDiffTotal))
+	_, _ = fmt.Fprintf(&summary, "- Changed files: %d shown of %d\n", bundle.Summary.ChangedFiles, bundle.Summary.ChangedFilesTotal)
+	_, _ = fmt.Fprintf(&summary, "- Changed files with direct dependents: %d\n", bundle.Summary.FilesWithDependents)
+	_, _ = fmt.Fprintf(&summary, "- Affected files outside diff: %d shown of %d\n", bundle.Summary.ImpactedOutsideDiffShown, bundle.Summary.ImpactedOutsideDiffTotal)
+	_, _ = fmt.Fprintf(&summary, "- Dependency context outside diff: %d shown of %d\n", bundle.Summary.DependencyContextOutsideDiffShown, bundle.Summary.DependencyContextOutsideDiffTotal)
 	if bundle.Summary.HighestBlastRadius != nil {
-		summary.WriteString(fmt.Sprintf("- Highest blast radius: `%s` (%d direct dependents)\n", bundle.Summary.HighestBlastRadius.File, bundle.Summary.HighestBlastRadius.ImporterCount))
+		_, _ = fmt.Fprintf(&summary, "- Highest blast radius: `%s` (%d direct dependents)\n", bundle.Summary.HighestBlastRadius.File, bundle.Summary.HighestBlastRadius.ImporterCount)
 	}
-	summary.WriteString(fmt.Sprintf("- Output budgets: total %d chars, diff %d, deps %d, importers %d\n", bundle.Limits.MaxTotalChars, bundle.Limits.MaxDiffChars, bundle.Limits.MaxDepsChars, bundle.Limits.MaxImportersChars))
-	summary.WriteString(fmt.Sprintf("- Snippet limits: %d total, %d per changed file, %d chars max\n\n", bundle.Limits.MaxSnippets, bundle.Limits.MaxSnippetsPerChanged, bundle.Limits.MaxSnippetChars))
+	_, _ = fmt.Fprintf(&summary, "- Output budgets: total %d chars, diff %d, deps %d, importers %d\n", bundle.Limits.MaxTotalChars, bundle.Limits.MaxDiffChars, bundle.Limits.MaxDepsChars, bundle.Limits.MaxImportersChars)
+	_, _ = fmt.Fprintf(&summary, "- Snippet limits: %d total, %d per changed file, %d chars max\n\n", bundle.Limits.MaxSnippets, bundle.Limits.MaxSnippetsPerChanged, bundle.Limits.MaxSnippetChars)
 	if !builder.Append(summary.String(), "summary") {
 		return builder.String()
 	}
@@ -1091,6 +1094,25 @@ func renderBlastRadiusMarkdown(bundle blastRadiusBundle) string {
 		}
 		section.WriteString("\n")
 		if !builder.Append(section.String(), "affected outside diff") {
+			return builder.String()
+		}
+	}
+
+	if len(bundle.AffectedModules) > 0 {
+		var section strings.Builder
+		section.WriteString("## Affected Modules\n\n")
+		for _, item := range bundle.AffectedModules {
+			_, _ = fmt.Fprintf(&section, "- `%s` (`%s`): %s", item.Name, item.ID, item.Relation)
+			if item.Via != "" {
+				_, _ = fmt.Fprintf(&section, " via `%s`", item.Via)
+			}
+			if item.Dependents > 0 {
+				_, _ = fmt.Fprintf(&section, " [%d dependent modules]", item.Dependents)
+			}
+			section.WriteString("\n")
+		}
+		section.WriteString("\n")
+		if !builder.Append(section.String(), "affected modules") {
 			return builder.String()
 		}
 	}
@@ -1186,6 +1208,22 @@ func renderBlastRadiusText(bundle blastRadiusBundle) string {
 		}
 		section.WriteString("\n")
 		if !builder.Append(section.String(), "affected outside diff") {
+			return builder.String()
+		}
+	}
+
+	if len(bundle.AffectedModules) > 0 {
+		var section strings.Builder
+		section.WriteString("[affected_modules]\n")
+		for _, item := range bundle.AffectedModules {
+			_, _ = fmt.Fprintf(&section, "%s (%s): %s", item.Name, item.ID, item.Relation)
+			if item.Via != "" {
+				_, _ = fmt.Fprintf(&section, " <= %s", item.Via)
+			}
+			section.WriteString("\n")
+		}
+		section.WriteString("\n")
+		if !builder.Append(section.String(), "affected modules") {
 			return builder.String()
 		}
 	}

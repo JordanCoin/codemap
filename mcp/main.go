@@ -64,6 +64,32 @@ const (
 	IntegrationCodexPlugin = "codex-plugin"
 )
 
+type statusTool struct {
+	name        string
+	description string
+}
+
+var statusTools = []statusTool{
+	{"list_projects", "Discover projects in a directory"},
+	{"get_structure", "Project tree view"},
+	{"get_dependencies", "Import/function analysis"},
+	{"get_diff", "Changed files vs branch"},
+	{"find_file", "Search by filename"},
+	{"get_importers", "Find what imports a file"},
+	{"status", "Verify MCP connection"},
+	{"start_watch", "Start watching a project"},
+	{"stop_watch", "Stop watching a project"},
+	{"get_activity", "See recent coding activity"},
+	{"get_hubs", "Find files with wide dependency impact"},
+	{"get_file_context", "Show imports and importers for one file"},
+	{"get_handoff", "Build/read cross-agent handoff summary"},
+	{"get_working_set", "Show files active in the current session"},
+	{"list_skills", "List available Codemap skills"},
+	{"get_skill", "Read one Codemap skill"},
+	{"get_topology", "Show project and module dependency topology"},
+	{"get_module_context", "Show context for one module or owning file"},
+}
+
 type RuntimeOptions struct {
 	ConfiguredVersion string
 	Integration       string
@@ -267,6 +293,18 @@ func NewServer(options RuntimeOptions) *mcp.Server {
 		Name:        "get_file_context",
 		Description: "Get complete dependency context for a specific file: what it imports, what imports it, whether it's a hub, and all connected files. Use this before editing a file to understand its role in the codebase.",
 	}, handleGetFileContext)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:         "get_topology",
+		Description:  "Get project/module topology from build manifests, including module dependencies, dependents, hubs, membership, evidence, and coverage. Existing file dependency tools remain file-only.",
+		OutputSchema: topologyOutputSchema[TopologyOutput](),
+	}, handleGetTopology)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:         "get_module_context",
+		Description:  "Get dependency context for one exact module ID, unique module name, or repository-relative file owner. Ambiguous names and ownership return candidate IDs without guessing.",
+		OutputSchema: topologyOutputSchema[ModuleContextOutput](),
+	}, handleGetModuleContext)
 
 	// Tool: get_handoff - Build/read cross-agent handoff artifact
 	mcp.AddTool(server, &mcp.Tool{
@@ -607,6 +645,11 @@ func handleStatus(ctx context.Context, req *mcp.CallToolRequest, input EmptyInpu
 		watchStatus = fmt.Sprintf("%d active: %s", activeWatchers, strings.Join(watchedPaths, ", "))
 	}
 
+	var inventory strings.Builder
+	for _, tool := range statusTools {
+		fmt.Fprintf(&inventory, "  %-18s - %s\n", tool.name, tool.description)
+	}
+
 	return textResult(fmt.Sprintf(`codemap MCP server v%s
 Status: connected
 Local filesystem access: enabled
@@ -614,7 +657,8 @@ Working directory: %s
 Home directory: %s
 Active watchers: %s
 
-Tools: run tools/list for the full tool inventory.`, buildinfo.Current(), cwd, home, watchStatus)), nil, nil
+	Available tools:
+%s`, buildinfo.Current(), cwd, home, watchStatus, strings.TrimSuffix(inventory.String(), "\n"))), nil, nil
 }
 
 func statusHandler(guidance string) func(context.Context, *mcp.CallToolRequest, EmptyInput) (*mcp.CallToolResult, any, error) {
