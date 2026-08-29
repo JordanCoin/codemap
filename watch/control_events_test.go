@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 // startControlEventDaemon boots a daemon over a minimal Go project and returns
@@ -48,13 +50,26 @@ func TestControlEventBurstTriggersOneRefresh(t *testing.T) {
 		return original(d, resetIgnoreCache)
 	}
 
-	_, configPath := startControlEventDaemon(t)
+	d, configPath := startControlEventDaemon(t)
+	close(d.done)
+	_ = d.watcher.Close()
+	d.eventLoopWG.Wait()
+	d.watcher.Events = make(chan fsnotify.Event, 5)
+	d.watcher.Errors = make(chan error)
+	d.done = make(chan struct{})
+	d.eventLoopWG.Add(1)
+	go func() {
+		defer d.eventLoopWG.Done()
+		d.eventLoop()
+	}()
 
-	// A tight burst, well inside the coalescing window.
+	if err := os.WriteFile(configPath, []byte(`{"only":["go","md"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Inject a tight burst so CI scheduling cannot stretch filesystem delivery
+	// beyond the coalescing window.
 	for i := 0; i < 5; i++ {
-		if err := os.WriteFile(configPath, []byte(`{"only":["go","md"]}`), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		d.watcher.Events <- fsnotify.Event{Name: configPath, Op: fsnotify.Write}
 	}
 
 	waitForWatchCondition(t, 5*time.Second, func() bool { return refreshes.Load() >= 1 })
