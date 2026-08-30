@@ -758,6 +758,40 @@ func TestExplicitRootImportersReportUsesCanonicalRelativePath(t *testing.T) {
 	}
 }
 
+func TestExplicitRootImportersReportCanonicalizesSymlinkedRoot(t *testing.T) {
+	if !scanner.NewAstGrepAnalyzer().Available() {
+		t.Skip("ast-grep not available")
+	}
+
+	repo := makeMainGitRepo(t, "main")
+	aliasParent := t.TempDir()
+	alias := filepath.Join(aliasParent, "repo")
+	if err := os.Symlink(repo, alias); err != nil {
+		t.Fatal(err)
+	}
+	canonicalRepo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := runRootOptionsBinary(
+		t.TempDir(),
+		"--json",
+		"--importers", filepath.Join(repo, "main.go"),
+		alias,
+	)
+	if err != nil {
+		t.Fatalf("codemap failed: %v\n%s", err, out)
+	}
+
+	var report scanner.ImportersReport
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("decode importers report: %v\n%s", err, out)
+	}
+	if report.Root != canonicalRepo || report.File != "main.go" {
+		t.Fatalf("report = root %q, file %q; want root %q and main.go", report.Root, report.File, canonicalRepo)
+	}
+}
+
 func TestRunDepsModeJSONAndMainDispatchesDepsAndImporters(t *testing.T) {
 	if !scanner.NewAstGrepAnalyzer().Available() {
 		t.Skip("ast-grep not available")

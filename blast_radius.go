@@ -1412,7 +1412,13 @@ func renderCoverage(w io.Writer, status string, notes []string) {
 }
 
 func buildImportersReportFromGraph(root, file string, fg *scanner.FileGraph) scanner.ImportersReport {
+	if canonical, err := filepath.EvalSymlinks(root); err == nil {
+		root = canonical
+	}
 	if filepath.IsAbs(file) {
+		if canonical, err := filepath.EvalSymlinks(file); err == nil {
+			file = canonical
+		}
 		if rel, err := filepath.Rel(root, file); err == nil {
 			file = rel
 		}
