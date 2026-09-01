@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -747,6 +749,85 @@ func TestHookSessionStopSummaryBranches(t *testing.T) {
 			t.Fatalf("expected modified file list, got:\n%s", out)
 		}
 	})
+}
+
+func TestHookSessionStopContextReturnsWithoutPostDeadlineOutput(t *testing.T) {
+	root := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var out bytes.Buffer
+	if err := hookSessionStopContext(ctx, root, &out); err == nil {
+		t.Fatal("hookSessionStopContext succeeded after cancellation")
+	}
+	before := out.String()
+	time.Sleep(20 * time.Millisecond)
+	if got := out.String(); got != before {
+		t.Fatalf("output changed after return: before %q after %q", before, got)
+	}
+}
+
+func TestFinishSessionDaemonContextPropagatesStopFailure(t *testing.T) {
+	root := t.TempDir()
+	withHookRuntimeStubs(t,
+		func() (string, error) { return "codemap", nil },
+		func(string, ...string) *exec.Cmd { return exec.Command(filepath.Join(root, "missing-codemap")) },
+		func(string) bool { return true },
+		nil,
+	)
+	if err := finishSessionDaemonContext(context.Background(), root, "session-a"); err == nil {
+		t.Fatal("finishSessionDaemonContext discarded stop failure")
+	}
+}
+
+func TestHookSessionStopContextPropagatesHandoffFailure(t *testing.T) {
+	root := makeRepoOnBranch(t, "feature/handoff-failure")
+	writeStateOnly(t, root, watch.State{UpdatedAt: time.Now(), RecentEvents: []watch.Event{{Time: time.Now(), Op: "WRITE", Path: "main.go"}}})
+	if err := os.MkdirAll(handoff.LatestPath(root), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := hookSessionStopContext(context.Background(), root, io.Discard); err == nil {
+		t.Fatal("hookSessionStopContext discarded handoff failure")
+	}
+}
+
+type cancelOnWrite struct {
+	cancel context.CancelFunc
+	match  string
+}
+
+func (w cancelOnWrite) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), w.match) {
+		w.cancel()
+	}
+	return len(p), nil
+}
+
+func TestHookSessionStopContextChecksDeadlineAfterHandoff(t *testing.T) {
+	root := makeRepoOnBranch(t, "feature/handoff-deadline")
+	writeStateOnly(t, root, watch.State{UpdatedAt: time.Now(), RecentEvents: []watch.Event{{Time: time.Now(), Op: "WRITE", Path: "main.go"}}})
+	ctx, cancel := context.WithCancel(context.Background())
+	err := hookSessionStopContext(ctx, root, cancelOnWrite{cancel: cancel, match: "Saved handoff"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("hookSessionStopContext error = %v, want context.Canceled", err)
+	}
+}
+
+func TestHookSessionIDFromStdinContextBoundsOpenPipe(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	defer writer.Close()
+	original := os.Stdin
+	os.Stdin = reader
+	defer func() { os.Stdin = original }()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	_, err = hookSessionIDFromStdinContext(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want deadline exceeded", err)
+	}
 }
 
 func TestDaemonCommandHelpersAndMultiRepoShellout(t *testing.T) {

@@ -159,6 +159,27 @@ func RunHookWithTimeout(hookName, root string, timeout time.Duration) error {
 		return RunHook(hookName, root)
 	}
 
+	if hookName == "session-stop" {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		resolvedRoot, _, err := ResolveNearestGitRoot(root)
+		if err != nil {
+			return err
+		}
+		root, err = ValidateProjectPath(resolvedRoot)
+		if err != nil {
+			return err
+		}
+		out := io.Writer(os.Stdout)
+		if os.Getenv("CODEX") == "1" {
+			out = io.Discard
+		}
+		err = hookSessionStopContext(ctx, root, out)
+		if errors.Is(err, context.DeadlineExceeded) {
+			return &HookTimeoutError{Hook: hookName, Timeout: timeout}
+		}
+		return err
+	}
 	return runWithTimeout(hookName, timeout, func() error {
 		return RunHook(hookName, root)
 	})
@@ -1422,20 +1443,43 @@ func hookPreCompact(root string) error {
 
 // hookSessionStop summarizes what changed in the session and stops the daemon
 func hookSessionStop(root string) error {
-	sessionID := hookSessionIDFromStdin()
-	// Read state BEFORE stopping daemon (includes timeline)
-	state := watch.ReadState(root)
+	return hookSessionStopContext(context.Background(), root, os.Stdout)
+}
 
-	finishSessionDaemon(root, sessionID)
+func hookSessionStopContext(ctx context.Context, root string, out io.Writer) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	sessionID, err := hookSessionIDFromStdinContext(ctx)
+	if err != nil {
+		return err
+	}
+	flushCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	state, flushErr := watch.FlushState(flushCtx, root)
+	cancel()
+	if flushErr != nil {
+		state = watch.ReadState(root)
+		fmt.Fprintln(out, "warning: session summary may be incomplete")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
-	fmt.Println()
-	fmt.Println("📊 Session Summary")
-	fmt.Println("==================")
+	if err := finishSessionDaemonContext(ctx, root, sessionID); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "📊 Session Summary")
+	fmt.Fprintln(out, "==================")
 
 	// Show timeline from daemon events (if available)
 	if state != nil && len(state.RecentEvents) > 0 {
-		fmt.Println()
-		fmt.Println("Edit Timeline:")
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "Edit Timeline:")
 
 		// Calculate stats
 		totalDelta := 0
@@ -1455,7 +1499,7 @@ func hookSessionStop(root string) error {
 		start := 0
 		if len(events) > 10 {
 			start = len(events) - 10
-			fmt.Printf("  ... %d earlier events\n", start)
+			fmt.Fprintf(out, "  ... %d earlier events\n", start)
 		}
 
 		for _, e := range events[start:] {
@@ -1471,7 +1515,7 @@ func hookSessionStop(root string) error {
 				hubStr = " ⚠️HUB"
 			}
 
-			fmt.Printf("  %s %-6s %s%s%s\n",
+			fmt.Fprintf(out, "  %s %-6s %s%s%s\n",
 				e.Time.Format("15:04:05"),
 				e.Op,
 				e.Path,
@@ -1481,67 +1525,80 @@ func hookSessionStop(root string) error {
 		}
 
 		// Show stats
-		fmt.Println()
-		fmt.Printf("Stats: %d events, %d files touched, %+d lines",
+		fmt.Fprintln(out)
+		fmt.Fprintf(out, "Stats: %d events, %d files touched, %+d lines",
 			len(state.RecentEvents), len(fileEdits), totalDelta)
 		if hubEdits > 0 {
-			fmt.Printf(", %d hub edits", hubEdits)
+			fmt.Fprintf(out, ", %d hub edits", hubEdits)
 		}
-		fmt.Println()
+		fmt.Fprintln(out)
 	} else {
 		// Fallback to git diff if no daemon events
-		gitCmd := exec.Command("git", "diff", "--name-only")
+		gitCmd := exec.CommandContext(ctx, "git", "diff", "--name-only")
 		gitCmd.Dir = root
 		output, err := gitCmd.Output()
 		if err != nil {
-			fmt.Println("No changes tracked.")
+			fmt.Fprintln(out, "No changes tracked.")
 			return nil
 		}
 
 		modified := strings.TrimSpace(string(output))
 		if modified == "" {
-			fmt.Println("No files modified.")
+			fmt.Fprintln(out, "No files modified.")
 			return nil
 		}
 
 		info := getHubInfoNoFallback(root)
 
-		fmt.Println()
-		fmt.Println("Files modified:")
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "Files modified:")
 		lineScanner := bufio.NewScanner(strings.NewReader(modified))
 		count := 0
 		for lineScanner.Scan() {
 			file := lineScanner.Text()
 			count++
 			if count > 10 {
-				fmt.Printf("  ... and more\n")
+				fmt.Fprintln(out, "  ... and more")
 				break
 			}
 
 			if info != nil && info.isHub(file) {
 				importers := len(info.Importers[file])
-				fmt.Printf("  ⚠️  %s (HUB - imported by %d files)\n", file, importers)
+				fmt.Fprintf(out, "  ⚠️  %s (HUB - imported by %d files)\n", file, importers)
 			} else {
-				fmt.Printf("  • %s\n", file)
+				fmt.Fprintf(out, "  • %s\n", file)
 			}
 		}
 	}
 
-	if err := writeSessionHandoff(root, state); err == nil {
-		fmt.Printf("🤝 Saved handoff to .codemap/handoff.latest.json\n")
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) >= 250*time.Millisecond {
+		if err := writeSessionHandoffContext(ctx, root, state); err != nil {
+			return err
+		}
+		fmt.Fprintln(out, "🤝 Saved handoff to .codemap/handoff.latest.json")
 	}
 
-	fmt.Println()
-	return nil
+	fmt.Fprintln(out)
+	return ctx.Err()
 }
 
-func writeSessionHandoff(root string, state *watch.State) error {
-	baseRef := resolveHandoffBaseRef(root)
+func writeSessionHandoffContext(ctx context.Context, root string, state *watch.State) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	baseRef := resolveHandoffBaseRefContext(ctx, root)
 	artifact, err := handoff.Build(root, handoff.BuildOptions{
+		Context: ctx,
 		State:   state,
 		BaseRef: baseRef,
 	})
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 
@@ -1564,6 +1621,9 @@ func writeSessionHandoff(root string, state *watch.State) error {
 	// Carry over history from previous artifact and append current session
 	if prev, err := handoff.ReadLatest(root); err == nil && prev != nil {
 		artifact.AgentHistory = prev.AgentHistory
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	artifact.AgentHistory = append(artifact.AgentHistory, agentEntry)
 
@@ -1601,20 +1661,24 @@ func sessionStartTime(state *watch.State) time.Time {
 }
 
 func resolveHandoffBaseRef(root string) string {
-	if remoteDefault, ok := gitSymbolicRef(root, "refs/remotes/origin/HEAD"); ok && remoteDefault != "" {
-		if gitRefExists(root, remoteDefault) {
+	return resolveHandoffBaseRefContext(context.Background(), root)
+}
+
+func resolveHandoffBaseRefContext(ctx context.Context, root string) string {
+	if remoteDefault, ok := gitSymbolicRefContext(ctx, root, "refs/remotes/origin/HEAD"); ok && remoteDefault != "" {
+		if gitRefExistsContext(ctx, root, remoteDefault) {
 			return remoteDefault
 		}
 	}
 
 	for _, ref := range []string{"main", "master", "trunk", "develop"} {
-		if gitRefExists(root, ref) {
+		if gitRefExistsContext(ctx, root, ref) {
 			return ref
 		}
 	}
 
 	for _, ref := range []string{"origin/main", "origin/master", "origin/trunk", "origin/develop"} {
-		if gitRefExists(root, ref) {
+		if gitRefExistsContext(ctx, root, ref) {
 			return ref
 		}
 	}
@@ -1623,14 +1687,14 @@ func resolveHandoffBaseRef(root string) string {
 	return "HEAD"
 }
 
-func gitRefExists(root, ref string) bool {
-	cmd := exec.Command("git", "rev-parse", "--verify", "--quiet", ref)
+func gitRefExistsContext(ctx context.Context, root, ref string) bool {
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", ref)
 	cmd.Dir = root
 	return cmd.Run() == nil
 }
 
-func gitSymbolicRef(root, ref string) (string, bool) {
-	cmd := exec.Command("git", "symbolic-ref", "--quiet", "--short", ref)
+func gitSymbolicRefContext(ctx context.Context, root, ref string) (string, bool) {
+	cmd := exec.CommandContext(ctx, "git", "symbolic-ref", "--quiet", "--short", ref)
 	cmd.Dir = root
 	out, err := cmd.Output()
 	if err != nil {
@@ -1644,15 +1708,34 @@ func gitSymbolicRef(root, ref string) (string, bool) {
 }
 
 func hookSessionIDFromStdin() string {
+	sessionID, _ := hookSessionIDFromStdinContext(context.Background())
+	return sessionID
+}
+
+func hookSessionIDFromStdinContext(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	info, err := os.Stdin.Stat()
 	if err == nil && info.Mode()&os.ModeCharDevice != 0 {
-		return ""
+		return "", nil
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := os.Stdin.SetReadDeadline(deadline); err == nil {
+			defer os.Stdin.SetReadDeadline(time.Time{})
+		}
 	}
 	input, err := io.ReadAll(os.Stdin)
-	if err != nil || len(strings.TrimSpace(string(input))) == 0 {
-		return ""
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return "", ctxErr
 	}
-	return sessionIDFromHookInput(input)
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return "", context.DeadlineExceeded
+	}
+	if err != nil || len(strings.TrimSpace(string(input))) == 0 {
+		return "", nil
+	}
+	return sessionIDFromHookInput(input), nil
 }
 
 // sessionIDFromHookInput extracts the agent session id from a raw hook payload.
@@ -1683,21 +1766,35 @@ func ensureSessionDaemon(root, sessionID string) {
 	}
 }
 
-func finishSessionDaemon(root, sessionID string) {
-	if sessionID == "" {
-		stopDaemon(root)
-		return
+func finishSessionDaemonContext(ctx context.Context, root, sessionID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	if err := updateSessionLease(root, sessionID, false, time.Now(), func(active int) {
+	if sessionID == "" {
+		return stopDaemonContext(ctx, root)
+	}
+	var stopErr error
+	if err := updateSessionLeaseContext(ctx, root, sessionID, false, time.Now(), func(active int) {
 		if active == 0 {
-			stopDaemon(root)
+			stopErr = stopDaemonContext(ctx, root)
 		}
 	}); err != nil {
-		stopDaemon(root)
+		return stopDaemonContext(ctx, root)
 	}
+	if stopErr != nil {
+		return stopErr
+	}
+	return ctx.Err()
 }
 
 func updateSessionLease(root, sessionID string, active bool, now time.Time, action func(int)) error {
+	return updateSessionLeaseContext(context.Background(), root, sessionID, active, now, action)
+}
+
+func updateSessionLeaseContext(ctx context.Context, root, sessionID string, active bool, now time.Time, action func(int)) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(sessionID) == "" {
 		if action != nil {
 			action(0)
@@ -1712,7 +1809,7 @@ func updateSessionLease(root, sessionID string, active bool, now time.Time, acti
 		return err
 	}
 	lockPath := filepath.Join(codemapDir, "sessions.lock")
-	if err := acquireSessionLock(lockPath); err != nil {
+	if err := acquireSessionLockContext(ctx, lockPath); err != nil {
 		return err
 	}
 	defer os.Remove(lockPath)
@@ -1726,6 +1823,9 @@ func updateSessionLease(root, sessionID string, active bool, now time.Time, acti
 		return err
 	}
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if entry.IsDir() {
 			continue
 		}
@@ -1739,6 +1839,9 @@ func updateSessionLease(root, sessionID string, active bool, now time.Time, acti
 	leaseName := fmt.Sprintf("%x.json", sha256.Sum256([]byte(detectAgentID()+"\x00"+sessionID)))
 	leasePath := filepath.Join(leaseDir, leaseName)
 	if active {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		payload, err := json.Marshal(map[string]any{
 			"agent":      detectAgentID(),
 			"updated_at": now.UTC().Format(time.RFC3339Nano),
@@ -1769,9 +1872,12 @@ func updateSessionLease(root, sessionID string, active bool, now time.Time, acti
 	return nil
 }
 
-func acquireSessionLock(lockPath string) error {
+func acquireSessionLockContext(ctx context.Context, lockPath string) error {
 	deadline := time.Now().Add(sessionLockWait)
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		err := os.Mkdir(lockPath, 0o700)
 		if err == nil {
 			return nil
@@ -1786,22 +1892,47 @@ func acquireSessionLock(lockPath string) error {
 		if time.Now().After(deadline) {
 			return fmt.Errorf("timed out waiting for session lock %s", lockPath)
 		}
-		time.Sleep(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }
 
 // stopDaemon stops the watch daemon
 func stopDaemon(root string) {
+	_ = stopDaemonContext(context.Background(), root)
+}
+
+func stopDaemonContext(ctx context.Context, root string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if !hookWatchIsRunning(root) {
-		return
+		return nil
 	}
 	exe, err := hookExecutablePath()
 	if err != nil {
-		return
+		return err
 	}
 	args := projectpath.PrependSetupRootArgs("watch", "stop", root)
 	cmd := hookExecCommand(exe, args...)
-	cmd.Run()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		<-done
+		return ctx.Err()
+	}
 }
 
 // extractFilePathsFromStdin reads Claude or Codex hook JSON from stdin and

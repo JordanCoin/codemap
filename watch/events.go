@@ -3,7 +3,6 @@ package watch
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -168,6 +167,9 @@ func (d *Daemon) eventLoop() {
 			}
 		}
 		delay, ok := debouncer.nextDelay(now)
+		if publishDelay, publishOK := d.publisher.nextDelay(now); publishOK && (!ok || publishDelay < delay) {
+			delay, ok = publishDelay, true
+		}
 		if !ok {
 			timerC = nil
 			return
@@ -178,6 +180,9 @@ func (d *Daemon) eventLoop() {
 	flushDue := func(now time.Time) {
 		for _, event := range debouncer.takeDue(now) {
 			d.handleEvent(event)
+		}
+		if d.publisher.due(now) {
+			d.reportPublicationError(d.publisher.publish())
 		}
 	}
 
@@ -203,18 +208,22 @@ func (d *Daemon) eventLoop() {
 		resetIgnoreCache := controlResetIgnoreCache
 		controlResetIgnoreCache = false
 		if err := daemonRefreshConfiguredFiles(d, resetIgnoreCache); err == nil {
-			d.writeState()
+			d.reportPublicationError(d.writeState())
 		}
 	}
 	defer func() {
 		for _, event := range debouncer.takeAll() {
 			d.handleEvent(event)
 		}
+		if d.publisher.dirty || len(d.publisher.pending) > 0 {
+			d.reportPublicationError(d.publisher.publish())
+		}
 	}()
 
 	for {
 		select {
 		case <-d.done:
+			d.drainQueued(debouncer, d.watcher.Events)
 			return
 
 		case <-timerC:
@@ -231,6 +240,11 @@ func (d *Daemon) eventLoop() {
 			}
 			event.Name = projectpath.CanonicalPath(event.Name)
 			now := time.Now()
+			if filepath.Clean(filepath.Dir(event.Name)) == filepath.Clean(d.publisher.flushDir) {
+				d.publisher.scanRequests(now)
+				armTimer(now)
+				continue
+			}
 			if resetIgnoreCache, control := d.filterControlEvent(event.Name); control {
 				// OR the flag across the burst: a coalesced refresh must still
 				// reset the ignore cache if any event in it was a .gitignore.
@@ -287,6 +301,7 @@ func (d *Daemon) eventLoop() {
 			if d.verbose {
 				fmt.Printf("[watch] Error: %v\n", err)
 			}
+			d.reportPublicationError(d.publisher.failPending("watch_error"))
 		}
 	}
 }
@@ -327,10 +342,75 @@ func (d *Daemon) handleConfiguredMembershipEvent(event fsnotify.Event) {
 	}
 	d.graph.mu.Unlock()
 	if present != existed {
-		d.writeState()
+		d.reportPublicationError(d.writeState())
 	}
 }
 
+func (d *Daemon) processQueuedEvent(debouncer *eventDebouncer, event fsnotify.Event, now time.Time) {
+	if filepath.Clean(filepath.Dir(event.Name)) == filepath.Clean(d.publisher.flushDir) {
+		d.publisher.scanRequests(now)
+		return
+	}
+	for _, pending := range debouncer.takeDueBeforeEvent(event, now) {
+		d.handleEvent(pending)
+	}
+	if d.handleTopologyControlEvent(event) {
+		return
+	}
+	isCreate := event.Op&fsnotify.Create != 0
+	if !d.isSourceFile(event.Name) && !isTopologyManifest(event.Name) {
+		if !isCreate {
+			return
+		}
+		if info, err := os.Stat(event.Name); err != nil || !info.IsDir() {
+			return
+		}
+	}
+	if isTransientFile(event.Name) {
+		return
+	}
+	switch d.debounceAction(debouncer, event, now) {
+	case debounceSkip:
+		debouncer.cancelPending(event.Name)
+	case debounceDefer:
+		debouncer.deferEvent(event, now)
+	case debounceProcess:
+		d.handleEvent(event)
+	}
+}
+
+func (d *Daemon) drainQueued(debouncer *eventDebouncer, events <-chan fsnotify.Event) {
+	quiet := time.NewTimer(5 * time.Millisecond)
+	deadline := time.NewTimer(50 * time.Millisecond)
+	defer quiet.Stop()
+	defer deadline.Stop()
+	for {
+		select {
+		case event, ok := <-events:
+			if !ok {
+				goto drained
+			}
+			d.processQueuedEvent(debouncer, event, time.Now())
+			if !quiet.Stop() {
+				select {
+				case <-quiet.C:
+				default:
+				}
+			}
+			quiet.Reset(5 * time.Millisecond)
+		case <-quiet.C:
+			goto drained
+		case <-deadline.C:
+			goto drained
+		}
+	}
+
+drained:
+	for _, event := range debouncer.takeAll() {
+		d.handleEvent(event)
+	}
+	d.publisher.scanRequests(time.Now())
+}
 func (d *Daemon) handleTopologyControlEvent(event fsnotify.Event) bool {
 	event.Name = projectpath.CanonicalPath(event.Name)
 	rel, err := filepath.Rel(projectpath.CanonicalPath(d.configDir), event.Name)
@@ -369,6 +449,8 @@ func (d *Daemon) debounceAction(debouncer *eventDebouncer, event fsnotify.Event,
 	if err != nil {
 		return debounceProcess
 	}
+	// An identical write carries no new information and is skipped for every
+	// file; changed writes use the same quiet-window defer for every file.
 	if cachedModTime != 0 && cachedSize == info.Size() && cachedModTime == info.ModTime().UnixNano() {
 		return debounceSkip
 	}
@@ -438,6 +520,8 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 
 	// Update graph and calculate deltas
 	d.graph.mu.Lock()
+	_, wasConfigured := d.graph.ConfiguredFiles[relPath]
+	var isConfigured bool
 	switch op {
 	case "CREATE", "WRITE":
 		info, err := os.Stat(fsEvent.Name)
@@ -503,6 +587,7 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 		}
 		if d.isConfiguredFile(relPath) {
 			d.graph.ConfiguredFiles[relPath] = struct{}{}
+			isConfigured = true
 		} else {
 			delete(d.graph.ConfiguredFiles, relPath)
 		}
@@ -551,6 +636,14 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 	}
 
 	d.graph.mu.Unlock()
+	if d.publisher != nil {
+		d.publisher.markDirty(time.Now())
+	}
+	// Persist the stale graph state synchronously so hooks and direct callers
+	// observe the invalidation even when the coalesced publish loop is idle.
+	if wasConfigured || isConfigured {
+		d.reportPublicationError(d.writeState())
+	}
 
 	// Log event
 	d.logEvent(event)
@@ -673,59 +766,20 @@ func (d *Daemon) logEvent(e Event) {
 
 	_ = trimEventLogToBytes(d.eventLog, int64(limits.MaxEventLogBytes), int64(limits.EventLogTrimToBytes))
 
-	// Update state file for hooks to read
-	d.writeState()
 }
 
-// writeState persists current state for hooks to read
-func (d *Daemon) writeState() {
-	runtimeDir, err := d.runtimeStateDir()
-	if err != nil {
-		return
+// writeState persists current state for hooks to read.
+func (d *Daemon) writeState() error {
+	if err := d.ensurePublisher(); err != nil {
+		return err
 	}
+	return d.publisher.publish()
+}
 
-	d.graph.mu.RLock()
-	defer d.graph.mu.RUnlock()
-	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
-		return
+func (d *Daemon) reportPublicationError(err error) {
+	if err != nil && d.verbose {
+		fmt.Printf("[watch] State publication failed: %v\n", err)
 	}
-
-	// Keep state snapshots small and deterministic for hook reads.
-	events := d.graph.Events
-	if len(events) > limits.MaxStateRecentEvents {
-		events = events[len(events)-limits.MaxStateRecentEvents:]
-	}
-	eventsCopy := append([]Event(nil), events...)
-
-	configuredFileCount := len(d.graph.ConfiguredFiles)
-	if d.graph.ConfiguredFiles == nil {
-		configuredFileCount = len(d.graph.Files)
-	}
-	state := State{
-		Root:                canonicalRoot(d.root),
-		UpdatedAt:           time.Now(),
-		FileCount:           len(d.graph.Files),
-		ConfiguredFileCount: &configuredFileCount,
-		Hubs:                []string{},
-		Importers:           map[string][]string{},
-		Imports:             map[string][]string{},
-		RecentEvents:        eventsCopy,
-		WorkingSet:          d.graph.WorkingSet.Snapshot(50),
-	}
-	if d.graph.FileGraph != nil {
-		state.Hubs = d.graph.FileGraph.HubFiles()
-		state.Importers = d.graph.FileGraph.Importers
-		state.Imports = d.graph.FileGraph.Imports
-		state.Coverage = d.graph.FileGraph.Coverage
-	}
-
-	data, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return
-	}
-
-	stateFile := filepath.Join(runtimeDir, "state.json")
-	_ = runtimefile.WriteAtomic(stateFile, data, 0o644)
 }
 
 func appendBoundedEvents(events []Event, event Event) []Event {

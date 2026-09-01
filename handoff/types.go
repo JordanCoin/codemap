@@ -1,6 +1,7 @@
 package handoff
 
 import (
+	"context"
 	"time"
 
 	"codemap/watch"
@@ -119,6 +120,7 @@ type FileDetail struct {
 
 // BuildOptions controls handoff generation behavior.
 type BuildOptions struct {
+	Context    context.Context
 	BaseRef    string
 	Since      time.Duration
 	State      *watch.State

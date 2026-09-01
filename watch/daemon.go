@@ -36,7 +36,9 @@ type Daemon struct {
 	verbose    bool
 	done       chan struct{}
 
-	eventLoopWG sync.WaitGroup
+	eventLoopWG  sync.WaitGroup
+	publisher    *statePublisher
+	closeWatcher func() error
 }
 
 func (d *Daemon) runtimeStateDir() (string, error) {
@@ -44,6 +46,21 @@ func (d *Daemon) runtimeStateDir() (string, error) {
 		return d.runtimeDir, nil
 	}
 	return projectpath.CheckedRuntimeCodemapDir(d.root)
+}
+
+func (d *Daemon) ensurePublisher() error {
+	if d.publisher != nil {
+		return nil
+	}
+	runtimeDir, err := d.runtimeStateDir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+		return err
+	}
+	d.publisher = newStatePublisher(d, filepath.Join(runtimeDir, "state.json"), "legacy-test-instance")
+	return nil
 }
 
 // NewDaemon creates a new watch daemon for the given root
@@ -69,14 +86,15 @@ func NewDaemon(root string, verbose bool) (*Daemon, error) {
 	}
 
 	d := &Daemon{
-		root:       absRoot,
-		configDir:  selection.PolicyDir,
-		runtimeDir: runtimeDir,
-		watcher:    watcher,
-		gitCache:   gitCache,
-		verbose:    verbose,
-		done:       make(chan struct{}),
-		eventLog:   filepath.Join(runtimeDir, "events.log"),
+		root:         absRoot,
+		configDir:    selection.PolicyDir,
+		runtimeDir:   runtimeDir,
+		watcher:      watcher,
+		gitCache:     gitCache,
+		verbose:      verbose,
+		done:         make(chan struct{}),
+		closeWatcher: watcher.Close,
+		eventLog:     filepath.Join(runtimeDir, "events.log"),
 		graph: &Graph{
 			Root:            absRoot,
 			Files:           make(map[string]*scanner.FileInfo),
@@ -88,15 +106,26 @@ func NewDaemon(root string, verbose bool) (*Daemon, error) {
 			IsGitRepo:       isGitRepo,
 		},
 	}
+	instance, err := newDaemonInstance()
+	if err != nil {
+		watcher.Close()
+		return nil, fmt.Errorf("create daemon identity: %w", err)
+	}
+	d.publisher = newStatePublisher(d, filepath.Join(runtimeDir, "state.json"), instance)
 
 	return d, nil
 }
 
 // Start begins watching and returns immediately
 func (d *Daemon) Start() error {
-	// Keep project configuration in its configured .codemap directory while
-	// mutable daemon state uses the validated project runtime namespace.
-	codemapDir := d.runtimeDir
+	if err := d.ensurePublisher(); err != nil {
+		return fmt.Errorf("resolve runtime state: %w", err)
+	}
+	runtimeDir, err := d.runtimeStateDir()
+	if err != nil {
+		return fmt.Errorf("resolve runtime state: %w", err)
+	}
+	codemapDir := runtimeDir
 	if err := os.MkdirAll(codemapDir, 0755); err != nil {
 		return fmt.Errorf("failed to create .codemap dir: %w", err)
 	}
@@ -124,9 +153,17 @@ func (d *Daemon) Start() error {
 	if err := d.watcher.Add(configDir); err != nil {
 		return fmt.Errorf("failed to watch .codemap dir: %w", err)
 	}
+	if err := ensureControlDirectory(d.publisher.flushDir); err != nil {
+		return fmt.Errorf("create flush directory: %w", err)
+	}
+	if err := d.watcher.Add(d.publisher.flushDir); err != nil {
+		return fmt.Errorf("watch flush directory: %w", err)
+	}
 
 	// Write initial state for hooks to read immediately
-	d.writeState()
+	if err := d.publisher.publish(); err != nil {
+		return fmt.Errorf("publish initial state: %w", err)
+	}
 
 	// Start event loop
 	d.eventLoopWG.Add(1)
@@ -187,8 +224,8 @@ func (d *Daemon) computeTopology() {
 // Stop gracefully shuts down the daemon
 func (d *Daemon) Stop() {
 	close(d.done)
-	d.watcher.Close()
 	d.eventLoopWG.Wait()
+	_ = d.closeWatcher()
 }
 
 // GetGraph returns the current graph (thread-safe)
@@ -234,7 +271,11 @@ func shouldComputeDependencyGraph(fileCount int) bool {
 
 // WriteInitialState writes state after initial scan (for hooks)
 func (d *Daemon) WriteInitialState() {
-	d.writeState()
+	if err := d.ensurePublisher(); err != nil {
+		d.reportPublicationError(err)
+		return
+	}
+	d.reportPublicationError(d.publisher.publish())
 }
 
 // fullScan does a complete scan of the project
