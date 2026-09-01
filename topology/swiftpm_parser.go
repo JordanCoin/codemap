@@ -108,7 +108,13 @@ func parseSwiftPMTarget(packageRoot, element string) (swiftPMTarget, *Issue) {
 		return swiftPMTarget{}, &Issue{Code: "computed-swiftpm-target-path", Message: fmt.Sprintf("target %q path is not a literal string", name)}
 	}
 	if hasPath {
+		if filepath.IsAbs(explicitPath) {
+			return swiftPMTarget{}, &Issue{Code: "invalid-swiftpm-target-path", Message: fmt.Sprintf("target %q path must stay inside the package root", name)}
+		}
 		target.root = filepath.Clean(filepath.Join(packageRoot, filepath.FromSlash(explicitPath)))
+		if !swiftPMPathWithin(target.root, packageRoot) {
+			return swiftPMTarget{}, &Issue{Code: "invalid-swiftpm-target-path", Message: fmt.Sprintf("target %q path must stay inside the package root", name)}
+		}
 	} else {
 		target.root = swiftPMConventionalRoot(packageRoot, call, name)
 	}
@@ -380,7 +386,8 @@ func swiftLiteralStringArray(text string) ([]string, bool) {
 
 func stripSwiftComments(text string) string {
 	var result strings.Builder
-	lineComment, blockComment := false, false
+	lineComment := false
+	blockDepth := 0
 	for index := 0; index < len(text); index++ {
 		char := text[index]
 		next := byte(0)
@@ -395,11 +402,15 @@ func stripSwiftComments(text string) string {
 			} else {
 				result.WriteByte(' ')
 			}
-		case blockComment:
-			if char == '*' && next == '/' {
+		case blockDepth > 0:
+			if char == '/' && next == '*' {
 				result.WriteString("  ")
 				index++
-				blockComment = false
+				blockDepth++
+			} else if char == '*' && next == '/' {
+				result.WriteString("  ")
+				index++
+				blockDepth--
 			} else if char == '\n' {
 				result.WriteByte('\n')
 			} else {
@@ -412,7 +423,7 @@ func stripSwiftComments(text string) string {
 		case char == '/' && next == '*':
 			result.WriteString("  ")
 			index++
-			blockComment = true
+			blockDepth = 1
 		default:
 			if end, recognized := swiftStringEnd(text, index); recognized {
 				result.WriteString(text[index:end])
@@ -441,9 +452,11 @@ func swiftStringInfo(text string, start int) (valueStart, valueEnd, end int, ok 
 	}
 	for index := valueStart; index < len(text); index++ {
 		if text[index] == '\\' {
-			index++
-			for index < len(text) && text[index] == '#' {
+			if hashes == 0 || swiftRawInterpolationStart(text, index, hashes) {
 				index++
+				for index < len(text) && text[index] == '#' {
+					index++
+				}
 			}
 			continue
 		}
@@ -452,6 +465,18 @@ func swiftStringInfo(text string, start int) (valueStart, valueEnd, end int, ok 
 		}
 	}
 	return valueStart, len(text), len(text), false
+}
+
+func swiftRawInterpolationStart(text string, slash, hashes int) bool {
+	if hashes == 0 || slash+1+hashes >= len(text) {
+		return false
+	}
+	for index := 0; index < hashes; index++ {
+		if text[slash+1+index] != '#' {
+			return false
+		}
+	}
+	return text[slash+1+hashes] == '('
 }
 
 func swiftStringEnd(text string, start int) (int, bool) {

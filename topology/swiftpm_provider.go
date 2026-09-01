@@ -86,6 +86,20 @@ func buildSwiftPMPackageFragment(files []scanner.FileInfo, parsed swiftPMManifes
 		})
 		fragment.Members[id] = swiftPMMembers(files, target.memberRoots, target.excludes)
 	}
+	pathTargets := make(map[string][]ID)
+	for _, target := range parsed.targets {
+		pathTargets[target.root] = append(pathTargets[target.root], swiftPMID(parsed.manifest, target.name))
+	}
+	for root, ids := range pathTargets {
+		if len(ids) > 1 {
+			fragment.Coverage.Issues = append(fragment.Coverage.Issues, Issue{
+				Provider:   "swiftpm",
+				Code:       "ambiguous-swiftpm-target-path",
+				Message:    fmt.Sprintf("%s target path %q is shared by multiple targets", parsed.manifest, root),
+				Candidates: uniqueSortedIDs(ids),
+			})
+		}
+	}
 
 	products := make(map[string][]swiftPMProduct)
 	for _, product := range parsed.products {
@@ -224,5 +238,6 @@ func swiftPMMembers(files []scanner.FileInfo, roots, excludes []string) []string
 func swiftPMPathWithin(path, root string) bool {
 	path = filepath.Clean(path)
 	root = filepath.Clean(root)
-	return path == root || strings.HasPrefix(path, root+string(filepath.Separator))
+	relative, err := filepath.Rel(root, path)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }

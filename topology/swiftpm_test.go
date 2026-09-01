@@ -120,7 +120,7 @@ let package = Package(
 	if graph.Coverage.Status != CoveragePartial {
 		t.Fatalf("coverage = %q, want partial", graph.Coverage.Status)
 	}
-	for _, code := range []string{"ambiguous-swiftpm-product", "computed-swiftpm-target-name", "invalid-node-path"} {
+	for _, code := range []string{"ambiguous-swiftpm-product", "computed-swiftpm-target-name", "invalid-swiftpm-target-path"} {
 		if !hasIssueCode(graph.Coverage.Issues, code) {
 			t.Fatalf("issues = %#v, want %s", graph.Coverage.Issues, code)
 		}
@@ -159,6 +159,63 @@ let package = Package(
 	}
 	if got, ok := swiftLiteralString(`"a\"b"`); !ok || got != `a"b` {
 		t.Fatalf("escaped literal = %q, %v", got, ok)
+	}
+	if got, ok := swiftLiteralString(`#"foo\"#`); !ok || got != `foo\` {
+		t.Fatalf("raw backslash literal = %q, %v", got, ok)
+	}
+	parsed = parseSwiftPMManifest("Package.swift", []byte(`
+let package = Package(targets: [
+    .target(name: "Raw", path: #"foo\"#),
+    .target(name: "After"),
+])
+`))
+	if len(parsed.issues) != 0 || len(parsed.targets) != 2 {
+		t.Fatalf("raw path parse = targets %#v, issues %#v", parsed.targets, parsed.issues)
+	}
+}
+
+func TestSwiftPMParserSkipsNestedBlockComments(t *testing.T) {
+	parsed := parseSwiftPMManifest("Package.swift", []byte(`
+let package = Package(
+    targets: [
+        .target(name: "Real"),
+        /* docs: /* inner */ .target(name: "Ghost"), */
+        .target(name: "Real2"),
+    ]
+)
+`))
+	if len(parsed.issues) != 0 {
+		t.Fatalf("issues = %#v", parsed.issues)
+	}
+	if len(parsed.targets) != 2 {
+		t.Fatalf("targets = %#v", parsed.targets)
+	}
+	if got := []string{parsed.targets[0].name, parsed.targets[1].name}; !reflect.DeepEqual(got, []string{"Real", "Real2"}) {
+		t.Fatalf("targets = %#v", parsed.targets)
+	}
+}
+
+func TestSwiftPMRejectsSharedAndEscapingTargetPaths(t *testing.T) {
+	root := t.TempDir()
+	writeTopologyFixture(t, root, "Packages/Demo/Package.swift", `
+let package = Package(targets: [
+    .target(name: "One", path: "Sources/Shared"),
+    .target(name: "Two", path: "Sources/Shared"),
+    .target(name: "Outside", path: "../outside"),
+])
+`)
+	fragment, err := (swiftPMProvider{}).Build(context.Background(), Inventory{
+		Root: root, Manifests: []string{"Packages/Demo/Package.swift"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph := MergeFragments(root, []Fragment{fragment})
+	if _, ok := graph.Nodes[swiftPMID("Packages/Demo/Package.swift", "Outside")]; ok {
+		t.Fatal("escaping target retained")
+	}
+	if graph.Coverage.Status != CoveragePartial || !hasIssueCode(graph.Coverage.Issues, "ambiguous-swiftpm-target-path") || !hasIssueCode(graph.Coverage.Issues, "invalid-swiftpm-target-path") {
+		t.Fatalf("issues = %#v", graph.Coverage.Issues)
 	}
 }
 
