@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -511,6 +512,27 @@ func TestCanonicalPathResolvesAliasesWithMissingLeaf(t *testing.T) {
 		if got := CanonicalPath(path); got != want {
 			t.Fatalf("CanonicalPath(%q) = %q, want %q", path, got, want)
 		}
+	}
+}
+
+func BenchmarkCanonicalPathLargeDiskTree(b *testing.B) {
+	root := b.TempDir()
+	paths := make([]string, 0, 2400)
+	for i := 0; i < 2400; i++ {
+		dir := filepath.Join(root, "pkg", fmt.Sprintf("%03d", i/100))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			b.Fatal(err)
+		}
+		file := filepath.Join(dir, fmt.Sprintf("file-%03d.go", i))
+		if err := os.WriteFile(file, nil, 0o644); err != nil {
+			b.Fatal(err)
+		}
+		paths = append(paths, file)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = CanonicalPath(paths[i%len(paths)])
 	}
 }
 
