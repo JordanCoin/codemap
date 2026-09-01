@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -90,50 +91,65 @@ func (p *statePublisher) publish() error {
 	next := p.generation + 1
 	data, err := json.MarshalIndent(p.snapshot(next), "", "  ")
 	if err != nil {
+		p.dirty = true
+		p.deadline = time.Now().Add(publicationRetryDelay)
 		return err
 	}
 	if err = runtimefile.WriteAtomic(p.path, data, 0o644); err != nil {
-		p.failPending("publication_failed")
+		p.dirty = true
+		ackErr := p.failPending("publication_failed")
 		p.deadline = time.Now().Add(publicationRetryDelay)
-		return err
+		return errors.Join(err, ackErr)
 	}
 	p.generation = next
 	p.dirty = false
 	p.deadline = time.Time{}
+	var ackErr error
 	for nonce, req := range p.pending {
-		p.writeAck(req, flushAck{Version: flushProtocolVersion, CanonicalRoot: req.CanonicalRoot, DaemonInstance: req.DaemonInstance, Nonce: req.Nonce, ObservedGeneration: req.ObservedGeneration, PublishedGeneration: next, Timestamp: time.Now().UTC(), Success: true})
+		ackErr = errors.Join(ackErr, p.writeAck(req, flushAck{Version: flushProtocolVersion, CanonicalRoot: req.CanonicalRoot, DaemonInstance: req.DaemonInstance, Nonce: req.Nonce, ObservedGeneration: req.ObservedGeneration, PublishedGeneration: next, Timestamp: time.Now().UTC(), Success: true}))
 		delete(p.pending, nonce)
 	}
-	return nil
+	return ackErr
 }
 
-func (p *statePublisher) failPending(code string) {
+func (p *statePublisher) failPending(code string) error {
+	var firstErr error
 	for nonce, req := range p.pending {
-		p.writeAck(req, flushAck{Version: flushProtocolVersion, CanonicalRoot: req.CanonicalRoot, DaemonInstance: req.DaemonInstance, Nonce: req.Nonce, ObservedGeneration: req.ObservedGeneration, Timestamp: time.Now().UTC(), ErrorCode: code})
+		if err := p.writeAck(req, flushAck{Version: flushProtocolVersion, CanonicalRoot: req.CanonicalRoot, DaemonInstance: req.DaemonInstance, Nonce: req.Nonce, ObservedGeneration: req.ObservedGeneration, Timestamp: time.Now().UTC(), ErrorCode: code}); err != nil && firstErr == nil {
+			firstErr = err
+		}
 		delete(p.pending, nonce)
 	}
+	return firstErr
 }
-func (p *statePublisher) writeAck(req flushRequest, ack flushAck) {
+func (p *statePublisher) writeAck(req flushRequest, ack flushAck) error {
 	data, err := json.Marshal(ack)
-	if err == nil {
-		_ = runtimefile.WriteAtomic(filepath.Join(p.flushDir, "ack-"+req.Nonce+".json"), data, 0o600)
+	if err != nil {
+		return err
 	}
+	return runtimefile.WriteAtomic(filepath.Join(p.flushDir, "ack-"+req.Nonce+".json"), data, 0o600)
 }
 
 func (p *statePublisher) scanRequests(now time.Time) {
+	failControl := func() {
+		if err := p.failPending("control_unavailable"); err != nil {
+			p.dirty = true
+			p.deadline = now.Add(publicationRetryDelay)
+		}
+	}
 	if err := ensureControlDirectory(p.flushDir); err != nil {
-		p.failPending("control_unavailable")
+		failControl()
 		return
 	}
 	entries, err := os.ReadDir(p.flushDir)
 	if err != nil {
-		p.failPending("control_unavailable")
+		failControl()
 		return
 	}
 	p.pruneControlArtifacts(entries, now)
 	entries, err = os.ReadDir(p.flushDir)
 	if err != nil {
-		p.failPending("control_unavailable")
+		failControl()
 		return
 	}
 	for _, e := range entries {

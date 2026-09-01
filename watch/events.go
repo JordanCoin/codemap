@@ -181,7 +181,7 @@ func (d *Daemon) eventLoop() {
 			d.handleEvent(event)
 		}
 		if d.publisher.due(now) {
-			_ = d.publisher.publish()
+			d.reportPublicationError(d.publisher.publish())
 		}
 	}
 
@@ -207,7 +207,7 @@ func (d *Daemon) eventLoop() {
 		resetIgnoreCache := controlResetIgnoreCache
 		controlResetIgnoreCache = false
 		if err := daemonRefreshConfiguredFiles(d, resetIgnoreCache); err == nil {
-			d.writeState()
+			d.reportPublicationError(d.writeState())
 		}
 	}
 	defer func() {
@@ -215,7 +215,7 @@ func (d *Daemon) eventLoop() {
 			d.handleEvent(event)
 		}
 		if d.publisher.dirty || len(d.publisher.pending) > 0 {
-			_ = d.publisher.publish()
+			d.reportPublicationError(d.publisher.publish())
 		}
 	}()
 
@@ -299,7 +299,7 @@ func (d *Daemon) eventLoop() {
 			if d.verbose {
 				fmt.Printf("[watch] Error: %v\n", err)
 			}
-			d.publisher.failPending("watch_error")
+			d.reportPublicationError(d.publisher.failPending("watch_error"))
 		}
 	}
 }
@@ -339,7 +339,7 @@ func (d *Daemon) handleConfiguredMembershipEvent(event fsnotify.Event) {
 	}
 	d.graph.mu.Unlock()
 	if present != existed {
-		d.writeState()
+		d.reportPublicationError(d.writeState())
 	}
 }
 
@@ -430,7 +430,6 @@ func (d *Daemon) debounceAction(debouncer *eventDebouncer, event fsnotify.Event,
 
 	d.graph.mu.RLock()
 	cached := d.graph.State[relPath]
-	_, configured := d.graph.ConfiguredFiles[relPath]
 	var cachedSize, cachedModTime int64
 	if cached != nil {
 		cachedSize = cached.Size
@@ -446,13 +445,9 @@ func (d *Daemon) debounceAction(debouncer *eventDebouncer, event fsnotify.Event,
 		return debounceProcess
 	}
 	// An identical write carries no new information and is skipped for every
-	// file. Configured files still bypass the quiet-window defer so their
-	// changes reach graph invalidation immediately.
+	// file; changed writes use the same quiet-window defer for every file.
 	if cachedModTime != 0 && cachedSize == info.Size() && cachedModTime == info.ModTime().UnixNano() {
 		return debounceSkip
-	}
-	if configured {
-		return debounceProcess
 	}
 	return debounceDefer
 }
@@ -644,7 +639,7 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 	// Persist the stale graph state synchronously so hooks and direct callers
 	// observe the invalidation even when the coalesced publish loop is idle.
 	if wasConfigured || isConfigured {
-		d.writeState()
+		d.reportPublicationError(d.writeState())
 	}
 
 	// Log event
@@ -770,12 +765,18 @@ func (d *Daemon) logEvent(e Event) {
 
 }
 
-// writeState persists current state for hooks to read
-func (d *Daemon) writeState() {
-	if d.ensurePublisher() != nil {
-		return
+// writeState persists current state for hooks to read.
+func (d *Daemon) writeState() error {
+	if err := d.ensurePublisher(); err != nil {
+		return err
 	}
-	_ = d.publisher.publish()
+	return d.publisher.publish()
+}
+
+func (d *Daemon) reportPublicationError(err error) {
+	if err != nil && d.verbose {
+		fmt.Printf("[watch] State publication failed: %v\n", err)
+	}
 }
 
 func appendBoundedEvents(events []Event, event Event) []Event {

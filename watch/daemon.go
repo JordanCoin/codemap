@@ -277,10 +277,11 @@ func shouldComputeDependencyGraph(fileCount int) bool {
 
 // WriteInitialState writes state after initial scan (for hooks)
 func (d *Daemon) WriteInitialState() {
-	if d.ensurePublisher() != nil {
+	if err := d.ensurePublisher(); err != nil {
+		d.reportPublicationError(err)
 		return
 	}
-	_ = d.publisher.publish()
+	d.reportPublicationError(d.publisher.publish())
 }
 
 // fullScan does a complete scan of the project

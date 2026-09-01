@@ -29,7 +29,7 @@ func TestDaemonDebounceActionUsesSizeAndModTime(t *testing.T) {
 		root: root,
 		graph: &Graph{State: map[string]*FileState{
 			"main.go": {Size: info.Size(), ModTime: info.ModTime().UnixNano()},
-		}},
+		}, ConfiguredFiles: map[string]struct{}{"main.go": {}}},
 	}
 	debouncer := newEventDebouncer(100 * time.Millisecond)
 	event := fsnotify.Event{Name: path, Op: fsnotify.Write}

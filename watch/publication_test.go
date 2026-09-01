@@ -54,7 +54,6 @@ func TestStatePublisherFailureBacksOffWithoutLosingDirtyState(t *testing.T) {
 	}
 	p := newStatePublisher(d, path, "instance-a")
 	now := time.Now()
-	p.markDirty(now.Add(-publicationQuietWindow))
 	if err := p.publish(); err == nil {
 		t.Fatal("publication unexpectedly succeeded")
 	}

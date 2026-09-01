@@ -109,7 +109,10 @@ func FlushState(ctx context.Context, root string) (*State, error) {
 	}
 	nonce := hex.EncodeToString(b[:])
 	req := flushRequest{Version: flushProtocolVersion, CanonicalRoot: active.CanonicalRoot, DaemonInstance: state.DaemonInstance, Nonce: nonce, ObservedGeneration: state.Generation, Timestamp: time.Now().UTC()}
-	data, _ := json.Marshal(req)
+	data, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal flush request: %w", err)
+	}
 	dir := filepath.Join(active.Directory, "flush")
 	if err = ensureControlDirectory(dir); err != nil {
 		return nil, err
