@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -483,6 +484,55 @@ func TestRuntimeRootAndCheckedRuntimeCodemapDir(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing")
 	if got := RuntimeRoot(missing); got != filepath.Clean(missing) {
 		t.Fatalf("RuntimeRoot() fallback = %q, want %q", got, filepath.Clean(missing))
+	}
+}
+
+func TestCanonicalPathResolvesAliasesWithMissingLeaf(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks may require elevated privileges")
+	}
+	target := t.TempDir()
+	if err := os.WriteFile(filepath.Join(target, "existing.txt"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(target, alias); err != nil {
+		t.Fatal(err)
+	}
+	canonicalTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := map[string]string{
+		filepath.Join(alias, "existing.txt"):           filepath.Join(canonicalTarget, "existing.txt"),
+		filepath.Join(alias, "missing", "config.json"): filepath.Join(canonicalTarget, "missing", "config.json"),
+	}
+	for path, want := range tests {
+		if got := CanonicalPath(path); got != want {
+			t.Fatalf("CanonicalPath(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func BenchmarkCanonicalPathLargeDiskTree(b *testing.B) {
+	root := b.TempDir()
+	paths := make([]string, 0, 2400)
+	for i := 0; i < 2400; i++ {
+		dir := filepath.Join(root, "pkg", fmt.Sprintf("%03d", i/100))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			b.Fatal(err)
+		}
+		file := filepath.Join(dir, fmt.Sprintf("file-%03d.go", i))
+		if err := os.WriteFile(file, nil, 0o644); err != nil {
+			b.Fatal(err)
+		}
+		paths = append(paths, file)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = CanonicalPath(paths[i%len(paths)])
 	}
 }
 

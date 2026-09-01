@@ -6,11 +6,14 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"codemap/internal/projectpath"
+	"github.com/fsnotify/fsnotify"
 )
 
-// startControlEventDaemon boots a daemon over a minimal Go project and returns
-// it with the path to its config file.
-func startControlEventDaemon(t *testing.T) (*Daemon, string) {
+// newControlEventDaemon creates a daemon over a minimal Go project without
+// starting its event loop.
+func newControlEventDaemon(t *testing.T) (*Daemon, string) {
 	t.Helper()
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
@@ -27,10 +30,18 @@ func startControlEventDaemon(t *testing.T) (*Daemon, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { d.Stop() })
+	return d, configPath
+}
+
+// startControlEventDaemon boots a daemon over a minimal Go project and returns
+// it with the path to its config file.
+func startControlEventDaemon(t *testing.T) (*Daemon, string) {
+	t.Helper()
+	d, configPath := newControlEventDaemon(t)
 	if err := d.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { d.Stop() })
 	return d, configPath
 }
 
@@ -48,13 +59,22 @@ func TestControlEventBurstTriggersOneRefresh(t *testing.T) {
 		return original(d, resetIgnoreCache)
 	}
 
-	_, configPath := startControlEventDaemon(t)
+	d, _ := newControlEventDaemon(t)
+	d.watcher.Events = make(chan fsnotify.Event, 5)
+	d.watcher.Errors = make(chan error)
+	if err := d.Start(); err != nil {
+		t.Fatal(err)
+	}
 
-	// A tight burst, well inside the coalescing window.
+	configPath := filepath.Join(d.configDir, "config.json")
+
+	if err := os.WriteFile(configPath, []byte(`{"only":["go","md"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Inject a tight burst so CI scheduling cannot stretch filesystem delivery
+	// beyond the coalescing window.
 	for i := 0; i < 5; i++ {
-		if err := os.WriteFile(configPath, []byte(`{"only":["go","md"]}`), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		d.watcher.Events <- fsnotify.Event{Name: configPath, Op: fsnotify.Write}
 	}
 
 	waitForWatchCondition(t, 5*time.Second, func() bool { return refreshes.Load() >= 1 })
@@ -94,4 +114,28 @@ func TestControlEventBurstPreservesIgnoreCacheReset(t *testing.T) {
 	}
 
 	waitForWatchCondition(t, 5*time.Second, func() bool { return sawReset.Load() })
+}
+
+func TestFilterControlEventCanonicalizesAliasAndMissingLeaf(t *testing.T) {
+	if os.PathSeparator == '\\' {
+		t.Skip("symlinks may require elevated privileges")
+	}
+	d, _ := newControlEventDaemon(t)
+	alias := filepath.Join(t.TempDir(), "codemap-alias")
+	if err := os.Symlink(d.configDir, alias); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(alias, "config.json")
+	if _, control := d.filterControlEvent(configPath); !control {
+		t.Fatalf("alias config path %q was not classified as control", configPath)
+	}
+	if err := os.Remove(filepath.Join(d.configDir, "config.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, control := d.filterControlEvent(configPath); !control {
+		t.Fatalf("missing alias config path %q was not classified as control", configPath)
+	}
+	if got, want := projectpath.CanonicalPath(configPath), filepath.Join(projectpath.CanonicalPath(d.configDir), "config.json"); got != want {
+		t.Fatalf("CanonicalPath(%q) = %q, want %q", configPath, got, want)
+	}
 }

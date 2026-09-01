@@ -48,14 +48,8 @@ func (d *Daemon) runtimeStateDir() (string, error) {
 
 // NewDaemon creates a new watch daemon for the given root
 func NewDaemon(root string, verbose bool) (*Daemon, error) {
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return nil, fmt.Errorf("invalid root path: %w", err)
-	}
 	// Canonicalize so d.root, the runtime dir, and fsnotify paths agree.
-	if canonical, err := filepath.EvalSymlinks(absRoot); err == nil {
-		absRoot = canonical
-	}
+	absRoot := projectpath.CanonicalPath(root)
 	selection, err := projectpath.SelectRuntime(absRoot)
 	if err != nil {
 		return nil, fmt.Errorf("resolve runtime state: %w", err)

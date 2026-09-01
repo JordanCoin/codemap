@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"codemap/config"
+	"codemap/internal/projectpath"
 
 	ignore "github.com/sabhiram/go-gitignore"
 )
@@ -25,7 +26,7 @@ type GitIgnoreCache struct {
 // NewGitIgnoreCache creates a cache that supports nested .gitignore files.
 // root should be the project root directory.
 func NewGitIgnoreCache(root string) *GitIgnoreCache {
-	absRoot, _ := filepath.Abs(root)
+	absRoot := projectpath.CanonicalPath(root)
 	c := &GitIgnoreCache{
 		root:     absRoot,
 		cache:    make(map[string]*ignore.GitIgnore),
@@ -72,7 +73,7 @@ func (c *GitIgnoreCache) EnsureDir(dir string) {
 	if c == nil || dir == "" {
 		return
 	}
-	c.tryLoadGitignore(dir)
+	c.tryLoadGitignore(projectpath.CanonicalPath(dir))
 }
 
 // ShouldIgnore checks if a path should be ignored based on all applicable .gitignore files.
@@ -81,6 +82,7 @@ func (c *GitIgnoreCache) ShouldIgnore(absPath string) bool {
 	if len(c.cache) == 0 {
 		return false
 	}
+	absPath = projectpath.CanonicalPath(absPath)
 
 	// Collect directories from leaf to root
 	var dirs []string
@@ -233,9 +235,9 @@ func ScanFiles(ctx context.Context, root string, cache *GitIgnoreCache, only []s
 		return nil, err
 	}
 	var files []FileInfo
-	absRoot, _ := filepath.Abs(root)
+	absRoot := projectpath.CanonicalPath(root)
 
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(absRoot, func(path string, info os.FileInfo, err error) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}

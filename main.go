@@ -777,7 +777,7 @@ func buildImportersReport(root, file string, filters scanner.Filters) (scanner.I
 	if err != nil {
 		return scanner.ImportersReport{}, err
 	}
-	return buildImportersReportFromGraph(root, file, fg), nil
+	return buildImportersReportFromGraph(root, file, fg)
 }
 
 func runImportersMode(root, file string, jsonMode bool, filters scanner.Filters) {

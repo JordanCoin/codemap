@@ -242,7 +242,10 @@ func TestBuildImportersReportFromGraphPreservesScanOrder(t *testing.T) {
 		Imports:   map[string][]string{"x.go": {"zebra.go", "apple.go", "mango.go"}},
 		Importers: map[string][]string{"x.go": {"zebra.go", "apple.go", "mango.go"}},
 	}
-	report := buildImportersReportFromGraph("/repo", "x.go", fg)
+	report, err := buildImportersReportFromGraph("/repo", "x.go", fg)
+	if err != nil {
+		t.Fatalf("buildImportersReportFromGraph() error: %v", err)
+	}
 	want := []string{"zebra.go", "apple.go", "mango.go"}
 	for i, w := range want {
 		if report.Importers[i] != w {
@@ -264,12 +267,33 @@ func TestBuildImportersReportFromGraphCarriesCoverage(t *testing.T) {
 		},
 	}
 
-	report := buildImportersReportFromGraph("/repo", "x.rs", fg)
+	report, err := buildImportersReportFromGraph("/repo", "x.rs", fg)
+	if err != nil {
+		t.Fatalf("buildImportersReportFromGraph() error: %v", err)
+	}
 	if report.CoverageStatus != "partial" || !reflect.DeepEqual(report.CoverageNotes, []string{"dynamic routes unresolved"}) {
 		t.Fatalf("report coverage = %q %#v", report.CoverageStatus, report.CoverageNotes)
 	}
 	if got := renderImportersReportString(report); !strings.Contains(got, "Coverage: partial") {
 		t.Fatalf("rendered report omits partial coverage:\n%s", got)
+	}
+}
+
+func TestBuildImportersReportFromGraphRejectsFileOutsideRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	fg := &scanner.FileGraph{
+		Imports:   map[string][]string{},
+		Importers: map[string][]string{},
+	}
+
+	for _, file := range []string{
+		filepath.Join(outside, "outside.go"),
+		filepath.Join("..", filepath.Base(outside), "outside.go"),
+	} {
+		if _, err := buildImportersReportFromGraph(root, file, fg); err == nil || !strings.Contains(err.Error(), "outside project root") {
+			t.Fatalf("buildImportersReportFromGraph(%q) error = %v, want outside-root error", file, err)
+		}
 	}
 }
 

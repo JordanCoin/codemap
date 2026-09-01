@@ -192,6 +192,43 @@ func CheckedRuntimeCodemapDir(projectRoot string) (string, error) {
 	return filepath.Join(selection.RuntimeDir, "projects", ProjectKey(selection.ProjectRoot)), nil
 }
 
+// CanonicalPath returns an absolute, cleaned path with platform symlinks
+// resolved; missing trailing components are retained for event paths.
+func CanonicalPath(path string) string {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	if canonical, err := filepath.EvalSymlinks(absPath); err == nil {
+		return filepath.Clean(canonical)
+	} else if !os.IsNotExist(err) {
+		return filepath.Clean(absPath)
+	}
+
+	current := absPath
+	var suffix []string
+	for {
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		suffix = append(suffix, filepath.Base(current))
+		current = parent
+		canonical, err := filepath.EvalSymlinks(current)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				return filepath.Clean(absPath)
+			}
+			continue
+		}
+		for i := len(suffix) - 1; i >= 0; i-- {
+			canonical = filepath.Join(canonical, suffix[i])
+		}
+		return filepath.Clean(canonical)
+	}
+	return filepath.Clean(absPath)
+}
+
 func canonicalProjectRoot(root string) (string, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
