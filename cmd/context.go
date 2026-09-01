@@ -147,8 +147,7 @@ func buildContextEnvelopeWithDeps(parent context.Context, root, prompt string, c
 	// Intent classification (if prompt provided)
 	if prompt != "" {
 		topK := projCfg.RoutingTopKOrDefault()
-		mentions := extractMentionedFiles(strings.ReplaceAll(prompt, `\`, "/"), topK)
-		files := resolveExactConfiguredFiles(mentions, inputs.fileSet)
+		files := resolveContextFiles(prompt, inputs.files, projCfg, topK)
 		intent := classifyIntent(prompt, files, inputs.info, projCfg)
 		envelope.Intent = &intent
 

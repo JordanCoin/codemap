@@ -159,26 +159,13 @@ func sortedGraphHubs(importers map[string][]string) []string {
 func normalizeContextPath(file string) string {
 	file = strings.TrimSpace(strings.ReplaceAll(file, `\`, "/"))
 	file = strings.TrimPrefix(pathpkg.Clean(file), "./")
-	if file == "." || file == "" || strings.HasPrefix(file, "../") || file == ".." || pathpkg.IsAbs(file) {
+	if file == "." || file == "" || strings.HasPrefix(file, "../") || file == ".." || pathpkg.IsAbs(file) || isContextVolumePath(file) {
 		return ""
 	}
 	return file
 }
 
-func resolveExactConfiguredFiles(mentions []string, fileSet map[string]string) []string {
-	resolved := make([]string, 0, len(mentions))
-	seen := make(map[string]struct{})
-	for _, mention := range mentions {
-		normalized := normalizeContextPath(mention)
-		actual, ok := fileSet[normalized]
-		if !ok {
-			continue
-		}
-		if _, duplicate := seen[actual]; duplicate {
-			continue
-		}
-		seen[actual] = struct{}{}
-		resolved = append(resolved, actual)
-	}
-	return resolved
+func isContextVolumePath(file string) bool {
+	return strings.HasPrefix(file, "//") ||
+		(len(file) >= 2 && file[1] == ':' && ((file[0] >= 'a' && file[0] <= 'z') || (file[0] >= 'A' && file[0] <= 'Z')))
 }
