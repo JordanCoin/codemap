@@ -16,11 +16,39 @@ type pythonManifest struct {
 	Root             string
 	Name             string
 	NormalizedName   string
+	PackageRoots     []string
+	PackageLayout    bool
 	Dependencies     []pythonDependency
 	WorkspaceMembers []string
 	WorkspaceExclude []string
 	UVSources        map[string][]pythonLocalSource
 	PoetrySources    map[string][]pythonLocalSource
+}
+
+type pythonSetuptoolsConfig struct {
+	PackageDir map[string]string `toml:"package-dir"`
+	PyModules  []string          `toml:"py-modules"`
+	Packages   *struct {
+		Find *struct {
+			Where []string `toml:"where"`
+		} `toml:"find"`
+	} `toml:"packages"`
+}
+
+type pythonHatchConfig struct {
+	Build *struct {
+		Targets *struct {
+			Wheel *struct {
+				Packages []string `toml:"packages"`
+			} `toml:"wheel"`
+		} `toml:"targets"`
+	} `toml:"build"`
+}
+
+type pythonPDMConfig struct {
+	Build *struct {
+		Includes []string `toml:"includes"`
+	} `toml:"build"`
 }
 
 type pythonDependency struct {
@@ -42,7 +70,10 @@ type pythonProjectDocument struct {
 		Dynamic              []string            `toml:"dynamic"`
 	} `toml:"project"`
 	Tool struct {
-		UV struct {
+		Setuptools *pythonSetuptoolsConfig `toml:"setuptools"`
+		Hatch      *pythonHatchConfig      `toml:"hatch"`
+		PDM        *pythonPDMConfig        `toml:"pdm"`
+		UV         struct {
 			Workspace struct {
 				Members []string `toml:"members"`
 				Exclude []string `toml:"exclude"`
@@ -57,7 +88,12 @@ type pythonProjectDocument struct {
 }
 
 func parsePythonManifest(root, path string) (pythonManifest, []Issue, error) {
-	data, err := os.ReadFile(filepath.Join(root, path))
+	manifestPath, err := safePythonManifestPath(root, path)
+	if err != nil {
+		return pythonManifest{}, []Issue{pythonIssue("invalid-manifest-path",
+			fmt.Sprintf("%s could not be read safely: %v", path, err))}, nil
+	}
+	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return pythonManifest{}, nil, err
 	}
@@ -75,6 +111,16 @@ func parsePythonManifest(root, path string) (pythonManifest, []Issue, error) {
 		PoetrySources:    make(map[string][]pythonLocalSource),
 	}
 	var issues []Issue
+	packageRoots, packageLayout := pythonPackageRoots(document)
+	manifest.PackageLayout = packageLayout
+	for _, packageRoot := range packageRoots {
+		manifest.PackageRoots = append(manifest.PackageRoots,
+			filepath.Clean(filepath.Join(manifest.Root, filepath.FromSlash(packageRoot))))
+	}
+	if manifest.PackageLayout {
+		issues = append(issues, pythonIssue("unsupported-package-layout",
+			fmt.Sprintf("%s declares a package layout that is not fully mapped", path)))
+	}
 	projectName := strings.TrimSpace(document.Project.Name)
 	poetryName := strings.TrimSpace(document.Tool.Poetry.Name)
 	switch {
@@ -90,6 +136,7 @@ func parsePythonManifest(root, path string) (pythonManifest, []Issue, error) {
 	manifest.NormalizedName = normalizePythonProjectName(manifest.Name)
 
 	for _, dynamic := range document.Project.Dynamic {
+		// Only dynamic dependencies affect the graph; other fields are not parsed here.
 		if strings.EqualFold(strings.TrimSpace(dynamic), "dependencies") {
 			issues = append(issues, pythonIssue("dynamic-dependencies",
 				fmt.Sprintf("%s computes project dependencies dynamically", path)))
@@ -152,6 +199,50 @@ func parsePythonManifest(root, path string) (pythonManifest, []Issue, error) {
 		}
 	}
 	return manifest, issues, nil
+}
+
+func safePythonManifestPath(root, manifest string) (string, error) {
+	if manifest == "" || filepath.IsAbs(manifest) {
+		return "", fmt.Errorf("manifest path must be repository-relative")
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	realRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(absRoot, filepath.Clean(manifest))
+	realManifest, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", err
+	}
+	relative, err := filepath.Rel(realRoot, realManifest)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("manifest escapes repository")
+	}
+	return realManifest, nil
+}
+
+func pythonPackageRoots(document pythonProjectDocument) ([]string, bool) {
+	var roots []string
+	declared := document.Tool.Setuptools != nil || document.Tool.Hatch != nil || document.Tool.PDM != nil
+	if setuptools := document.Tool.Setuptools; setuptools != nil {
+		for _, root := range setuptools.PackageDir {
+			roots = append(roots, root)
+		}
+		if setuptools.Packages != nil && setuptools.Packages.Find != nil {
+			roots = append(roots, setuptools.Packages.Find.Where...)
+		}
+	}
+	if hatch := document.Tool.Hatch; hatch != nil && hatch.Build != nil && hatch.Build.Targets != nil && hatch.Build.Targets.Wheel != nil {
+		roots = append(roots, hatch.Build.Targets.Wheel.Packages...)
+	}
+	if pdm := document.Tool.PDM; pdm != nil && pdm.Build != nil {
+		roots = append(roots, pdm.Build.Includes...)
+	}
+	return uniqueSortedStrings(roots), declared
 }
 
 func decodePythonLocalSources(value any) ([]pythonLocalSource, bool) {

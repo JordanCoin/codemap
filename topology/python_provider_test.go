@@ -2,6 +2,7 @@ package topology
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -75,6 +76,105 @@ name = "shared"
 	assertPythonOwner(t, graph, "libs/shared/shared/__init__.py", shared)
 	if graph.Coverage.Status != CoverageComplete {
 		t.Fatalf("coverage = %#v", graph.Coverage)
+	}
+}
+
+func TestPythonProviderDoesNotGuessDeclaredPackageLayouts(t *testing.T) {
+	root := t.TempDir()
+	writeTopologyFixture(t, root, "pyproject.toml", `
+[project]
+name = "myproj"
+
+[tool.setuptools]
+py-modules = ["standalone_module"]
+`)
+	writeTopologyFixture(t, root, "standalone_module.py", "")
+	writeTopologyFixture(t, root, "src/unrelated_scratch/scratch.py", "")
+
+	graph, _, err := BuildGraphWithProviders(context.Background(), root, []Provider{pythonProvider{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := graph.Nodes[ID("python:pyproject.toml:myproj")]
+	if len(node.SourceRoots) != 0 || len(graph.Members[node.ID]) != 0 {
+		t.Fatalf("declared flat layout was guessed: node = %#v, members = %#v", node, graph.Members[node.ID])
+	}
+	if graph.Coverage.Status != CoveragePartial || !hasIssueCode(graph.Coverage.Issues, "unsupported-package-layout") {
+		t.Fatalf("coverage = %#v, want partial unsupported-package-layout", graph.Coverage)
+	}
+}
+
+func TestPythonProviderUsesDeclaredHatchPackageRoot(t *testing.T) {
+	root := t.TempDir()
+	writeTopologyFixture(t, root, "packages/service/pyproject.toml", `
+[project]
+name = "myproj"
+
+[tool.hatch.build.targets.wheel]
+packages = ["lib/actualpkg"]
+`)
+	writeTopologyFixture(t, root, "packages/service/lib/actualpkg/__init__.py", "")
+	writeTopologyFixture(t, root, "packages/service/src/unrelated_scratch/scratch.py", "")
+
+	graph, _, err := BuildGraphWithProviders(context.Background(), root, []Provider{pythonProvider{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := graph.Nodes[ID("python:packages/service/pyproject.toml:myproj")]
+	if len(node.SourceRoots) != 1 || node.SourceRoots[0] != filepath.FromSlash("packages/service/lib/actualpkg") {
+		t.Fatalf("source roots = %#v", node.SourceRoots)
+	}
+	assertPythonOwner(t, graph, "packages/service/lib/actualpkg/__init__.py", node.ID)
+	if graph.Owners[filepath.FromSlash("packages/service/src/unrelated_scratch/scratch.py")] != nil {
+		t.Fatalf("unrelated source was assigned: %#v", graph.Owners)
+	}
+	if graph.Coverage.Status != CoveragePartial || !hasIssueCode(graph.Coverage.Issues, "unsupported-package-layout") {
+		t.Fatalf("coverage = %#v, want partial unsupported-package-layout", graph.Coverage)
+	}
+}
+
+func TestPythonProviderUsesDeclaredSetuptoolsPackageRoot(t *testing.T) {
+	root := t.TempDir()
+	writeTopologyFixture(t, root, "pyproject.toml", `
+[project]
+name = "myproj"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+`)
+	writeTopologyFixture(t, root, "src/myproj/__init__.py", "")
+	writeTopologyFixture(t, root, "myproj/unrelated.py", "")
+
+	graph, _, err := BuildGraphWithProviders(context.Background(), root, []Provider{pythonProvider{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := graph.Nodes[ID("python:pyproject.toml:myproj")]
+	if !reflect.DeepEqual(node.SourceRoots, []string{filepath.FromSlash("src")}) {
+		t.Fatalf("source roots = %#v", node.SourceRoots)
+	}
+	assertPythonOwner(t, graph, "src/myproj/__init__.py", node.ID)
+	if graph.Owners[filepath.FromSlash("myproj/unrelated.py")] != nil {
+		t.Fatalf("unrelated source was assigned: %#v", graph.Owners)
+	}
+}
+
+func TestPythonProviderRejectsManifestSymlinkOutsideRoot(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	writeTopologyFixture(t, outside, "pyproject.toml", "[project]\nname = \"external\"\n")
+	if err := os.Symlink(filepath.Join(outside, "pyproject.toml"), filepath.Join(root, "pyproject.toml")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	graph, _, err := BuildGraphWithProviders(context.Background(), root, []Provider{pythonProvider{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(graph.Nodes) != 0 || graph.Coverage.Status == CoverageComplete || !hasIssueCode(graph.Coverage.Issues, "invalid-manifest-path") {
+		t.Fatalf("external manifest was trusted: %#v", graph)
 	}
 }
 

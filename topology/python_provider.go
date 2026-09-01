@@ -121,8 +121,16 @@ func pythonNode(manifest pythonManifest, files []scanner.FileInfo) Node {
 		Root:     root,
 		Provider: "python",
 	}
-	packageDir := strings.ReplaceAll(manifest.NormalizedName, "-", "_")
-	for _, candidate := range []string{filepath.Join(root, "src"), filepath.Join(root, packageDir)} {
+	var sourceCandidates []string
+	if manifest.PackageLayout {
+		for _, packageRoot := range manifest.PackageRoots {
+			sourceCandidates = append(sourceCandidates, filepath.FromSlash(packageRoot))
+		}
+	} else {
+		packageDir := strings.ReplaceAll(manifest.NormalizedName, "-", "_")
+		sourceCandidates = []string{filepath.Join(root, "src"), filepath.Join(root, packageDir)}
+	}
+	for _, candidate := range sourceCandidates {
 		if pythonFilesUnder(files, candidate) {
 			node.SourceRoots = append(node.SourceRoots, candidate)
 		}
