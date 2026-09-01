@@ -295,3 +295,42 @@ func TestExpandReferenceRejectsAmbiguityWithoutEdges(t *testing.T) {
 		t.Fatalf("candidates = %#v, want sorted unique IDs", issue.Candidates)
 	}
 }
+
+func TestMergeFragmentsIgnoresNonApplicableProviders(t *testing.T) {
+	root := t.TempDir()
+	answered := Fragment{
+		Provider: "test",
+		Nodes:    []Node{testNode("test:settings.gradle.kts:app", "app")},
+		Coverage: Coverage{Status: CoverageComplete},
+	}
+	// Providers whose manifests are absent report Unavailable with nothing to say.
+	notApplicable := []Fragment{
+		{Provider: "jvm", Coverage: Coverage{Status: CoverageUnavailable}},
+		{Provider: "swiftpm", Coverage: Coverage{Status: CoverageUnavailable}},
+	}
+
+	graph := MergeFragments(root, append([]Fragment{answered}, notApplicable...))
+	if graph.Coverage.Status != CoverageComplete {
+		t.Fatalf("coverage = %q, want %q when the only applicable provider answered fully",
+			graph.Coverage.Status, CoverageComplete)
+	}
+
+	// Nothing applied anywhere: topology has nothing to report.
+	if graph := MergeFragments(root, notApplicable); graph.Coverage.Status != CoverageUnavailable {
+		t.Fatalf("coverage = %q, want %q when no provider produced a module",
+			graph.Coverage.Status, CoverageUnavailable)
+	}
+
+	// A provider that genuinely failed carries an Issue and still counts.
+	failed := Fragment{
+		Provider: "jvm",
+		Coverage: Coverage{
+			Status: CoverageUnavailable,
+			Issues: []Issue{{Provider: "jvm", Code: "provider-failed", Message: "boom"}},
+		},
+	}
+	if graph := MergeFragments(root, []Fragment{answered, failed}); graph.Coverage.Status != CoveragePartial {
+		t.Fatalf("coverage = %q, want %q when an applicable provider failed",
+			graph.Coverage.Status, CoveragePartial)
+	}
+}
