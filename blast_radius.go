@@ -520,7 +520,11 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 		// Analyze the FULL changed set; capping only limits what is displayed,
 		// it must not shrink blast-radius analysis or the summary stats.
 		for _, file := range changedFiles {
-			allReports = append(allReports, buildImportersReportFromGraph(absRoot, file.Path, fg))
+			report, reportErr := buildImportersReportFromGraph(absRoot, file.Path, fg)
+			if reportErr != nil {
+				return blastRadiusBundle{}, reportErr
+			}
+			allReports = append(allReports, report)
 		}
 		shownReports = allReports
 		if len(diffCapped.Files) < len(allReports) {
@@ -1411,18 +1415,25 @@ func renderCoverage(w io.Writer, status string, notes []string) {
 	fmt.Fprintf(w, "Coverage: %s — %s\n", status, strings.Join(notes, "; "))
 }
 
-func buildImportersReportFromGraph(root, file string, fg *scanner.FileGraph) scanner.ImportersReport {
+func buildImportersReportFromGraph(root, file string, fg *scanner.FileGraph) (scanner.ImportersReport, error) {
 	if canonical, err := filepath.EvalSymlinks(root); err == nil {
 		root = canonical
 	}
-	if filepath.IsAbs(file) {
-		if canonical, err := filepath.EvalSymlinks(file); err == nil {
-			file = canonical
-		}
-		if rel, err := filepath.Rel(root, file); err == nil {
-			file = rel
-		}
+	filePath := file
+	if !filepath.IsAbs(filePath) {
+		filePath = filepath.Join(root, filepath.FromSlash(filePath))
 	}
+	if canonical, err := filepath.EvalSymlinks(filePath); err == nil {
+		filePath = canonical
+	}
+	rel, err := filepath.Rel(root, filePath)
+	if err != nil {
+		return scanner.ImportersReport{}, fmt.Errorf("resolve file %q relative to project root %q: %w", file, root, err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return scanner.ImportersReport{}, fmt.Errorf("file %q is outside project root %q", file, root)
+	}
+	file = rel
 	file = filepath.ToSlash(file)
 
 	// Preserve scan order (do not sort): this helper also backs the pre-existing
@@ -1447,7 +1458,7 @@ func buildImportersReportFromGraph(root, file string, fg *scanner.FileGraph) sca
 			report.HubImports = append(report.HubImports, imp)
 		}
 	}
-	return report
+	return report, nil
 }
 
 func printAstGrepInstallHint(w io.Writer, err error) {
