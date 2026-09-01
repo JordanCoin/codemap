@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"codemap/config"
 	"codemap/internal/projectpath"
 	"codemap/internal/runtimefile"
 	"codemap/limits"
@@ -340,8 +341,12 @@ func (d *Daemon) handleConfiguredMembershipEvent(event fsnotify.Event) {
 	} else {
 		delete(d.graph.ConfiguredFiles, relPath)
 	}
+	changed := present != existed
+	if changed {
+		d.markGraphLifecycleLocked(newGraphState(d.root, config.Load(d.root), graphLifecycleStale, time.Time{}, nil))
+	}
 	d.graph.mu.Unlock()
-	if present != existed {
+	if changed {
 		d.reportPublicationError(d.writeState())
 	}
 }
@@ -532,8 +537,13 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 				delete(d.graph.Files, relPath)
 				delete(d.graph.ConfiguredFiles, relPath)
 				delete(d.graph.State, relPath)
+				if wasConfigured {
+					state := newGraphState(d.root, config.Load(d.root), graphLifecycleStale, time.Time{}, nil)
+					d.markGraphLifecycleLocked(state)
+				}
 			}
 			d.graph.mu.Unlock()
+			d.reportPublicationError(d.writeState())
 			return
 		}
 
@@ -602,6 +612,10 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 		delete(d.graph.Files, relPath)
 		delete(d.graph.ConfiguredFiles, relPath)
 		delete(d.graph.State, relPath)
+	}
+	if wasConfigured || isConfigured {
+		state := newGraphState(d.root, config.Load(d.root), graphLifecycleStale, time.Time{}, nil)
+		d.markGraphLifecycleLocked(state)
 	}
 
 	// Check if file is dirty (uncommitted) - only if git repo
@@ -690,35 +704,42 @@ func (d *Daemon) findRelatedHot(path string, window time.Duration) []string {
 		return nil
 	}
 
-	// Get connected files from the file graph
-	connected := d.graph.FileGraph.ConnectedFiles(path)
-	if len(connected) == 0 {
+	fileGraph := d.graph.FileGraph
+	imports := fileGraph.Imports[path]
+	importers := fileGraph.Importers[path]
+	if len(imports) == 0 && len(importers) == 0 {
 		return nil
 	}
 
-	connectedSet := make(map[string]bool)
-	for _, f := range connected {
-		connectedSet[f] = true
+	connected := make(map[string]struct{}, len(imports)+len(importers))
+	for _, related := range imports {
+		if related != path {
+			connected[related] = struct{}{}
+		}
+	}
+	for _, related := range importers {
+		if related != path {
+			connected[related] = struct{}{}
+		}
 	}
 
-	// Look at recent events and find matches
+	// Process newest events first and keep only the latest event for each path.
 	cutoff := time.Now().Add(-window)
-	recentlyEdited := make(map[string]bool)
+	var hot []string
 	for i := len(d.graph.Events) - 1; i >= 0; i-- {
 		e := d.graph.Events[i]
 		if e.Time.Before(cutoff) {
 			break
 		}
-		if e.Path != path && (e.Op == "CREATE" || e.Op == "WRITE") {
-			recentlyEdited[e.Path] = true
+		if e.Op != "CREATE" && e.Op != "WRITE" {
+			continue
 		}
-	}
-
-	// Find intersection
-	var hot []string
-	for file := range connectedSet {
-		if recentlyEdited[file] {
-			hot = append(hot, file)
+		if _, found := connected[e.Path]; found {
+			hot = append(hot, e.Path)
+			delete(connected, e.Path)
+			if len(connected) == 0 {
+				break
+			}
 		}
 	}
 

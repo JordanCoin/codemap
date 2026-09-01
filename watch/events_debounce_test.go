@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"codemap/config"
+
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -90,6 +92,40 @@ func TestDaemonDebounceActionProcessesMissingTrackedFile(t *testing.T) {
 	}
 	if got := d.debounceAction(debouncer, event, base.Add(10*time.Millisecond)); got != debounceProcess {
 		t.Fatalf("rapid missing-file action = %v, want process", got)
+	}
+}
+
+func TestDaemonDebouncesConfiguredWriteAfterFirstEvent(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "main.go")
+	content := []byte("package main\n")
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []GraphLifecycle{graphLifecycleAvailable, graphLifecycleStale} {
+		t.Run(string(status), func(t *testing.T) {
+			d := &Daemon{
+				root: root,
+				graph: &Graph{
+					State:           map[string]*FileState{"main.go": {Size: info.Size(), ModTime: info.ModTime().UnixNano()}},
+					ConfiguredFiles: map[string]struct{}{"main.go": {}},
+					GraphState:      newGraphState(root, config.ProjectConfig{}, status, time.Now(), []string{"main.go"}),
+				},
+			}
+			debouncer := newEventDebouncer(100 * time.Millisecond)
+			event := fsnotify.Event{Name: path, Op: fsnotify.Write}
+			base := time.Unix(0, 0)
+			if got := d.debounceAction(debouncer, event, base); got != debounceProcess {
+				t.Fatal("first configured write should not be skipped")
+			}
+			if got := d.debounceAction(debouncer, event, base.Add(10*time.Millisecond)); got != debounceSkip {
+				t.Fatalf("duplicate configured write while graph is %s = %v, want skip", status, got)
+			}
+		})
 	}
 }
 

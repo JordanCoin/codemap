@@ -77,7 +77,8 @@ func (p *statePublisher) snapshot(generation uint64) State {
 		configuredFileCount = len(d.graph.Files)
 	}
 	root := canonicalRoot(d.root)
-	s := State{Root: root, CanonicalRoot: root, DaemonInstance: p.instance, Generation: generation, UpdatedAt: time.Now(), FileCount: len(d.graph.Files), ConfiguredFileCount: &configuredFileCount, Hubs: []string{}, Importers: map[string][]string{}, Imports: map[string][]string{}, RecentEvents: append([]Event(nil), events...), WorkingSet: d.graph.WorkingSet.Snapshot(50)}
+	graphState := d.graph.GraphState
+	s := State{Root: root, CanonicalRoot: root, DaemonInstance: p.instance, Generation: generation, UpdatedAt: time.Now(), FileCount: len(d.graph.Files), ConfiguredFileCount: &configuredFileCount, Hubs: []string{}, Importers: map[string][]string{}, Imports: map[string][]string{}, RecentEvents: append([]Event(nil), events...), WorkingSet: d.graph.WorkingSet.Snapshot(50), Graph: &graphState}
 	if d.graph.FileGraph != nil {
 		s.Hubs = d.graph.FileGraph.HubFiles()
 		s.Importers = d.graph.FileGraph.Importers
