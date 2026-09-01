@@ -58,7 +58,7 @@ type watchReadiness struct {
 }
 
 func main() {
-	args, err := applyGlobalRootOptions(os.Args[1:])
+	args, projectRootExplicit, err := applyGlobalRootOptions(os.Args[1:])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(2)
@@ -318,7 +318,12 @@ func main() {
 		os.Exit(0)
 	}
 
-	root := flag.Arg(0)
+	root, importer, err := resolveImportersInvocation(flag.Arg(0), *importersMode, projectRootExplicit)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(2)
+	}
+	*importersMode = importer
 	if root == "" {
 		root = "."
 	}
@@ -512,29 +517,29 @@ func main() {
 	}
 }
 
-func applyGlobalRootOptions(args []string) ([]string, error) {
+func applyGlobalRootOptions(args []string) ([]string, bool, error) {
 	opts, remaining, err := cmd.ParseGlobalRootOptions(args)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if !opts.Active() {
 		launchDir, err := os.Getwd()
 		if err != nil {
-			return nil, fmt.Errorf("get working directory: %w", err)
+			return nil, false, fmt.Errorf("get working directory: %w", err)
 		}
 		if _, err := projectpath.Select(launchDir); err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		return remaining, nil
+		return remaining, false, nil
 	}
 
 	launchDir, err := os.Getwd()
 	if err != nil {
-		return nil, fmt.Errorf("get working directory: %w", err)
+		return nil, false, fmt.Errorf("get working directory: %w", err)
 	}
 	roots, err := cmd.ResolveGlobalRoots(opts, launchDir)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	// Canonicalize the stored setup root so projectpath and daemon args agree
 	// with the resolved project root (e.g. macOS /var -> /private/var).
@@ -542,7 +547,7 @@ func applyGlobalRootOptions(args []string) ([]string, error) {
 		roots.Setup = canonical
 	}
 	if err := os.Chdir(roots.Project); err != nil {
-		return nil, fmt.Errorf("change to project root %q: %w", roots.Project, err)
+		return nil, false, fmt.Errorf("change to project root %q: %w", roots.Project, err)
 	}
 	if opts.SetupRoot != "" {
 		projectpath.SetSetupRoot(roots.Setup)
@@ -550,7 +555,33 @@ func applyGlobalRootOptions(args []string) ([]string, error) {
 		projectpath.ResetSetupRoot()
 	}
 
-	return remaining, nil
+	return remaining, opts.Directory != "", nil
+}
+
+func resolveImportersInvocation(root, importer string, projectRootExplicit bool) (string, string, error) {
+	if root != "" || projectRootExplicit || importer == "" || !filepath.IsAbs(importer) {
+		// Canonicalize the importer so the relative path matches the
+		// canonicalized project root (e.g. macOS /tmp -> /private/tmp).
+		if filepath.IsAbs(importer) {
+			if canonical, err := filepath.EvalSymlinks(importer); err == nil {
+				importer = canonical
+			}
+		}
+		return root, importer, nil
+	}
+
+	canonicalImporter, err := filepath.EvalSymlinks(importer)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve --importers file %q: %w", importer, err)
+	}
+	inferred, found, err := cmd.ResolveNearestGitRoot(filepath.Dir(canonicalImporter))
+	if err != nil {
+		return "", "", fmt.Errorf("infer project root from --importers %q: %w", importer, err)
+	}
+	if !found {
+		return "", "", fmt.Errorf("infer project root from --importers %q: file is not inside a Git repository", importer)
+	}
+	return inferred, canonicalImporter, nil
 }
 
 // stdinManifest is the JSON format accepted by --stdin.
