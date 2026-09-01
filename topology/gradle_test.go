@@ -181,6 +181,80 @@ func TestGradleCommentStripperPreservesURLLikeStringLiterals(t *testing.T) {
 	}
 }
 
+func TestGradleIgnoresBlockCommentsAndInterpolatedIncludes(t *testing.T) {
+	root := t.TempDir()
+	writeTopologyFixture(t, root, "settings.gradle.kts", `
+include(":app", ":core")
+/*
+include(":commented")
+*/
+include(":${projectName}")
+`)
+	writeTopologyFixture(t, root, "app/build.gradle.kts", `
+/*
+implementation(project(":commented"))
+*/
+implementation(project(":core"))
+`)
+	fragment, err := (jvmProvider{}).Build(context.Background(), Inventory{
+		Root: root, Manifests: []string{"settings.gradle.kts", "app/build.gradle.kts"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph := MergeFragments(root, []Fragment{fragment})
+	if !hasIssueCode(graph.Coverage.Issues, "dynamic-gradle-include") {
+		t.Fatalf("issues = %#v", graph.Coverage.Issues)
+	}
+	if _, ok := graph.Nodes[gradleID("settings.gradle.kts", ":commented")]; ok {
+		t.Fatal("block-commented Gradle project was retained")
+	}
+	if _, ok := graph.Nodes[gradleID("settings.gradle.kts", ":${projectName}")]; ok {
+		t.Fatal("interpolated Gradle project was retained")
+	}
+	assertTopologyEdge(t, graph.Dependencies[gradleID("settings.gradle.kts", ":app")], gradleID("settings.gradle.kts", ":core"), EdgeDependency, EdgeScope("implementation"))
+}
+
+func TestGradleReportsSharedAndMultilineDeclarations(t *testing.T) {
+	root := t.TempDir()
+	writeTopologyFixture(t, root, "settings.gradle.kts", `
+include(":app", ":common")
+include(
+    ":multiline"
+)
+`)
+	writeTopologyFixture(t, root, "build.gradle", `
+subprojects {
+    dependencies {
+        implementation project(":common")
+    }
+}
+`)
+	fragment, err := (jvmProvider{}).Build(context.Background(), Inventory{
+		Root: root, Manifests: []string{"settings.gradle.kts", "build.gradle"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph := MergeFragments(root, []Fragment{fragment})
+	if graph.Coverage.Status != CoveragePartial {
+		t.Fatalf("coverage = %q: %#v", graph.Coverage.Status, graph.Coverage.Issues)
+	}
+	for _, code := range []string{"dynamic-gradle-include", "dynamic-gradle-scope"} {
+		if !hasIssueCode(graph.Coverage.Issues, code) {
+			t.Fatalf("issues = %#v, want %s", graph.Coverage.Issues, code)
+		}
+	}
+	if _, ok := graph.Nodes[gradleID("settings.gradle.kts", ":multiline")]; ok {
+		t.Fatal("multiline Gradle project was retained")
+	}
+	for _, edge := range graph.Dependencies[gradleID("settings.gradle.kts", ":")] {
+		if edge.Kind == EdgeDependency {
+			t.Fatalf("shared Gradle block emitted a root dependency: %#v", edge)
+		}
+	}
+}
+
 func TestGradleFailsClosedForAmbiguousAccessors(t *testing.T) {
 	root := t.TempDir()
 	writeTopologyFixture(t, root, "settings.gradle.kts", `include(":app", ":foo_bar", ":foo-bar")`)

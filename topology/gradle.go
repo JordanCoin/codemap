@@ -35,19 +35,21 @@ type gradleIncludeBuild struct {
 }
 
 var (
-	gradleRootNamePattern          = regexp.MustCompile(`^\s*rootProject\.name\s*=\s*["']([^"']+)["']`)
-	gradleIncludeCallPattern       = regexp.MustCompile(`^\s*include\s*\((.*)\)\s*$`)
-	gradleIncludeGroovyPattern     = regexp.MustCompile(`^\s*include\s+(.+)$`)
-	gradleIncludeBuildPattern      = regexp.MustCompile(`^\s*includeBuild\s*\(\s*["']([^"']+)["']\s*\)`)
-	gradleIncludeBuildGroovy       = regexp.MustCompile(`^\s*includeBuild\s+["']([^"']+)["']`)
-	gradleProjectDirPattern        = regexp.MustCompile(`^\s*project\(\s*["'](:[^"']*)["']\s*\)\.projectDir\s*=\s*(?:file\(\s*["']([^"']+)["']\s*\)|new File\(\s*rootDir\s*,\s*["']([^"']+)["']\s*\))`)
-	gradleProjectDependency        = regexp.MustCompile(`^\s*([A-Za-z][A-Za-z0-9_]*)\s*\(\s*project\(\s*["'](:[^"']+)["']\s*\)\s*\)`)
-	gradleProjectDependencyGroovy  = regexp.MustCompile(`^\s*([A-Za-z][A-Za-z0-9_]*)\s+project\(\s*["'](:[^"']+)["']\s*\)`)
-	gradleAccessorDependency       = regexp.MustCompile(`^\s*([A-Za-z][A-Za-z0-9_]*)\s*\(\s*(projects(?:\.[A-Za-z_][A-Za-z0-9_]*)+)\s*\)`)
-	gradleAccessorDependencyGroovy = regexp.MustCompile(`^\s*([A-Za-z][A-Za-z0-9_]*)\s+(projects(?:\.[A-Za-z_][A-Za-z0-9_]*)+)`)
-	gradleSourceRootCall           = regexp.MustCompile(`(?:java|kotlin|scala)\.srcDirs?\s*\((.*)\)`)
-	gradleSourceRootGroovy         = regexp.MustCompile(`(?:java|kotlin|scala)\.srcDirs?\s*(?:=)?\s*(.+)$`)
-	gradleStringLiteralPattern     = regexp.MustCompile(`["']([^"']+)["']`)
+	gradleRootNamePattern           = regexp.MustCompile(`^\s*rootProject\.name\s*=\s*["']([^"']+)["']`)
+	gradleIncludeCallPattern        = regexp.MustCompile(`^\s*include\s*\((.*)\)\s*$`)
+	gradleIncludeGroovyPattern      = regexp.MustCompile(`^\s*include\s+(.+)$`)
+	gradleIncludeBuildPattern       = regexp.MustCompile(`^\s*includeBuild\s*\(\s*["']([^"']+)["']\s*\)`)
+	gradleIncludeBuildGroovy        = regexp.MustCompile(`^\s*includeBuild\s+["']([^"']+)["']`)
+	gradleProjectDirPattern         = regexp.MustCompile(`^\s*project\(\s*["'](:[^"']*)["']\s*\)\.projectDir\s*=\s*(?:file\(\s*["']([^"']+)["']\s*\)|new File\(\s*rootDir\s*,\s*["']([^"']+)["']\s*\))`)
+	gradleProjectDependency         = regexp.MustCompile(`^\s*([A-Za-z][A-Za-z0-9_]*)\s*\(\s*project\(\s*["'](:[^"']+)["']\s*\)\s*\)`)
+	gradleProjectDependencyGroovy   = regexp.MustCompile(`^\s*([A-Za-z][A-Za-z0-9_]*)\s+project\(\s*["'](:[^"']+)["']\s*\)`)
+	gradleAccessorDependency        = regexp.MustCompile(`^\s*([A-Za-z][A-Za-z0-9_]*)\s*\(\s*(projects(?:\.[A-Za-z_][A-Za-z0-9_]*)+)\s*\)`)
+	gradleAccessorDependencyGroovy  = regexp.MustCompile(`^\s*([A-Za-z][A-Za-z0-9_]*)\s+(projects(?:\.[A-Za-z_][A-Za-z0-9_]*)+)`)
+	gradleSourceRootCall            = regexp.MustCompile(`(?:java|kotlin|scala)\.srcDirs?\s*\((.*)\)`)
+	gradleSourceRootGroovy          = regexp.MustCompile(`(?:java|kotlin|scala)\.srcDirs?\s*(?:=)?\s*(.+)$`)
+	gradleStringLiteralPattern      = regexp.MustCompile(`["']([^"']+)["']`)
+	gradleIncludeStartPattern       = regexp.MustCompile(`^\s*include\s*\(`)
+	gradleSharedProjectBlockPattern = regexp.MustCompile(`\b(?:subprojects|allprojects)\b[^\{]*\{`)
 )
 
 func buildGradleFragment(ctx context.Context, inventory Inventory, manifests []string) (Fragment, error) {
@@ -185,10 +187,11 @@ func parseGradleSettings(root, settings string) (*gradleBuild, error) {
 	}
 
 	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	inBlockComment := false
 	lineNumber := 0
 	for scanner.Scan() {
 		lineNumber++
-		line := stripGradleLineComment(scanner.Text())
+		line := stripSBTComments(scanner.Text(), &inBlockComment)
 		if match := gradleRootNamePattern.FindStringSubmatch(line); match != nil {
 			build.rootName = match[1]
 			continue
@@ -211,20 +214,26 @@ func parseGradleSettings(root, settings string) (*gradleBuild, error) {
 		}
 		if match := gradleIncludeCallPattern.FindStringSubmatch(line); match != nil {
 			includes := gradleStringLiterals(match[1])
-			if len(includes) == 0 {
+			if len(includes) == 0 || gradleHasDynamicStringLiteral(match[1]) {
 				build.issues = append(build.issues, Issue{Provider: "jvm", Code: "dynamic-gradle-include", Message: fmt.Sprintf("%s:%d include has no literal project paths", settings, lineNumber)})
-				continue
 			}
-			addGradleProjects(build, includes)
+			if len(includes) > 0 {
+				addGradleProjects(build, includes)
+			}
 			continue
 		}
 		if match := gradleIncludeGroovyPattern.FindStringSubmatch(line); match != nil {
 			includes := gradleStringLiterals(match[1])
-			if len(includes) == 0 {
+			if len(includes) == 0 || gradleHasDynamicStringLiteral(match[1]) {
 				build.issues = append(build.issues, Issue{Provider: "jvm", Code: "dynamic-gradle-include", Message: fmt.Sprintf("%s:%d include has no literal project paths", settings, lineNumber)})
-				continue
 			}
-			addGradleProjects(build, includes)
+			if len(includes) > 0 {
+				addGradleProjects(build, includes)
+			}
+			continue
+		}
+		if gradleIncludeStartPattern.MatchString(line) {
+			build.issues = append(build.issues, Issue{Provider: "jvm", Code: "dynamic-gradle-include", Message: fmt.Sprintf("%s:%d include spans multiple lines", settings, lineNumber)})
 			continue
 		}
 		if match := gradleProjectDirPattern.FindStringSubmatch(line); match != nil {
@@ -258,10 +267,31 @@ func parseGradleBuildFile(root string, build *gradleBuild, projectPath, manifest
 	var sourceRoots, testRoots []string
 	var issues []Issue
 	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	inBlockComment := false
+	sharedProjectBlockDepth := 0
+	sharedProjectIssue := false
 	lineNumber := 0
 	for scanner.Scan() {
 		lineNumber++
-		line := stripGradleLineComment(scanner.Text())
+		line := stripSBTComments(scanner.Text(), &inBlockComment)
+		if sharedProjectBlockDepth > 0 {
+			sharedProjectBlockDepth += gradleBraceDelta(line)
+			if sharedProjectBlockDepth < 0 {
+				sharedProjectBlockDepth = 0
+			}
+			continue
+		}
+		if gradleSharedProjectBlockPattern.MatchString(line) {
+			sharedProjectBlockDepth = gradleBraceDelta(line)
+			if sharedProjectBlockDepth < 0 {
+				sharedProjectBlockDepth = 0
+			}
+			if !sharedProjectIssue {
+				issues = append(issues, Issue{Provider: "jvm", Code: "dynamic-gradle-scope", Message: fmt.Sprintf("%s:%d project-wide Gradle block is not attributed to individual projects", manifest, lineNumber)})
+				sharedProjectIssue = true
+			}
+			continue
+		}
 		if match := gradleProjectDependency.FindStringSubmatch(line); match != nil {
 			targetPath := canonicalGradlePath(match[2])
 			target := build.projects[targetPath]
@@ -491,13 +521,31 @@ func gradleStringLiterals(text string) []string {
 	matches := gradleStringLiteralPattern.FindAllStringSubmatch(text, -1)
 	result := make([]string, 0, len(matches))
 	for _, match := range matches {
+		if strings.Contains(match[1], "$") {
+			continue
+		}
 		result = append(result, match[1])
 	}
 	return result
 }
 
+func gradleHasDynamicStringLiteral(text string) bool {
+	for _, match := range gradleStringLiteralPattern.FindAllStringSubmatch(text, -1) {
+		if strings.Contains(match[1], "$") {
+			return true
+		}
+	}
+	return false
+}
+
 func stripGradleLineComment(line string) string {
+	inBlockComment := false
+	return stripSBTComments(line, &inBlockComment)
+}
+
+func gradleBraceDelta(line string) int {
 	inString, escaped := byte(0), false
+	delta := 0
 	for index := 0; index < len(line); index++ {
 		char := line[index]
 		if inString != 0 {
@@ -514,11 +562,14 @@ func stripGradleLineComment(line string) string {
 			inString = char
 			continue
 		}
-		if char == '/' && index+1 < len(line) && line[index+1] == '/' {
-			return line[:index]
+		switch char {
+		case '{':
+			delta++
+		case '}':
+			delta--
 		}
 	}
-	return line
+	return delta
 }
 
 func sortedGradleProjectPaths(projects map[string]*gradleProject) []string {

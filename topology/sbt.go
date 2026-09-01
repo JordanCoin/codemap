@@ -36,13 +36,14 @@ type sbtReference struct {
 }
 
 var (
-	sbtProjectPattern     = regexp.MustCompile(`^\s*(?:lazy\s+)?val\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\(?\s*(?:project|rootProject)\b(.*)$`)
-	sbtProjectPathPattern = regexp.MustCompile(`(?:project\.in\s*\(\s*file\s*\(\s*|project\s+in\s+file\s*\(\s*)["']([^"']+)["']`)
-	sbtNamePattern        = regexp.MustCompile(`^\s*(?:ThisBuild\s*/\s*)?name\s*:=\s*["']([^"']+)["']`)
-	sbtReferencePattern   = regexp.MustCompile(`\.(dependsOn|aggregate)\s*\(([^)]*)\)`)
-	sbtSourcePattern      = regexp.MustCompile(`(?:unmanagedSourceDirectories|sourceDirectories|scalaSource|javaSource|kotlinSource)\b(.*)$`)
-	sbtProjectNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-	sbtStringPattern      = regexp.MustCompile(`["']([^"']+)["']`)
+	sbtProjectPattern        = regexp.MustCompile(`^\s*(?:lazy\s+)?val\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\(?\s*(?:project|rootProject)\b(.*)$`)
+	sbtProjectPathPattern    = regexp.MustCompile(`(?:project\.in\s*\(\s*file\s*\(\s*|project\s+in\s+file\s*\(\s*)["']([^"']+)["']`)
+	sbtNamePattern           = regexp.MustCompile(`^\s*(?:ThisBuild\s*/\s*)?name\s*:=\s*["']([^"']+)["']`)
+	sbtReferencePattern      = regexp.MustCompile(`\.(dependsOn|aggregate)\s*\(([^)]*)\)`)
+	sbtSourcePattern         = regexp.MustCompile(`(?:unmanagedSourceDirectories|sourceDirectories|scalaSource|javaSource|kotlinSource)\b(.*)$`)
+	sbtProjectNamePattern    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	sbtStringPattern         = regexp.MustCompile(`["']([^"']+)["']`)
+	sbtDynamicProjectPattern = regexp.MustCompile(`\b(?:Seq|List|Vector|Set)\b.*\.map\s*\(.*\bProject\s*\(`)
 )
 
 func buildSBTFragment(ctx context.Context, inventory Inventory, manifests []string) (Fragment, error) {
@@ -159,6 +160,9 @@ func parseSBTBuild(root, manifest string) (*sbtBuild, error) {
 				build.projects[name] = project
 			}
 			currentProject = name
+		}
+		if sbtDynamicProjectPattern.MatchString(line) {
+			build.issues = append(build.issues, Issue{Provider: "jvm", Code: "dynamic-sbt-project", Message: fmt.Sprintf("%s:%d project list is generated dynamically", build.manifest, lineNumber)})
 		}
 		if currentProject == "" {
 			continue

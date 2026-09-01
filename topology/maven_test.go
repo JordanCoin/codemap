@@ -326,3 +326,30 @@ func TestMavenResolvesChainedPropertiesDeterministically(t *testing.T) {
 	libID := mavenID("lib/pom.xml", "com.example", "lib")
 	assertTopologyEdge(t, graph.Dependencies[appID], libID, EdgeDependency, EdgeScope("compile"))
 }
+
+func TestMavenResolvesPropertyModuleAndParentPaths(t *testing.T) {
+	root := t.TempDir()
+	writeTopologyFixture(t, root, "pom.xml", `<project>
+  <modelVersion>4.0.0</modelVersion><groupId>com.example</groupId>
+  <artifactId>root</artifactId><packaging>pom</packaging>
+  <properties><module.dir>app</module.dir></properties>
+  <modules><module>${module.dir}</module></modules>
+</project>`)
+	writeTopologyFixture(t, root, "app/pom.xml", `<project>
+  <parent><groupId>com.example</groupId><artifactId>root</artifactId>
+    <relativePath>${parent.path}</relativePath></parent>
+  <properties><parent.path>../pom.xml</parent.path></properties>
+  <artifactId>app</artifactId>
+</project>`)
+	fragment, err := (jvmProvider{}).Build(context.Background(), Inventory{
+		Root: root, Manifests: []string{"pom.xml", filepath.FromSlash("app/pom.xml")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph := MergeFragments(root, []Fragment{fragment})
+	rootID := mavenID("pom.xml", "com.example", "root")
+	appID := mavenID(filepath.FromSlash("app/pom.xml"), "com.example", "app")
+	assertTopologyEdge(t, graph.Dependencies[rootID], appID, EdgeBuildBoundary, EdgeScope(""))
+	assertTopologyEdge(t, graph.Dependencies[appID], rootID, EdgeInheritance, EdgeScope(""))
+}

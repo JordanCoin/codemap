@@ -108,3 +108,20 @@ lazy val root = project
 		}
 	}
 }
+
+func TestSBTReportsGeneratedProjects(t *testing.T) {
+	root := t.TempDir()
+	writeTopologyFixture(t, root, "build.sbt", `
+val generated = Seq("app").map(name => Project(name))
+`)
+	fragment, err := (jvmProvider{}).Build(context.Background(), Inventory{
+		Root: root, Manifests: []string{"build.sbt"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph := MergeFragments(root, []Fragment{fragment})
+	if graph.Coverage.Status != CoveragePartial || !hasIssueCode(graph.Coverage.Issues, "dynamic-sbt-project") {
+		t.Fatalf("coverage = %q, issues = %#v", graph.Coverage.Status, graph.Coverage.Issues)
+	}
+}

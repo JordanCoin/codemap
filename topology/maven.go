@@ -184,7 +184,16 @@ func buildMavenFragment(ctx context.Context, inventory Inventory, manifests []st
 			})
 		}
 		for _, module := range mavenSubprojects(pom.raw) {
-			moduleManifest := filepath.Clean(filepath.Join(pom.root, filepath.FromSlash(strings.TrimSpace(module)), "pom.xml"))
+			resolvedModule, ok := resolveMavenValue(module, pom.properties)
+			if !ok {
+				fragment.Coverage.Issues = append(fragment.Coverage.Issues, Issue{
+					Provider: "jvm",
+					Code:     "unresolved-maven-property",
+					Message:  fmt.Sprintf("%s contains an unresolved module path", pom.manifest),
+				})
+				continue
+			}
+			moduleManifest := filepath.Clean(filepath.Join(pom.root, filepath.FromSlash(strings.TrimSpace(resolvedModule)), "pom.xml"))
 			child := poms[moduleManifest]
 			if child == nil {
 				fragment.Coverage.Issues = append(fragment.Coverage.Issues, Issue{
@@ -261,6 +270,11 @@ func linkMavenParentByPath(pom *mavenPOM, poms map[string]*mavenPOM) {
 			return
 		}
 	}
+	resolved, ok := resolveMavenValue(relative, pom.raw.Properties)
+	if !ok {
+		return
+	}
+	relative = resolved
 	pom.parent = poms[filepath.Clean(filepath.Join(pom.root, filepath.FromSlash(relative)))]
 }
 
