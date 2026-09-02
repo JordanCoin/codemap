@@ -56,8 +56,8 @@ type Graph struct {
 	LastScan         time.Time
 	IsGitRepo        bool
 	HasDeps          bool // whether deps were successfully computed
-	GraphState      GraphState
-	graphGeneration uint64
+	GraphState       GraphState
+	graphGeneration  uint64
 }
 
 // State represents the daemon state that hooks can read
