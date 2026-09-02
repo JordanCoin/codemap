@@ -34,7 +34,19 @@ func MergeFragments(root string, fragments []Fragment) *Graph {
 	var issues []Issue
 	invalidIDs := make(map[ID]bool)
 	complete := true
+	sawNotApplicable := false
 	for _, fragment := range fragments {
+		// A provider that found none of its manifests reports Unavailable with
+		// nothing to say: "not applicable here", not "incomplete". Such a
+		// fragment must not drag down a graph that other providers answered
+		// fully, but it does mean an empty graph is unavailable rather than
+		// completely known. A provider that declares Complete, or that carries
+		// nodes, edges or issues, always counts toward completeness.
+		if fragment.Coverage.Status == CoverageUnavailable && len(fragment.Nodes) == 0 &&
+			len(fragment.Edges) == 0 && len(fragment.Coverage.Issues) == 0 && len(fragment.Members) == 0 {
+			sawNotApplicable = true
+			continue
+		}
 		if fragment.Coverage.Status != CoverageComplete {
 			complete = false
 		}
@@ -155,7 +167,7 @@ func MergeFragments(root string, fragments []Fragment) *Graph {
 
 	issues = uniqueSortedIssues(issues)
 	switch {
-	case len(graph.Nodes) == 0 && !complete:
+	case len(graph.Nodes) == 0 && (!complete || sawNotApplicable):
 		graph.Coverage.Status = CoverageUnavailable
 	case complete && len(issues) == 0:
 		graph.Coverage.Status = CoverageComplete
