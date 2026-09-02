@@ -10,27 +10,35 @@ import (
 )
 
 func TestContextLexicalRouting(t *testing.T) {
-	t.Run("exact path wins before stem", func(t *testing.T) {
-		files := routingFiles("cmd/context.go", "internal/helper.go")
-		got := resolveContextFilesWithCase("inspect cmd/context.go and context", files, config.ProjectConfig{}, 3, false)
-		if want := []string{"cmd/context.go"}; !reflect.DeepEqual(got, want) {
+	t.Run("exact path wins over basename regardless of token order", func(t *testing.T) {
+		files := routingFiles("cmd/context.go", "pkg/server.go")
+		got := resolveContextFilesWithCase("inspect server.go and cmd/context.go", files, config.ProjectConfig{}, 2, false)
+		if want := []string{"cmd/context.go", "pkg/server.go"}; !reflect.DeepEqual(got, want) {
 			t.Fatalf("files = %#v, want %#v", got, want)
 		}
 	})
 
-	t.Run("unique extension basename and Rust stem", func(t *testing.T) {
+	t.Run("unique extension basename resolves", func(t *testing.T) {
 		files := routingFiles("mcp/server.go", "src/final_build.rs")
-		got := resolveContextFilesWithCase("connect server.go to final_build", files, config.ProjectConfig{}, 3, false)
-		if want := []string{"mcp/server.go", "src/final_build.rs"}; !reflect.DeepEqual(got, want) {
+		got := resolveContextFilesWithCase("connect server.go", files, config.ProjectConfig{}, 3, false)
+		if want := []string{"mcp/server.go"}; !reflect.DeepEqual(got, want) {
 			t.Fatalf("files = %#v, want %#v", got, want)
 		}
 	})
 
-	t.Run("ambiguous basename and stem stay unresolved", func(t *testing.T) {
+	t.Run("ambiguous basename stays unresolved", func(t *testing.T) {
 		files := routingFiles("cmd/context.go", "internal/context.go", "src/graph.rs", "mcp/graph.go")
 		got := resolveContextFilesWithCase("inspect context.go and graph", files, config.ProjectConfig{}, 4, false)
 		if len(got) != 0 {
 			t.Fatalf("ambiguous files = %#v, want none", got)
+		}
+	})
+
+	t.Run("ordinary words do not resolve extensionless file stems", func(t *testing.T) {
+		files := routingFiles("cmd/doctor.go", "plugins/install.go", "cmd/root.go", "handoff/build.go")
+		got := resolveContextFilesWithCase("please install a new machine and root out the build problem", files, config.ProjectConfig{}, 4, false)
+		if len(got) != 0 {
+			t.Fatalf("inferred files = %#v, want none", got)
 		}
 	})
 
@@ -67,6 +75,15 @@ func TestContextLexicalRouting(t *testing.T) {
 		if len(got) != 0 {
 			t.Fatalf("absolute files = %#v, want none", got)
 		}
+		if got := normalizeContextPath(`C:\\tmp\\target.go`); got != "" {
+			t.Fatalf("drive path = %q, want empty", got)
+		}
+		if got := normalizeContextPath("//server/share.go"); got != "" {
+			t.Fatalf("UNC path = %q, want empty", got)
+		}
+		if got := normalizeContextInventoryPath("x:helper.go"); got != "x:helper.go" {
+			t.Fatalf("inventory path = %q, want x:helper.go", got)
+		}
 	})
 
 	t.Run("case-folded exact collisions stay unresolved", func(t *testing.T) {
@@ -79,7 +96,7 @@ func TestContextLexicalRouting(t *testing.T) {
 
 	t.Run("top k bounds lexical matches", func(t *testing.T) {
 		files := routingFiles("src/alpha.go", "src/beta.go", "src/gamma.go")
-		got := resolveContextFilesWithCase("alpha beta gamma", files, config.ProjectConfig{}, 2, false)
+		got := resolveContextFilesWithCase("alpha.go beta.go gamma.go", files, config.ProjectConfig{}, 2, false)
 		if want := []string{"src/alpha.go", "src/beta.go"}; !reflect.DeepEqual(got, want) {
 			t.Fatalf("files = %#v, want %#v", got, want)
 		}
@@ -113,14 +130,14 @@ func TestContextLexicalRouting(t *testing.T) {
 		cfg := config.ProjectConfig{Routing: config.RoutingConfig{
 			Subsystems: []config.Subsystem{{ID: "mcp", Keywords: []string{"mcp"}, Paths: []string{"mcp"}}},
 		}}
-		got := resolveContextFilesWithCase("trace mcp -> final_build -> graph", files, cfg, 3, false)
+		got := resolveContextFilesWithCase("trace mcp -> final_build.rs -> graph.rs", files, cfg, 3, false)
 		want := []string{"src/final_build.rs", "src/graph.rs", "mcp/server.go"}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("files = %#v, want %#v", got, want)
 		}
 	})
 
-	t.Run("resolved stem drives intent risk", func(t *testing.T) {
+	t.Run("explicit basename drives intent risk", func(t *testing.T) {
 		files := routingFiles("src/final_build.rs", "a.rs", "b.rs", "c.rs")
 		graph := &scanner.FileGraph{
 			Imports: map[string][]string{
@@ -128,8 +145,42 @@ func TestContextLexicalRouting(t *testing.T) {
 			},
 			Importers: map[string][]string{"src/final_build.rs": {"a.rs", "b.rs", "c.rs"}},
 		}
-		envelope := buildContextEnvelopeWithDeps(context.Background(), t.TempDir(), "refactor final_build", true, testContextEnvelopeDeps(files, graph))
+		envelope := buildContextEnvelopeWithDeps(context.Background(), t.TempDir(), "refactor final_build.rs", true, testContextEnvelopeDeps(files, graph))
 		if envelope.Intent == nil || !reflect.DeepEqual(envelope.Intent.Files, []string{"src/final_build.rs"}) || envelope.Intent.RiskLevel != "medium" {
+			t.Fatalf("intent = %#v", envelope.Intent)
+		}
+		if envelope.Intent.FileConfidence != "explicit" {
+			t.Fatalf("file confidence = %q, want explicit", envelope.Intent.FileConfidence)
+		}
+	})
+
+	t.Run("inferred candidates do not affect explicit scope or risk", func(t *testing.T) {
+		files := routingFiles("README.md", "src/build/a.go", "src/build/b.go")
+		cfg := config.ProjectConfig{Routing: config.RoutingConfig{
+			Subsystems: []config.Subsystem{{ID: "build", Keywords: []string{"overdrive"}, Paths: []string{"src/build"}}},
+		}}
+		graph := &scanner.FileGraph{Importers: map[string][]string{
+			"README.md":      {},
+			"src/build/a.go": {"one.go", "two.go", "three.go"},
+		}}
+		root := t.TempDir()
+		writeProjectConfig(t, root, cfg)
+		envelope := buildContextEnvelopeWithDeps(context.Background(), root, "inspect README.md during overdrive", true, testContextEnvelopeDeps(files, graph))
+		if envelope.Intent == nil || len(envelope.Intent.Files) != 3 || envelope.Intent.FileConfidence != "mixed" || envelope.Intent.Scope != "single-file" || envelope.Intent.RiskLevel != "low" {
+			t.Fatalf("intent = %#v", envelope.Intent)
+		}
+	})
+
+	t.Run("inferred subsystem candidates do not set scope or risk", func(t *testing.T) {
+		files := routingFiles("src/build/a.go", "src/build/b.go", "src/other.go")
+		cfg := config.ProjectConfig{Routing: config.RoutingConfig{
+			Subsystems: []config.Subsystem{{ID: "build", Keywords: []string{"overdrive"}, Paths: []string{"src/build"}}},
+		}}
+		graph := &scanner.FileGraph{Importers: map[string][]string{"src/build/a.go": {"src/other.go", "src/other.go", "src/other.go"}}}
+		root := t.TempDir()
+		writeProjectConfig(t, root, cfg)
+		envelope := buildContextEnvelopeWithDeps(context.Background(), root, "speed up overdrive", true, testContextEnvelopeDeps(files, graph))
+		if envelope.Intent == nil || len(envelope.Intent.Files) != 2 || envelope.Intent.FileConfidence != "inferred" || envelope.Intent.Scope != "unknown" || envelope.Intent.RiskLevel != "unknown" {
 			t.Fatalf("intent = %#v", envelope.Intent)
 		}
 	})

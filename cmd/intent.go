@@ -10,13 +10,14 @@ import (
 
 // TaskIntent represents a parsed understanding of what the user wants to do.
 type TaskIntent struct {
-	Category           string              `json:"category"`    // "refactor", "feature", "bugfix", "explore", "test", "docs"
-	Confidence         float64             `json:"confidence"`  // 0.0-1.0 confidence in category
-	Files              []string            `json:"files"`       // mentioned files
-	Subsystems         []string            `json:"subsystems"`  // matched subsystem IDs
-	Scope              string              `json:"scope"`       // "single-file", "package", "cross-cutting"
-	RiskLevel          string              `json:"risk"`        // "unknown", "low", "medium", "high"
-	Suggestions        []ContextSuggestion `json:"suggestions"` // what to read/check next
+	Category           string              `json:"category"`                  // "refactor", "feature", "bugfix", "explore", "test", "docs"
+	Confidence         float64             `json:"confidence"`                // 0.0-1.0 confidence in category
+	Files              []string            `json:"files"`                     // files named or inferred from the request
+	FileConfidence     string              `json:"file_confidence,omitempty"` // explicit, inferred, or mixed
+	Subsystems         []string            `json:"subsystems"`                // matched subsystem IDs
+	Scope              string              `json:"scope"`                     // "single-file", "package", "cross-cutting"
+	RiskLevel          string              `json:"risk"`                      // "unknown", "low", "medium", "high"
+	Suggestions        []ContextSuggestion `json:"suggestions"`               // what to read/check next
 	DependencyCoverage string              `json:"dependency_coverage,omitempty"`
 	CoverageNotes      []string            `json:"coverage_notes,omitempty"`
 }
@@ -110,11 +111,48 @@ var categoryDefs = []categoryDef{
 
 // classifyIntent analyzes a user prompt against code intelligence to determine task intent.
 func classifyIntent(prompt string, files []string, info *hubInfo, cfg config.ProjectConfig) TaskIntent {
+	return classifyIntentWithEvidence(prompt, files, info, cfg, false)
+}
+
+func classifyIntentWithEvidence(prompt string, files []string, info *hubInfo, cfg config.ProjectConfig, inferredOnly bool) TaskIntent {
+	riskFiles := files
+	if inferredOnly {
+		riskFiles = nil
+	}
+	confidence := ""
+	if len(files) > 0 {
+		if inferredOnly {
+			confidence = "inferred"
+		} else {
+			confidence = "explicit"
+		}
+	}
+	return classifyIntentWithFiles(prompt, files, riskFiles, info, cfg, confidence, inferredOnly)
+}
+
+func classifyIntentWithResolution(prompt string, resolution contextFileResolution, info *hubInfo, cfg config.ProjectConfig) TaskIntent {
+	confidence := ""
+	switch {
+	case len(resolution.explicitFiles) > 0 && len(resolution.inferredFiles) > 0:
+		confidence = "mixed"
+	case len(resolution.explicitFiles) > 0:
+		confidence = "explicit"
+	case len(resolution.inferredFiles) > 0:
+		confidence = "inferred"
+	}
+	inferredOnly := len(resolution.explicitFiles) == 0 && len(resolution.inferredFiles) > 0
+	return classifyIntentWithFiles(prompt, resolution.files, resolution.explicitFiles, info, cfg, confidence, inferredOnly)
+}
+
+func classifyIntentWithFiles(prompt string, files, riskFiles []string, info *hubInfo, cfg config.ProjectConfig, confidence string, inferredOnly bool) TaskIntent {
 	intent := TaskIntent{
 		Category:  "feature", // default
 		Files:     files,
 		RiskLevel: "unknown",
 		Scope:     "single-file",
+	}
+	if confidence != "" {
+		intent.FileConfidence = confidence
 	}
 	if info != nil {
 		intent.DependencyCoverage = string(info.Coverage.Status)
@@ -153,7 +191,7 @@ func classifyIntent(prompt string, files []string, info *hubInfo, cfg config.Pro
 	}
 
 	// Compute scope from file distribution
-	intent.Scope = computeScope(files)
+	intent.Scope = computeScopeWithEvidence(riskFiles, inferredOnly)
 
 	// Match subsystems
 	if len(cfg.Routing.Subsystems) > 0 {
@@ -164,8 +202,15 @@ func classifyIntent(prompt string, files []string, info *hubInfo, cfg config.Pro
 	}
 
 	// Compute risk level and generate suggestions from hub analysis
-	if info != nil && len(files) > 0 {
-		intent.RiskLevel, intent.Suggestions = analyzeRisk(files, info, intent.Category)
+	if info != nil && len(riskFiles) > 0 {
+		intent.RiskLevel, intent.Suggestions = analyzeRiskWithEvidence(riskFiles, info, intent.Category, false)
+	} else if inferredOnly {
+		intent.RiskLevel = "unknown"
+		intent.Suggestions = []ContextSuggestion{{
+			Type:   "check-deps",
+			Target: ".",
+			Reason: "risk is unknown without an explicit file mention",
+		}}
 	} else {
 		intent.Suggestions = []ContextSuggestion{{
 			Type:   "check-deps",
@@ -179,6 +224,13 @@ func classifyIntent(prompt string, files []string, info *hubInfo, cfg config.Pro
 
 // computeScope determines whether the task touches one file, one package, or crosses packages.
 func computeScope(files []string) string {
+	return computeScopeWithEvidence(files, false)
+}
+
+func computeScopeWithEvidence(files []string, inferredOnly bool) string {
+	if inferredOnly {
+		return "unknown"
+	}
 	if len(files) == 0 {
 		return "unknown"
 	}
@@ -199,6 +251,13 @@ func computeScope(files []string) string {
 
 // analyzeRisk evaluates hub involvement and generates context suggestions.
 func analyzeRisk(files []string, info *hubInfo, category string) (string, []ContextSuggestion) {
+	return analyzeRiskWithEvidence(files, info, category, false)
+}
+
+func analyzeRiskWithEvidence(files []string, info *hubInfo, category string, inferredOnly bool) (string, []ContextSuggestion) {
+	if inferredOnly {
+		return "unknown", nil
+	}
 	risk := "low"
 	var suggestions []ContextSuggestion
 

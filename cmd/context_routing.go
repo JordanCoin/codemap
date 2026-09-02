@@ -3,7 +3,6 @@ package cmd
 import (
 	pathpkg "path"
 	"regexp"
-	"runtime"
 	"sort"
 	"strings"
 
@@ -18,22 +17,27 @@ type contextFileIndex struct {
 	paths           []string
 	exact           map[string][]string
 	basenames       map[string][]string
-	stems           map[string][]string
 }
 
-func resolveContextFiles(prompt string, files []scanner.FileInfo, cfg config.ProjectConfig, topK int) []string {
-	return resolveContextFilesWithCase(prompt, files, cfg, topK, runtime.GOOS == "windows")
+type contextFileResolution struct {
+	files         []string
+	explicitFiles []string
+	inferredFiles []string
 }
 
 func resolveContextFilesWithCase(prompt string, files []scanner.FileInfo, cfg config.ProjectConfig, topK int, caseInsensitive bool) []string {
+	return resolveContextFileResolutionWithCase(prompt, files, cfg, topK, caseInsensitive).files
+}
+
+func resolveContextFileResolutionWithCase(prompt string, files []scanner.FileInfo, cfg config.ProjectConfig, topK int, caseInsensitive bool) contextFileResolution {
 	if topK <= 0 || len(files) == 0 {
-		return nil
+		return contextFileResolution{}
 	}
 	index := newContextFileIndex(files, caseInsensitive)
 	tokens := contextRoutingTokens(prompt)
-	result := make([]string, 0, topK)
+	resolution := contextFileResolution{files: make([]string, 0, topK)}
 	seen := make(map[string]struct{})
-	add := func(path string) bool {
+	add := func(path string, inferred bool) bool {
 		if path == "" {
 			return false
 		}
@@ -41,16 +45,21 @@ func resolveContextFilesWithCase(prompt string, files []scanner.FileInfo, cfg co
 			return false
 		}
 		seen[path] = struct{}{}
-		result = append(result, path)
-		return len(result) >= topK
+		resolution.files = append(resolution.files, path)
+		if inferred {
+			resolution.inferredFiles = append(resolution.inferredFiles, path)
+		} else {
+			resolution.explicitFiles = append(resolution.explicitFiles, path)
+		}
+		return len(resolution.files) >= topK
 	}
 
 	// Exact normalized repository-relative paths always win.
 	for _, token := range tokens {
 		normalized := normalizeContextPath(token)
 		matches := index.exact[index.key(normalized)]
-		if normalized != "" && len(matches) == 1 && add(matches[0]) {
-			return result
+		if normalized != "" && len(matches) == 1 && add(matches[0], false) {
+			return resolution
 		}
 	}
 
@@ -65,25 +74,13 @@ func resolveContextFilesWithCase(prompt string, files []scanner.FileInfo, cfg co
 			continue
 		}
 		matches := index.basenames[index.key(base)]
-		if len(matches) == 1 && add(matches[0]) {
-			return result
-		}
-	}
-
-	// Finally accept unique extensionless file stems.
-	for _, token := range tokens {
-		normalized := normalizeContextPath(token)
-		if normalized == "" || strings.Contains(normalized, "/") || pathpkg.Ext(normalized) != "" {
-			continue
-		}
-		matches := index.stems[index.key(normalized)]
-		if len(matches) == 1 && add(matches[0]) {
-			return result
+		if len(matches) == 1 && add(matches[0], false) {
+			return resolution
 		}
 	}
 
 	// Configured subsystem routes are bounded last-resort file candidates.
-	for _, subsystemIndex := range contextSubsystemMatches(prompt, cfg, len(cfg.Routing.Subsystems)) {
+	for _, subsystemIndex := range contextSubsystemMatches(prompt, cfg, cfg.RoutingTopKOrDefault()) {
 		subsystem := cfg.Routing.Subsystems[subsystemIndex]
 		for _, prefix := range subsystem.Paths {
 			prefix = normalizeContextPath(prefix)
@@ -93,13 +90,13 @@ func resolveContextFilesWithCase(prompt string, files []scanner.FileInfo, cfg co
 			prefixKey := index.key(prefix)
 			for _, path := range index.paths {
 				pathKey := index.key(path)
-				if (pathKey == prefixKey || strings.HasPrefix(pathKey, prefixKey+"/")) && add(path) {
-					return result
+				if (pathKey == prefixKey || strings.HasPrefix(pathKey, prefixKey+"/")) && add(path, true) {
+					return resolution
 				}
 			}
 		}
 	}
-	return result
+	return resolution
 }
 
 func newContextFileIndex(files []scanner.FileInfo, caseInsensitive bool) contextFileIndex {
@@ -107,10 +104,9 @@ func newContextFileIndex(files []scanner.FileInfo, caseInsensitive bool) context
 		caseInsensitive: caseInsensitive,
 		exact:           make(map[string][]string, len(files)),
 		basenames:       make(map[string][]string),
-		stems:           make(map[string][]string),
 	}
 	for _, file := range files {
-		path := normalizeContextPath(file.Path)
+		path := normalizeContextInventoryPath(file.Path)
 		if path == "" {
 			continue
 		}
@@ -132,10 +128,6 @@ func newContextFileIndex(files []scanner.FileInfo, caseInsensitive bool) context
 		index.exact[pathKey] = append(index.exact[pathKey], path)
 		base := pathpkg.Base(path)
 		index.basenames[index.key(base)] = append(index.basenames[index.key(base)], path)
-		stem := strings.TrimSuffix(base, pathpkg.Ext(base))
-		if stem != "" {
-			index.stems[index.key(stem)] = append(index.stems[index.key(stem)], path)
-		}
 	}
 	sort.Strings(index.paths)
 	return index
@@ -159,59 +151,15 @@ func contextRoutingTokens(prompt string) []string {
 	return tokens
 }
 
-type contextSubsystemMatch struct {
-	index int
-	id    string
-	score int
-}
-
 func contextSubsystemMatches(prompt string, cfg config.ProjectConfig, topK int) []int {
-	if topK <= 0 || cfg.RoutingStrategyOrDefault() != "keyword" {
+	matches := matchSubsystemRoutes(prompt, cfg, topK)
+	if len(matches) == 0 {
 		return nil
-	}
-
-	promptLower := strings.ToLower(prompt)
-	matches := make([]contextSubsystemMatch, 0, len(cfg.Routing.Subsystems))
-	for index, subsystem := range cfg.Routing.Subsystems {
-		score := 0
-		for _, keyword := range subsystem.Keywords {
-			keyword = strings.TrimSpace(strings.ToLower(keyword))
-			if keyword != "" && strings.Contains(promptLower, keyword) {
-				score++
-			}
-		}
-		for _, pathHint := range subsystem.Paths {
-			pathHint = strings.TrimSpace(strings.ToLower(pathHint))
-			if pathHint != "" && strings.Contains(promptLower, pathHint) {
-				score++
-			}
-		}
-		if score == 0 {
-			continue
-		}
-		id := strings.TrimSpace(subsystem.ID)
-		if id == "" {
-			id = "(unnamed)"
-		}
-		matches = append(matches, contextSubsystemMatch{index: index, id: id, score: score})
-	}
-
-	sort.SliceStable(matches, func(i, j int) bool {
-		if matches[i].score != matches[j].score {
-			return matches[i].score > matches[j].score
-		}
-		if matches[i].id != matches[j].id {
-			return matches[i].id < matches[j].id
-		}
-		return matches[i].index < matches[j].index
-	})
-	if len(matches) > topK {
-		matches = matches[:topK]
 	}
 
 	indices := make([]int, len(matches))
 	for i, match := range matches {
-		indices[i] = match.index
+		indices[i] = match.Index
 	}
 	return indices
 }

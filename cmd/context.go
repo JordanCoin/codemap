@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -147,8 +148,9 @@ func buildContextEnvelopeWithDeps(parent context.Context, root, prompt string, c
 	// Intent classification (if prompt provided)
 	if prompt != "" {
 		topK := projCfg.RoutingTopKOrDefault()
-		files := resolveContextFiles(prompt, inputs.files, projCfg, topK)
-		intent := classifyIntent(prompt, files, inputs.info, projCfg)
+		resolution := resolveContextFileResolutionWithCase(prompt, inputs.files, projCfg, topK, runtime.GOOS == "windows")
+		files := resolution.files
+		intent := classifyIntentWithResolution(prompt, resolution, inputs.info, projCfg)
 		envelope.Intent = &intent
 
 		// Match skills against intent

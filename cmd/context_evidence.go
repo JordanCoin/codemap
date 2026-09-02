@@ -44,7 +44,6 @@ type contextEnvelopeDeps struct {
 type contextRequestInputs struct {
 	state      *watch.State
 	files      []scanner.FileInfo
-	fileSet    map[string]string
 	info       *hubInfo
 	evidence   GraphEvidence
 	fileScanOK bool
@@ -67,7 +66,6 @@ func defaultContextEnvelopeDeps() contextEnvelopeDeps {
 func loadContextRequestInputs(ctx context.Context, root string, deps contextEnvelopeDeps) contextRequestInputs {
 	inputs := contextRequestInputs{
 		state:    deps.readState(root),
-		fileSet:  make(map[string]string),
 		evidence: unavailableGraphEvidence(graphEvidenceScanFailed),
 	}
 
@@ -78,12 +76,6 @@ func loadContextRequestInputs(ctx context.Context, root string, deps contextEnve
 	}
 	inputs.files = files
 	inputs.fileScanOK = true
-	for _, file := range files {
-		normalized := normalizeContextPath(file.Path)
-		if normalized != "" {
-			inputs.fileSet[normalized] = file.Path
-		}
-	}
 
 	if len(files) == 0 {
 		inputs.info = &hubInfo{Importers: map[string][]string{}, Imports: map[string][]string{}}
@@ -157,9 +149,18 @@ func sortedGraphHubs(importers map[string][]string) []string {
 }
 
 func normalizeContextPath(file string) string {
+	return normalizeContextPathWithVolumeGuard(file, true)
+}
+
+func normalizeContextInventoryPath(file string) string {
+	return normalizeContextPathWithVolumeGuard(file, false)
+}
+
+func normalizeContextPathWithVolumeGuard(file string, rejectVolume bool) string {
 	file = strings.TrimSpace(strings.ReplaceAll(file, `\`, "/"))
+	volumePath := isContextVolumePath(file)
 	file = strings.TrimPrefix(pathpkg.Clean(file), "./")
-	if file == "." || file == "" || strings.HasPrefix(file, "../") || file == ".." || pathpkg.IsAbs(file) || isContextVolumePath(file) {
+	if file == "." || file == "" || strings.HasPrefix(file, "../") || file == ".." || pathpkg.IsAbs(file) || (rejectVolume && volumePath) {
 		return ""
 	}
 	return file
