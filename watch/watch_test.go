@@ -254,13 +254,18 @@ func TestFileRemoval(t *testing.T) {
 	}
 }
 
-// TestDebounce tests that rapid events are debounced
 func TestDebounce(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "codemap-watch-test")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tmpDir)
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".codemap"), 0o755); err != nil {
+		t.Fatalf("Failed to create config dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, ".codemap", "config.json"), []byte(`{"exclude":["rapid.go"]}`), 0o644); err != nil {
+		t.Fatalf("Failed to exclude debounce fixture: %v", err)
+	}
 
 	testFile := filepath.Join(tmpDir, "rapid.go")
 	if err := os.WriteFile(testFile, []byte("package rapid\n"), 0644); err != nil {

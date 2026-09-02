@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"codemap/analysis"
+	"codemap/config"
 	"codemap/limits"
 	"codemap/scanner"
 	"codemap/watch"
@@ -18,6 +19,7 @@ const (
 	graphEvidenceAvailable       = "available"
 	graphEvidenceUnavailable     = "unavailable"
 	graphEvidenceFreshScan       = "fresh_scan"
+	graphEvidenceWatchCache      = "watch_cache"
 	graphEvidenceLargeRepository = "large_repository"
 	graphEvidenceCancelled       = "cancelled"
 	graphEvidenceDeadline        = "deadline"
@@ -82,6 +84,10 @@ func loadContextRequestInputs(ctx context.Context, root string, deps contextEnve
 		inputs.evidence = GraphEvidence{Status: graphEvidenceAvailable, Source: graphEvidenceFreshScan}
 		return inputs
 	}
+	if graph, _ := watch.ValidateCachedGraphForInventory(inputs.state, root, config.Load(root), contextFilePaths(files)); graph != nil {
+		populateContextGraphInputs(&inputs, graph, graphEvidenceWatchCache)
+		return inputs
+	}
 	if len(files) > limits.LargeRepoFileCount {
 		inputs.evidence = unavailableGraphEvidence(graphEvidenceLargeRepository)
 		return inputs
@@ -96,16 +102,26 @@ func loadContextRequestInputs(ctx context.Context, root string, deps contextEnve
 		inputs.evidence = unavailableGraphEvidence(graphEvidenceScanIncomplete)
 		return inputs
 	}
-	// An edge-free graph is still authoritative when its coverage is complete
-	// (the zero coverage status is the production graph's complete default).
-	// Explicitly unavailable provenance remains fail-closed, even if stale or
-	// partial edge maps happen to contain entries.
+	// Complete edge-free graphs are valid; unavailable provenance is not.
 	if graph.Coverage.Status == analysis.CoverageUnavailable ||
 		(len(graph.Coverage.Sources) > 0 && scanner.CoverageFromSources(graph.Coverage.Sources).Status == analysis.CoverageUnavailable) {
 		inputs.evidence = unavailableGraphEvidence(graphEvidenceScanIncomplete)
 		return inputs
 	}
 
+	populateContextGraphInputs(&inputs, graph, graphEvidenceFreshScan)
+	return inputs
+}
+
+func contextFilePaths(files []scanner.FileInfo) []string {
+	paths := make([]string, 0, len(files))
+	for _, file := range files {
+		paths = append(paths, file.Path)
+	}
+	return paths
+}
+
+func populateContextGraphInputs(inputs *contextRequestInputs, graph *scanner.FileGraph, source string) {
 	hubs := sortedGraphHubs(graph.Importers)
 	inputs.info = &hubInfo{
 		Hubs:      hubs,
@@ -113,8 +129,7 @@ func loadContextRequestInputs(ctx context.Context, root string, deps contextEnve
 		Imports:   graph.Imports,
 		Coverage:  graph.Coverage,
 	}
-	inputs.evidence = GraphEvidence{Status: graphEvidenceAvailable, Source: graphEvidenceFreshScan}
-	return inputs
+	inputs.evidence = GraphEvidence{Status: graphEvidenceAvailable, Source: source}
 }
 
 func unavailableGraphEvidence(reason string) GraphEvidence {

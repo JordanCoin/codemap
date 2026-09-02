@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"codemap/config"
 	"codemap/internal/projectpath"
 	"codemap/limits"
 	"codemap/scanner"
@@ -48,6 +49,7 @@ func TestGetGraphWriteInitialStateAndFindRelatedHot(t *testing.T) {
 	d := &Daemon{
 		root: root,
 		graph: &Graph{
+			GraphState: newGraphState(root, config.ProjectConfig{}, graphLifecycleAvailable, time.Now(), []string{"pkg/types.go", "main.go", "other.go"}),
 			Files: map[string]*scanner.FileInfo{
 				"pkg/types.go": {Path: "pkg/types.go"},
 				"main.go":      {Path: "main.go"},

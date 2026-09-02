@@ -114,6 +114,52 @@ func getHubInfoNoFallback(root string) *hubInfo {
 	return getHubInfoWithFallback(root, false)
 }
 
+func getValidatedHubInfo(root string) *hubInfo {
+	state := watch.ReadState(root)
+	graph, _ := watch.ValidateCachedGraph(state, root, config.Load(root))
+	if graph == nil {
+		return nil
+	}
+	return &hubInfo{
+		Hubs:      graph.HubFiles(),
+		Importers: graph.Importers,
+		Imports:   graph.Imports,
+		Coverage:  graph.Coverage,
+	}
+}
+
+func resolveValidatedHookFiles(root string, mentions []string, cfg config.ProjectConfig) []string {
+	files := make([]string, 0, len(mentions))
+	seen := make(map[string]struct{})
+	gitCache := scanner.NewGitIgnoreCache(root)
+	for _, mention := range mentions {
+		normalized := normalizeContextPath(mention)
+		if normalized == "" || !scanner.MatchesFilters(normalized, filepath.Ext(normalized), cfg.Only, cfg.Exclude) {
+			continue
+		}
+		candidate := filepath.Join(root, filepath.FromSlash(normalized))
+		info, err := os.Lstat(candidate)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		for dir := filepath.Dir(candidate); ; dir = filepath.Dir(dir) {
+			gitCache.EnsureDir(dir)
+			if dir == filepath.Clean(root) || dir == filepath.Dir(dir) {
+				break
+			}
+		}
+		if gitCache.ShouldIgnore(candidate) {
+			continue
+		}
+		if _, duplicate := seen[normalized]; duplicate {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		files = append(files, normalized)
+	}
+	return files
+}
+
 func getHubInfoWithFallback(root string, allowFallback bool) *hubInfo {
 	if state := watch.ReadState(root); state != nil {
 		// State may contain file/event info only (no dependency graph) on very
@@ -843,10 +889,15 @@ func hookPromptSubmit(root string) error {
 
 	projCfg := config.Load(root)
 	topK := projCfg.RoutingTopKOrDefault()
-	info := getHubInfoNoFallback(root)
+	info := getValidatedHubInfo(root)
 
 	// Extract mentioned files and classify intent
 	filesMentioned := extractMentionedFiles(prompt, topK)
+	if info != nil {
+		filesMentioned = resolveValidatedHookFiles(root, filesMentioned, projCfg)
+	}
+	// The cached graph has no content fingerprint, so it cannot support a
+	// risk verdict after an in-place source edit.
 	intent := classifyIntent(prompt, filesMentioned, nil, projCfg)
 
 	// Emit structured intent marker (machine-readable for tools) only when the
