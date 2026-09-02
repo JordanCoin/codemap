@@ -1267,6 +1267,7 @@ func extractMentionedFiles(prompt string, limit int) []string {
 type subsystemRouteMatch struct {
 	ID           string   `json:"id"`
 	Score        int      `json:"score"`
+	Index        int      `json:"-"`
 	Docs         []string `json:"docs,omitempty"`
 	Agents       []string `json:"agents,omitempty"`
 	Instructions string   `json:"instructions,omitempty"`
@@ -1279,7 +1280,7 @@ func matchSubsystemRoutes(prompt string, cfg config.ProjectConfig, topK int) []s
 
 	promptLower := strings.ToLower(prompt)
 	var matches []subsystemRouteMatch
-	for _, subsystem := range cfg.Routing.Subsystems {
+	for index, subsystem := range cfg.Routing.Subsystems {
 		score := 0
 		for _, keyword := range subsystem.Keywords {
 			keyword = strings.TrimSpace(strings.ToLower(keyword))
@@ -1304,6 +1305,7 @@ func matchSubsystemRoutes(prompt string, cfg config.ProjectConfig, topK int) []s
 		matches = append(matches, subsystemRouteMatch{
 			ID:           id,
 			Score:        score,
+			Index:        index,
 			Docs:         subsystem.Docs,
 			Agents:       subsystem.Agents,
 			Instructions: subsystem.Instructions,
@@ -1312,6 +1314,9 @@ func matchSubsystemRoutes(prompt string, cfg config.ProjectConfig, topK int) []s
 
 	sort.Slice(matches, func(i, j int) bool {
 		if matches[i].Score == matches[j].Score {
+			if matches[i].ID == matches[j].ID {
+				return matches[i].Index < matches[j].Index
+			}
 			return matches[i].ID < matches[j].ID
 		}
 		return matches[i].Score > matches[j].Score

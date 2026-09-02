@@ -44,7 +44,6 @@ type contextEnvelopeDeps struct {
 type contextRequestInputs struct {
 	state      *watch.State
 	files      []scanner.FileInfo
-	fileSet    map[string]string
 	info       *hubInfo
 	evidence   GraphEvidence
 	fileScanOK bool
@@ -67,7 +66,6 @@ func defaultContextEnvelopeDeps() contextEnvelopeDeps {
 func loadContextRequestInputs(ctx context.Context, root string, deps contextEnvelopeDeps) contextRequestInputs {
 	inputs := contextRequestInputs{
 		state:    deps.readState(root),
-		fileSet:  make(map[string]string),
 		evidence: unavailableGraphEvidence(graphEvidenceScanFailed),
 	}
 
@@ -78,12 +76,6 @@ func loadContextRequestInputs(ctx context.Context, root string, deps contextEnve
 	}
 	inputs.files = files
 	inputs.fileScanOK = true
-	for _, file := range files {
-		normalized := normalizeContextPath(file.Path)
-		if normalized != "" {
-			inputs.fileSet[normalized] = file.Path
-		}
-	}
 
 	if len(files) == 0 {
 		inputs.info = &hubInfo{Importers: map[string][]string{}, Imports: map[string][]string{}}
@@ -157,28 +149,24 @@ func sortedGraphHubs(importers map[string][]string) []string {
 }
 
 func normalizeContextPath(file string) string {
-	file = strings.TrimSpace(strings.ReplaceAll(file, `\`, "/"))
+	return normalizeContextPathWithVolumeGuard(strings.TrimSpace(file), true)
+}
+
+func normalizeContextInventoryPath(file string) string {
+	return normalizeContextPathWithVolumeGuard(file, false)
+}
+
+func normalizeContextPathWithVolumeGuard(file string, rejectVolume bool) string {
+	file = strings.ReplaceAll(file, `\`, "/")
+	volumePath := isContextVolumePath(file)
 	file = strings.TrimPrefix(pathpkg.Clean(file), "./")
-	if file == "." || file == "" || strings.HasPrefix(file, "../") || file == ".." || pathpkg.IsAbs(file) {
+	if file == "." || file == "" || strings.HasPrefix(file, "../") || file == ".." || pathpkg.IsAbs(file) || (rejectVolume && volumePath) {
 		return ""
 	}
 	return file
 }
 
-func resolveExactConfiguredFiles(mentions []string, fileSet map[string]string) []string {
-	resolved := make([]string, 0, len(mentions))
-	seen := make(map[string]struct{})
-	for _, mention := range mentions {
-		normalized := normalizeContextPath(mention)
-		actual, ok := fileSet[normalized]
-		if !ok {
-			continue
-		}
-		if _, duplicate := seen[actual]; duplicate {
-			continue
-		}
-		seen[actual] = struct{}{}
-		resolved = append(resolved, actual)
-	}
-	return resolved
+func isContextVolumePath(file string) bool {
+	return strings.HasPrefix(file, "//") ||
+		(len(file) >= 2 && file[1] == ':' && ((file[0] >= 'a' && file[0] <= 'z') || (file[0] >= 'A' && file[0] <= 'Z')))
 }
