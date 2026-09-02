@@ -483,7 +483,7 @@ func TestCheckFileImportersAndRouteSuggestions(t *testing.T) {
 
 func TestHookPromptSubmitShowsContextAndProgress(t *testing.T) {
 	root := t.TempDir()
-	writeProjectConfig(t, root, config.ProjectConfig{
+	cfg := config.ProjectConfig{
 		Routing: config.RoutingConfig{
 			Retrieval: config.RetrievalConfig{Strategy: "keyword", TopK: 2},
 			Subsystems: []config.Subsystem{
@@ -494,10 +494,16 @@ func TestHookPromptSubmitShowsContextAndProgress(t *testing.T) {
 				},
 			},
 		},
-	})
+	}
+	writeProjectConfig(t, root, cfg)
+	mustWriteFile(t, filepath.Join(root, "pkg", "types.go"), "package pkg\n")
+	graphState := watch.NewGraphState(root, cfg, watch.GraphLifecycleAvailable, time.Now(), []string{"pkg/types.go"})
+	configuredCount := 1
 	writeWatchState(t, root, watch.State{
-		UpdatedAt: time.Now(),
-		FileCount: 5,
+		UpdatedAt:           time.Now(),
+		FileCount:           5,
+		Graph:               &graphState,
+		ConfiguredFileCount: &configuredCount,
 		Importers: map[string][]string{
 			"pkg/types.go": {"a.go", "b.go", "c.go"},
 		},

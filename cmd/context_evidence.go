@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"codemap/analysis"
+	"codemap/config"
 	"codemap/limits"
 	"codemap/scanner"
 	"codemap/watch"
@@ -18,6 +19,7 @@ const (
 	graphEvidenceAvailable       = "available"
 	graphEvidenceUnavailable     = "unavailable"
 	graphEvidenceFreshScan       = "fresh_scan"
+	graphEvidenceWatchCache      = "watch_cache"
 	graphEvidenceLargeRepository = "large_repository"
 	graphEvidenceCancelled       = "cancelled"
 	graphEvidenceDeadline        = "deadline"
@@ -44,7 +46,6 @@ type contextEnvelopeDeps struct {
 type contextRequestInputs struct {
 	state      *watch.State
 	files      []scanner.FileInfo
-	fileSet    map[string]string
 	info       *hubInfo
 	evidence   GraphEvidence
 	fileScanOK bool
@@ -67,7 +68,6 @@ func defaultContextEnvelopeDeps() contextEnvelopeDeps {
 func loadContextRequestInputs(ctx context.Context, root string, deps contextEnvelopeDeps) contextRequestInputs {
 	inputs := contextRequestInputs{
 		state:    deps.readState(root),
-		fileSet:  make(map[string]string),
 		evidence: unavailableGraphEvidence(graphEvidenceScanFailed),
 	}
 
@@ -78,16 +78,14 @@ func loadContextRequestInputs(ctx context.Context, root string, deps contextEnve
 	}
 	inputs.files = files
 	inputs.fileScanOK = true
-	for _, file := range files {
-		normalized := normalizeContextPath(file.Path)
-		if normalized != "" {
-			inputs.fileSet[normalized] = file.Path
-		}
-	}
 
 	if len(files) == 0 {
 		inputs.info = &hubInfo{Importers: map[string][]string{}, Imports: map[string][]string{}}
 		inputs.evidence = GraphEvidence{Status: graphEvidenceAvailable, Source: graphEvidenceFreshScan}
+		return inputs
+	}
+	if graph, _ := watch.ValidateCachedGraphForInventory(inputs.state, root, config.Load(root), contextFilePaths(files)); graph != nil {
+		populateContextGraphInputs(&inputs, graph, graphEvidenceWatchCache)
 		return inputs
 	}
 	if len(files) > limits.LargeRepoFileCount {
@@ -104,16 +102,26 @@ func loadContextRequestInputs(ctx context.Context, root string, deps contextEnve
 		inputs.evidence = unavailableGraphEvidence(graphEvidenceScanIncomplete)
 		return inputs
 	}
-	// An edge-free graph is still authoritative when its coverage is complete
-	// (the zero coverage status is the production graph's complete default).
-	// Explicitly unavailable provenance remains fail-closed, even if stale or
-	// partial edge maps happen to contain entries.
+	// Complete edge-free graphs are valid; unavailable provenance is not.
 	if graph.Coverage.Status == analysis.CoverageUnavailable ||
 		(len(graph.Coverage.Sources) > 0 && scanner.CoverageFromSources(graph.Coverage.Sources).Status == analysis.CoverageUnavailable) {
 		inputs.evidence = unavailableGraphEvidence(graphEvidenceScanIncomplete)
 		return inputs
 	}
 
+	populateContextGraphInputs(&inputs, graph, graphEvidenceFreshScan)
+	return inputs
+}
+
+func contextFilePaths(files []scanner.FileInfo) []string {
+	paths := make([]string, 0, len(files))
+	for _, file := range files {
+		paths = append(paths, file.Path)
+	}
+	return paths
+}
+
+func populateContextGraphInputs(inputs *contextRequestInputs, graph *scanner.FileGraph, source string) {
 	hubs := sortedGraphHubs(graph.Importers)
 	inputs.info = &hubInfo{
 		Hubs:      hubs,
@@ -121,8 +129,7 @@ func loadContextRequestInputs(ctx context.Context, root string, deps contextEnve
 		Imports:   graph.Imports,
 		Coverage:  graph.Coverage,
 	}
-	inputs.evidence = GraphEvidence{Status: graphEvidenceAvailable, Source: graphEvidenceFreshScan}
-	return inputs
+	inputs.evidence = GraphEvidence{Status: graphEvidenceAvailable, Source: source}
 }
 
 func unavailableGraphEvidence(reason string) GraphEvidence {
@@ -157,28 +164,24 @@ func sortedGraphHubs(importers map[string][]string) []string {
 }
 
 func normalizeContextPath(file string) string {
-	file = strings.TrimSpace(strings.ReplaceAll(file, `\`, "/"))
+	return normalizeContextPathWithVolumeGuard(strings.TrimSpace(file), true)
+}
+
+func normalizeContextInventoryPath(file string) string {
+	return normalizeContextPathWithVolumeGuard(file, false)
+}
+
+func normalizeContextPathWithVolumeGuard(file string, rejectVolume bool) string {
+	file = strings.ReplaceAll(file, `\`, "/")
+	volumePath := isContextVolumePath(file)
 	file = strings.TrimPrefix(pathpkg.Clean(file), "./")
-	if file == "." || file == "" || strings.HasPrefix(file, "../") || file == ".." || pathpkg.IsAbs(file) {
+	if file == "." || file == "" || strings.HasPrefix(file, "../") || file == ".." || pathpkg.IsAbs(file) || (rejectVolume && volumePath) {
 		return ""
 	}
 	return file
 }
 
-func resolveExactConfiguredFiles(mentions []string, fileSet map[string]string) []string {
-	resolved := make([]string, 0, len(mentions))
-	seen := make(map[string]struct{})
-	for _, mention := range mentions {
-		normalized := normalizeContextPath(mention)
-		actual, ok := fileSet[normalized]
-		if !ok {
-			continue
-		}
-		if _, duplicate := seen[actual]; duplicate {
-			continue
-		}
-		seen[actual] = struct{}{}
-		resolved = append(resolved, actual)
-	}
-	return resolved
+func isContextVolumePath(file string) bool {
+	return strings.HasPrefix(file, "//") ||
+		(len(file) >= 2 && file[1] == ':' && ((file[0] >= 'a' && file[0] <= 'z') || (file[0] >= 'A' && file[0] <= 'Z')))
 }

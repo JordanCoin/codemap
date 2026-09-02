@@ -1,11 +1,16 @@
 package watch
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"codemap/config"
+	"codemap/scanner"
 
 	"github.com/fsnotify/fsnotify"
 )
@@ -59,6 +64,12 @@ func TestDaemonDebounceActionUsesSizeAndModTime(t *testing.T) {
 	if got := d.debounceAction(debouncer, event, base.Add(20*time.Millisecond)); got != debounceSkip {
 		t.Fatalf("duplicate write action = %v, want skip", got)
 	}
+	if got := d.debounceAction(debouncer, event, base.Add(200*time.Millisecond)); got != debounceSkip {
+		t.Fatalf("delayed duplicate write action = %v, want skip", got)
+	}
+	if got := d.debounceAction(debouncer, fsnotify.Event{Name: path, Op: fsnotify.Create}, base.Add(210*time.Millisecond)); got != debounceProcess {
+		t.Fatalf("create after write action = %v, want process", got)
+	}
 }
 
 func TestDaemonDebounceActionProcessesMissingCache(t *testing.T) {
@@ -90,6 +101,40 @@ func TestDaemonDebounceActionProcessesMissingTrackedFile(t *testing.T) {
 	}
 	if got := d.debounceAction(debouncer, event, base.Add(10*time.Millisecond)); got != debounceProcess {
 		t.Fatalf("rapid missing-file action = %v, want process", got)
+	}
+}
+
+func TestDaemonDebouncesConfiguredWriteAfterFirstEvent(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "main.go")
+	content := []byte("package main\n")
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []GraphLifecycle{graphLifecycleAvailable, graphLifecycleStale} {
+		t.Run(string(status), func(t *testing.T) {
+			d := &Daemon{
+				root: root,
+				graph: &Graph{
+					State:           map[string]*FileState{"main.go": {Size: info.Size(), ModTime: info.ModTime().UnixNano()}},
+					ConfiguredFiles: map[string]struct{}{"main.go": {}},
+					GraphState:      newGraphState(root, config.ProjectConfig{}, status, time.Now(), []string{"main.go"}),
+				},
+			}
+			debouncer := newEventDebouncer(100 * time.Millisecond)
+			event := fsnotify.Event{Name: path, Op: fsnotify.Write}
+			base := time.Unix(0, 0)
+			if got := d.debounceAction(debouncer, event, base); got != debounceProcess {
+				t.Fatal("first configured write should not be skipped")
+			}
+			if got := d.debounceAction(debouncer, event, base.Add(10*time.Millisecond)); got != debounceSkip {
+				t.Fatalf("duplicate configured write while graph is %s = %v, want skip", status, got)
+			}
+		})
 	}
 }
 
@@ -179,6 +224,66 @@ func TestStopClosesWatcherAfterEventLoopDrain(t *testing.T) {
 		return closeWatcher()
 	}
 	d.Stop()
+}
+
+func TestEventLoopRefreshesDependenciesAfterConfiguredEvent(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "main.go")
+	if err := os.WriteFile(path, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d, err := NewDaemon(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Stop() })
+	if err := d.watcher.Close(); err != nil {
+		t.Fatal(err)
+	}
+	d.watcher.Events = make(chan fsnotify.Event, 1)
+	d.watcher.Errors = make(chan error)
+	if err := os.MkdirAll(d.runtimeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	d.graph.Files["main.go"] = &scanner.FileInfo{Path: "main.go", Ext: ".go"}
+	d.graph.State["main.go"] = &FileState{Lines: 1}
+	d.graph.ConfiguredFiles["main.go"] = struct{}{}
+	d.graph.GraphState = newGraphState(root, config.ProjectConfig{}, graphLifecycleAvailable, time.Now(), []string{"main.go"})
+	d.graph.FileGraph = &scanner.FileGraph{Imports: map[string][]string{"main.go": {"dep.go"}}}
+	d.graph.HasDeps = true
+
+	originalBuild := buildFileGraph
+	originalRefresh := daemonRefreshDependencies
+	t.Cleanup(func() {
+		buildFileGraph = originalBuild
+		daemonRefreshDependencies = originalRefresh
+	})
+	var refreshes atomic.Int32
+	buildFileGraph = func(context.Context, string, scanner.Filters) (*scanner.FileGraph, error) {
+		return &scanner.FileGraph{
+			Imports:   map[string][]string{"main.go": {"dep.go"}},
+			Importers: map[string][]string{"dep.go": {"main.go"}},
+		}, nil
+	}
+	daemonRefreshDependencies = func(d *Daemon) {
+		refreshes.Add(1)
+		originalRefresh(d)
+	}
+
+	d.eventLoopWG.Add(1)
+	go func() {
+		defer d.eventLoopWG.Done()
+		d.eventLoop()
+	}()
+	d.watcher.Events <- fsnotify.Event{Name: path, Op: fsnotify.Write}
+	waitForWatchCondition(t, time.Second, func() bool {
+		d.graph.mu.RLock()
+		defer d.graph.mu.RUnlock()
+		return refreshes.Load() > 0 && d.graph.GraphState.Status == graphLifecycleAvailable && d.graph.HasDeps
+	})
 }
 
 func TestEventDebouncerDoesNotSkipNonWriteOps(t *testing.T) {
