@@ -149,7 +149,7 @@ func sortedGraphHubs(importers map[string][]string) []string {
 }
 
 func normalizeContextPath(file string) string {
-	return normalizeContextPathWithVolumeGuard(file, true)
+	return normalizeContextPathWithVolumeGuard(strings.TrimSpace(file), true)
 }
 
 func normalizeContextInventoryPath(file string) string {
@@ -157,7 +157,7 @@ func normalizeContextInventoryPath(file string) string {
 }
 
 func normalizeContextPathWithVolumeGuard(file string, rejectVolume bool) string {
-	file = strings.TrimSpace(strings.ReplaceAll(file, `\`, "/"))
+	file = strings.ReplaceAll(file, `\`, "/")
 	volumePath := isContextVolumePath(file)
 	file = strings.TrimPrefix(pathpkg.Clean(file), "./")
 	if file == "." || file == "" || strings.HasPrefix(file, "../") || file == ".." || pathpkg.IsAbs(file) || (rejectVolume && volumePath) {

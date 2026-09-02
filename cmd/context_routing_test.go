@@ -69,6 +69,14 @@ func TestContextLexicalRouting(t *testing.T) {
 		}
 	})
 
+	t.Run("inventory keeps significant whitespace", func(t *testing.T) {
+		files := routingFiles(" foo.go", "bar.go ")
+		got := resolveContextFilesWithCase("inspect foo.go and bar.go", files, config.ProjectConfig{}, 2, false)
+		if len(got) != 0 {
+			t.Fatalf("whitespace files = %#v, want none", got)
+		}
+	})
+
 	t.Run("absolute and volume paths stay unresolved", func(t *testing.T) {
 		files := routingFiles("/tmp/target.go", "C:/tmp/target.go", "//server/share.go")
 		got := resolveContextFilesWithCase("inspect /tmp/target.go C:\\tmp\\target.go //server/share.go", files, config.ProjectConfig{}, 3, true)
