@@ -160,6 +160,11 @@ func (d *Daemon) eventLoop() {
 	defer timer.Stop()
 
 	var timerC <-chan time.Time
+	handleEvent := func(event fsnotify.Event) {
+		if d.handleEvent(event) {
+			daemonRefreshDependencies(d)
+		}
+	}
 	armTimer := func(now time.Time) {
 		if !timer.Stop() {
 			select {
@@ -180,7 +185,7 @@ func (d *Daemon) eventLoop() {
 	}
 	flushDue := func(now time.Time) {
 		for _, event := range debouncer.takeDue(now) {
-			d.handleEvent(event)
+			handleEvent(event)
 		}
 		if d.publisher.due(now) {
 			d.reportPublicationError(d.publisher.publish())
@@ -254,7 +259,7 @@ func (d *Daemon) eventLoop() {
 				continue
 			}
 			for _, pending := range debouncer.takeDueBeforeEvent(event, now) {
-				d.handleEvent(pending)
+				handleEvent(pending)
 			}
 			if d.handleTopologyControlEvent(event) {
 				continue
@@ -269,11 +274,15 @@ func (d *Daemon) eventLoop() {
 					if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
 						// Directory create - let it through to handleEvent
 					} else {
-						d.handleConfiguredMembershipEvent(event)
+						if d.handleConfiguredMembershipEvent(event) {
+							daemonRefreshDependencies(d)
+						}
 						continue
 					}
 				} else {
-					d.handleConfiguredMembershipEvent(event)
+					if d.handleConfiguredMembershipEvent(event) {
+						daemonRefreshDependencies(d)
+					}
 					continue
 				}
 			}
@@ -291,7 +300,7 @@ func (d *Daemon) eventLoop() {
 			case debounceDefer:
 				debouncer.deferEvent(event, now)
 			case debounceProcess:
-				d.handleEvent(event)
+				handleEvent(event)
 			}
 			armTimer(time.Now())
 
@@ -318,14 +327,14 @@ func (d *Daemon) filterControlEvent(path string) (resetIgnoreCache, control bool
 	return false, false
 }
 
-func (d *Daemon) handleConfiguredMembershipEvent(event fsnotify.Event) {
+func (d *Daemon) handleConfiguredMembershipEvent(event fsnotify.Event) bool {
 	event.Name = projectpath.CanonicalPath(event.Name)
 	relPath, err := filepath.Rel(projectpath.CanonicalPath(d.root), event.Name)
 	if err != nil {
-		return
+		return false
 	}
 	if path := filepath.ToSlash(relPath); path == ".codemap" || strings.HasPrefix(path, ".codemap/") {
-		return
+		return false
 	}
 	present := event.Op&(fsnotify.Remove|fsnotify.Rename) == 0
 	if present {
@@ -349,6 +358,7 @@ func (d *Daemon) handleConfiguredMembershipEvent(event fsnotify.Event) {
 	if changed {
 		d.reportPublicationError(d.writeState())
 	}
+	return changed
 }
 
 func (d *Daemon) processQueuedEvent(debouncer *eventDebouncer, event fsnotify.Event, now time.Time) {
@@ -430,7 +440,15 @@ func (d *Daemon) handleTopologyControlEvent(event fsnotify.Event) bool {
 
 func (d *Daemon) debounceAction(debouncer *eventDebouncer, event fsnotify.Event, now time.Time) debounceAction {
 	event.Name = projectpath.CanonicalPath(event.Name)
-	if !debouncer.shouldSkip(event, now) {
+	if event.Op&fsnotify.Write == 0 || event.Op&(fsnotify.Create|fsnotify.Remove|fsnotify.Rename) != 0 || event.Op&^(fsnotify.Write|fsnotify.Chmod) != 0 {
+		return debounceProcess
+	}
+	last, seen := debouncer.lastSeen[event.Name]
+	if seen && now.Sub(last) >= debouncer.pruneAfter {
+		seen = false
+	}
+	rapid := debouncer.shouldSkip(event, now)
+	if !rapid && !seen {
 		return debounceProcess
 	}
 	relPath, err := filepath.Rel(projectpath.CanonicalPath(d.root), event.Name)
@@ -454,10 +472,12 @@ func (d *Daemon) debounceAction(debouncer *eventDebouncer, event fsnotify.Event,
 	if err != nil {
 		return debounceProcess
 	}
-	// An identical write carries no new information and is skipped for every
-	// file; changed writes use the same quiet-window defer for every file.
-	if cachedModTime != 0 && cachedSize == info.Size() && cachedModTime == info.ModTime().UnixNano() {
+	// An unchanged repeat can arrive after a rebuild delayed the event loop.
+	if seen && cachedModTime != 0 && cachedSize == info.Size() && cachedModTime == info.ModTime().UnixNano() {
 		return debounceSkip
+	}
+	if !rapid {
+		return debounceProcess
 	}
 	return debounceDefer
 }
@@ -484,13 +504,13 @@ func isTransientFile(path string) bool {
 }
 
 // handleEvent processes a single file event
-func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
+func (d *Daemon) handleEvent(fsEvent fsnotify.Event) bool {
 	fsEvent.Name = projectpath.CanonicalPath(fsEvent.Name)
 	absPath := fsEvent.Name
 	if d.gitCache != nil {
 		// Ignore gitignored paths entirely so watcher churn cannot come from excluded trees.
 		if d.gitCache.ShouldIgnore(absPath) {
-			return
+			return false
 		}
 	}
 
@@ -511,7 +531,7 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 	case fsEvent.Op&fsnotify.Rename != 0:
 		op = "RENAME"
 	default:
-		return
+		return false
 	}
 
 	event := Event{
@@ -543,8 +563,10 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 				}
 			}
 			d.graph.mu.Unlock()
-			d.reportPublicationError(d.writeState())
-			return
+			if wasConfigured {
+				d.reportPublicationError(d.writeState())
+			}
+			return wasConfigured
 		}
 
 		// If a new directory was created, add it to the watcher
@@ -555,7 +577,7 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 				d.gitCache.EnsureDir(dirPath)
 				if d.gitCache.ShouldIgnore(dirPath) {
 					d.graph.mu.Unlock()
-					return
+					return false
 				}
 			}
 			// Skip hidden directories and common ignores
@@ -563,7 +585,7 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 				d.watcher.Add(fsEvent.Name)
 			}
 			d.graph.mu.Unlock()
-			return
+			return false
 		}
 
 		// Count new lines
@@ -613,7 +635,8 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 		delete(d.graph.ConfiguredFiles, relPath)
 		delete(d.graph.State, relPath)
 	}
-	if wasConfigured || isConfigured {
+	graphInvalidated := wasConfigured || isConfigured
+	if graphInvalidated {
 		state := newGraphState(d.root, config.Load(d.root), graphLifecycleStale, time.Time{}, nil)
 		d.markGraphLifecycleLocked(state)
 	}
@@ -685,6 +708,7 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) {
 		}
 		fmt.Printf("[watch] %s %s %s%s%s%s%s\n", event.Time.Format("15:04:05"), op, relPath, deltaStr, dirtyStr, hubStr, hotStr)
 	}
+	return graphInvalidated
 }
 
 func countTopologyDependents(graph *topology.Graph, id topology.ID) int {

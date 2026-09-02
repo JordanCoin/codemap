@@ -34,6 +34,13 @@ func TestGraphProvenanceValidation(t *testing.T) {
 	if graph, reason := ValidateCachedGraphForInventory(&base, root, cfg, []string{"main.go", "dep.go"}); graph == nil || reason != "" {
 		t.Fatalf("matching inventory = %#v, %q", graph, reason)
 	}
+	edgeFree := base
+	edgeFree.Coverage.Status = analysis.CoverageComplete
+	edgeFree.Imports = map[string][]string{}
+	edgeFree.Importers = map[string][]string{}
+	if graph, reason := ValidateCachedGraph(&edgeFree, root, cfg); graph == nil || reason != "" {
+		t.Fatalf("complete edge-free cache = %#v, %q", graph, reason)
+	}
 	if graph, reason := ValidateCachedGraphForInventory(&base, root, cfg, []string{"main.go", "new.go"}); graph != nil || reason != graphCacheInventoryMismatch {
 		t.Fatalf("replacement inventory = %#v, %q; want nil, %q", graph, reason, graphCacheInventoryMismatch)
 	}
@@ -63,6 +70,10 @@ func TestGraphProvenanceValidation(t *testing.T) {
 			state.Graph.InventoryFingerprint = ""
 			return root, cfg
 		}, want: graphCacheIncomplete},
+		{name: "unavailable coverage", mutate: func(state *State) (string, config.ProjectConfig) {
+			state.Coverage.Status = analysis.CoverageUnavailable
+			return root, cfg
+		}, want: graphCacheIncomplete},
 		{name: "incomplete maps", mutate: func(state *State) (string, config.ProjectConfig) {
 			state.Imports = map[string][]string{}
 			state.Importers = map[string][]string{}
@@ -79,6 +90,41 @@ func TestGraphProvenanceValidation(t *testing.T) {
 				t.Fatalf("validateCachedGraph() = %#v, %q; want nil, %q", graph, reason, tt.want)
 			}
 		})
+	}
+}
+
+func TestConfiguredEventRefreshesDependencyGraph(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "main.go")
+	if err := os.WriteFile(path, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d := testGraphStateDaemon(root)
+
+	original := buildFileGraph
+	t.Cleanup(func() { buildFileGraph = original })
+	calls := 0
+	buildFileGraph = func(context.Context, string, scanner.Filters) (*scanner.FileGraph, error) {
+		calls++
+		return &scanner.FileGraph{
+			Imports:   map[string][]string{"main.go": {"dep.go"}},
+			Importers: map[string][]string{"dep.go": {"main.go"}},
+		}, nil
+	}
+
+	if !d.handleEvent(fsnotify.Event{Name: path, Op: fsnotify.Write}) {
+		t.Fatal("configured write did not invalidate the graph")
+	}
+	if d.graph.GraphState.Status != graphLifecycleStale {
+		t.Fatalf("after write graph state = %#v, want stale", d.graph.GraphState)
+	}
+	d.refreshDependencies()
+
+	if calls != 1 {
+		t.Fatalf("dependency builds = %d, want 1", calls)
+	}
+	if d.graph.GraphState.Status != graphLifecycleAvailable || !d.graph.HasDeps {
+		t.Fatalf("after refresh graph state = %#v, has deps %t", d.graph.GraphState, d.graph.HasDeps)
 	}
 }
 

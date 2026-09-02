@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"codemap/analysis"
 	"codemap/config"
 	"codemap/limits"
 	"codemap/scanner"
@@ -105,7 +106,13 @@ func loadContextRequestInputs(ctx context.Context, root string, deps contextEnve
 		inputs.evidence = unavailableGraphEvidence(graphErrorReason(ctx, err))
 		return inputs
 	}
-	if graph == nil || (len(graph.Imports) == 0 && len(graph.Importers) == 0) {
+	if graph == nil {
+		inputs.evidence = unavailableGraphEvidence(graphEvidenceScanIncomplete)
+		return inputs
+	}
+	// Complete edge-free graphs are valid; unavailable provenance is not.
+	if graph.Coverage.Status == analysis.CoverageUnavailable ||
+		(len(graph.Coverage.Sources) > 0 && scanner.CoverageFromSources(graph.Coverage.Sources).Status == analysis.CoverageUnavailable) {
 		inputs.evidence = unavailableGraphEvidence(graphEvidenceScanIncomplete)
 		return inputs
 	}

@@ -896,7 +896,9 @@ func hookPromptSubmit(root string) error {
 	if info != nil {
 		filesMentioned = resolveValidatedHookFiles(root, filesMentioned, projCfg)
 	}
-	intent := classifyIntent(prompt, filesMentioned, info, projCfg)
+	// The cached graph has no content fingerprint, so it cannot support a
+	// risk verdict after an in-place source edit.
+	intent := classifyIntent(prompt, filesMentioned, nil, projCfg)
 
 	// Emit structured intent marker (machine-readable for tools) only when the
 	// classification is trustworthy — a zero/low-confidence category is a

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"codemap/analysis"
 	"codemap/config"
 	"codemap/internal/projectpath"
 	"codemap/scanner"
@@ -60,6 +61,7 @@ func TestContextEnvelopeV2ReportsUnavailableGraph(t *testing.T) {
 		Packages:  map[string][]string{"main": {"main.go"}},
 		Imports:   map[string][]string{},
 		Importers: map[string][]string{},
+		Coverage:  scanner.GraphCoverage{Status: analysis.CoverageUnavailable},
 	}
 	envelope := buildContextEnvelopeWithDeps(context.Background(), t.TempDir(), "refactor main.go", true, testContextEnvelopeDeps(files, graph))
 
@@ -84,6 +86,24 @@ func TestContextEnvelopeV2ReportsUnavailableGraph(t *testing.T) {
 	}
 	if envelope.Intent == nil || envelope.Intent.RiskLevel != "unknown" {
 		t.Fatalf("intent = %#v, want unknown risk", envelope.Intent)
+	}
+}
+
+func TestContextGraphEvidenceAcceptsCompleteEdgeFreeGraph(t *testing.T) {
+	files := []scanner.FileInfo{{Path: "main.go"}}
+	graph := &scanner.FileGraph{
+		Imports:   map[string][]string{},
+		Importers: map[string][]string{},
+		Coverage:  scanner.GraphCoverage{Status: analysis.CoverageComplete},
+	}
+
+	envelope := buildContextEnvelopeWithDeps(context.Background(), t.TempDir(), "inspect main.go", true, testContextEnvelopeDeps(files, graph))
+
+	if envelope.Project.GraphEvidence.Status != graphEvidenceAvailable || envelope.Project.GraphEvidence.Source != graphEvidenceFreshScan {
+		t.Fatalf("graph evidence = %#v, want available fresh_scan", envelope.Project.GraphEvidence)
+	}
+	if envelope.Project.HubCount == nil || *envelope.Project.HubCount != 0 {
+		t.Fatalf("hub count = %#v, want zero", envelope.Project.HubCount)
 	}
 }
 
@@ -445,7 +465,7 @@ func TestPromptHookValidatedGraphCache(t *testing.T) {
 		})
 	}
 
-	checkRisk("refactor pkg/types.go", "medium")
+	checkRisk("refactor pkg/types.go", "unknown")
 	checkRisk("refactor pkg/missing.go", "unknown")
 	checkRisk("refactor generated/deeper/ignored.go", "unknown")
 	state.Graph.BuilderRevision = "old"

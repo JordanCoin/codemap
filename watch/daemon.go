@@ -23,6 +23,7 @@ import (
 var (
 	buildTopologyGraph = topology.BuildGraph
 	writeTopologyCache = topology.WriteCacheAt
+	buildFileGraph     = scanner.BuildFileGraph
 )
 
 // Daemon is the watch daemon that keeps the graph updated
@@ -323,8 +324,6 @@ func (d *Daemon) isConfiguredFile(path string) bool {
 	return scanner.MatchesFilters(path, filepath.Ext(path), cfg.Only, cfg.Exclude)
 }
 
-// daemonRefreshConfiguredFiles is the seam the event loop calls, so tests can
-// observe how often control events trigger a refresh.
 var daemonRefreshConfiguredFiles = (*Daemon).refreshConfiguredFiles
 
 func (d *Daemon) refreshConfiguredFiles(resetIgnoreCache bool) error {
@@ -361,10 +360,26 @@ func (d *Daemon) refreshConfiguredFiles(resetIgnoreCache bool) error {
 	return nil
 }
 
+var daemonRefreshDependencies = (*Daemon).refreshDependencies
+
+func (d *Daemon) refreshDependencies() {
+	d.graph.mu.RLock()
+	stale := d.graph.GraphState.Status == graphLifecycleStale
+	configuredCount := len(d.graph.ConfiguredFiles)
+	d.graph.mu.RUnlock()
+	if !stale || !shouldComputeDependencyGraph(configuredCount) {
+		return
+	}
+	d.computeDeps()
+	if d.publisher != nil {
+		d.reportPublicationError(d.writeState())
+	}
+}
+
 // computeDeps builds the file-to-file dependency graph
 func (d *Daemon) computeDeps() {
 	d.computeDepsWith(func(ctx context.Context, root string) (*scanner.FileGraph, error) {
-		return scanner.BuildFileGraph(ctx, root, scanner.ConfiguredFilters(root))
+		return buildFileGraph(ctx, root, scanner.ConfiguredFilters(root))
 	})
 }
 

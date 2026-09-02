@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"codemap/analysis"
 	"codemap/config"
 	"codemap/scanner"
 )
@@ -137,8 +138,17 @@ func ValidateCachedGraph(state *State, root string, cfg config.ProjectConfig) (*
 	if graphState.InventoryFingerprint == "" {
 		return nil, graphCacheIncomplete
 	}
+	coverageStatus := state.Coverage.Status
+	coverageUnavailable := coverageStatus == analysis.CoverageUnavailable
+	if coverageStatus == "" && len(state.Coverage.Sources) > 0 {
+		coverageStatus = scanner.CoverageFromSources(state.Coverage.Sources).Status
+		coverageUnavailable = coverageStatus == analysis.CoverageUnavailable
+	}
+	if coverageUnavailable {
+		return nil, graphCacheIncomplete
+	}
 	configuredCount, known := state.ConfiguredCount()
-	if !known || (configuredCount > 0 && len(state.Imports) == 0 && len(state.Importers) == 0) {
+	if !known || (configuredCount > 0 && coverageStatus != analysis.CoverageComplete && len(state.Imports) == 0 && len(state.Importers) == 0) {
 		return nil, graphCacheIncomplete
 	}
 	return &scanner.FileGraph{
