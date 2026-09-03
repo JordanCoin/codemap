@@ -111,12 +111,12 @@ func TestContextLexicalRouting(t *testing.T) {
 	})
 
 	t.Run("subsystem paths are deterministic and bounded", func(t *testing.T) {
-		files := routingFiles("src/build/c.go", "src/build/a.go", "src/build/b.go", "src/other.go")
+		files := routingFiles("src/build/c.go", "src/build/a.go", "src/build/b.go", "src/building/no.go", "src/other.go")
 		cfg := config.ProjectConfig{Routing: config.RoutingConfig{
 			Subsystems: []config.Subsystem{{ID: "build", Keywords: []string{"overdrive"}, Paths: []string{"src/build"}}},
 		}}
-		got := resolveContextFilesWithCase("speed up overdrive", files, cfg, 2, false)
-		if want := []string{"src/build/a.go", "src/build/b.go"}; !reflect.DeepEqual(got, want) {
+		got := resolveContextFilesWithCase("speed up overdrive", files, cfg, 10, false)
+		if want := []string{"src/build/a.go", "src/build/b.go", "src/build/c.go"}; !reflect.DeepEqual(got, want) {
 			t.Fatalf("files = %#v, want %#v", got, want)
 		}
 	})
@@ -126,6 +126,7 @@ func TestContextLexicalRouting(t *testing.T) {
 		cfg := config.ProjectConfig{Routing: config.RoutingConfig{Subsystems: []config.Subsystem{
 			{ID: "shared", Keywords: []string{"overdrive"}, Paths: []string{"alpha"}},
 			{ID: "shared", Keywords: []string{"overdrive"}, Paths: []string{"beta"}},
+			{ID: "shared", Keywords: []string{"overdrive"}, Paths: []string{"alpha"}},
 		}}}
 		got := resolveContextFilesWithCase("inspect overdrive", files, cfg, 2, false)
 		if want := []string{"alpha/a.go", "beta/b.go"}; !reflect.DeepEqual(got, want) {
@@ -200,4 +201,68 @@ func routingFiles(paths ...string) []scanner.FileInfo {
 		files[i] = scanner.FileInfo{Path: path}
 	}
 	return files
+}
+
+func TestContextFileIndexPrefixes(t *testing.T) {
+	index := newContextFileIndex(routingFiles("src/build/z.go", "src/build/a.go", "src/other.go"), false)
+	var got []string
+	index.forPrefix("src/build", func(path string) bool {
+		got = append(got, path)
+		return false
+	})
+	if want := []string{"src/build/a.go", "src/build/z.go"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("prefix files = %#v, want %#v", got, want)
+	}
+}
+
+func TestContextFileIndexPrefixesRespectBoundaries(t *testing.T) {
+	index := newContextFileIndex(routingFiles("src/build.go", "src/build/a.go", "src/building/b.go"), false)
+	var got []string
+	index.forPrefix("src/build", func(path string) bool {
+		got = append(got, path)
+		return false
+	})
+	if want := []string{"src/build/a.go"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("boundary files = %#v, want %#v", got, want)
+	}
+}
+
+func TestContextFileIndexPrefixesRespectCaseFolding(t *testing.T) {
+	files := routingFiles("Src/Build/z.go", "src/build/a.go", "src/building/b.go")
+	index := newContextFileIndex(files, true)
+	var got []string
+	index.forPrefix(index.key("src/build"), func(path string) bool {
+		got = append(got, path)
+		return false
+	})
+	if want := []string{"Src/Build/z.go", "src/build/a.go"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("case-folded files = %#v, want %#v", got, want)
+	}
+	cfg := config.ProjectConfig{Routing: config.RoutingConfig{
+		Subsystems: []config.Subsystem{{ID: "build", Keywords: []string{"build"}, Paths: []string{"src/build"}}},
+	}}
+	if got := resolveContextFilesWithCase("build", files, cfg, 1, true); !reflect.DeepEqual(got, []string{"Src/Build/z.go"}) {
+		t.Fatalf("case-folded top-k files = %#v, want first path", got)
+	}
+}
+
+func TestContextSubsystemMatchesUsesSharedRouteScoring(t *testing.T) {
+	cfg := config.ProjectConfig{Routing: config.RoutingConfig{
+		Retrieval: config.RetrievalConfig{Strategy: "keyword", TopK: 2},
+		Subsystems: []config.Subsystem{
+			{ID: "low", Keywords: []string{"build"}},
+			{ID: "high", Keywords: []string{"build", "latency"}, Paths: []string{"cmd"}},
+			{ID: "tie", Keywords: []string{"build"}},
+		},
+	}}
+	prompt := "build latency in cmd"
+	shared := matchSubsystemRoutes(prompt, cfg, cfg.RoutingTopKOrDefault())
+	got := contextSubsystemMatches(prompt, cfg, cfg.RoutingTopKOrDefault())
+	want := make([]int, len(shared))
+	for i, match := range shared {
+		want[i] = match.Index
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("route indices = %#v, want %#v", got, want)
+	}
 }
