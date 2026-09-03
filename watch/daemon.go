@@ -41,6 +41,29 @@ type Daemon struct {
 	eventLoopWG  sync.WaitGroup
 	publisher    *statePublisher
 	closeWatcher func() error
+
+	dependencyRequests chan dependencyGraphSnapshot
+	dependencyResults  chan dependencyGraphResult
+	dependencyOnce     sync.Once
+	dependencyCancel   context.CancelFunc
+	dependencyWorkerWG sync.WaitGroup
+	// These flags are owned by eventLoop; the worker only exchanges snapshots
+	// and results through the channels above.
+	dependencyBusy    bool
+	dependencyPending bool
+}
+
+type dependencyGraphSnapshot struct {
+	configured []string
+	config     config.ProjectConfig
+	generation uint64
+}
+
+type dependencyGraphResult struct {
+	snapshot dependencyGraphSnapshot
+	graph    *scanner.FileGraph
+	err      error
+	started  time.Time
 }
 
 func (d *Daemon) runtimeStateDir() (string, error) {
@@ -166,6 +189,7 @@ func (d *Daemon) Start() error {
 	if err := d.publisher.publish(); err != nil {
 		return fmt.Errorf("publish initial state: %w", err)
 	}
+	d.startDependencyWorker()
 
 	// Start event loop
 	d.eventLoopWG.Add(1)
@@ -227,7 +251,11 @@ func (d *Daemon) computeTopology() {
 // Stop gracefully shuts down the daemon
 func (d *Daemon) Stop() {
 	close(d.done)
+	if d.dependencyCancel != nil {
+		d.dependencyCancel()
+	}
 	d.eventLoopWG.Wait()
+	d.dependencyWorkerWG.Wait()
 	_ = d.closeWatcher()
 }
 
@@ -344,17 +372,15 @@ func (d *Daemon) refreshConfiguredFiles(resetIgnoreCache bool) error {
 	d.graph.ConfiguredFiles = configured
 	// Filters define dependency membership too, so the previous graph must not
 	// be published under a new configured-file count.
-	d.graph.FileGraph = nil
-	d.graph.DepCtx = make(map[string]*DepContext)
-	d.graph.HasDeps = false
+	d.markGraphLifecycleLocked(newGraphState(d.root, config.Load(d.root), graphLifecycleStale, time.Time{}, nil))
 	d.graph.mu.Unlock()
 
 	// Invalidation alone would leave the daemon serving no hub or importer
 	// intelligence until it restarts, so every hook reading daemon state would
-	// silently degrade after one config edit. Rebuild under the same size guard
-	// Start uses. computeDeps takes the lock itself, so call it unlocked.
+	// silently degrade after one config edit. Queue the rebuild under the same
+	// size guard Start uses.
 	if shouldComputeDependencyGraph(len(configured)) {
-		d.computeDeps()
+		d.refreshDependencies()
 	}
 	d.computeTopology()
 	return nil
@@ -362,17 +388,98 @@ func (d *Daemon) refreshConfiguredFiles(resetIgnoreCache bool) error {
 
 var daemonRefreshDependencies = (*Daemon).refreshDependencies
 
+// refreshDependencies is called by eventLoop and owns the worker state flags.
 func (d *Daemon) refreshDependencies() {
 	d.graph.mu.RLock()
 	stale := d.graph.GraphState.Status == graphLifecycleStale
 	configuredCount := len(d.graph.ConfiguredFiles)
+	configured := make([]string, 0, len(d.graph.ConfiguredFiles))
+	for file := range d.graph.ConfiguredFiles {
+		configured = append(configured, file)
+	}
+	snapshot := dependencyGraphSnapshot{
+		configured: configured,
+		config:     config.Load(d.root),
+		generation: d.graph.graphGeneration,
+	}
 	d.graph.mu.RUnlock()
 	if !stale || !shouldComputeDependencyGraph(configuredCount) {
 		return
 	}
-	d.computeDeps()
+	d.startDependencyWorker()
+	if d.dependencyBusy {
+		d.dependencyPending = true
+		return
+	}
+	d.dependencyBusy = true
+	select {
+	case d.dependencyRequests <- snapshot:
+	case <-d.done:
+		d.dependencyBusy = false
+	}
+}
+
+// buildDependencyGraph converts a worker panic into the existing failed-build
+// path so a background scan cannot terminate the daemon process.
+func buildDependencyGraph(ctx context.Context, root string, build func(context.Context, string, scanner.Filters) (*scanner.FileGraph, error)) (graph *scanner.FileGraph, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("dependency graph build panicked: %v", recovered)
+		}
+	}()
+	return build(ctx, root, scanner.ConfiguredFilters(root))
+}
+
+func (d *Daemon) startDependencyWorker() {
+	d.dependencyOnce.Do(func() {
+		if d.dependencyRequests == nil {
+			d.dependencyRequests = make(chan dependencyGraphSnapshot, 1)
+		}
+		if d.dependencyResults == nil {
+			d.dependencyResults = make(chan dependencyGraphResult, 1)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		d.dependencyCancel = cancel
+		d.dependencyWorkerWG.Add(1)
+		go func() {
+			defer d.dependencyWorkerWG.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case snapshot := <-d.dependencyRequests:
+					started := time.Now()
+					graph, err := buildDependencyGraph(ctx, d.root, buildFileGraph)
+					result := dependencyGraphResult{snapshot: snapshot, graph: graph, err: err, started: started}
+					select {
+					case d.dependencyResults <- result:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+		}()
+	})
+}
+
+// handleDependencyGraphResult is called by eventLoop and owns the worker state flags.
+func (d *Daemon) handleDependencyGraphResult(result dependencyGraphResult) {
+	d.dependencyBusy = false
+	d.applyDependencyGraph(result.snapshot, result.graph, result.err, result.started)
+	retry := d.dependencyPending
+	d.dependencyPending = false
+	if retry {
+		d.graph.mu.Lock()
+		if d.graph.GraphState.Status != graphLifecycleStale {
+			d.markGraphLifecycleLocked(newGraphState(d.root, config.Load(d.root), graphLifecycleStale, time.Time{}, nil))
+		}
+		d.graph.mu.Unlock()
+	}
 	if d.publisher != nil {
 		d.reportPublicationError(d.writeState())
+	}
+	if retry {
+		d.refreshDependencies()
 	}
 }
 
@@ -389,27 +496,38 @@ func (d *Daemon) computeDepsWith(build func(context.Context, string) (*scanner.F
 
 func (d *Daemon) computeDepsWithBeforePublish(build func(context.Context, string) (*scanner.FileGraph, error), beforePublish func()) {
 	start := time.Now()
-	buildConfig := config.Load(d.root)
-	d.graph.mu.RLock()
-	configuredBefore := make([]string, 0, len(d.graph.ConfiguredFiles))
-	for file := range d.graph.ConfiguredFiles {
-		configuredBefore = append(configuredBefore, file)
-	}
-	generationBefore := d.graph.graphGeneration
-	d.graph.mu.RUnlock()
+	snapshot := d.dependencyGraphSnapshot()
 
 	// Build the file graph. Unavailable coverage provides no usable dependency
 	// evidence, so do not publish an authoritative empty graph.
 	fg, err := build(context.Background(), d.root)
-	if err != nil || fg == nil || (len(configuredBefore) > 0 && fg.Coverage.Status == analysis.CoverageUnavailable) {
+	if beforePublish != nil {
+		beforePublish()
+	}
+	d.applyDependencyGraph(snapshot, fg, err, start)
+}
+
+func (d *Daemon) dependencyGraphSnapshot() dependencyGraphSnapshot {
+	d.graph.mu.RLock()
+	defer d.graph.mu.RUnlock()
+	configured := make([]string, 0, len(d.graph.ConfiguredFiles))
+	for file := range d.graph.ConfiguredFiles {
+		configured = append(configured, file)
+	}
+	return dependencyGraphSnapshot{
+		configured: configured,
+		config:     config.Load(d.root),
+		generation: d.graph.graphGeneration,
+	}
+}
+
+func (d *Daemon) applyDependencyGraph(snapshot dependencyGraphSnapshot, fg *scanner.FileGraph, err error, start time.Time) {
+	if err != nil || fg == nil || (len(snapshot.configured) > 0 && fg.Coverage.Status == analysis.CoverageUnavailable) {
 		d.markGraphLifecycle(graphLifecycleFailed)
 		if d.verbose {
 			fmt.Printf("[watch] File graph unavailable: %v\n", err)
 		}
 		return
-	}
-	if beforePublish != nil {
-		beforePublish()
 	}
 
 	d.graph.mu.Lock()
@@ -419,13 +537,13 @@ func (d *Daemon) computeDepsWithBeforePublish(build func(context.Context, string
 		configuredAfter = append(configuredAfter, file)
 	}
 	currentConfig := config.Load(d.root)
-	if d.graph.graphGeneration != generationBefore ||
-		ConfiguredInventoryFingerprint(configuredBefore) != ConfiguredInventoryFingerprint(configuredAfter) ||
-		graphFilterFingerprint(buildConfig) != graphFilterFingerprint(currentConfig) {
+	if d.graph.graphGeneration != snapshot.generation ||
+		ConfiguredInventoryFingerprint(snapshot.configured) != ConfiguredInventoryFingerprint(configuredAfter) ||
+		graphFilterFingerprint(snapshot.config) != graphFilterFingerprint(currentConfig) {
 		d.markGraphLifecycleLocked(newGraphState(d.root, currentConfig, graphLifecycleStale, time.Time{}, nil))
 		return
 	}
-	state := newGraphState(d.root, buildConfig, graphLifecycleAvailable, time.Now(), configuredBefore)
+	state := newGraphState(d.root, snapshot.config, graphLifecycleAvailable, time.Now(), snapshot.configured)
 
 	// Convert FileGraph to DepContext map
 	d.graph.DepCtx = make(map[string]*DepContext)

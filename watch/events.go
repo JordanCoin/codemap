@@ -240,6 +240,10 @@ func (d *Daemon) eventLoop() {
 		case <-controlTimerC:
 			refreshConfigured()
 
+		case result := <-d.dependencyResults:
+			d.handleDependencyGraphResult(result)
+			armTimer(time.Now())
+
 		case event, ok := <-d.watcher.Events:
 			if !ok {
 				return
