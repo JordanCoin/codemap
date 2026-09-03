@@ -230,6 +230,9 @@ func TestContextFileIndexPrefixesRespectBoundaries(t *testing.T) {
 func TestContextFileIndexPrefixesRespectCaseFolding(t *testing.T) {
 	files := routingFiles("Src/Build/z.go", "src/build/a.go", "src/building/b.go")
 	index := newContextFileIndex(files, true)
+	if want := []string{"Src/Build/z.go", "src/build/a.go"}; !reflect.DeepEqual(index.prefixPaths["src/build"], want) {
+		t.Fatalf("case-folded prefix index = %#v, want %#v", index.prefixPaths["src/build"], want)
+	}
 	var got []string
 	index.forPrefix(index.key("src/build"), func(path string) bool {
 		got = append(got, path)
