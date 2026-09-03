@@ -17,6 +17,7 @@ type contextFileIndex struct {
 	exact           map[string][]string
 	basenames       map[string][]string
 	sortedPaths     []contextIndexedPath
+	prefixPaths     map[string][]string
 }
 
 type contextIndexedPath struct {
@@ -121,9 +122,6 @@ func newContextFileIndex(files []scanner.FileInfo, caseInsensitive bool) context
 		if path == "" {
 			continue
 		}
-		if _, duplicate := index.exact[path]; duplicate && !caseInsensitive {
-			continue
-		}
 		pathKey := index.key(path)
 		duplicate := false
 		for _, existing := range index.exact[pathKey] {
@@ -147,6 +145,17 @@ func newContextFileIndex(files []scanner.FileInfo, caseInsensitive bool) context
 		for order := range index.sortedPaths {
 			index.sortedPaths[order].order = order
 		}
+		index.prefixPaths = make(map[string][]string)
+		for _, indexed := range index.sortedPaths {
+			for prefix := indexed.path; prefix != "."; prefix = pathpkg.Dir(prefix) {
+				prefixKey := index.key(prefix)
+				index.prefixPaths[prefixKey] = append(index.prefixPaths[prefixKey], indexed.path)
+				dir := pathpkg.Dir(prefix)
+				if dir == prefix {
+					break
+				}
+			}
+		}
 	}
 	sort.Slice(index.sortedPaths, func(i, j int) bool {
 		if index.sortedPaths[i].key == index.sortedPaths[j].key {
@@ -158,31 +167,18 @@ func newContextFileIndex(files []scanner.FileInfo, caseInsensitive bool) context
 }
 
 func (i contextFileIndex) forPrefix(prefixKey string, visit func(string) bool) bool {
-	exactStart := sort.Search(len(i.sortedPaths), func(index int) bool {
-		return i.sortedPaths[index].key >= prefixKey
-	})
 	if i.caseInsensitive {
-		matches := make([]contextIndexedPath, 0)
-		for index := exactStart; index < len(i.sortedPaths) && i.sortedPaths[index].key == prefixKey; index++ {
-			matches = append(matches, i.sortedPaths[index])
-		}
-		descendantPrefix := prefixKey + "/"
-		descendantStart := sort.Search(len(i.sortedPaths), func(index int) bool {
-			return i.sortedPaths[index].key >= descendantPrefix
-		})
-		for index := descendantStart; index < len(i.sortedPaths) && strings.HasPrefix(i.sortedPaths[index].key, descendantPrefix); index++ {
-			matches = append(matches, i.sortedPaths[index])
-		}
-		sort.Slice(matches, func(left, right int) bool {
-			return matches[left].order < matches[right].order
-		})
-		for _, match := range matches {
-			if visit(match.path) {
+		for _, path := range i.prefixPaths[prefixKey] {
+			if visit(path) {
 				return true
 			}
 		}
 		return false
 	}
+
+	exactStart := sort.Search(len(i.sortedPaths), func(index int) bool {
+		return i.sortedPaths[index].key >= prefixKey
+	})
 	for index := exactStart; index < len(i.sortedPaths) && i.sortedPaths[index].key == prefixKey; index++ {
 		if visit(i.sortedPaths[index].path) {
 			return true

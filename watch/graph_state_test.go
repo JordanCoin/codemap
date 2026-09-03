@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -103,6 +104,13 @@ func TestConfiguredEventRefreshesDependencyGraph(t *testing.T) {
 
 	original := buildFileGraph
 	t.Cleanup(func() { buildFileGraph = original })
+	t.Cleanup(func() {
+		close(d.done)
+		if d.dependencyCancel != nil {
+			d.dependencyCancel()
+		}
+		d.dependencyWorkerWG.Wait()
+	})
 	calls := 0
 	buildFileGraph = func(context.Context, string, scanner.Filters) (*scanner.FileGraph, error) {
 		calls++
@@ -119,12 +127,139 @@ func TestConfiguredEventRefreshesDependencyGraph(t *testing.T) {
 		t.Fatalf("after write graph state = %#v, want stale", d.graph.GraphState)
 	}
 	d.refreshDependencies()
+	result := <-d.dependencyResults
+	d.handleDependencyGraphResult(result)
 
 	if calls != 1 {
 		t.Fatalf("dependency builds = %d, want 1", calls)
 	}
 	if d.graph.GraphState.Status != graphLifecycleAvailable || !d.graph.HasDeps {
 		t.Fatalf("after refresh graph state = %#v, has deps %t", d.graph.GraphState, d.graph.HasDeps)
+	}
+}
+
+func TestDependencyRefreshBuildsOffEventLoop(t *testing.T) {
+	root := t.TempDir()
+	d := testGraphStateDaemon(root)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	original := buildFileGraph
+	t.Cleanup(func() { buildFileGraph = original })
+	t.Cleanup(func() {
+		close(d.done)
+		if d.dependencyCancel != nil {
+			d.dependencyCancel()
+		}
+		d.dependencyWorkerWG.Wait()
+	})
+	buildFileGraph = func(context.Context, string, scanner.Filters) (*scanner.FileGraph, error) {
+		close(started)
+		<-release
+		return &scanner.FileGraph{}, nil
+	}
+
+	d.markGraphLifecycle(graphLifecycleStale)
+	finished := make(chan struct{})
+	go func() {
+		d.refreshDependencies()
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("refreshDependencies blocked on graph construction")
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("dependency worker did not start")
+	}
+	close(release)
+}
+
+func TestDependencyGraphBuildRecoversPanics(t *testing.T) {
+	graph, err := buildDependencyGraph(context.Background(), t.TempDir(), func(context.Context, string, scanner.Filters) (*scanner.FileGraph, error) {
+		panic("test panic")
+	})
+	if graph != nil || err == nil || err.Error() != "dependency graph build panicked: test panic" {
+		t.Fatalf("panic result = graph=%#v err=%v", graph, err)
+	}
+}
+
+func TestDependencyRefreshRejectsResultAfterInvalidation(t *testing.T) {
+	root := t.TempDir()
+	d := testGraphStateDaemon(root)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	original := buildFileGraph
+	t.Cleanup(func() { buildFileGraph = original })
+	t.Cleanup(func() {
+		close(d.done)
+		if d.dependencyCancel != nil {
+			d.dependencyCancel()
+		}
+		d.dependencyWorkerWG.Wait()
+	})
+	buildFileGraph = func(context.Context, string, scanner.Filters) (*scanner.FileGraph, error) {
+		close(started)
+		<-release
+		return &scanner.FileGraph{Importers: map[string][]string{"dep.go": {"main.go"}}}, nil
+	}
+
+	d.markGraphLifecycle(graphLifecycleStale)
+	d.refreshDependencies()
+	<-started
+	d.markGraphLifecycle(graphLifecycleStale)
+	close(release)
+	d.handleDependencyGraphResult(<-d.dependencyResults)
+
+	d.graph.mu.RLock()
+	defer d.graph.mu.RUnlock()
+	if d.graph.HasDeps || d.graph.FileGraph != nil || d.graph.GraphState.Status != graphLifecycleStale {
+		t.Fatalf("stale worker result was applied: state=%#v hasDeps=%t graph=%#v", d.graph.GraphState, d.graph.HasDeps, d.graph.FileGraph)
+	}
+}
+
+func TestDependencyRefreshCoalescesInvalidations(t *testing.T) {
+	root := t.TempDir()
+	d := testGraphStateDaemon(root)
+	var calls atomic.Int32
+	secondStarted := make(chan struct{})
+	release := make(chan struct{})
+	original := buildFileGraph
+	t.Cleanup(func() { buildFileGraph = original })
+	t.Cleanup(func() {
+		close(d.done)
+		if d.dependencyCancel != nil {
+			d.dependencyCancel()
+		}
+		d.dependencyWorkerWG.Wait()
+	})
+	buildFileGraph = func(context.Context, string, scanner.Filters) (*scanner.FileGraph, error) {
+		if calls.Add(1) == 2 {
+			close(secondStarted)
+		}
+		if calls.Load() == 1 {
+			<-release
+			return nil, errors.New("first dependency build failed")
+		}
+		return &scanner.FileGraph{}, nil
+	}
+
+	d.markGraphLifecycle(graphLifecycleStale)
+	d.refreshDependencies()
+	d.markGraphLifecycle(graphLifecycleStale)
+	d.refreshDependencies()
+	close(release)
+	d.handleDependencyGraphResult(<-d.dependencyResults)
+	select {
+	case <-secondStarted:
+	case <-time.After(time.Second):
+		t.Fatal("pending invalidation did not schedule a second build")
+	}
+	d.handleDependencyGraphResult(<-d.dependencyResults)
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("dependency builds = %d, want 2", got)
 	}
 }
 
@@ -278,6 +413,7 @@ func testGraphStateDaemon(root string) *Daemon {
 	state := newGraphState(root, config.ProjectConfig{}, graphLifecycleAvailable, time.Now(), []string{"main.go"})
 	return &Daemon{
 		root: root,
+		done: make(chan struct{}),
 		graph: &Graph{
 			Root:            root,
 			Files:           map[string]*scanner.FileInfo{"main.go": {Path: "main.go", Ext: ".go"}},
