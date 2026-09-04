@@ -451,7 +451,6 @@ func TestRustGraphContextHandlersDisclosePartialCoverage(t *testing.T) {
 
 	root := t.TempDir()
 	files := map[string]string{
-		"Cargo.toml":          "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n",
 		"src/lib.rs":          "mod workspace;\n",
 		"src/workspace.rs":    "pub fn run() {}\n",
 		"src/string_route.rs": "const COMMAND: &str = \"run\";\n",

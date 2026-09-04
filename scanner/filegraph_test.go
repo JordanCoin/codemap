@@ -13,10 +13,6 @@ import (
 )
 
 func TestRustWorkspaceImportersRespectCrateBoundaries(t *testing.T) {
-	if !NewAstGrepAnalyzer().Available() {
-		t.Skip("ast-grep not available")
-	}
-
 	root := t.TempDir()
 	files := map[string]string{
 		"Cargo.toml": `[workspace]
@@ -57,9 +53,27 @@ but-api = { path = "../but-api" }
 		}
 	}
 
-	graph, err := BuildFileGraph(context.Background(), root, ConfiguredFilters(root))
+	analyses := []FileAnalysis{
+		{Path: "crate-a/src/lib.rs", Language: "rust", References: []ImportReference{{Path: "workspace", Kind: "rust-module"}}},
+		{Path: "crate-a/src/workspace.rs", Language: "rust"},
+		{Path: "but-api/src/lib.rs", Language: "rust", References: []ImportReference{{Path: "workspace", Kind: "rust-module"}}},
+		{Path: "but-api/src/workspace.rs", Language: "rust"},
+		{Path: "consumer/src/lib.rs", Language: "rust", References: []ImportReference{{Path: "but_api::workspace::run", Kind: "rust-path"}}},
+	}
+	metadata := cargoMetadataJSON(t, root, []map[string]any{
+		cargoPackage(root, "crate-a", "crate-a", "crate_a", nil),
+		cargoPackage(root, "but-api", "but-api", "but_api", nil),
+		cargoPackage(root, "consumer", "consumer", "consumer", []map[string]any{{
+			"name": "but-api",
+			"path": filepath.Join(root, "but-api"),
+		}}),
+	})
+	graph, err := buildFileGraphFromAnalysesWithCargoMetadata(
+		context.Background(), root, analyses,
+		func(context.Context, string) ([]byte, error) { return metadata, nil },
+	)
 	if err != nil {
-		t.Fatalf("BuildFileGraph() error: %v", err)
+		t.Fatalf("buildFileGraphFromAnalysesWithCargoMetadata() error: %v", err)
 	}
 
 	want := []string{"but-api/src/lib.rs", "consumer/src/lib.rs"}
