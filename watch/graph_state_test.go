@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -15,6 +16,47 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 )
+
+// A state file written by a binary from before importers were sorted carries
+// builder revision "filegraph-v1". Its edge lists are in map-iteration order,
+// so reusing it would keep serving non-deterministic answers; the revision bump
+// must force a rebuild.
+func TestPreSortStateFileIsNotReused(t *testing.T) {
+	if graphBuilderRevision == "filegraph-v1" {
+		t.Fatalf("graphBuilderRevision is still %q; bump it so pre-sort caches are rebuilt", graphBuilderRevision)
+	}
+
+	root := t.TempDir()
+	cfg := config.ProjectConfig{}
+	current := newGraphState(root, cfg, graphLifecycleAvailable, time.Unix(10, 0), []string{"dep.go", "main.go"})
+	fresh := State{
+		Graph:     &current,
+		Imports:   map[string][]string{"main.go": {"dep.go"}},
+		Importers: map[string][]string{"dep.go": {"main.go"}},
+	}
+	configuredCount := 2
+	fresh.ConfiguredFileCount = &configuredCount
+	fresh.Coverage.Status = analysis.CoverageComplete
+
+	if graph, reason := ValidateCachedGraph(&fresh, root, cfg); graph == nil || reason != "" {
+		t.Fatalf("current-revision cache = %#v, %q; want it reused", graph, reason)
+	}
+
+	payload, err := json.Marshal(fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var onDisk State
+	if err := json.Unmarshal(payload, &onDisk); err != nil {
+		t.Fatal(err)
+	}
+	onDisk.Graph.BuilderRevision = "filegraph-v1"
+
+	graph, reason := ValidateCachedGraph(&onDisk, root, cfg)
+	if graph != nil || reason != graphCacheRevisionMismatch {
+		t.Fatalf("filegraph-v1 state file = %#v, %q; want nil, %q", graph, reason, graphCacheRevisionMismatch)
+	}
+}
 
 func TestGraphProvenanceValidation(t *testing.T) {
 	root := t.TempDir()
