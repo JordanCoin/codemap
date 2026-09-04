@@ -3,6 +3,7 @@ package scanner
 import (
 	"context"
 	"reflect"
+	"sort"
 	"testing"
 )
 
@@ -15,7 +16,11 @@ func TestTsconfigDotSlashAliasResolvesImporters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build alias fixture graph: %v", err)
 	}
-	got := graph.Importers["lib/a1.ts"]
+	// Compare as a set: the graph appends importers in analysis order, which
+	// is not deterministic across runs (see the note in the PR for #173). The
+	// exactness this asserts is membership, not sequence.
+	got := append([]string(nil), graph.Importers["lib/a1.ts"]...)
+	sort.Strings(got)
 	want := []string{"app/layout.tsx", "app/page.tsx"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("lib/a1.ts importers = %v, want exactly %v", got, want)
