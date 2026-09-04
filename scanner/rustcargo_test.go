@@ -118,6 +118,49 @@ func TestCargoMetadataSharesOneScanDeadline(t *testing.T) {
 	}
 }
 
+func TestCargoMetadataDeadlinePreservesFallbackTopology(t *testing.T) {
+	root := t.TempDir()
+	writeRustCargoFixture(t, root, map[string]string{
+		"Cargo.toml":       "[workspace]\nmembers = [\"one\", \"two\"]\n",
+		"one/Cargo.toml":   cargoTestManifest("one"),
+		"one/src/lib.rs":   "mod local;\n",
+		"one/src/local.rs": "",
+		"two/Cargo.toml":   cargoTestManifest("two"),
+		"two/src/lib.rs":   "",
+	})
+	analyses := []FileAnalysis{
+		{Path: "one/src/lib.rs", Language: "rust", Imports: []string{"local"}},
+		{Path: "one/src/local.rs", Language: "rust"},
+		{Path: "two/src/lib.rs", Language: "rust"},
+	}
+	files := []FileInfo{
+		{Path: "one/src/lib.rs"},
+		{Path: "one/src/local.rs"},
+		{Path: "two/src/lib.rs"},
+	}
+
+	index, outcome, err := buildRustWorkspaceIndexWithTimeout(
+		context.Background(), root, analyses, files,
+		func(ctx context.Context, _ string) ([]byte, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+		time.Millisecond,
+	)
+	if err != nil {
+		t.Fatalf("buildRustWorkspaceIndexWithTimeout() error: %v", err)
+	}
+	if outcome == nil || outcome.Status != ScanSourceFallback {
+		t.Fatalf("metadata outcome = %#v, want fallback", outcome)
+	}
+	if pkg, ok := index.packageForFile("one/src/local.rs"); !ok || pkg.root != "one" {
+		t.Fatalf("fallback package = %#v, ok %v, want one", pkg, ok)
+	}
+	if pkg, ok := index.packageForFile("two/src/lib.rs"); !ok || pkg.root != "two" {
+		t.Fatalf("fallback package = %#v, ok %v, want two", pkg, ok)
+	}
+}
+
 func TestCargoMetadataRecoversLocalCargoTopology(t *testing.T) {
 	tests := []struct {
 		name          string
