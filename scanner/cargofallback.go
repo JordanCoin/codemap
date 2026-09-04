@@ -29,7 +29,11 @@ func buildFileGraphFromOutcomeWithCargoMetadataAndFilters(ctx context.Context, r
 			break
 		}
 	}
-	fg, err := buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx, root, outcome.Analyses, filters, loader, outcome.Sources...)
+	var inventory []FileInfo
+	if outcome.hasFileInventory {
+		inventory = outcome.files
+	}
+	fg, err := buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx, root, outcome.Analyses, filters, loader, outcome.Sources, inventory, outcome.hasFileInventory)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +101,9 @@ func scanForGraphOutcomeWithFilters(ctx context.Context, root string, filters Fi
 		return ScanOutcome{}, false, err
 	}
 	fallback := ScanOutcome{
-		Sources: []ScanSourceOutcome{incomplete.Outcome},
+		Sources:          []ScanSourceOutcome{incomplete.Outcome},
+		files:            files,
+		hasFileInventory: true,
 	}
 	recovered := false
 	if goFallback, fallbackErr := buildGoFallbackOutcome(ctx, root, files); fallbackErr == nil {
@@ -151,6 +157,10 @@ func mergeFallbackOutcome(dst *ScanOutcome, src ScanOutcome) {
 	dst.Analyses = append(dst.Analyses, src.Analyses...)
 	dst.Sources = append(dst.Sources, src.Sources...)
 	dst.precomputedEdges = append(dst.precomputedEdges, src.precomputedEdges...)
+	if src.hasFileInventory {
+		dst.files = src.files
+		dst.hasFileInventory = true
+	}
 }
 
 func buildCargoFallbackOutcome(ctx context.Context, root string, files []FileInfo, loader cargoMetadataLoader) (ScanOutcome, error) {

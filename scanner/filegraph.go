@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"codemap/analysis"
@@ -26,8 +27,8 @@ type FileGraph struct {
 
 // fileIndex provides fast lookup of files by various import-like keys
 type fileIndex struct {
-	byExact     map[string][]string // exact path -> files
-	bySuffix    map[string][]string // path suffix -> files (for nested packages)
+	byExact     map[string]uint32   // exact path -> inventory count
+	bySuffix    []string            // paths ordered by suffix for nested lookup
 	byDir       map[string][]string // directory -> files in it
 	goPkgs      map[string][]string // Go package path -> files
 	cueModules  []cueModuleInfo
@@ -60,7 +61,7 @@ func BuildFileGraphFromAnalyses(ctx context.Context, root string, analyses []Fil
 	if err != nil {
 		return nil, err
 	}
-	return buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx, root, filtered, filters, loadCargoMetadata)
+	return buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx, root, filtered, filters, loadCargoMetadata, nil, nil, false)
 }
 
 func buildFileGraphFromAnalysesWithCargoMetadata(ctx context.Context, root string, analyses []FileAnalysis, loader cargoMetadataLoader) (*FileGraph, error) {
@@ -70,10 +71,10 @@ func buildFileGraphFromAnalysesWithCargoMetadata(ctx context.Context, root strin
 	if err != nil {
 		return nil, err
 	}
-	return buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx, root, filtered, filters, loader)
+	return buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx, root, filtered, filters, loader, nil, nil, false)
 }
 
-func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, root string, analyses []FileAnalysis, filters Filters, loader cargoMetadataLoader, sources ...ScanSourceOutcome) (*FileGraph, error) {
+func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, root string, analyses []FileAnalysis, filters Filters, loader cargoMetadataLoader, sources []ScanSourceOutcome, inventory []FileInfo, hasInventory bool) (*FileGraph, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -110,9 +111,14 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 	if useJSWorkspace || useDartWorkspace {
 		scanOnly = nil
 	}
-	allFiles, err := ScanFiles(ctx, root, gitCache, scanOnly, filters.Exclude)
-	if err != nil {
-		return nil, err
+	var allFiles []FileInfo
+	if hasInventory && (len(filters.Only) == 0 || !useJSWorkspace && !useDartWorkspace) {
+		allFiles = inventory
+	} else {
+		allFiles, err = ScanFiles(ctx, root, gitCache, scanOnly, filters.Exclude)
+		if err != nil {
+			return nil, err
+		}
 	}
 	files := allFiles
 	if len(filters.Only) > 0 && (useJSWorkspace || useDartWorkspace) {
@@ -281,12 +287,14 @@ func buildFileIndex(files []FileInfo, goModule string) *fileIndex {
 }
 
 func buildFileIndexContext(ctx context.Context, files []FileInfo, goModule string) (*fileIndex, error) {
+	directoryHint := min(len(files), 1024)
 	idx := &fileIndex{
-		byExact:  make(map[string][]string),
-		bySuffix: make(map[string][]string),
-		byDir:    make(map[string][]string),
-		goPkgs:   make(map[string][]string),
+		byExact:  make(map[string]uint32, len(files)),
+		bySuffix: make([]string, 0, len(files)),
+		byDir:    make(map[string][]string, directoryHint),
+		goPkgs:   make(map[string][]string, directoryHint),
 	}
+	goPackagePaths := make(map[string]string, directoryHint)
 
 	for _, f := range files {
 		if err := ctx.Err(); err != nil {
@@ -301,43 +309,101 @@ func buildFileIndexContext(ctx context.Context, files []FileInfo, goModule strin
 		// Index by directory
 		idx.byDir[dir] = append(idx.byDir[dir], path)
 
-		// Index by exact path (without extension for fuzzy matching)
-		idx.byExact[path] = append(idx.byExact[path], path)
-		noExt := strings.TrimSuffix(path, filepath.Ext(path))
-		idx.byExact[noExt] = append(idx.byExact[noExt], path)
-
-		// Index by all path suffixes (for nested package resolution)
-		// e.g., "llm-server/app/core/config.py" indexed as:
-		//   - "app/core/config.py"
-		//   - "core/config.py"
-		//   - "config.py"
-		parts := strings.Split(path, string(filepath.Separator))
-		for i := 1; i < len(parts); i++ {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			suffix := strings.Join(parts[i:], string(filepath.Separator))
-			idx.bySuffix[suffix] = append(idx.bySuffix[suffix], path)
-			// Also without extension
-			noExt := strings.TrimSuffix(suffix, filepath.Ext(suffix))
-			idx.bySuffix[noExt] = append(idx.bySuffix[noExt], path)
-		}
+		idx.byExact[path]++
+		idx.bySuffix = append(idx.bySuffix, path)
 
 		// Go package index. Import paths always use forward slashes, so the
 		// key must be slash-normalized or lookups fail on Windows.
 		if strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") && goModule != "" {
 			pkgPath := goModule
 			if dir != "" {
-				pkgPath = goModule + "/" + filepath.ToSlash(dir)
+				var ok bool
+				pkgPath, ok = goPackagePaths[dir]
+				if !ok {
+					pkgPath = goModule + "/" + filepath.ToSlash(dir)
+					goPackagePaths[dir] = pkgPath
+				}
 			}
 			idx.goPkgs[pkgPath] = append(idx.goPkgs[pkgPath], path)
 		}
 	}
+	sort.Slice(idx.bySuffix, func(i, j int) bool {
+		if order := comparePathsReversed(idx.bySuffix[i], idx.bySuffix[j]); order != 0 {
+			return order < 0
+		}
+		return idx.bySuffix[i] < idx.bySuffix[j]
+	})
 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	return idx, nil
+}
+
+func comparePathsReversed(left, right string) int {
+	limit := min(len(left), len(right))
+	for i := 0; i < limit; i++ {
+		leftByte, rightByte := left[len(left)-1-i], right[len(right)-1-i]
+		if leftByte < rightByte {
+			return -1
+		}
+		if leftByte > rightByte {
+			return 1
+		}
+	}
+	if len(left) < len(right) {
+		return -1
+	}
+	if len(left) > len(right) {
+		return 1
+	}
+	return 0
+}
+
+func comparePathSuffix(path, suffix string) int {
+	prefixLen := len(suffix) + 1
+	limit := min(len(path), prefixLen)
+	for i := 0; i < limit; i++ {
+		left := path[len(path)-1-i]
+		right := byte(filepath.Separator)
+		if i < len(suffix) {
+			right = suffix[len(suffix)-1-i]
+		}
+		if left < right {
+			return -1
+		}
+		if left > right {
+			return 1
+		}
+	}
+	if len(path) < prefixLen {
+		return -1
+	}
+	if len(path) > prefixLen {
+		return 1
+	}
+	return 0
+}
+
+func hasPathSuffix(path, suffix string) bool {
+	return len(path) > len(suffix) && path[len(path)-len(suffix)-1] == byte(filepath.Separator) && strings.HasSuffix(path, suffix)
+}
+
+func (idx *fileIndex) suffixMatches(suffix string) []string {
+	if suffix == "" {
+		return nil
+	}
+	start := sort.Search(len(idx.bySuffix), func(i int) bool {
+		return comparePathSuffix(idx.bySuffix[i], suffix) >= 0
+	})
+	var matches []string
+	for i := start; i < len(idx.bySuffix) && hasPathSuffix(idx.bySuffix[i], suffix); i++ {
+		matches = append(matches, idx.bySuffix[i])
+	}
+	if len(matches) > 1 {
+		sort.Strings(matches)
+	}
+	return matches
 }
 
 // fuzzyResolve converts an import path to compatible local file paths.
@@ -557,14 +623,13 @@ func resolveRelative(imp, fromDir string, idx *fileIndex, sourceLanguage string)
 // tryExactMatch looks for exact path matches with common extensions.
 // Extension list derived from the canonical scanner registry.
 func tryExactMatch(path string, idx *fileIndex, sourceLanguage string) []string {
-	extensions := ResolverExtensions()
-
-	for _, ext := range extensions {
+	if idx.byExact[path] == 1 && languagesCompatible(sourceLanguage, DetectLanguage(path)) {
+		return []string{path}
+	}
+	for _, ext := range resolverExtensions[:len(resolverExtensions)-1] {
 		candidate := path + ext
-		if files, ok := idx.byExact[candidate]; ok {
-			if compatible := compatibleFiles(sourceLanguage, files); len(compatible) > 0 {
-				return compatible
-			}
+		if idx.byExact[candidate] == 1 && languagesCompatible(sourceLanguage, DetectLanguage(candidate)) {
+			return []string{candidate}
 		}
 	}
 
@@ -573,12 +638,9 @@ func tryExactMatch(path string, idx *fileIndex, sourceLanguage string) []string 
 
 // trySuffixMatch finds files where the path ends with the normalized import
 func trySuffixMatch(normalized string, idx *fileIndex, sourceLanguage string) []string {
-	// Extension list derived from the canonical scanner registry.
-	extensions := ResolverExtensions()
-
-	for _, ext := range extensions {
+	for _, ext := range resolverExtensions {
 		candidate := normalized + ext
-		if files, ok := idx.bySuffix[candidate]; ok {
+		if files := idx.suffixMatches(candidate); len(files) > 0 {
 			files = compatibleFiles(sourceLanguage, files)
 			if len(files) == 0 {
 				continue
@@ -594,7 +656,7 @@ func trySuffixMatch(normalized string, idx *fileIndex, sourceLanguage string) []
 
 	// Also try __init__.py for Python packages
 	initCandidate := filepath.Join(normalized, "__init__.py")
-	if files, ok := idx.bySuffix[initCandidate]; ok {
+	if files := idx.suffixMatches(initCandidate); len(files) > 0 {
 		return compatibleFiles(sourceLanguage, files)
 	}
 

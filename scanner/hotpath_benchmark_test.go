@@ -50,6 +50,28 @@ func BenchmarkBuildFileGraphFromAnalyses(b *testing.B) {
 	}
 }
 
+func BenchmarkBuildFileGraphFromOutcome(b *testing.B) {
+	root, files := benchmarkScannerTree(b, 5_000)
+	analyses := make([]FileAnalysis, 0, len(files))
+	for _, file := range files {
+		analyses = append(analyses, FileAnalysis{
+			Path:     file.Path,
+			Language: "go",
+			Imports:  []string{"example.com/bench/shared"},
+		})
+	}
+	outcome := ScanOutcome{Analyses: analyses, files: files, hasFileInventory: true}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		var err error
+		benchmarkGraph, err = BuildFileGraphFromOutcome(context.Background(), root, outcome, Filters{})
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkBuildFileIndex(b *testing.B) {
 	files := benchmarkFileInventory(50_000)
 	benchmarkBuildFileIndex(b, files)

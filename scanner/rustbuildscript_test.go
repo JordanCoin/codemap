@@ -125,9 +125,6 @@ func TestRustBuildScriptResolvesStaticCargoInputs(t *testing.T) {
 }
 
 func TestRustBuildScriptResolvesTargetWithExtensionSibling(t *testing.T) {
-	// idx.byExact also indexes files under their extension-stripped key, so
-	// "app/data.json.gz" appears under the same "app/data.json" key as the
-	// real target. The real directive must still resolve.
 	root := t.TempDir()
 	writeRustCargoFixture(t, root, map[string]string{
 		"Cargo.toml":   "[package]\nname = \"app\"\nversion = \"0.1.0\"\nbuild = \"build.rs\"\n",

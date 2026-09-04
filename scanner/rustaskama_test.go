@@ -137,9 +137,6 @@ func TestRustAskamaTemplateResolvesWithinCargoPackage(t *testing.T) {
 }
 
 func TestRustAskamaTemplateResolvesWithExtensionSibling(t *testing.T) {
-	// idx.byExact also indexes files under their extension-stripped key, so
-	// "app/templates/template.html.orig" appears under the same
-	// "app/templates/template.html" key as the real target.
 	root := t.TempDir()
 	writeRustCargoFixture(t, root, map[string]string{
 		"Cargo.toml":                   "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
@@ -168,14 +165,14 @@ func TestRustAskamaTemplateResolvesWithExtensionSibling(t *testing.T) {
 }
 
 func TestRustAskamaTemplateRequiresAuthoritativeUnambiguousTarget(t *testing.T) {
-	idx := &fileIndex{byExact: map[string][]string{
-		filepath.FromSlash("app/templates/page.html"): {"app/templates/page.html", "app/templates/page.html"},
+	idx := &fileIndex{byExact: map[string]uint32{
+		filepath.FromSlash("app/templates/page.html"): 2,
 	}}
 	workspace := &rustWorkspaceIndex{packages: []rustPackage{{root: "app", authoritative: true}}}
 	if got := resolveRustAskamaTemplate(t.TempDir(), "app/src/lib.rs", `"page.html"`, idx, workspace); got != "" {
 		t.Fatalf("ambiguous target = %q, want unresolved", got)
 	}
-	idx.byExact[filepath.FromSlash("app/templates/page.html")] = []string{"app/templates/page.html"}
+	idx.byExact[filepath.FromSlash("app/templates/page.html")] = 1
 	workspace.packages[0].authoritative = false
 	if got := resolveRustAskamaTemplate(t.TempDir(), "app/src/lib.rs", `"page.html"`, idx, workspace); got != "" {
 		t.Fatalf("fallback-owned target = %q, want unresolved", got)

@@ -249,11 +249,15 @@ func PromptExtensions() []string {
 	return exts
 }
 
-// ResolverExtensions returns extensions used for import path resolution,
-// including index-file patterns for JS/TS/Python ecosystems.
-// Sorted by length descending so longer extensions match first (.tsx before .ts),
-// with empty string last as the final fallback.
+var resolverExtensions = buildResolverExtensions()
+
+// ResolverExtensions returns an isolated copy of the ordered extensions used
+// for import path resolution.
 func ResolverExtensions() []string {
+	return slices.Clone(resolverExtensions)
+}
+
+func buildResolverExtensions() []string {
 	var exts []string
 	for ext := range extToLang {
 		exts = append(exts, ext)
