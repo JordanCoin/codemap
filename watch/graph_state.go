@@ -29,7 +29,7 @@ const (
 	graphLifecycleSkippedSize = GraphLifecycleSkippedSize
 	graphLifecycleFailed      = GraphLifecycleFailed
 
-	graphBuilderRevision        = "filegraph-v1"
+	graphBuilderRevision        = "filegraph-v2"
 	graphCacheLegacy            = "legacy"
 	graphCacheRootMismatch      = "root_mismatch"
 	graphCacheFilterMismatch    = "filter_mismatch"

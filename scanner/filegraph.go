@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"codemap/analysis"
@@ -248,7 +249,28 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	fg.sortEdges()
 	return fg, nil
+}
+
+// sortEdges orders the reverse edge lists. Importers are appended while
+// iterating analyses, whose order the scanner does not fix, so the same
+// repository scanned twice produced the same importers in a different
+// sequence: --importers output shifted between identical runs, diffs of
+// codemap output showed changes that were not changes, and no caller could
+// assert an exact list.
+//
+// Imports are deliberately left alone. They are appended per file in
+// resolution order, which is already stable and which callers rely on: the
+// CUE resolver returns a selected package before the package it falls back
+// to, and DepsProject sorts its own copy for JSON output anyway.
+func (fg *FileGraph) sortEdges() {
+	if fg == nil {
+		return
+	}
+	for file := range fg.Importers {
+		sort.Strings(fg.Importers[file])
+	}
 }
 
 func applyPrecomputedFileEdges(fg *FileGraph, edges []fileEdge) {
@@ -713,7 +735,10 @@ func (fg *FileGraph) IsHub(path string) bool {
 	return CountHubImporters(fg.Importers[path]) >= HubThreshold
 }
 
-// HubFiles returns all files that qualify as hubs under IsHub.
+// HubFiles returns all files that qualify as hubs under IsHub, ordered by
+// non-test importer count descending and then by path. Map iteration order is
+// random, so callers that truncate or display the head of this list would
+// otherwise show a different set of hubs on every run over the same graph.
 func (fg *FileGraph) HubFiles() []string {
 	var hubs []string
 	for path := range fg.Importers {
@@ -721,6 +746,16 @@ func (fg *FileGraph) HubFiles() []string {
 			hubs = append(hubs, path)
 		}
 	}
+	counts := make(map[string]int, len(hubs))
+	for _, path := range hubs {
+		counts[path] = CountHubImporters(fg.Importers[path])
+	}
+	sort.Slice(hubs, func(i, j int) bool {
+		if counts[hubs[i]] != counts[hubs[j]] {
+			return counts[hubs[i]] > counts[hubs[j]]
+		}
+		return hubs[i] < hubs[j]
+	})
 	return hubs
 }
 
