@@ -100,6 +100,10 @@ func parseCargoMetadata(data []byte) (cargoMetadata, error) {
 }
 
 func buildRustWorkspaceIndex(ctx context.Context, root string, analyses []FileAnalysis, files []FileInfo, loader cargoMetadataLoader) (*rustWorkspaceIndex, *ScanSourceOutcome, error) {
+	return buildRustWorkspaceIndexWithTimeout(ctx, root, analyses, files, loader, cargoMetadataTimeout)
+}
+
+func buildRustWorkspaceIndexWithTimeout(ctx context.Context, root string, analyses []FileAnalysis, files []FileInfo, loader cargoMetadataLoader, metadataTimeout time.Duration) (*rustWorkspaceIndex, *ScanSourceOutcome, error) {
 	index := buildRustFallbackWorkspaceIndex(root, analyses)
 	manifestPaths, err := discoverCargoManifests(ctx, root, files)
 	if err != nil {
@@ -115,7 +119,7 @@ func buildRustWorkspaceIndex(ctx context.Context, root string, analyses []FileAn
 		outcome := cargoMetadataOutcome(0, len(manifestPaths))
 		return index, &outcome, nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, cargoMetadataTimeout)
+	metadataCtx, cancel := context.WithTimeout(ctx, metadataTimeout)
 	defer cancel()
 
 	packagesByRoot := make(map[string]rustPackage, len(index.packages))
@@ -129,11 +133,14 @@ func buildRustWorkspaceIndex(ctx context.Context, root string, analyses []FileAn
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
+		if metadataCtx.Err() != nil {
+			break
+		}
 		manifestPath = filepath.Clean(manifestPath)
 		if handledManifests[manifestPath] {
 			continue
 		}
-		data, err := loader(ctx, manifestPath)
+		data, err := loader(metadataCtx, manifestPath)
 		if err != nil {
 			continue
 		}
