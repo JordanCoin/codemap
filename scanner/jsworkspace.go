@@ -415,10 +415,8 @@ func resolveManifestTarget(root, target string, idx *fileIndex, sourceLanguage s
 	if !ok {
 		return nil
 	}
-	for _, candidate := range compatibleFiles(sourceLanguage, idx.byExact[localPath]) {
-		if candidate == localPath {
-			return []string{candidate}
-		}
+	if idx.byExact[localPath] == 1 && languagesCompatible(sourceLanguage, DetectLanguage(localPath)) {
+		return []string{localPath}
 	}
 	return nil
 }

@@ -40,17 +40,44 @@ func ResolvesFileLevelImports(language string) bool {
 	return !symbolLevel
 }
 
+type fileLanguageInventory struct {
+	hasRust     bool
+	hasCUE      bool
+	symbolLevel map[string]int
+}
+
+func inspectFileLanguages(files []FileInfo) fileLanguageInventory {
+	var inventory fileLanguageInventory
+	for _, file := range files {
+		language := fileInfoLanguage(file)
+		switch language {
+		case "rust":
+			inventory.hasRust = true
+		case "cue":
+			inventory.hasCUE = true
+		}
+		if display, ok := symbolLevelImportLanguages[language]; ok {
+			if inventory.symbolLevel == nil {
+				inventory.symbolLevel = make(map[string]int)
+			}
+			inventory.symbolLevel[display]++
+		}
+	}
+	return inventory
+}
+
+func fileInfoLanguage(file FileInfo) string {
+	ext := file.Ext
+	if ext == "" {
+		return DetectLanguage(file.Path)
+	}
+	return extToLang[strings.ToLower(ext)]
+}
+
 // symbolLevelInventory counts scanned files per symbol-level language, keyed by
 // the language's display name.
 func symbolLevelInventory(files []FileInfo) map[string]int {
-	counts := make(map[string]int)
-	for _, file := range files {
-		display, symbolLevel := symbolLevelImportLanguages[DetectLanguage(file.Path)]
-		if symbolLevel {
-			counts[display]++
-		}
-	}
-	return counts
+	return inspectFileLanguages(files).symbolLevel
 }
 
 // symbolLevelSources renders one source per symbol-level language present, so
@@ -104,7 +131,13 @@ func (c *GraphCoverage) AddSymbolLevelImportCoverage(files []FileInfo) {
 	if c == nil {
 		return
 	}
-	counts := symbolLevelInventory(files)
+	c.addSymbolLevelImportCoverage(symbolLevelInventory(files))
+}
+
+func (c *GraphCoverage) addSymbolLevelImportCoverage(counts map[string]int) {
+	if c == nil {
+		return
+	}
 	sources := symbolLevelSources(counts)
 	if len(sources) == 0 {
 		return

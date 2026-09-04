@@ -262,19 +262,16 @@ func ScanFiles(ctx context.Context, root string, cache *GitIgnoreCache, only []s
 			return nil
 		}
 
-		// Compute absolute path once for gitignore checks and relative path calculation
-		absPath, _ := filepath.Abs(path)
-
 		// For directories: load any .gitignore, then check if dir itself should be skipped
 		if info.IsDir() {
 			if cache != nil {
-				cache.tryLoadGitignore(absPath)
-				if cache.ShouldIgnore(absPath) {
+				cache.tryLoadGitignore(path)
+				if cache.ShouldIgnore(path) {
 					return filepath.SkipDir
 				}
 			}
 			// Check if directory matches any exclude pattern
-			relPath, _ := filepath.Rel(absRoot, absPath)
+			relPath, _ := filepath.Rel(absRoot, path)
 			if relPath != "." {
 				for _, pattern := range exclude {
 					pattern = strings.TrimSpace(pattern)
@@ -287,11 +284,11 @@ func ScanFiles(ctx context.Context, root string, cache *GitIgnoreCache, only []s
 		}
 
 		// For files: check gitignore
-		if cache != nil && cache.ShouldIgnore(absPath) {
+		if cache != nil && cache.ShouldIgnore(path) {
 			return nil
 		}
 
-		relPath, _ := filepath.Rel(absRoot, absPath)
+		relPath, _ := filepath.Rel(absRoot, path)
 		ext := filepath.Ext(path)
 
 		// Apply user filters (--only and --exclude)
@@ -382,12 +379,26 @@ func ScanForDeps(ctx context.Context, root string, filters Filters) (ScanOutcome
 	if err != nil {
 		return outcome, err
 	}
-	cueOutcome, err := scanCUEFiles(ctx, root, filters)
+	return appendCUEOutcome(ctx, root, filters, outcome)
+}
+
+func appendCUEOutcome(ctx context.Context, root string, filters Filters, outcome ScanOutcome) (ScanOutcome, error) {
+	var cueOutcome ScanOutcome
+	var err error
+	if outcome.hasFileInventory {
+		cueOutcome, err = scanCUEFilesFromFiles(ctx, root, outcome.files)
+	} else {
+		cueOutcome, err = scanCUEFiles(ctx, root, filters)
+	}
 	if err != nil {
 		return ScanOutcome{}, err
 	}
 	outcome.Analyses = append(outcome.Analyses, cueOutcome.Analyses...)
 	outcome.Sources = append(outcome.Sources, cueOutcome.Sources...)
+	if cueOutcome.hasFileInventory {
+		outcome.files = cueOutcome.files
+		outcome.hasFileInventory = true
+	}
 	return outcome, nil
 }
 

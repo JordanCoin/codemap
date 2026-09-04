@@ -41,15 +41,8 @@ func resolveRustBuildScriptInput(fromFile, input string, idx *fileIndex, workspa
 	if candidate == fromFile {
 		return ""
 	}
-	// byExact also indexes files under their extension-stripped key, so
-	// accept only when the target itself is indexed exactly once.
-	exact := 0
-	for _, file := range idx.byExact[candidate] {
-		if file == candidate {
-			exact++
-		}
-	}
-	if exact != 1 {
+	// Duplicate inventory entries make ownership ambiguous.
+	if idx.byExact[candidate] != 1 {
 		return ""
 	}
 	return candidate

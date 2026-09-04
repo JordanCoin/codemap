@@ -2,13 +2,13 @@ package scanner
 
 import (
 	"context"
-
-	"codemap/analysis"
 	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"codemap/analysis"
 )
 
 func requireSourceOutcome(t *testing.T, coverage GraphCoverage, source string) ScanSourceOutcome {
@@ -161,6 +161,70 @@ func TestNonCargoGraphHasNoCargoOutcome(t *testing.T) {
 		if outcome.Name == "cargo-metadata" {
 			t.Fatalf("unexpected Cargo outcome: %#v", outcome)
 		}
+	}
+}
+
+func TestBuildFileGraphFromOutcomeReusesFileInventory(t *testing.T) {
+	root := t.TempDir()
+	outcome := ScanOutcome{
+		Analyses: []FileAnalysis{{Path: "app/main.py", Language: "python", Imports: []string{"pkg.util"}}},
+		Sources:  []ScanSourceOutcome{{Name: "ast-grep", Status: ScanSourceAuthoritative}},
+		files: []FileInfo{
+			{Path: "app/main.py", Ext: ".py"},
+			{Path: filepath.FromSlash("src/pkg/util.py"), Ext: ".py"},
+		},
+		hasFileInventory: true,
+	}
+
+	graph, err := BuildFileGraphFromOutcome(context.Background(), root, outcome, Filters{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.FromSlash("src/pkg/util.py")
+	if got := graph.Imports["app/main.py"]; !reflect.DeepEqual(got, []string{want}) {
+		t.Fatalf("imports = %v, want [%s]", got, want)
+	}
+}
+
+func TestBuildFileGraphFromOutcomeReusesKnownEmptyInventory(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "missing")
+	graph, err := BuildFileGraphFromOutcome(context.Background(), root, ScanOutcome{
+		Sources:          []ScanSourceOutcome{{Name: "ast-grep", Status: ScanSourceAuthoritative}},
+		hasFileInventory: true,
+	}, Filters{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(graph.Imports) != 0 || len(graph.Importers) != 0 {
+		t.Fatalf("known empty inventory produced edges: %+v", graph)
+	}
+}
+
+func TestAppendCUEOutcomeReusesFallbackInventory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "schema.cue"), []byte("package schema\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := appendCUEOutcome(context.Background(), root, Filters{}, ScanOutcome{
+		files:            []FileInfo{{Path: "schema.cue", Ext: ".cue"}},
+		hasFileInventory: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outcome.Analyses) != 1 || outcome.Analyses[0].Path != "schema.cue" || !outcome.hasFileInventory {
+		t.Fatalf("CUE analyses = %#v", outcome.Analyses)
+	}
+}
+
+func TestAppendCUEOutcomeReusesKnownEmptyInventory(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "missing")
+	outcome, err := appendCUEOutcome(context.Background(), root, Filters{}, ScanOutcome{hasFileInventory: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outcome.Analyses) != 0 || !outcome.hasFileInventory {
+		t.Fatalf("outcome = %#v", outcome)
 	}
 }
 
