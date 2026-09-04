@@ -22,9 +22,9 @@ func TestPythonRelativeImportsResolve(t *testing.T) {
 		want []string
 		form string
 	}{
-		{"pkg/mod.py", []string{"pkg/a_dotted.py", "pkg/b_bare.py", "pkg/c_multi.py", "pkg/sub/d_parent.py"},
-			"from .mod / from . import mod / aliased / from ..mod one level up"},
-		{"pkg/second.py", []string{"pkg/c_multi.py"}, "second name in a multi-name import list"},
+		{"pkg/mod.py", []string{"pkg/a_dotted.py", "pkg/b_bare.py", "pkg/c_multi.py", "pkg/h_multiline.py", "pkg/sub/d_parent.py"},
+			"from .mod / from . import mod / aliased / multiline list / from ..mod one level up"},
+		{"pkg/second.py", []string{"pkg/c_multi.py", "pkg/h_multiline.py"}, "second name in single-line and multiline lists"},
 		{"pkg/sub/deep.py", []string{"pkg/e_dotted_path.py"}, "from .sub.deep, dots below the current package"},
 		{"pkg/sub/__init__.py", []string{"pkg/f_package.py"}, "from .sub, a package rather than a module"},
 	} {
@@ -60,6 +60,10 @@ func TestPythonRelativeImportNames(t *testing.T) {
 		{"alias names the module, not the alias", ".", "from . import mod as aliased", []string{".mod"}},
 		{"parent package", "..", "from .. import mod", []string{"..mod"}},
 		{"parenthesised list", ".", "from . import (mod, second)", []string{".mod", ".second"}},
+		// Black's default for a long list. Truncating at the first newline
+		// dropped every name.
+		{"multiline parenthesised list", ".", "from . import (\n    mod,\n    second,\n)", []string{".mod", ".second"}},
+		{"multiline with per-line comments", ".", "from . import (\n    mod,  # keep\n    second,\n)", []string{".mod", ".second"}},
 		{"star imports no module", ".", "from . import *", nil},
 		{"trailing comment ignored", ".", "from . import mod  # keep", []string{".mod"}},
 		// The path already names the module here, so the imported names are
@@ -102,6 +106,12 @@ func TestResolvePythonRelativeLevels(t *testing.T) {
 		{"package resolves to its __init__", ".sub", "pkg", []string{"pkg/sub/__init__.py"}},
 		{"three dots from a nested package reach the root", "...top", "pkg/sub", []string{"top.py"}},
 		{"bare dots resolve to nothing", ".", "pkg", nil},
+		// filepath.Dir("") is ".", which normalizes back to "", so an
+		// unchecked climb clamps at the root and resolves a dot count deeper
+		// than the file to a root-level module it never named.
+		{"climbing past the root resolves to nothing", "....mod", "pkg/sub", nil},
+		{"climbing far past the root resolves to nothing", "......mod", "pkg/sub", nil},
+		{"climbing exactly to the root still resolves", "...top", "pkg/sub", []string{"top.py"}},
 		{"unknown module resolves to nothing", ".nope", "pkg", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -110,5 +120,23 @@ func TestResolvePythonRelativeLevels(t *testing.T) {
 				t.Fatalf("resolvePythonRelative(%q, %q) = %v, want %v", tc.imp, tc.fromDir, got, tc.want)
 			}
 		})
+	}
+}
+
+// A dot count deeper than the file's directory allows must resolve to
+// nothing. Clamping at the scan root produced an edge to a root-level module
+// the import never named — a fabricated edge, which is worse than a miss.
+func TestPythonRelativeImportClimbingPastRootResolvesToNothing(t *testing.T) {
+	graph, err := BuildFileGraph(context.Background(), "../testdata/python-relative-imports", Filters{})
+	if err != nil {
+		t.Fatalf("build python fixture graph: %v", err)
+	}
+	if got := graph.Imports["pkg/sub/i_over_climb.py"]; len(got) != 0 {
+		t.Fatalf("pkg/sub/i_over_climb.py imports = %v, want none", got)
+	}
+	for _, importer := range graph.Importers["pkg/mod.py"] {
+		if importer == "pkg/sub/i_over_climb.py" {
+			t.Fatalf("pkg/mod.py gained a fabricated importer from a four-dot import in pkg/sub")
+		}
 	}
 }

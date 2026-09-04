@@ -621,6 +621,14 @@ func resolvePythonRelative(imp, fromDir string, idx *fileIndex) []string {
 
 	targetDir := fromDir
 	for i := 1; i < level; i++ {
+		// filepath.Dir("") is ".", which normalizes back to "", so an
+		// unchecked loop clamps at the scan root and a dot count deeper than
+		// the file resolves to a root-level module it never named. Climbing
+		// past the root has to resolve to nothing: the package above the root
+		// is not visible, and guessing produces a fabricated edge.
+		if targetDir == "" {
+			return nil
+		}
 		targetDir = filepath.Dir(targetDir)
 		if targetDir == "." {
 			targetDir = ""

@@ -581,10 +581,19 @@ func pythonRelativeImportNames(language, path, text string) []string {
 	if !found {
 		return nil
 	}
-	if idx := strings.IndexAny(after, "#\n"); idx >= 0 {
-		after = after[:idx]
+	// Black wraps a long list across lines inside parentheses, so the names
+	// cannot be read from the first line alone. Strip each line's comment,
+	// then flatten.
+	var flattened strings.Builder
+	for _, line := range strings.Split(after, "\n") {
+		if idx := strings.Index(line, "#"); idx >= 0 {
+			line = line[:idx]
+		}
+		flattened.WriteString(line)
+		flattened.WriteString(" ")
 	}
-	after = strings.TrimSpace(strings.Trim(strings.TrimSpace(after), "()"))
+	after = strings.TrimSpace(flattened.String())
+	after = strings.TrimSpace(strings.Trim(after, "()"))
 
 	var names []string
 	for _, part := range strings.Split(after, ",") {
