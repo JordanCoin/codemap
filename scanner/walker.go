@@ -113,9 +113,13 @@ func (c *GitIgnoreCache) ShouldIgnore(absPath string) bool {
 
 // IgnoredDirs are directories to skip during scanning
 var IgnoredDirs = map[string]bool{
-	".git":           true,
-	"node_modules":   true,
-	"vendor":         true,
+	".git":         true,
+	"node_modules": true,
+	"vendor":       true,
+	// Go's own toolchain ignores testdata, and fixture repositories inside it
+	// are not the project's source: scanning them inflates file counts and
+	// lets a fixture's language change the project's reported coverage.
+	"testdata":       true,
 	"Pods":           true,
 	"build":          true,
 	"DerivedData":    true,
