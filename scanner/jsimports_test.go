@@ -42,7 +42,7 @@ func TestCommonJSSingleQuoteImportersResolve(t *testing.T) {
 	}{
 		{"services/layoutInputService.js", []string{"routes/admin.js", "routes/members.js"}, "single-quoted require, both ../ and ./../ forms"},
 		{"routes/members.js", []string{"app.js"}, "double-quoted require still resolves"},
-		{"routes/admin.js", []string{"app.js"}, "single-quoted ESM import in a .js file"},
+		{"routes/admin.js", []string{"app.js"}, "single-quoted ESM import in a .js file (already matched on main via jsx.yml's kind: import_statement; pinned so the rule rewrite cannot regress it)"},
 		{"app.js", nil, "entry point is imported by nothing"},
 	} {
 		got := sortedImporters(t, graph, tc.file)
