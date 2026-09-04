@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -90,13 +91,12 @@ func (p *statePublisher) snapshot(generation uint64) State {
 
 func (p *statePublisher) publish() error {
 	next := p.generation + 1
-	data, err := json.MarshalIndent(p.snapshot(next), "", "  ")
+	err := runtimefile.WriteAtomicWith(p.path, 0o644, func(w io.Writer) error {
+		encoder := json.NewEncoder(w)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(p.snapshot(next))
+	})
 	if err != nil {
-		p.dirty = true
-		p.deadline = time.Now().Add(publicationRetryDelay)
-		return err
-	}
-	if err = runtimefile.WriteAtomic(p.path, data, 0o644); err != nil {
 		p.dirty = true
 		ackErr := p.failPending("publication_failed")
 		p.deadline = time.Now().Add(publicationRetryDelay)
