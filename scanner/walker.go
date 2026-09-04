@@ -319,11 +319,16 @@ func ConfiguredFilters(root string) Filters {
 // ScanConfiguredFiles scans using the active setup root's project filters
 // while honoring caller cancellation.
 func ScanConfiguredFiles(ctx context.Context, root string, cache *GitIgnoreCache) ([]FileInfo, error) {
+	cfg := config.Load(root)
+	return ScanConfiguredFilesWithFilters(ctx, root, cache, Filters{Only: cfg.Only, Exclude: cfg.Exclude})
+}
+
+// ScanConfiguredFilesWithFilters scans files using already resolved filters.
+func ScanConfiguredFilesWithFilters(ctx context.Context, root string, cache *GitIgnoreCache, filters Filters) ([]FileInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	cfg := config.Load(root)
-	files, err := ScanFiles(ctx, root, cache, cfg.Only, cfg.Exclude)
+	files, err := ScanFiles(ctx, root, cache, filters.Only, filters.Exclude)
 	if err != nil {
 		return nil, err
 	}

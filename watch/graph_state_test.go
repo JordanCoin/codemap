@@ -178,7 +178,7 @@ func TestDependencyRefreshBuildsOffEventLoop(t *testing.T) {
 }
 
 func TestDependencyGraphBuildRecoversPanics(t *testing.T) {
-	graph, err := buildDependencyGraph(context.Background(), t.TempDir(), func(context.Context, string, scanner.Filters) (*scanner.FileGraph, error) {
+	graph, err := buildDependencyGraph(context.Background(), t.TempDir(), scanner.Filters{}, func(context.Context, string, scanner.Filters) (*scanner.FileGraph, error) {
 		panic("test panic")
 	})
 	if graph != nil || err == nil || err.Error() != "dependency graph build panicked: test panic" {

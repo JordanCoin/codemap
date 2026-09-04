@@ -234,7 +234,12 @@ func ConfigPath(root string) string {
 // Returns zero-value ProjectConfig if the file is missing.
 // Logs a warning to stderr and returns zero-value if JSON is malformed.
 func Load(root string) ProjectConfig {
-	data, err := os.ReadFile(ConfigPath(root))
+	return LoadFile(ConfigPath(root))
+}
+
+// LoadFile reads a previously resolved config path.
+func LoadFile(path string) ProjectConfig {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return ProjectConfig{}
 	}

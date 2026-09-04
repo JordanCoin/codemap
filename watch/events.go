@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"codemap/config"
 	"codemap/internal/projectpath"
 	"codemap/internal/runtimefile"
 	"codemap/limits"
@@ -333,6 +332,7 @@ func (d *Daemon) filterControlEvent(path string) (resetIgnoreCache, control bool
 
 func (d *Daemon) handleConfiguredMembershipEvent(event fsnotify.Event) bool {
 	event.Name = projectpath.CanonicalPath(event.Name)
+	cfg := d.loadConfig()
 	relPath, err := filepath.Rel(projectpath.CanonicalPath(d.root), event.Name)
 	if err != nil {
 		return false
@@ -343,7 +343,7 @@ func (d *Daemon) handleConfiguredMembershipEvent(event fsnotify.Event) bool {
 	present := event.Op&(fsnotify.Remove|fsnotify.Rename) == 0
 	if present {
 		info, err := os.Stat(event.Name)
-		if err != nil || info.IsDir() || (d.gitCache != nil && d.gitCache.ShouldIgnore(event.Name)) || !d.isConfiguredFile(relPath) {
+		if err != nil || info.IsDir() || (d.gitCache != nil && d.gitCache.ShouldIgnore(event.Name)) || !matchesConfiguredFile(relPath, cfg) {
 			present = false
 		}
 	}
@@ -356,7 +356,7 @@ func (d *Daemon) handleConfiguredMembershipEvent(event fsnotify.Event) bool {
 	}
 	changed := present != existed
 	if changed {
-		d.markGraphLifecycleLocked(newGraphState(d.root, config.Load(d.root), graphLifecycleStale, time.Time{}, nil))
+		d.markGraphLifecycleLocked(newGraphState(d.root, cfg, graphLifecycleStale, time.Time{}, nil))
 	}
 	d.graph.mu.Unlock()
 	if changed {
@@ -537,6 +537,7 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) bool {
 	default:
 		return false
 	}
+	cfg := d.loadConfig()
 
 	event := Event{
 		Time:     time.Now(),
@@ -562,7 +563,7 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) bool {
 				delete(d.graph.ConfiguredFiles, relPath)
 				delete(d.graph.State, relPath)
 				if wasConfigured {
-					state := newGraphState(d.root, config.Load(d.root), graphLifecycleStale, time.Time{}, nil)
+					state := newGraphState(d.root, cfg, graphLifecycleStale, time.Time{}, nil)
 					d.markGraphLifecycleLocked(state)
 				}
 			}
@@ -621,7 +622,7 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) bool {
 		if d.graph.ConfiguredFiles == nil {
 			d.graph.ConfiguredFiles = make(map[string]struct{})
 		}
-		if d.isConfiguredFile(relPath) {
+		if matchesConfiguredFile(relPath, cfg) {
 			d.graph.ConfiguredFiles[relPath] = struct{}{}
 			isConfigured = true
 		} else {
@@ -641,7 +642,7 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) bool {
 	}
 	graphInvalidated := wasConfigured || isConfigured
 	if graphInvalidated {
-		state := newGraphState(d.root, config.Load(d.root), graphLifecycleStale, time.Time{}, nil)
+		state := newGraphState(d.root, cfg, graphLifecycleStale, time.Time{}, nil)
 		d.markGraphLifecycleLocked(state)
 	}
 
