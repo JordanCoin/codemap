@@ -251,8 +251,11 @@ func ScanFiles(ctx context.Context, root string, cache *GitIgnoreCache, only []s
 
 		name := info.Name()
 
-		// Fast path: skip hardcoded ignored dirs/files
-		if IgnoredDirs[name] {
+		// Fast path: skip hardcoded ignored dirs/files. Never applied to the
+		// walk root itself: a user who runs `codemap testdata/` or scans from
+		// inside vendor/ asked for exactly that tree, and skipping it here
+		// returns Files: 0 with no explanation.
+		if IgnoredDirs[name] && path != absRoot {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}

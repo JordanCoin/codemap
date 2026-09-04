@@ -36,7 +36,9 @@ func ReadExternalDeps(ctx context.Context, root string, manifestByteBudget int64
 			return nil
 		}
 		if info.IsDir() {
-			if IgnoredDirs[info.Name()] {
+			// The walk root is what the user asked for, so it is never one of
+			// the hardcoded ignored directories.
+			if IgnoredDirs[info.Name()] && path != root {
 				return filepath.SkipDir
 			}
 			return nil

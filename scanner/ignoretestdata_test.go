@@ -41,6 +41,56 @@ func TestScanSkipsTestdataDirectories(t *testing.T) {
 	}
 }
 
+// The hardcoded ignore list must never apply to the directory the user asked
+// for. `codemap testdata/`, or `cd vendor && codemap .`, previously matched the
+// root's own base name and returned Files: 0 with no error and no explanation.
+func TestIgnoredDirNameScansWhenItIsTheRoot(t *testing.T) {
+	for _, name := range []string{"testdata", "vendor", "node_modules"} {
+		t.Run(name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), name)
+			if err := os.MkdirAll(root, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "app.go"), []byte("package app\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			files, err := ScanFiles(context.Background(), root, NewGitIgnoreCache(root), nil, nil)
+			if err != nil {
+				t.Fatalf("scan: %v", err)
+			}
+			if len(files) != 1 || files[0].Path != "app.go" {
+				t.Fatalf("scan of %s/ as the root returned %v, want [app.go]", name, files)
+			}
+		})
+	}
+}
+
+// Nested ignored directories are still skipped when the root is itself named
+// like one: the exemption covers the root only, not every directory sharing
+// its name.
+func TestIgnoredDirRootStillSkipsNestedIgnoredDirs(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "testdata")
+	nested := filepath.Join(root, "fixture", "testdata")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "app.go"), []byte("package app\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "deep.go"), []byte("package deep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	files, err := ScanFiles(context.Background(), root, NewGitIgnoreCache(root), nil, nil)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(files) != 1 || files[0].Path != "app.go" {
+		t.Fatalf("scan returned %v, want only [app.go] — nested testdata must still be skipped", files)
+	}
+}
+
 // A fixture is still scannable when it is itself the root, which is how the
 // fixture tests in this package use them.
 func TestTestdataFixtureScansWhenItIsTheRoot(t *testing.T) {
