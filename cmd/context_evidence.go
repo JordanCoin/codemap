@@ -172,6 +172,12 @@ func normalizeContextInventoryPath(file string) string {
 }
 
 func normalizeContextPathWithVolumeGuard(file string, rejectVolume bool) string {
+	if file == "" || (rejectVolume && isContextVolumePath(file)) {
+		return ""
+	}
+	if isNormalizedContextRelativePath(file) {
+		return file
+	}
 	file = strings.ReplaceAll(file, `\`, "/")
 	volumePath := isContextVolumePath(file)
 	file = strings.TrimPrefix(pathpkg.Clean(file), "./")
@@ -179,6 +185,28 @@ func normalizeContextPathWithVolumeGuard(file string, rejectVolume bool) string 
 		return ""
 	}
 	return file
+}
+
+func isNormalizedContextRelativePath(file string) bool {
+	if file == "" || file[0] == '/' || file[len(file)-1] == '/' {
+		return false
+	}
+	segmentStart := 0
+	for index := 0; index < len(file); index++ {
+		if file[index] == '\\' {
+			return false
+		}
+		if file[index] != '/' {
+			continue
+		}
+		segment := file[segmentStart:index]
+		if segment == "" || segment == "." || segment == ".." {
+			return false
+		}
+		segmentStart = index + 1
+	}
+	segment := file[segmentStart:]
+	return segment != "." && segment != ".."
 }
 
 func isContextVolumePath(file string) bool {
