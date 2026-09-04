@@ -2,9 +2,15 @@ id: js-imports
 language: javascript
 rule:
   any:
-    - pattern: import $$$_ from "$PATH"
-    - pattern: import "$PATH"
-    - pattern: require("$PATH")
+    # Structural, so quote style stops mattering: the literal-text patterns
+    # this replaces were hardcoded to double quotes, and single quotes are the
+    # Prettier default, so single-quoted imports and requires were invisible.
+    - kind: import_statement
+    # require() is a call, not an import_statement, so a kind rule alone would
+    # lose CommonJS entirely. $$$ binds no $PATH metavariable, which keeps
+    # path extraction on the quote-agnostic text path and lets a dynamic
+    # require(someVar) resolve to nothing rather than to a fabricated edge.
+    - pattern: require($$$)
 ---
 id: js-functions
 language: javascript

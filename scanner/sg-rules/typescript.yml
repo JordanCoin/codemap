@@ -1,7 +1,11 @@
 id: ts-imports
 language: typescript
 rule:
-  kind: import_statement
+  any:
+    - kind: import_statement
+    # CommonJS require() is a call expression, so kind: import_statement alone
+    # never saw it, in either quote style.
+    - pattern: require($$$)
 ---
 id: ts-functions
 language: typescript
