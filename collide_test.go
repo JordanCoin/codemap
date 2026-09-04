@@ -272,6 +272,173 @@ func TestCollideEmptyCoverageStatusRendersComplete(t *testing.T) {
 	}
 }
 
+// The default hides nothing. A merge-order hazard the tool measured at zero
+// file-level importers is still a hazard, and the previous default of 1 hid
+// every one of them on this repository.
+func TestCollideDefaultMinImportersHidesNothing(t *testing.T) {
+	if got := collideDefaultMinImporters; got != 0 {
+		t.Fatalf("collideDefaultMinImporters = %d, want 0", got)
+	}
+	prs := []collidePR{
+		{Number: 1, Files: []collidePRFile{{Path: "quiet.go"}}},
+		{Number: 2, Files: []collidePRFile{{Path: "quiet.go"}}},
+	}
+	lookup := func(string) collideImporters { return collideImporters{Count: 0, Known: true, InGraph: true} }
+
+	report := buildCollideReport(prs, lookup, collideCompleteCoverage(), "", collideDefaultMinImporters)
+	if report.HiddenByMinImporters != 0 || len(report.SharedFiles) != 1 {
+		t.Fatalf("default run hid %d file(s) and kept %d, want 0 hidden and 1 kept",
+			report.HiddenByMinImporters, len(report.SharedFiles))
+	}
+}
+
+// Go resolves imports at package level, so nothing imports an individual file
+// inside a multi-file package and a file-level count is structurally 0 there.
+// Two PRs editing two files of one package are editing one compilation unit,
+// and that must not read as weightless.
+func TestCollideGoSamePackageCollisionCarriesPackageWeight(t *testing.T) {
+	fg := &scanner.FileGraph{
+		Root:    "/repo",
+		Module:  "example.com/app",
+		Imports: map[string][]string{},
+		// The multi-file package carries no file-level edges at all: a Go
+		// import resolving to three files is dropped rather than fanned out.
+		// A file-level count here is a structural zero, which is the bug.
+		Importers: map[string][]string{},
+		Packages: map[string][]string{
+			"example.com/app/pkg": {"pkg/one.go", "pkg/two.go", "pkg/three.go"},
+			"example.com/app/cmd": {"cmd/main.go"},
+		},
+		Coverage: collideCompleteCoverage(),
+	}
+	analyses := []scanner.FileAnalysis{
+		{Path: "cmd/main.go", Language: "go", Imports: []string{"example.com/app/pkg"}},
+		// Quoted, and from a directory the package index does not carry: still
+		// an importer.
+		{Path: "other/x.go", Language: "go", Imports: []string{`"example.com/app/pkg"`}},
+		// A file importing its own package is not a second party to a
+		// collision inside it; it is counted once, as a sibling.
+		{Path: "pkg/two.go", Language: "go", Imports: []string{"example.com/app/pkg"}},
+		// Third-party imports are not this module's packages.
+		{Path: "pkg/three.go", Language: "go", Imports: []string{"github.com/other/thing"}},
+	}
+	lookup := collideGraphLookup("/repo", fg, analyses)
+
+	got := lookup("pkg/one.go")
+	if !got.Known || !got.InGraph {
+		t.Fatalf("lookup(pkg/one.go) = %+v, want a known in-graph answer", got)
+	}
+	if got.scope() != collideScopePackage {
+		t.Errorf("lookup(pkg/one.go) scope = %q, want %q", got.scope(), collideScopePackage)
+	}
+	if got.Count != 4 {
+		t.Errorf("lookup(pkg/one.go) count = %d, want 4 (2 package importers + 2 siblings)", got.Count)
+	}
+
+	// A _test.go file is not a member of the package index but does live in the
+	// package, so it is weighted with it rather than given a file-level zero —
+	// and identically to the file beside it, since the index's exclusion of
+	// test files is not a difference in hazard.
+	if got := lookup("pkg/one_test.go"); got.scope() != collideScopePackage || got.Count != 4 {
+		t.Errorf("lookup(pkg/one_test.go) = %+v, want package scope with count 4", got)
+	}
+
+	prs := []collidePR{
+		{Number: 1, Files: []collidePRFile{{Path: "pkg/one.go"}}},
+		{Number: 2, Files: []collidePRFile{{Path: "pkg/one.go"}}},
+	}
+	// --min-importers 1 used to hide this pair entirely. It is the hazard.
+	report := buildCollideReport(prs, lookup, fg.Coverage, "", 1)
+	if len(report.SharedFiles) != 1 || report.SharedFiles[0].ImporterCount == 0 {
+		t.Fatalf("shared files = %+v, want one file with a non-zero weight", report.SharedFiles)
+	}
+	if report.SharedFiles[0].ImporterScope != collideScopePackage {
+		t.Errorf("shared file scope = %q, want %q", report.SharedFiles[0].ImporterScope, collideScopePackage)
+	}
+
+	var buf bytes.Buffer
+	renderCollideReport(&buf, report)
+	if output := buf.String(); !strings.Contains(output, "4 package importers") {
+		t.Errorf("human output does not label the granularity it measured:\n%s", output)
+	}
+}
+
+// A file-resolved language keeps its file-level count and its plain label: the
+// package hop exists only where the graph actually resolves at package level.
+func TestCollideFileResolvedLanguagesKeepFileScope(t *testing.T) {
+	fg := &scanner.FileGraph{
+		Root:      "/repo",
+		Module:    "example.com/app",
+		Imports:   map[string][]string{},
+		Importers: map[string][]string{"src/api.ts": {"src/a.ts", "src/b.ts"}},
+		Packages:  map[string][]string{"example.com/app/pkg": {"pkg/one.go"}},
+		Coverage:  collideCompleteCoverage(),
+	}
+	lookup := collideGraphLookup("/repo", fg, nil)
+
+	got := lookup("src/api.ts")
+	if got.scope() != collideScopeFile || got.Count != 2 {
+		t.Errorf("lookup(src/api.ts) = %+v, want file scope with 2 importers", got)
+	}
+	if text := collideImportersText(got.Known, got.InGraph, got.Count, got.scope()); text != "2 importers" {
+		t.Errorf("label = %q, want %q", text, "2 importers")
+	}
+}
+
+// Issue #134 measured the collision matrix among #124-#127 by merging all six
+// pairs by hand, and file intersection alone got every one of them right. The
+// weighting is allowed to reorder that list. It is not allowed to change it.
+func TestCollideWeightingReordersPairsWithoutChangingThem(t *testing.T) {
+	fileScoped := collideSharedFilesOrFail(t, collideFixturePRs(), collideFixtureLookup)
+	// The same four PRs over the same paths, weighted at package granularity:
+	// the sg-rules YAML still carries no edges, but the two Go files now weigh
+	// by their package, and rustgraph.go outranks astgrep.go.
+	packageScoped := collideSharedFilesOrFail(t, collideFixturePRs(), func(path string) collideImporters {
+		switch path {
+		case "scanner/astgrep.go":
+			return collideImporters{Count: 11, Known: true, InGraph: true, Scope: collideScopePackage}
+		case "scanner/rustgraph.go":
+			return collideImporters{Count: 42, Known: true, InGraph: true, Scope: collideScopePackage}
+		default:
+			return collideFixtureLookup(path)
+		}
+	})
+
+	before := collidePairs(fileScoped)
+	after := collidePairs(packageScoped)
+
+	// Same pairs, same shared-file counts.
+	beforeSet := pairCounts(before)
+	afterSet := pairCounts(after)
+	if len(beforeSet) != 6 {
+		t.Fatalf("file-level pairs = %v, want the six pairs #134 measured", beforeSet)
+	}
+	for label, count := range beforeSet {
+		got, ok := afterSet[label]
+		if !ok {
+			t.Errorf("weighting dropped pair %s, which #134 measured as real", label)
+			continue
+		}
+		if got != count {
+			t.Errorf("pair %s shared file count = %d under weighting, want %d", label, got, count)
+		}
+	}
+	for label := range afterSet {
+		if _, ok := beforeSet[label]; !ok {
+			t.Errorf("weighting invented pair %s, which is not in #134's matrix", label)
+		}
+	}
+
+	// Order is the only thing allowed to move, and here it does: the top file
+	// of every pair changes from astgrep.go to the heavier rustgraph.go.
+	if before[0].TopFile != "scanner/astgrep.go" {
+		t.Fatalf("file-level top file = %q, want scanner/astgrep.go", before[0].TopFile)
+	}
+	if after[0].TopFile != "scanner/rustgraph.go" {
+		t.Errorf("package-level top file = %q, want scanner/rustgraph.go (42 beats 11)", after[0].TopFile)
+	}
+}
+
 func TestCollideHumanOutputGolden(t *testing.T) {
 	report := buildCollideReport(collideFixturePRs(), collideFixtureLookup, collideCompleteCoverage(), "JordanCoin/codemap", 0)
 
@@ -370,4 +537,21 @@ func mustSharedFiles(t *testing.T, prs []collidePR, lookup collideLookup, minImp
 
 func pairLabel(a, b int) string {
 	return fmt.Sprintf("#%d+#%d", a, b)
+}
+
+func collideSharedFilesOrFail(t *testing.T, prs []collidePR, lookup collideLookup) []collideSharedFile {
+	t.Helper()
+	shared, hidden := collideSharedFiles(prs, lookup, 0)
+	if hidden != 0 {
+		t.Fatalf("hidden = %d, want 0 at --min-importers 0", hidden)
+	}
+	return shared
+}
+
+func pairCounts(pairs []collidePair) map[string]int {
+	counts := make(map[string]int, len(pairs))
+	for _, pair := range pairs {
+		counts[pairLabel(pair.A, pair.B)] = pair.SharedFileCount
+	}
+	return counts
 }

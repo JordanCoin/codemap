@@ -33,6 +33,31 @@ const (
 // severity is unknown must never outrank one whose severity was measured.
 const collideUnknownWeight = -1
 
+// collideDefaultMinImporters hides nothing. Every file two open PRs both change
+// is a merge-order hazard whatever its importer count, so a threshold that
+// filters by default answers "no collisions" on a repository that is full of
+// them — which is exactly what a default of 1 did here, where Go's
+// package-level resolution puts most shared files at a file-level 0. The flag
+// remains, for narrowing a long list to the worst of it.
+const collideDefaultMinImporters = 0
+
+// The two scopes an importer count can be measured at. They are reported
+// separately because they are not the same measurement and must not be read as
+// if they were.
+const (
+	// collideScopeFile counts the files that import this exact file. It is the
+	// right answer for every language whose imports name a file: TypeScript,
+	// JavaScript, Python.
+	collideScopeFile = "file"
+	// collideScopePackage counts what a change to this file can reach when the
+	// language resolves imports at package granularity. Go is the case that
+	// matters here: nothing imports `scanner/astgrep.go`, things import
+	// `codemap/scanner`, so a file-level count of a Go file inside a multi-file
+	// package is structurally always 0 and reads as "harmless" for the busiest
+	// files in the repository.
+	collideScopePackage = "package"
+)
+
 // collidePRFile is one changed path from `gh pr list --json files`.
 type collidePRFile struct {
 	Path string `json:"path"`
@@ -57,6 +82,18 @@ type collideImporters struct {
 	Count   int
 	Known   bool
 	InGraph bool
+	// Scope says which question Count answers. The empty value means
+	// collideScopeFile so a caller that never had a choice reads correctly.
+	Scope string
+}
+
+// scope normalises the zero value rather than emitting an empty string a
+// consumer cannot interpret.
+func (i collideImporters) scope() string {
+	if i.Scope == collideScopePackage {
+		return collideScopePackage
+	}
+	return collideScopeFile
 }
 
 // collideLookup answers importer questions for a repository-relative path.
@@ -68,6 +105,7 @@ type collideSharedFile struct {
 	PRs            []int  `json:"prs"`
 	Language       string `json:"language,omitempty"`
 	ImporterCount  int    `json:"importer_count"`
+	ImporterScope  string `json:"importer_scope"`
 	ImportersKnown bool   `json:"importers_known"`
 	InGraph        bool   `json:"in_graph"`
 }
@@ -88,6 +126,7 @@ type collidePair struct {
 	SharedFiles       []string `json:"shared_files"`
 	TopFile           string   `json:"top_file"`
 	TopImporterCount  int      `json:"top_importer_count"`
+	TopImporterScope  string   `json:"top_importer_scope"`
 	TopImportersKnown bool     `json:"top_importers_known"`
 	TopFileInGraph    bool     `json:"top_file_in_graph"`
 }
@@ -134,7 +173,7 @@ func runCollideSubcommand(args []string, launchDir string) int {
 	fs.SetOutput(os.Stderr)
 	repo := fs.String("repo", "", "Repository to read open PRs from (owner/name); defaults to the current checkout")
 	jsonMode := fs.Bool("json", false, "Emit a single JSON object")
-	minImporters := fs.Int("min-importers", 1, "Hide shared files with fewer importers than this")
+	minImporters := fs.Int("min-importers", collideDefaultMinImporters, "Hide shared files with fewer importers than this (0 shows every hazard)")
 	limit := fs.Int("limit", 50, "Maximum open PRs to read")
 	var help bool
 	fs.BoolVar(&help, "help", false, "Show collide help")
@@ -187,13 +226,22 @@ func runCollideSubcommand(args []string, launchDir string) int {
 
 	cfg := config.Load(resolvedRoot)
 	filters := scanner.Filters{Only: cfg.Only, Exclude: cfg.Exclude}
-	fg, err := scanner.BuildFileGraph(context.Background(), resolvedRoot, filters)
+	// The scan outcome is kept rather than discarded: a package-resolved
+	// language needs the raw import strings, which the file graph does not
+	// preserve. BuildFileGraphFromOutcome reuses this same scan, so keeping it
+	// costs nothing — this is one scan either way.
+	outcome, err := scanner.ScanForDeps(context.Background(), resolvedRoot, filters)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error scanning project: %v\n", err)
+		return 1
+	}
+	fg, err := scanner.BuildFileGraphFromOutcome(context.Background(), resolvedRoot, outcome, filters)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error building file graph: %v\n", err)
 		return 1
 	}
 
-	report := buildCollideReport(prs, collideGraphLookup(resolvedRoot, fg), fg.Coverage, *repo, *minImporters)
+	report := buildCollideReport(prs, collideGraphLookup(resolvedRoot, fg, outcome.Analyses), fg.Coverage, *repo, *minImporters)
 
 	if *jsonMode {
 		encoder := json.NewEncoder(os.Stdout)
@@ -214,6 +262,12 @@ func printCollideUsage(fs *flag.FlagSet) {
 	fmt.Fprintln(os.Stderr, "Rank open pull requests by the merge-order hazard they share: which pairs")
 	fmt.Fprintln(os.Stderr, "change the same files, weighted by how many files import them. CI cannot see")
 	fmt.Fprintln(os.Stderr, "this, because every PR is built against main and never against its siblings.")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Weights are labelled with the granularity they were measured at. A language")
+	fmt.Fprintln(os.Stderr, "whose imports name files (TypeScript, JavaScript, Python) reports importers of")
+	fmt.Fprintln(os.Stderr, "that file. Go imports name packages, so a Go file reports package importers:")
+	fmt.Fprintln(os.Stderr, "the files outside its package that import the package, plus its siblings")
+	fmt.Fprintln(os.Stderr, "inside it, because two PRs editing one package are editing one unit.")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Options:")
 	fs.PrintDefaults()
@@ -245,21 +299,126 @@ func collideCoverageStatus(coverage scanner.GraphCoverage) string {
 // collideGraphLookup answers importer questions from a built file graph,
 // reusing the same helper that backs `codemap --importers` and blast-radius so
 // all three report the same number for the same file.
-func collideGraphLookup(root string, fg *scanner.FileGraph) collideLookup {
+func collideGraphLookup(root string, fg *scanner.FileGraph, analyses []scanner.FileAnalysis) collideLookup {
 	known := collideImportersKnown(fg.Coverage)
+	packageImporters := collidePackageImporterCounts(fg, analyses)
 	return func(path string) collideImporters {
 		if !scanner.IsSourceExt(filepath.Ext(path)) {
 			// Not a dishonest zero: the import graph has no edges for this kind
 			// of file at all, which is a different statement from "nothing
 			// imports it".
-			return collideImporters{Known: true, InGraph: false}
+			return collideImporters{Known: true, InGraph: false, Scope: collideScopeFile}
+		}
+		if pkg, ok := collidePackageOf(fg, path); ok {
+			return collideImporters{
+				Count:   collidePackageWeight(packageImporters, pkg, len(fg.Packages[pkg])),
+				Known:   known,
+				InGraph: true,
+				Scope:   collideScopePackage,
+			}
 		}
 		report, err := buildImportersReportFromGraph(root, path, fg)
 		if err != nil {
-			return collideImporters{Known: false, InGraph: true}
+			return collideImporters{Known: false, InGraph: true, Scope: collideScopeFile}
 		}
-		return collideImporters{Count: report.ImporterCount, Known: known, InGraph: true}
+		return collideImporters{Count: report.ImporterCount, Known: known, InGraph: true, Scope: collideScopeFile}
 	}
+}
+
+// collidePackageOf names the package a file belongs to, when the graph resolves
+// that file's language at package granularity.
+//
+// FileGraph.Packages is populated for Go and nothing else, which is exactly the
+// set of languages this treatment is correct for — a language whose imports
+// name files needs no package hop, and inventing one would inflate its counts.
+// Test files are not members of the index (buildFileIndex skips them) but do
+// live in the package, so they are matched by directory and counted as
+// siblings of it rather than falling back to a file-level 0.
+func collidePackageOf(fg *scanner.FileGraph, path string) (string, bool) {
+	if fg == nil || fg.Module == "" || len(fg.Packages) == 0 {
+		return "", false
+	}
+	if !strings.EqualFold(filepath.Ext(path), ".go") {
+		return "", false
+	}
+	pkg := fg.Module
+	if dir := filepath.ToSlash(filepath.Dir(filepath.FromSlash(path))); dir != "" && dir != "." {
+		pkg += "/" + dir
+	}
+	if _, ok := fg.Packages[pkg]; !ok {
+		return "", false
+	}
+	return pkg, true
+}
+
+// collidePackageImporterCounts counts, per package, the files that import it.
+//
+// This cannot be read off FileGraph.Importers. BuildFileGraph deliberately
+// drops a Go import that resolves to more than one file rather than fanning one
+// import into an edge per file (it would inflate every hub count in the
+// repository), so a multi-file package has no file-level edges at all and the
+// graph's own answer for "who imports scanner/filegraph.go" is a structural
+// zero. The raw import strings do carry it, which is why the scan outcome is
+// kept.
+//
+// A file importing its own package is not counted: a package is not a second
+// party to a collision inside itself. Its siblings are counted separately.
+func collidePackageImporterCounts(fg *scanner.FileGraph, analyses []scanner.FileAnalysis) map[string]int {
+	if fg == nil || fg.Module == "" || len(fg.Packages) == 0 {
+		return nil
+	}
+	importers := make(map[string]map[string]bool)
+	for _, a := range analyses {
+		if !strings.EqualFold(filepath.Ext(a.Path), ".go") {
+			continue
+		}
+		ownPackage, hasOwn := collidePackageOf(fg, a.Path)
+		for _, imported := range a.Imports {
+			// Only a package this module actually contains is in fg.Packages,
+			// so this lookup also rejects every third-party import.
+			pkg := strings.Trim(imported, "\"'`")
+			if _, tracked := fg.Packages[pkg]; !tracked {
+				continue
+			}
+			if hasOwn && pkg == ownPackage {
+				continue
+			}
+			if importers[pkg] == nil {
+				importers[pkg] = make(map[string]bool)
+			}
+			importers[pkg][filepath.ToSlash(a.Path)] = true
+		}
+	}
+
+	counts := make(map[string]int, len(importers))
+	for pkg, files := range importers {
+		counts[pkg] = len(files)
+	}
+	return counts
+}
+
+// collidePackageWeight is the severity of a collision on a file inside a
+// package-resolved package: how many files a change to it can reach.
+//
+// It is the sum of two counts:
+//
+//   - the files outside the package that import the package, which is the
+//     cross-package blast radius a file-level count structurally cannot see; and
+//   - the file's siblings in the same package, which is the in-package hazard
+//     — two PRs editing two files of one package are editing one compilation
+//     unit, and that is the collision `codemap collide` exists to name.
+//
+// The sibling term is the package's size minus one for every file in it, test
+// files included. Test files are absent from the package index, so counting
+// only actual members would score a _test.go file one higher than the
+// implementation file beside it — an ordering artefact of the index, not a real
+// difference in hazard.
+func collidePackageWeight(packageImporters map[string]int, pkg string, packageSize int) int {
+	siblings := packageSize - 1
+	if siblings < 0 {
+		siblings = 0
+	}
+	return packageImporters[pkg] + siblings
 }
 
 // buildCollideReport is the whole computation, kept free of gh and the scanner
@@ -336,6 +495,7 @@ func collideSharedFiles(prs []collidePR, lookup collideLookup, minImporters int)
 			PRs:            prNumbers,
 			Language:       scanner.DetectLanguage(path),
 			ImporterCount:  importers.Count,
+			ImporterScope:  importers.scope(),
 			ImportersKnown: importers.Known,
 			InGraph:        importers.InGraph,
 		})
@@ -379,6 +539,7 @@ func collidePairs(shared []collideSharedFile) []collidePair {
 				if pair.TopFile == "" {
 					pair.TopFile = file.Path
 					pair.TopImporterCount = file.ImporterCount
+					pair.TopImporterScope = file.ImporterScope
 					pair.TopImportersKnown = file.ImportersKnown
 					pair.TopFileInGraph = file.InGraph
 				}
@@ -470,18 +631,25 @@ func collideTrust(shared []collideSharedFile, coverage scanner.GraphCoverage) st
 	return collideTrustHigh
 }
 
-// collideImportersText states an importer count the way it is actually known.
-func collideImportersText(known, inGraph bool, count int) string {
+// collideImportersText states an importer count the way it is actually known,
+// including at which granularity it was measured. "23 package importers" and
+// "23 importers" are different claims and a reader must be able to tell them
+// apart without knowing which languages resolve how.
+func collideImportersText(known, inGraph bool, count int, scope string) string {
 	if !known {
 		return "unknown importers"
 	}
 	if !inGraph {
 		return "not in graph"
 	}
+	noun := "importers"
 	if count == 1 {
-		return "1 importer"
+		noun = "importer"
 	}
-	return fmt.Sprintf("%d importers", count)
+	if scope == collideScopePackage {
+		noun = "package " + noun
+	}
+	return fmt.Sprintf("%d %s", count, noun)
 }
 
 func renderCollideReport(w io.Writer, report collideReport) {
@@ -506,20 +674,29 @@ func renderCollideReport(w io.Writer, report collideReport) {
 		}
 	} else {
 		width := 0
-		for _, file := range report.SharedFiles {
+		// A package-scoped label is longer than a file-scoped one, so the
+		// weight column is measured rather than assumed; a hard-coded width
+		// silently ragged the output the moment a count grew.
+		weightWidth := 17
+		weights := make([]string, len(report.SharedFiles))
+		for i, file := range report.SharedFiles {
 			if len(file.Path) > width {
 				width = len(file.Path)
 			}
+			weights[i] = collideImportersText(file.ImportersKnown, file.InGraph, file.ImporterCount, file.ImporterScope)
+			if len(weights[i]) > weightWidth {
+				weightWidth = len(weights[i])
+			}
 		}
 		fmt.Fprintln(w, "SHARED FILES (each = a merge-order hazard):")
-		for _, file := range report.SharedFiles {
+		for i, file := range report.SharedFiles {
 			owners := make([]string, 0, len(file.PRs))
 			for _, number := range file.PRs {
 				owners = append(owners, fmt.Sprintf("#%d", number))
 			}
-			fmt.Fprintf(w, "  %d PRs   %-*s  %-17s <- %s\n",
+			fmt.Fprintf(w, "  %d PRs   %-*s  %-*s <- %s\n",
 				len(file.PRs), width, file.Path,
-				collideImportersText(file.ImportersKnown, file.InGraph, file.ImporterCount),
+				weightWidth, weights[i],
 				strings.Join(owners, ", "))
 		}
 	}
@@ -534,7 +711,7 @@ func renderCollideReport(w io.Writer, report collideReport) {
 		for _, pair := range report.Pairs {
 			fmt.Fprintf(w, "  #%d + #%d  ->  %d shared file(s)  top: %s (%s)\n",
 				pair.A, pair.B, pair.SharedFileCount, pair.TopFile,
-				collideImportersText(pair.TopImportersKnown, pair.TopFileInGraph, pair.TopImporterCount))
+				collideImportersText(pair.TopImportersKnown, pair.TopFileInGraph, pair.TopImporterCount, pair.TopImporterScope))
 		}
 	}
 
