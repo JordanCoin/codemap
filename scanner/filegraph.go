@@ -183,6 +183,11 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 			break
 		}
 	}
+	// Languages whose imports name modules rather than files cannot produce
+	// intra-project edges at all, so an empty graph over them is a blind spot
+	// rather than a finding. Recording it here is what keeps --importers and
+	// blast-radius honest too: both read this graph's provenance.
+	fg.Coverage.AddSymbolLevelImportCoverage(files)
 
 	var jsResolver *jsWorkspaceResolver
 	if useJSWorkspace {

@@ -228,6 +228,26 @@ func writeParityRepository(t *testing.T) string {
 	return root
 }
 
+// A graph built with nothing to report against it has the zero-value status.
+// The MCP answer must spell that out as "complete": an empty coverage_status
+// makes a zero-importer answer on a fully checked graph indistinguishable from
+// one the scanner could not check at all (#148).
+func TestNewImportersOutputSpellsOutCompleteCoverage(t *testing.T) {
+	graph := &scanner.FileGraph{
+		Importers: map[string][]string{},
+		Imports:   map[string][]string{},
+	}
+	out := newImportersOutput("/repo", "pkg/user.go", graph)
+	if out.CoverageStatus != "complete" {
+		t.Fatalf("coverage_status = %q, want %q for a zero-value graph coverage", out.CoverageStatus, "complete")
+	}
+	graph.Coverage.Status = "partial"
+	out = newImportersOutput("/repo", "pkg/user.go", graph)
+	if out.CoverageStatus != "partial" {
+		t.Fatalf("coverage_status = %q, want %q when the graph reports partial", out.CoverageStatus, "partial")
+	}
+}
+
 func TestNewImportersOutputSortsDeterministically(t *testing.T) {
 	graph := &scanner.FileGraph{
 		Importers: map[string][]string{

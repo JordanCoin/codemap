@@ -1034,6 +1034,12 @@ func buildBlastRadiusRendered(diffProject scanner.Project, depsProject scanner.D
 	}
 	var renderable []renderableImporter
 	for _, report := range reports {
+		// Decide on the data, not on the rendered text: every report now
+		// carries a coverage line, so rendering first would make a file with
+		// no importers look like it had content.
+		if len(report.Importers) == 0 && len(report.HubImports) == 0 {
+			continue
+		}
 		text := renderImportersReportString(report)
 		if strings.TrimSpace(text) == "" {
 			continue
@@ -1449,7 +1455,7 @@ func buildImportersReportFromGraph(root, file string, fg *scanner.FileGraph) (sc
 		Imports:        imports,
 		ImporterCount:  len(importers),
 		IsHub:          fg.IsHub(file),
-		CoverageStatus: string(fg.Coverage.Status),
+		CoverageStatus: string(fg.Coverage.EffectiveStatus()),
 		CoverageNotes:  append([]string(nil), fg.Coverage.Notes...),
 	}
 
