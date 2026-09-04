@@ -113,9 +113,13 @@ func (c *GitIgnoreCache) ShouldIgnore(absPath string) bool {
 
 // IgnoredDirs are directories to skip during scanning
 var IgnoredDirs = map[string]bool{
-	".git":           true,
-	"node_modules":   true,
-	"vendor":         true,
+	".git":         true,
+	"node_modules": true,
+	"vendor":       true,
+	// Go's own toolchain ignores testdata, and fixture repositories inside it
+	// are not the project's source: scanning them inflates file counts and
+	// lets a fixture's language change the project's reported coverage.
+	"testdata":       true,
 	"Pods":           true,
 	"build":          true,
 	"DerivedData":    true,
@@ -247,8 +251,11 @@ func ScanFiles(ctx context.Context, root string, cache *GitIgnoreCache, only []s
 
 		name := info.Name()
 
-		// Fast path: skip hardcoded ignored dirs/files
-		if IgnoredDirs[name] {
+		// Fast path: skip hardcoded ignored dirs/files. Never applied to the
+		// walk root itself: a user who runs `codemap testdata/` or scans from
+		// inside vendor/ asked for exactly that tree, and skipping it here
+		// returns Files: 0 with no explanation.
+		if IgnoredDirs[name] && path != absRoot {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
