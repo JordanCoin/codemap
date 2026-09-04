@@ -155,6 +155,7 @@ codemap --diff         # what changed vs main
 codemap --deps .       # dependency flow
 codemap --importers f  # who imports a file
 codemap blast-radius   # review bundle: diff + deps + importers
+codemap collide        # rank open PRs by shared-file merge-order hazard
 codemap handoff .      # save layered handoff for cross-agent continuation
 codemap context        # machine-readable project context JSON
 codemap doctor         # validate agent integrations
