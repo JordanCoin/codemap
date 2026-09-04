@@ -22,50 +22,42 @@ func resetSkylineRNG() {
 	rng = rand.New(rand.NewPCG(42, 0))
 }
 
-func stripSkylineANSI(s string) string {
-	return skylineANSIPattern.ReplaceAllString(s, "")
+func TestAggregateSkylineFilesFallsBackToAssets(t *testing.T) {
+	files := []scanner.FileInfo{
+		{Path: "images/one.png", Ext: ".png", Size: 10},
+		{Path: "images/two.jpg", Ext: ".jpg", Size: 20},
+	}
+	groups, count, size := aggregateSkylineFiles(files)
+	if count != 2 || size != 30 {
+		t.Fatalf("fallback totals = (%d, %d), want (2, 30)", count, size)
+	}
+	if len(groups) != 2 {
+		t.Fatalf("fallback groups = %d, want 2", len(groups))
+	}
 }
 
-func TestSkylineFilterCodeFiles(t *testing.T) {
-	tests := []struct {
-		name     string
-		files    []scanner.FileInfo
-		expected int
-	}{
-		{
-			name: "returns only code files when present",
-			files: []scanner.FileInfo{
-				{Path: "main.go", Ext: ".go"},
-				{Path: "schema.cue", Ext: ".cue"},
-				{Path: "photo.png", Ext: ".png"},
-				{Path: "Dockerfile"},
-			},
-			expected: 3,
-		},
-		{
-			name: "returns original files when no code files found",
-			files: []scanner.FileInfo{
-				{Path: "image.png", Ext: ".png"},
-				{Path: "font.woff", Ext: ".woff"},
-			},
-			expected: 2,
-		},
+func TestAggregateSkylineFilesExcludesAssetsFromCodeTotals(t *testing.T) {
+	files := []scanner.FileInfo{
+		{Path: "main.go", Ext: ".go", Size: 10},
+		{Path: "images/logo.png", Ext: ".png", Size: 100},
 	}
+	groups, count, size := aggregateSkylineFiles(files)
+	if count != 1 || size != 10 {
+		t.Fatalf("code totals = (%d, %d), want (1, 10)", count, size)
+	}
+	if len(groups) != 1 || groups[0].ext != ".go" {
+		t.Fatalf("code groups = %#v, want only .go", groups)
+	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := filterCodeFiles(tt.files)
-			if len(got) != tt.expected {
-				t.Fatalf("filterCodeFiles() len = %d, want %d", len(got), tt.expected)
-			}
-		})
-	}
+func stripSkylineANSI(s string) string {
+	return skylineANSIPattern.ReplaceAllString(s, "")
 }
 
 func TestSkylineAggregateByExtension(t *testing.T) {
 	files := []scanner.FileInfo{
 		{Path: "a/main.go", Ext: ".go", Size: 100},
-		{Path: "a/util.go", Ext: ".go", Size: 50},
+		{Path: "a/util.go", Ext: ".go", Size: 20},
 		{Path: "b/app.ts", Ext: ".ts", Size: 120},
 		{Path: "Makefile", Ext: "", Size: 80},
 	}
@@ -75,8 +67,8 @@ func TestSkylineAggregateByExtension(t *testing.T) {
 		t.Fatalf("aggregateByExtension() len = %d, want 3", len(agg))
 	}
 
-	if agg[0].ext != ".go" || agg[0].size != 150 || agg[0].count != 2 {
-		t.Fatalf("unexpected first aggregate: %+v", agg[0])
+	if agg[0].ext != ".go" || agg[0].size != 120 || agg[0].count != 2 || agg[1].ext != ".ts" {
+		t.Fatalf("first aggregates = %+v, want .go before .ts", agg[:2])
 	}
 
 	seenMakefile := false
@@ -209,7 +201,7 @@ func TestSkylineRenderStaticIncludesTitleAndStats(t *testing.T) {
 	sorted := []extAgg{{ext: ".go", size: 300, count: 1}}
 
 	var buf bytes.Buffer
-	renderStatic(&buf, arranged, 40, 10, 8, 24, 16, codeFiles, "Demo", sorted)
+	renderStatic(&buf, arranged, 40, 10, 8, 24, 16, len(codeFiles), codeFiles[0].Size, "Demo", sorted)
 
 	out := buf.String()
 	checks := []string{"─── Demo ───", "1 languages", "1 files", "300.0B"}
