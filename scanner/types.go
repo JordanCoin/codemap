@@ -100,6 +100,15 @@ func newDepsProject(root string, files []FileAnalysis, externalDeps map[string][
 			}
 		}
 	}
+	if len(inventory) > 0 {
+		coverage = ApplySymbolLevelImportCoverage(coverage, inventory[0])
+	} else {
+		analysed := make([]FileInfo, 0, len(files))
+		for _, file := range files {
+			analysed = append(analysed, FileInfo{Path: file.Path})
+		}
+		coverage = ApplySymbolLevelImportCoverage(coverage, analysed)
+	}
 	return NewDepsProjectWithCoverage(root, files, externalDeps, diffRef, coverage)
 }
 
