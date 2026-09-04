@@ -792,6 +792,31 @@ func TestDetectModule(t *testing.T) {
 	}
 }
 
+func TestHubFilesOrderIsDeterministic(t *testing.T) {
+	fg := &FileGraph{
+		Importers: map[string][]string{
+			"core.go":   {"a.go", "b.go", "c.go", "d.go", "e.go"},
+			"util.go":   {"a.go", "b.go", "c.go", "d.go"},
+			"alpha.go":  {"a.go", "b.go", "c.go"},
+			"beta.go":   {"a.go", "b.go", "c.go"},
+			"gamma.go":  {"a.go", "b.go", "c.go"},
+			"delta.go":  {"a.go", "b.go", "c.go"},
+			"lonely.go": {"a.go"},
+			// Test importers never count toward hub status, so this file must
+			// not appear no matter how many test files import it.
+			"testonly.go": {"a_test.go", "b_test.go", "c_test.go", "d_test.go"},
+		},
+	}
+
+	want := []string{"core.go", "util.go", "alpha.go", "beta.go", "delta.go", "gamma.go"}
+	for i := 0; i < 12; i++ {
+		got := fg.HubFiles()
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("HubFiles() call %d = %v, want %v", i+1, got, want)
+		}
+	}
+}
+
 func TestFileGraphHubAndConnectedFiles(t *testing.T) {
 	fg := &FileGraph{
 		Imports: map[string][]string{

@@ -730,7 +730,10 @@ func (fg *FileGraph) IsHub(path string) bool {
 	return CountHubImporters(fg.Importers[path]) >= HubThreshold
 }
 
-// HubFiles returns all files that qualify as hubs under IsHub.
+// HubFiles returns all files that qualify as hubs under IsHub, ordered by
+// non-test importer count descending and then by path. Map iteration order is
+// random, so callers that truncate or display the head of this list would
+// otherwise show a different set of hubs on every run over the same graph.
 func (fg *FileGraph) HubFiles() []string {
 	var hubs []string
 	for path := range fg.Importers {
@@ -738,6 +741,16 @@ func (fg *FileGraph) HubFiles() []string {
 			hubs = append(hubs, path)
 		}
 	}
+	counts := make(map[string]int, len(hubs))
+	for _, path := range hubs {
+		counts[path] = CountHubImporters(fg.Importers[path])
+	}
+	sort.Slice(hubs, func(i, j int) bool {
+		if counts[hubs[i]] != counts[hubs[j]] {
+			return counts[hubs[i]] > counts[hubs[j]]
+		}
+		return hubs[i] < hubs[j]
+	})
 	return hubs
 }
 
