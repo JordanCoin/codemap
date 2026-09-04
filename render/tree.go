@@ -13,34 +13,43 @@ import (
 
 // treeNode represents a node in the file tree
 type treeNode struct {
-	name     string
-	isFile   bool
-	file     *scanner.FileInfo
-	children map[string]*treeNode
+	name       string
+	isFile     bool
+	file       *scanner.FileInfo
+	children   map[string]*treeNode
+	fileCount  int
+	totalSize  int64
+	statsReady bool
 }
 
 // getTopLargeFiles returns paths of top 5 largest source code files
 func getTopLargeFiles(files []scanner.FileInfo) map[string]bool {
 	// Filter out assets and binaries (no extension = likely binary)
-	var sourceFiles []scanner.FileInfo
+	var largest []scanner.FileInfo
 	for _, f := range files {
 		ext := strings.ToLower(f.Ext)
 		// Skip if no extension (likely binary) or if it's an asset
 		if ext == "" || IsAssetExtension(ext) {
 			continue
 		}
-		sourceFiles = append(sourceFiles, f)
+		position := sort.Search(len(largest), func(i int) bool {
+			return largest[i].Size < f.Size || largest[i].Size == f.Size && largest[i].Path > f.Path
+		})
+		if position >= 5 {
+			continue
+		}
+		largest = append(largest, scanner.FileInfo{})
+		copy(largest[position+1:], largest[position:])
+		largest[position] = f
+		if len(largest) > 5 {
+			largest = largest[:5]
+		}
 	}
-
-	// Sort by size descending
-	sort.Slice(sourceFiles, func(i, j int) bool {
-		return sourceFiles[i].Size > sourceFiles[j].Size
-	})
 
 	// Return top 5 as set
 	result := make(map[string]bool)
-	for i := 0; i < len(sourceFiles) && i < 5; i++ {
-		result[sourceFiles[i].Path] = true
+	for _, file := range largest {
+		result[file.Path] = true
 	}
 	return result
 }
@@ -50,44 +59,61 @@ func getDirStats(node *treeNode) (int, int64) {
 	if node.isFile {
 		return 1, node.file.Size
 	}
+	if node.statsReady {
+		return node.fileCount, node.totalSize
+	}
 	count := 0
-	var size int64 = 0
+	var size int64
 	for _, child := range node.children {
-		c, s := getDirStats(child)
-		count += c
-		size += s
+		childCount, childSize := getDirStats(child)
+		count += childCount
+		size += childSize
 	}
 	return count, size
+}
+
+func cacheTreeStats(node *treeNode) (int, int64) {
+	if node.isFile {
+		return 1, node.file.Size
+	}
+	node.fileCount, node.totalSize = 0, 0
+	for _, child := range node.children {
+		count, size := cacheTreeStats(child)
+		node.fileCount += count
+		node.totalSize += size
+	}
+	node.statsReady = true
+	return node.fileCount, node.totalSize
 }
 
 // buildTreeStructure builds a nested tree from flat file list
 func buildTreeStructure(files []scanner.FileInfo) *treeNode {
 	root := &treeNode{children: make(map[string]*treeNode)}
 
-	for _, f := range files {
-		parts := strings.Split(f.Path, string(os.PathSeparator))
+	for i := range files {
+		f := &files[i]
 		current := root
-		for i, part := range parts {
-			if i == len(parts)-1 {
+		remaining := f.Path
+		for {
+			separator := strings.IndexByte(remaining, os.PathSeparator)
+			if separator < 0 {
 				// File
-				fileCopy := f
-				current.children[part] = &treeNode{
-					name:   part,
+				current.children[remaining] = &treeNode{
+					name:   remaining,
 					isFile: true,
-					file:   &fileCopy,
+					file:   f,
 				}
-			} else {
-				// Directory
-				if current.children[part] == nil {
-					current.children[part] = &treeNode{
-						name:     part,
-						children: make(map[string]*treeNode),
-					}
-				}
-				current = current.children[part]
+				break
 			}
+			part := remaining[:separator]
+			if current.children[part] == nil {
+				current.children[part] = &treeNode{name: part, children: make(map[string]*treeNode)}
+			}
+			current = current.children[part]
+			remaining = remaining[separator+1:]
 		}
 	}
+	cacheTreeStats(root)
 	return root
 }
 
