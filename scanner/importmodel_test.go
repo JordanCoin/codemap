@@ -141,3 +141,17 @@ func TestFixtureImporterListsAreExact(t *testing.T) {
 		t.Fatalf("go pkg/user.go importers = %v, want exactly [main.go]", got)
 	}
 }
+
+// A zero-importer answer has to say how much it checked, so the field is
+// always present — the complete case is exactly where an omitted status let a
+// silent zero read as a thorough one.
+func TestEffectiveStatusSpellsOutComplete(t *testing.T) {
+	if got := (GraphCoverage{}).EffectiveStatus(); got != analysis.CoverageComplete {
+		t.Fatalf("zero-value coverage EffectiveStatus() = %q, want %q", got, analysis.CoverageComplete)
+	}
+	for _, status := range []analysis.CoverageStatus{analysis.CoveragePartial, analysis.CoverageUnavailable} {
+		if got := (GraphCoverage{Status: status}).EffectiveStatus(); got != status {
+			t.Fatalf("EffectiveStatus() = %q, want %q preserved", got, status)
+		}
+	}
+}

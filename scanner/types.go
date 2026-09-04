@@ -180,7 +180,7 @@ type ImportersReport struct {
 	HubImports     []string `json:"hub_imports,omitempty"`
 	ImporterCount  int      `json:"importer_count"`
 	IsHub          bool     `json:"is_hub"`
-	CoverageStatus string   `json:"coverage_status,omitempty"`
+	CoverageStatus string   `json:"coverage_status"`
 	CoverageNotes  []string `json:"coverage_notes,omitempty"`
 }
 

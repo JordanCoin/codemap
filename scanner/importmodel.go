@@ -120,3 +120,14 @@ func (c *GraphCoverage) AddSymbolLevelImportCoverage(files []FileInfo) {
 		c.Status = analysis.CoveragePartial
 	}
 }
+
+// EffectiveStatus reports the coverage status a consumer should see. The zero
+// value means the graph was built with nothing to report against it, which is
+// complete knowledge — but an empty string tells a consumer nothing, so it is
+// spelled out. A zero-importer answer has to say how much it checked.
+func (c GraphCoverage) EffectiveStatus() analysis.CoverageStatus {
+	if c.Status == "" {
+		return analysis.CoverageComplete
+	}
+	return c.Status
+}
