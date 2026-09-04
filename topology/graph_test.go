@@ -106,6 +106,18 @@ func TestMergeFragmentsRejectsEscapingPathsAndUnknownEndpoints(t *testing.T) {
 	}
 }
 
+func TestNormalizeRepoPathRejectsAbsoluteAndEscapingPaths(t *testing.T) {
+	root := t.TempDir()
+	for _, path := range []string{"", filepath.Join("..", "outside"), filepath.Join(root, "inside")} {
+		if _, err := normalizeRepoPath(root, path); err == nil {
+			t.Fatalf("normalizeRepoPath(%q) succeeded", path)
+		}
+	}
+	if got, err := normalizeRepoPath(root, filepath.Join("nested", "file.go")); err != nil || got != filepath.Join("nested", "file.go") {
+		t.Fatalf("normalizeRepoPath(valid) = %q, %v", got, err)
+	}
+}
+
 func TestMergeFragmentsRejectsMissingNodePaths(t *testing.T) {
 	root := t.TempDir()
 	missing := testNode("test:missing", "missing")

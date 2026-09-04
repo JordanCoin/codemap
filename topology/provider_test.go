@@ -259,6 +259,54 @@ func TestDiscoverManifestsHonorsGitignoreAndExclude(t *testing.T) {
 	}
 }
 
+func TestDiscoverInventoryFindsManifestsBelowSourceIgnoredDirectories(t *testing.T) {
+	root := t.TempDir()
+	writeTopologyFixture(t, root, "Main.java", "class Main {}\n")
+	writeTopologyFixture(t, root, "main.go", "package main\n")
+	writeTopologyFixture(t, root, "pom.xml", "<project />")
+	writeTopologyFixture(t, root, "vendor/pom.xml", "<project />")
+	writeTopologyFixture(t, root, "vendor/generated.go", "package generated\n")
+	writeTopologyFixture(t, root, "vendor/.gitignore", "ignored/\n")
+	writeTopologyFixture(t, root, "vendor/ignored/pom.xml", "<project />")
+	writeTopologyFixture(t, root, "build/pom.xml", "<project />")
+	writeTopologyFixture(t, root, "build/generated.go", "package generated\n")
+
+	files, manifests, err := discoverInventory(context.Background(), root, []Provider{stubProvider{
+		name:      "jvm",
+		version:   "1",
+		languages: []string{"java"},
+		manifests: []string{"pom.xml"},
+	}}, config.ProjectConfig{}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFiles := []string{"Main.java"}
+	gotFiles := make([]string, len(files))
+	for i, file := range files {
+		gotFiles[i] = filepath.ToSlash(file.Path)
+	}
+	if !reflect.DeepEqual(gotFiles, wantFiles) {
+		t.Fatalf("files = %#v, want %#v", gotFiles, wantFiles)
+	}
+	wantManifests := []string{"build/pom.xml", "pom.xml", "vendor/pom.xml"}
+	for i := range manifests {
+		manifests[i] = filepath.ToSlash(manifests[i])
+	}
+	if !reflect.DeepEqual(manifests, wantManifests) {
+		t.Fatalf("manifests = %#v, want %#v", manifests, wantManifests)
+	}
+
+	filteredFiles, filteredManifests, err := discoverInventory(context.Background(), root, []Provider{stubProvider{
+		name: "jvm", version: "1", languages: []string{"java"}, manifests: []string{"pom.xml"},
+	}}, config.ProjectConfig{Only: []string{"java"}}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filteredFiles) != 1 || filepath.ToSlash(filteredFiles[0].Path) != "Main.java" || !reflect.DeepEqual(filteredManifests, manifests) {
+		t.Fatalf("filtered inventory = (%#v, %#v), want the Java file and unchanged manifests", filteredFiles, filteredManifests)
+	}
+}
+
 func TestDiscoverManifestsStopsOnCancellation(t *testing.T) {
 	root := t.TempDir()
 	writeTopologyFixture(t, root, "pom.xml", "<project />")
@@ -273,6 +321,18 @@ func TestDiscoverManifestsStopsOnCancellation(t *testing.T) {
 	}}, config.ProjectConfig{})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v, want context.Canceled", err)
+	}
+}
+
+func TestDiscoverInventoryReportsManifestWalkLimit(t *testing.T) {
+	root := t.TempDir()
+	writeTopologyFixture(t, root, "pom.xml", "<project />")
+
+	_, _, err := discoverInventoryWithLimit(context.Background(), root, []Provider{stubProvider{
+		name: "jvm", version: "1", languages: []string{"java"}, manifests: []string{"pom.xml"},
+	}}, config.ProjectConfig{}, false, 1)
+	if !errors.Is(err, errManifestWalkLimit) {
+		t.Fatalf("error = %v, want manifest walk limit", err)
 	}
 }
 

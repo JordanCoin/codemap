@@ -303,21 +303,22 @@ func validateNodePath(root string, node Node) error {
 }
 
 func normalizeRepoPath(root, path string) (string, error) {
-	if path == "" || filepath.IsAbs(path) {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	return normalizeRepoPathFromRoot(absRoot, path)
+}
+
+func normalizeRepoPathFromRoot(absRoot, path string) (string, error) {
+	if path == "" || filepath.IsAbs(path) || filepath.VolumeName(path) != "" {
 		return "", fmt.Errorf("path must be non-empty and repository-relative")
 	}
 	clean := filepath.Clean(path)
 	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path escapes repository")
 	}
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return "", err
-	}
-	joined, err := filepath.Abs(filepath.Join(absRoot, clean))
-	if err != nil {
-		return "", err
-	}
+	joined := filepath.Join(absRoot, clean)
 	rel, err := filepath.Rel(absRoot, joined)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path escapes repository")
