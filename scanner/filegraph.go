@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -626,6 +627,15 @@ func tryExactMatch(path string, idx *fileIndex, sourceLanguage string) []string 
 	if idx.byExact[path] == 1 && languagesCompatible(sourceLanguage, DetectLanguage(path)) {
 		return []string{path}
 	}
+	// Under ESM and NodeNext, TypeScript requires the specifier to name the
+	// emitted JavaScript file, so "./helper.js" is written in a file whose
+	// only on-disk counterpart is helper.ts. The specifier already carries an
+	// extension, so appending one below never matches and the edge was lost.
+	for _, candidate := range typescriptSourceCandidates(path, sourceLanguage) {
+		if idx.byExact[candidate] == 1 && languagesCompatible(sourceLanguage, DetectLanguage(candidate)) {
+			return []string{candidate}
+		}
+	}
 	for _, ext := range resolverExtensions[:len(resolverExtensions)-1] {
 		candidate := path + ext
 		if idx.byExact[candidate] == 1 && languagesCompatible(sourceLanguage, DetectLanguage(candidate)) {
@@ -634,6 +644,38 @@ func tryExactMatch(path string, idx *fileIndex, sourceLanguage string) []string 
 	}
 
 	return nil
+}
+
+// typescriptEmitExtensions maps an emitted JavaScript extension to the
+// TypeScript sources that produce it, in the order the compiler prefers.
+//
+// ".mjs" and ".cjs" are deliberately absent: they emit from ".mts" and
+// ".cts", which are not recognized source extensions here, so the scanner
+// never indexes such a file and a mapping for them would be unreachable code
+// that looks like support. Adding those extensions is a separate change.
+var typescriptEmitExtensions = map[string][]string{
+	".js":  {".ts", ".tsx", ".d.ts"},
+	".jsx": {".tsx", ".d.ts"},
+}
+
+// typescriptSourceCandidates returns the TypeScript files a JavaScript
+// specifier may name. It applies only to JS-family importers, and only when
+// the specifier already carries an emitted extension: for anything else the
+// ordinary extension-appending search is correct and this returns nothing.
+func typescriptSourceCandidates(path, sourceLanguage string) []string {
+	if !isJavaScriptLanguage(sourceLanguage) {
+		return nil
+	}
+	sources, emitted := typescriptEmitExtensions[strings.ToLower(pathpkg.Ext(path))]
+	if !emitted {
+		return nil
+	}
+	stem := strings.TrimSuffix(path, pathpkg.Ext(path))
+	candidates := make([]string, 0, len(sources))
+	for _, ext := range sources {
+		candidates = append(candidates, stem+ext)
+	}
+	return candidates
 }
 
 // trySuffixMatch finds files where the path ends with the normalized import
