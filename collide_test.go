@@ -157,6 +157,48 @@ func TestCollidePairsRankByImporterCountThenSharedFiles(t *testing.T) {
 	}
 }
 
+// A pair's top file must be its heaviest shared file, not the first one the
+// PR-count ordering happens to hand it. Reproduction from independent review:
+// #1 and #2 share a 100-importer hub and a fixture touched by four PRs; the
+// fixture sorts first by PR count, so a first-file rule reported the pair by
+// the fixture (0 importers) and ranked it below a lesser pair.
+func TestCollidePairsTopFileIsHeaviestNotFirst(t *testing.T) {
+	prs := []collidePR{
+		{Number: 1, Files: []collidePRFile{{Path: "hub.go"}, {Path: "fixture.go"}}},
+		{Number: 2, Files: []collidePRFile{{Path: "hub.go"}, {Path: "fixture.go"}}},
+		{Number: 3, Files: []collidePRFile{{Path: "fixture.go"}}},
+		{Number: 4, Files: []collidePRFile{{Path: "fixture.go"}}},
+		{Number: 5, Files: []collidePRFile{{Path: "mid.go"}}},
+		{Number: 6, Files: []collidePRFile{{Path: "mid.go"}}},
+	}
+	lookup := func(path string) collideImporters {
+		switch path {
+		case "hub.go":
+			return collideImporters{Count: 100, Known: true, InGraph: true}
+		case "mid.go":
+			return collideImporters{Count: 50, Known: true, InGraph: true}
+		default:
+			return collideImporters{Count: 0, Known: true, InGraph: true}
+		}
+	}
+
+	pairs := collidePairs(mustSharedFiles(t, prs, lookup, 0))
+	if len(pairs) == 0 {
+		t.Fatal("no pairs")
+	}
+	if label := pairLabel(pairs[0].A, pairs[0].B); label != "#1+#2" {
+		t.Errorf("top pair = %s (top file %s, %d importers), want #1+#2 on the hub",
+			label, pairs[0].TopFile, pairs[0].TopImporterCount)
+	}
+	if pairs[0].TopFile != "hub.go" || pairs[0].TopImporterCount != 100 {
+		t.Errorf("#1+#2 top file = %s (%d importers), want hub.go (100)", pairs[0].TopFile, pairs[0].TopImporterCount)
+	}
+	// An unknown weight must never displace a measured one, even a zero.
+	if collideUnknownWeight >= 0 {
+		t.Fatalf("collideUnknownWeight = %d, must sort below a measured zero", collideUnknownWeight)
+	}
+}
+
 // --min-importers is a severity filter, so it may only hide files whose
 // severity is known to be below it.
 func TestCollideMinImportersHidesLowCountsButNeverUnknownOnes(t *testing.T) {

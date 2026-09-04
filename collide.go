@@ -131,6 +131,15 @@ type collidePair struct {
 	TopFileInGraph    bool     `json:"top_file_in_graph"`
 }
 
+// topWeight is the pair's severity: the importer weight of its worst shared
+// file, or the unknown weight when the graph could not measure it.
+func (p collidePair) topWeight() int {
+	if !p.TopImportersKnown {
+		return collideUnknownWeight
+	}
+	return p.TopImporterCount
+}
+
 // collideLanguageCoverage reports graph coverage for one language present in
 // the shared set, which is the only slice of the repository this verdict rests
 // on.
@@ -534,9 +543,10 @@ func collidePairs(shared []collideSharedFile) []collidePair {
 					pairs[key] = pair
 				}
 				pair.SharedFiles = append(pair.SharedFiles, file.Path)
-				// shared is already ordered worst-first, so the first file to
-				// land on a pair is its top file.
-				if pair.TopFile == "" {
+				// shared is ordered by PR count first, not by importer weight,
+				// so the first file to land on a pair is not necessarily its
+				// worst one. Keep the heaviest shared file as the top file.
+				if pair.TopFile == "" || file.weight() > pair.topWeight() {
 					pair.TopFile = file.Path
 					pair.TopImporterCount = file.ImporterCount
 					pair.TopImporterScope = file.ImporterScope
@@ -554,10 +564,7 @@ func collidePairs(shared []collideSharedFile) []collidePair {
 	}
 
 	weight := func(pair collidePair) int {
-		if !pair.TopImportersKnown {
-			return collideUnknownWeight
-		}
-		return pair.TopImporterCount
+		return pair.topWeight()
 	}
 	sort.Slice(out, func(i, j int) bool {
 		left, right := out[i], out[j]
