@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,6 +43,10 @@ func CachePathAt(cacheDir string) string {
 }
 
 func BuildCacheIdentity(root string, files []scanner.FileInfo, manifests []string, providers []Provider) (CacheIdentity, error) {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return CacheIdentity{}, err
+	}
 	cfg := config.Load(root)
 	filterData, err := json.Marshal(cfg)
 	if err != nil {
@@ -52,28 +57,67 @@ func BuildCacheIdentity(root string, files []scanner.FileInfo, manifests []strin
 	sort.Strings(manifestPaths)
 	manifestHash := sha256.New()
 	for _, manifest := range manifestPaths {
-		rel, err := normalizeRepoPath(root, manifest)
+		rel, err := normalizeRepoPathFromRoot(absRoot, manifest)
 		if err != nil {
 			return CacheIdentity{}, fmt.Errorf("manifest %q: %w", manifest, err)
 		}
-		data, err := os.ReadFile(filepath.Join(root, rel))
+		data, err := os.ReadFile(filepath.Join(absRoot, rel))
 		if err != nil {
 			return CacheIdentity{}, err
 		}
 		writeHashPart(manifestHash, filepath.ToSlash(rel))
-		writeHashPart(manifestHash, string(data))
+		writeHashBytes(manifestHash, data)
 	}
 
-	fileParts := make([]string, 0, len(files))
-	for _, file := range files {
-		rel, err := normalizeRepoPath(root, file.Path)
+	type fileIdentity struct {
+		path  string
+		index int
+	}
+	fileParts := make([]fileIdentity, 0, len(files))
+	for index, file := range files {
+		rel, err := normalizeRepoPathFromRoot(absRoot, file.Path)
 		if err != nil {
 			return CacheIdentity{}, fmt.Errorf("configured file %q: %w", file.Path, err)
 		}
-		fileParts = append(fileParts, fmt.Sprintf("%s\x00%d\x00%s\x00%t\x00%d\x00%d",
-			filepath.ToSlash(rel), file.Size, file.Ext, file.IsNew, file.Added, file.Removed))
+		fileParts = append(fileParts, fileIdentity{path: filepath.ToSlash(rel), index: index})
 	}
-	sort.Strings(fileParts)
+	sort.Slice(fileParts, func(i, j int) bool {
+		if fileParts[i].path != fileParts[j].path {
+			return fileParts[i].path < fileParts[j].path
+		}
+		left, right := files[fileParts[i].index], files[fileParts[j].index]
+		if left.Size != right.Size {
+			return left.Size < right.Size
+		}
+		if left.Ext != right.Ext {
+			return left.Ext < right.Ext
+		}
+		if left.IsNew != right.IsNew {
+			return !left.IsNew
+		}
+		if left.Added != right.Added {
+			return left.Added < right.Added
+		}
+		return left.Removed < right.Removed
+	})
+	fileHash := sha256.New()
+	record := make([]byte, 0, 128)
+	for _, part := range fileParts {
+		file := files[part.index]
+		record = record[:0]
+		record = append(record, part.path...)
+		record = append(record, 0)
+		record = strconv.AppendInt(record, file.Size, 10)
+		record = append(record, 0)
+		record = append(record, file.Ext...)
+		record = append(record, 0)
+		record = strconv.AppendBool(record, file.IsNew)
+		record = append(record, 0)
+		record = strconv.AppendInt(record, int64(file.Added), 10)
+		record = append(record, 0)
+		record = strconv.AppendInt(record, int64(file.Removed), 10)
+		writeHashBytes(fileHash, record)
+	}
 
 	providerParts := make([]string, 0, len(providers))
 	for _, provider := range sortedProviders(providers) {
@@ -83,7 +127,7 @@ func BuildCacheIdentity(root string, files []scanner.FileInfo, manifests []strin
 	return CacheIdentity{
 		Filters:          hashStrings(string(filterData)),
 		Manifests:        hex.EncodeToString(manifestHash.Sum(nil)),
-		ConfiguredFiles:  hashStrings(fileParts...),
+		ConfiguredFiles:  hex.EncodeToString(fileHash.Sum(nil)),
 		ProviderVersions: hashStrings(providerParts...),
 	}, nil
 }
@@ -220,5 +264,10 @@ func hashStrings(parts ...string) string {
 
 func writeHashPart(hash interface{ Write([]byte) (int, error) }, part string) {
 	_, _ = hash.Write([]byte(part))
+	_, _ = hash.Write([]byte{0})
+}
+
+func writeHashBytes(hash interface{ Write([]byte) (int, error) }, part []byte) {
+	_, _ = hash.Write(part)
 	_, _ = hash.Write([]byte{0})
 }

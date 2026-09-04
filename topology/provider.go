@@ -17,6 +17,8 @@ import (
 
 const maxManifestWalkEntries = 100_000
 
+var errManifestWalkLimit = errors.New("manifest walk limit exceeded")
+
 type ManifestSelector struct {
 	Names []string
 }
@@ -109,24 +111,19 @@ func BuildGraphWithProviders(ctx context.Context, root string, providers []Provi
 		return MergeFragments(root, nil), CacheIdentity{}, nil
 	}
 
-	cache := scanner.NewGitIgnoreCache(root)
-	inventoryFiles, err := scanner.ScanConfiguredFiles(ctx, root, cache)
+	inventoryFiles, manifests, err := discoverInventory(ctx, root, selected, cfg, true)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, CacheIdentity{}, err
 		}
-		return unavailableGraph("inventory-failed", err.Error()), CacheIdentity{}, nil
+		code := "inventory-failed"
+		if errors.Is(err, errManifestWalkLimit) {
+			code = "manifest-discovery-failed"
+		}
+		return unavailableGraph(code, err.Error()), CacheIdentity{}, nil
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, CacheIdentity{}, err
-	}
-	inventoryFiles = filterInventoryFiles(inventoryFiles, selected)
-	manifests, err := discoverManifests(ctx, root, selected, cfg)
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, CacheIdentity{}, err
-		}
-		return unavailableGraph("manifest-discovery-failed", err.Error()), CacheIdentity{}, nil
 	}
 	identity, err := BuildCacheIdentity(root, inventoryFiles, manifests, selected)
 	if err != nil {
@@ -181,10 +178,20 @@ func BuildGraphWithProviders(ctx context.Context, root string, providers []Provi
 }
 
 func discoverManifests(ctx context.Context, root string, providers []Provider, cfg config.ProjectConfig) ([]string, error) {
+	_, manifests, err := discoverInventory(ctx, root, providers, cfg, false)
+	return manifests, err
+}
+
+func discoverInventory(ctx context.Context, root string, providers []Provider, cfg config.ProjectConfig, includeFiles bool) ([]scanner.FileInfo, []string, error) {
+	return discoverInventoryWithLimit(ctx, root, providers, cfg, includeFiles, maxManifestWalkEntries)
+}
+
+func discoverInventoryWithLimit(ctx context.Context, root string, providers []Provider, cfg config.ProjectConfig, includeFiles bool, maxEntries int) ([]scanner.FileInfo, []string, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	names := make(map[string]bool)
+	languages := make(map[string]bool)
 	for _, provider := range providers {
 		for _, name := range provider.Manifests().Names {
 			name = strings.TrimSpace(name)
@@ -192,31 +199,43 @@ func discoverManifests(ctx context.Context, root string, providers []Provider, c
 				names[name] = true
 			}
 		}
+		if includeFiles {
+			for _, language := range provider.Languages() {
+				language = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(language)), ".")
+				if language != "" {
+					languages[language] = true
+				}
+			}
+		}
 	}
-	if len(names) == 0 {
-		return nil, nil
+	if len(names) == 0 && !includeFiles {
+		return nil, nil, nil
 	}
 
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return nil, err
-	}
+	absRoot := projectpath.CanonicalPath(root)
 	ignoreCache := scanner.NewGitIgnoreCache(absRoot)
 	entries := 0
+	var files []scanner.FileInfo
 	var manifests []string
-	err = filepath.WalkDir(absRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+	var sourceIgnoredRoot string
+	err := filepath.WalkDir(absRoot, func(path string, entry fs.DirEntry, walkErr error) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if walkErr != nil {
 			return walkErr
 		}
-		entries++
-		if entries > maxManifestWalkEntries {
-			return fmt.Errorf("manifest walk exceeded %d entries", maxManifestWalkEntries)
+		if len(names) > 0 {
+			entries++
+			if entries > maxEntries {
+				return fmt.Errorf("%w: exceeded %d entries", errManifestWalkLimit, maxEntries)
+			}
 		}
 		if path == absRoot {
 			return nil
+		}
+		if sourceIgnoredRoot != "" && path != sourceIgnoredRoot && !strings.HasPrefix(path, sourceIgnoredRoot+string(filepath.Separator)) {
+			sourceIgnoredRoot = ""
 		}
 		rel, err := filepath.Rel(absRoot, path)
 		if err != nil {
@@ -228,20 +247,42 @@ func discoverManifests(ctx context.Context, root string, providers []Provider, c
 				return filepath.SkipDir
 			}
 			ignoreCache.EnsureDir(path)
+			if sourceIgnoredRoot == "" && scanner.IgnoredDirs[entry.Name()] {
+				sourceIgnoredRoot = path
+			}
 			return nil
 		}
-		if !names[entry.Name()] || ignoreCache.ShouldIgnore(path) ||
-			!scanner.MatchesFilters(filepath.ToSlash(rel), filepath.Ext(rel), nil, cfg.Exclude) {
+		ext := filepath.Ext(rel)
+		relSlash := filepath.ToSlash(rel)
+		if ignoreCache.ShouldIgnore(path) || !scanner.MatchesFilters(relSlash, ext, nil, cfg.Exclude) {
 			return nil
 		}
-		manifests = append(manifests, filepath.Clean(rel))
+		if names[entry.Name()] {
+			manifests = append(manifests, filepath.Clean(rel))
+		}
+		if !includeFiles || sourceIgnoredRoot != "" || scanner.IgnoredDirs[entry.Name()] ||
+			!scanner.MatchesFilters(relSlash, ext, cfg.Only, nil) {
+			return nil
+		}
+		language := strings.ToLower(scanner.DetectLanguage(relSlash))
+		if !languages[language] && !languages[strings.TrimPrefix(strings.ToLower(ext), ".")] {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		files = append(files, scanner.FileInfo{Path: filepath.Clean(rel), Size: info.Size(), Ext: ext})
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	sort.Strings(manifests)
-	return manifests, nil
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	return files, manifests, nil
 }
 
 func enabledProviders(providers []Provider, only []string) []Provider {
@@ -266,27 +307,6 @@ func enabledProviders(providers []Provider, only []string) []Provider {
 		}
 	}
 	return enabled
-}
-
-func filterInventoryFiles(files []scanner.FileInfo, providers []Provider) []scanner.FileInfo {
-	languages := make(map[string]bool)
-	for _, provider := range providers {
-		for _, language := range provider.Languages() {
-			language = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(language)), ".")
-			if language != "" {
-				languages[language] = true
-			}
-		}
-	}
-	filtered := make([]scanner.FileInfo, 0, len(files))
-	for _, file := range files {
-		language := strings.ToLower(scanner.DetectLanguage(file.Path))
-		extension := strings.TrimPrefix(strings.ToLower(file.Ext), ".")
-		if languages[language] || languages[extension] {
-			filtered = append(filtered, file)
-		}
-	}
-	return filtered
 }
 
 func sortedProviders(providers []Provider) []Provider {
