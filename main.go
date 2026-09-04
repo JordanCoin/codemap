@@ -211,6 +211,15 @@ func main() {
 		return
 	}
 
+	// Handle "collide" subcommand before global flag parsing
+	if len(os.Args) >= 2 && os.Args[1] == "collide" {
+		root, _ := os.Getwd()
+		if code := runCollideSubcommand(os.Args[2:], root); code != 0 {
+			os.Exit(code)
+		}
+		return
+	}
+
 	skylineMode := flag.Bool("skyline", false, "Enable skyline visualization mode")
 	animateMode := flag.Bool("animate", false, "Enable animation (use with --skyline)")
 	depsMode := flag.Bool("deps", false, "Enable dependency graph mode (function/import analysis)")
@@ -293,6 +302,7 @@ func main() {
 		fmt.Println("  codemap hook session-stop       # Session summary")
 		fmt.Println("  codemap handoff [path]          # Build handoff artifact for agent switching")
 		fmt.Println("  codemap blast-radius [path]     # Compact bounded blast-radius bundle")
+		fmt.Println("  codemap collide                 # Rank open PRs by shared-file merge-order hazard")
 		fmt.Println()
 		fmt.Println("Project config:")
 		fmt.Println("  codemap config init             # Create .codemap/config.json (auto-detects extensions)")
