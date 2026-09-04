@@ -816,6 +816,23 @@ func readTSConfig(configPath, root string) (map[string][]string, string) {
 	return paths, baseURL
 }
 
+// normalizeAliasTarget puts a substituted tsconfig alias target into the same
+// shape as the file index, which stores repository-relative paths with no "./"
+// prefix. create-next-app has shipped "@/*": ["./*"] for years, so the
+// substituted target is "./lib/a1" while the index holds "lib/a1" and nothing
+// matches. filepath.Join already cleaned the target when a baseUrl was set,
+// which is why this only ever bit projects without one.
+func normalizeAliasTarget(target string) string {
+	if target == "" {
+		return target
+	}
+	cleaned := filepath.ToSlash(filepath.Clean(target))
+	if cleaned == "." {
+		return ""
+	}
+	return cleaned
+}
+
 // resolvePathAlias attempts to resolve an import using TypeScript path aliases
 // e.g., "@modules/auth" with alias "@modules/*" -> ["src/modules/*"] becomes "src/modules/auth"
 func resolvePathAlias(imp string, pathAliases map[string][]string, baseURL string, idx *fileIndex, sourceLanguage string) []string {
@@ -833,6 +850,7 @@ func resolvePathAlias(imp string, pathAliases map[string][]string, baseURL strin
 					if baseURL != "" && !filepath.IsAbs(resolved) {
 						resolved = filepath.Join(baseURL, resolved)
 					}
+					resolved = normalizeAliasTarget(resolved)
 					if files := tryExactMatch(resolved, idx, sourceLanguage); len(files) > 0 {
 						return files
 					}
@@ -867,6 +885,8 @@ func resolvePathAlias(imp string, pathAliases map[string][]string, baseURL strin
 			if baseURL != "" && !filepath.IsAbs(resolved) {
 				resolved = filepath.Join(baseURL, resolved)
 			}
+
+			resolved = normalizeAliasTarget(resolved)
 
 			// Try to find matching files
 			if files := tryExactMatch(resolved, idx, sourceLanguage); len(files) > 0 {
