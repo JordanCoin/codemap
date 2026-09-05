@@ -188,10 +188,10 @@ func TestJSWorkspaceResolverUsesExplicitFilters(t *testing.T) {
 }
 
 func TestJSWorkspaceResolverOnlyWidensJavaScriptScans(t *testing.T) {
-	if needsJSWorkspaceResolver([]FileAnalysis{{Path: "main.go", Language: "go"}}) {
+	if inspectAnalysisLanguages([]FileAnalysis{{Path: "main.go", Language: "go"}}).hasJS {
 		t.Fatal("Go-only analysis should not widen the filtered file scan")
 	}
-	if !needsJSWorkspaceResolver([]FileAnalysis{{Path: "app.ts", Language: "typescript"}}) {
+	if !inspectAnalysisLanguages([]FileAnalysis{{Path: "app.ts", Language: "typescript"}}).hasJS {
 		t.Fatal("TypeScript analysis should enable workspace manifest scanning")
 	}
 }

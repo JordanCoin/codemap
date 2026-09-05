@@ -38,6 +38,7 @@ func buildFileGraphFromOutcomeWithCargoMetadataAndFilters(ctx context.Context, r
 		return nil, err
 	}
 	applyPrecomputedFileEdges(fg, outcome.precomputedEdges)
+	fg.sortEdges()
 	return fg, nil
 }
 

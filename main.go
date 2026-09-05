@@ -211,6 +211,15 @@ func main() {
 		return
 	}
 
+	// Handle "collide" subcommand before global flag parsing
+	if len(os.Args) >= 2 && os.Args[1] == "collide" {
+		root, _ := os.Getwd()
+		if code := runCollideSubcommand(os.Args[2:], root); code != 0 {
+			os.Exit(code)
+		}
+		return
+	}
+
 	skylineMode := flag.Bool("skyline", false, "Enable skyline visualization mode")
 	animateMode := flag.Bool("animate", false, "Enable animation (use with --skyline)")
 	depsMode := flag.Bool("deps", false, "Enable dependency graph mode (function/import analysis)")
@@ -293,6 +302,7 @@ func main() {
 		fmt.Println("  codemap hook session-stop       # Session summary")
 		fmt.Println("  codemap handoff [path]          # Build handoff artifact for agent switching")
 		fmt.Println("  codemap blast-radius [path]     # Compact bounded blast-radius bundle")
+		fmt.Println("  codemap collide                 # Rank open PRs by shared-file merge-order hazard")
 		fmt.Println()
 		fmt.Println("Project config:")
 		fmt.Println("  codemap config init             # Create .codemap/config.json (auto-detects extensions)")
@@ -1153,22 +1163,31 @@ func publishWatchReadiness(path string, readinessErr error) error {
 
 func waitWatchReadiness(path string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
+	// A readiness file that does not parse is a file still being written, not
+	// a daemon that failed: publishWatchReadiness renames its payload into
+	// place atomically, but nothing guarantees every writer does, and treating
+	// the first unparseable read as fatal reported a startup failure for a
+	// daemon that was starting fine. Keep the last parse error so a file that
+	// never becomes valid says why, rather than only that it timed out.
+	var lastParseErr error
 	for {
 		data, err := os.ReadFile(path)
 		if err == nil {
 			var status watchReadiness
-			if err := json.Unmarshal(data, &status); err != nil {
-				return fmt.Errorf("reading daemon readiness: %w", err)
-			}
-			if status.Error != "" {
+			if parseErr := json.Unmarshal(data, &status); parseErr != nil {
+				lastParseErr = parseErr
+			} else if status.Error != "" {
 				return errors.New(status.Error)
+			} else {
+				return nil
 			}
-			return nil
-		}
-		if !errors.Is(err, os.ErrNotExist) {
+		} else if !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("reading daemon readiness: %w", err)
 		}
 		if time.Now().After(deadline) {
+			if lastParseErr != nil {
+				return fmt.Errorf("reading daemon readiness: %w", lastParseErr)
+			}
 			return fmt.Errorf("daemon readiness timed out after %s", timeout)
 		}
 		time.Sleep(10 * time.Millisecond)

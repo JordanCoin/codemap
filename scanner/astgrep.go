@@ -503,6 +503,13 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 			} else {
 				mod = extractImportPath(m.Text)
 			}
+			// "from . import mod" puts the module in the import list, not the
+			// path, so $PATH is a bare run of dots and the edge would be lost.
+			// Recover each name and re-form it as the relative module it means.
+			if names := pythonRelativeImportNames(fileMap[relPath].Language, mod, m.Text); len(names) > 0 {
+				fileMap[relPath].Imports = append(fileMap[relPath].Imports, names...)
+				continue
+			}
 			if mod != "" {
 				fileMap[relPath].Imports = append(fileMap[relPath].Imports, mod)
 			}
@@ -559,6 +566,46 @@ func detectLangFromRuleID(ruleID string) string {
 		return ruleIDToLang[parts[0]]
 	}
 	return ""
+}
+
+// pythonRelativeImportNames expands "from . import a, b" into the relative
+// modules it names (".a", ".b"), which the $PATH metavariable cannot carry
+// because the modules appear in the import list. It returns nil for anything
+// else, including "from .mod import name", where the path already names the
+// module and the imported names are symbols rather than modules.
+func pythonRelativeImportNames(language, path, text string) []string {
+	if language != "python" || path == "" || strings.Trim(path, ".") != "" {
+		return nil
+	}
+	_, after, found := strings.Cut(text, " import ")
+	if !found {
+		return nil
+	}
+	// Black wraps a long list across lines inside parentheses, so the names
+	// cannot be read from the first line alone. Strip each line's comment,
+	// then flatten.
+	var flattened strings.Builder
+	for _, line := range strings.Split(after, "\n") {
+		if idx := strings.Index(line, "#"); idx >= 0 {
+			line = line[:idx]
+		}
+		flattened.WriteString(line)
+		flattened.WriteString(" ")
+	}
+	after = strings.TrimSpace(flattened.String())
+	after = strings.TrimSpace(strings.Trim(after, "()"))
+
+	var names []string
+	for _, part := range strings.Split(after, ",") {
+		// "mod as alias" imports the module named before the alias.
+		name, _, _ := strings.Cut(strings.TrimSpace(part), " ")
+		name = strings.TrimSpace(name)
+		if name == "" || name == "*" || !isValidIdentifier(name) {
+			continue
+		}
+		names = append(names, path+name)
+	}
+	return names
 }
 
 func extractImportPath(text string) string {

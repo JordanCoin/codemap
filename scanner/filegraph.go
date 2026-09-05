@@ -85,11 +85,10 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 	}
 
 	fg := &FileGraph{
-		Root:        absRoot,
-		Imports:     make(map[string][]string),
-		Importers:   make(map[string][]string),
-		Packages:    make(map[string][]string),
-		PathAliases: make(map[string][]string),
+		Root:      absRoot,
+		Imports:   make(map[string][]string),
+		Importers: make(map[string][]string),
+		Packages:  make(map[string][]string),
 	}
 	hasCargoSource := false
 	for _, source := range sources {
@@ -102,11 +101,12 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 	// Detect module name from go.mod (for Go import resolution)
 	fg.Module = detectModule(absRoot)
 
-	// Detect path aliases from tsconfig.json (for TS/JS import resolution)
-	fg.PathAliases, fg.BaseURL = detectPathAliases(absRoot)
-
-	useJSWorkspace := needsJSWorkspaceResolver(analyses)
-	useDartWorkspace := needsDartWorkspaceResolver(analyses)
+	analysisLanguages := inspectAnalysisLanguages(analyses)
+	useJSWorkspace := analysisLanguages.hasJS
+	useDartWorkspace := analysisLanguages.hasDart
+	if useJSWorkspace {
+		fg.PathAliases, fg.BaseURL = detectPathAliases(absRoot)
+	}
 	gitCache := NewGitIgnoreCache(root)
 	scanOnly := filters.Only
 	if useJSWorkspace || useDartWorkspace {
@@ -130,30 +130,30 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 			}
 		}
 	}
-	if !hasCUEAnalyses(analyses) {
-		for _, file := range files {
-			if !strings.EqualFold(filepath.Ext(file.Path), ".cue") {
-				continue
-			}
-			cueOutcome, cueErr := scanCUEFilesFromFiles(ctx, absRoot, files)
-			if cueErr != nil {
-				return nil, cueErr
-			}
-			analyses = append(analyses, cueOutcome.Analyses...)
-			for _, source := range cueOutcome.Sources {
-				fg.Coverage.AddSource(source)
-			}
-			break
+	languages := inspectFileLanguages(files)
+	hasCUEAnalysis := analysisLanguages.hasCUE
+	if languages.hasCUE && !hasCUEAnalysis {
+		cueOutcome, cueErr := scanCUEFilesFromFiles(ctx, absRoot, files)
+		if cueErr != nil {
+			return nil, cueErr
+		}
+		analyses = append(analyses, cueOutcome.Analyses...)
+		for _, source := range cueOutcome.Sources {
+			fg.Coverage.AddSource(source)
 		}
 	}
-	rustWorkspace, cargoOutcome, err := buildRustWorkspaceIndex(ctx, absRoot, analyses, files, loader)
-	if err != nil {
-		return nil, err
-	}
-	// The outcome already carries cargo provenance; keep exactly one
-	// cargo-metadata source per graph.
-	if cargoOutcome != nil && !hasCargoSource {
-		fg.Coverage.AddSource(*cargoOutcome)
+	var rustWorkspace *rustWorkspaceIndex
+	if languages.hasRust || analysisLanguages.hasRust {
+		var cargoOutcome *ScanSourceOutcome
+		rustWorkspace, cargoOutcome, err = buildRustWorkspaceIndex(ctx, absRoot, analyses, files, loader)
+		if err != nil {
+			return nil, err
+		}
+		// The outcome already carries cargo provenance; keep exactly one
+		// cargo-metadata source per graph.
+		if cargoOutcome != nil && !hasCargoSource {
+			fg.Coverage.AddSource(*cargoOutcome)
+		}
 	}
 
 	// Build file index for fast fuzzy matching
@@ -161,35 +161,39 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	idx.cueModules = detectCUEModulesWithFiles(absRoot, files)
-	idx.cuePackages = make(map[string]string)
-	for _, file := range files {
-		if DetectLanguage(file.Path) != "cue" {
-			continue
+	if languages.hasCUE || hasCUEAnalysis {
+		idx.cueModules = detectCUEModulesWithFiles(absRoot, files)
+		idx.cuePackages = make(map[string]string)
+		for _, file := range files {
+			if fileInfoLanguage(file) != "cue" {
+				continue
+			}
+			path := filepath.ToSlash(filepath.Clean(file.Path))
+			data, readErr := os.ReadFile(filepath.Join(absRoot, filepath.FromSlash(path)))
+			if readErr == nil {
+				idx.cuePackages[path], _ = cueHeader(data)
+			}
 		}
-		path := filepath.ToSlash(filepath.Clean(file.Path))
-		data, readErr := os.ReadFile(filepath.Join(absRoot, filepath.FromSlash(path)))
-		if readErr == nil {
-			idx.cuePackages[path], _ = cueHeader(data)
-		}
-	}
-	for _, analysis := range analyses {
-		if analysis.Language == "cue" && analysis.Package != "" {
-			idx.cuePackages[filepath.ToSlash(filepath.Clean(analysis.Path))] = analysis.Package
+		for _, analysis := range analyses {
+			if analysis.Language == "cue" && analysis.Package != "" {
+				idx.cuePackages[filepath.ToSlash(filepath.Clean(analysis.Path))] = analysis.Package
+			}
 		}
 	}
 	fg.Packages = idx.goPkgs
-	for _, file := range files {
+	if languages.hasRust {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if strings.EqualFold(filepath.Ext(file.Path), ".rs") {
-			if CoverageFromSources(fg.Coverage.Sources).Status != analysis.CoverageUnavailable {
-				fg.Coverage.AddSource(ScanSourceOutcome{Name: "rust-cargo", Status: ScanSourceMixed, Detail: rustCoverageNote})
-			}
-			break
+		if CoverageFromSources(fg.Coverage.Sources).Status != analysis.CoverageUnavailable {
+			fg.Coverage.AddSource(ScanSourceOutcome{Name: "rust-cargo", Status: ScanSourceMixed, Detail: rustCoverageNote})
 		}
 	}
+	// Languages whose imports name modules rather than files cannot produce
+	// intra-project edges at all, so an empty graph over them is a blind spot
+	// rather than a finding. Recording it here is what keeps --importers and
+	// blast-radius honest too: both read this graph's provenance.
+	fg.Coverage.addSymbolLevelImportCoverage(languages.symbolLevel)
 
 	var jsResolver *jsWorkspaceResolver
 	if useJSWorkspace {
@@ -250,7 +254,28 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	fg.sortEdges()
 	return fg, nil
+}
+
+// sortEdges orders the reverse edge lists. Importers are appended while
+// iterating analyses, whose order the scanner does not fix, so the same
+// repository scanned twice produced the same importers in a different
+// sequence: --importers output shifted between identical runs, diffs of
+// codemap output showed changes that were not changes, and no caller could
+// assert an exact list.
+//
+// Imports are deliberately left alone. They are appended per file in
+// resolution order, which is already stable and which callers rely on: the
+// CUE resolver returns a selected package before the package it falls back
+// to, and DepsProject sorts its own copy for JSON output anyway.
+func (fg *FileGraph) sortEdges() {
+	if fg == nil {
+		return
+	}
+	for file := range fg.Importers {
+		sort.Strings(fg.Importers[file])
+	}
 }
 
 func applyPrecomputedFileEdges(fg *FileGraph, edges []fileEdge) {
@@ -263,22 +288,30 @@ func applyPrecomputedFileEdges(fg *FileGraph, edges []fileEdge) {
 	}
 }
 
-func needsJSWorkspaceResolver(analyses []FileAnalysis) bool {
-	for _, analysis := range analyses {
-		if isJavaScriptLanguage(DetectLanguage(analysis.Path)) {
-			return true
-		}
-	}
-	return false
+type analysisLanguageInventory struct {
+	hasJS   bool
+	hasDart bool
+	hasRust bool
+	hasCUE  bool
 }
 
-func needsDartWorkspaceResolver(analyses []FileAnalysis) bool {
-	for _, file := range analyses {
-		if DetectLanguage(file.Path) == "dart" {
-			return true
+func inspectAnalysisLanguages(analyses []FileAnalysis) analysisLanguageInventory {
+	var inventory analysisLanguageInventory
+	for _, analysis := range analyses {
+		language := DetectLanguage(analysis.Path)
+		if isJavaScriptLanguage(language) {
+			inventory.hasJS = true
+		} else if language == "dart" {
+			inventory.hasDart = true
+		}
+		switch analysis.Language {
+		case "rust":
+			inventory.hasRust = true
+		case "cue":
+			inventory.hasCUE = true
 		}
 	}
-	return false
+	return inventory
 }
 
 // buildFileIndex creates a multi-key index for fast import resolution
@@ -469,6 +502,14 @@ func fuzzyResolveWithWorkspace(
 
 	// Strategy 2: Relative path resolution (./foo, ../bar)
 	if strings.HasPrefix(imp, ".") {
+		// Python spells relative imports as a run of dots that counts package
+		// levels, not as path segments: "from .mod import x" is a sibling
+		// module, not a directory called ".mod". Routing it through the
+		// JS-shaped resolver produced "pkg/.mod", which matches nothing, so
+		// every intra-package edge in a Python project was lost.
+		if sourceLanguage == "python" {
+			return resolvePythonRelative(imp, fromDir, idx)
+		}
 		return resolveRelative(imp, fromDir, idx, sourceLanguage)
 	}
 
@@ -512,15 +553,6 @@ func nearestCUEModule(fromFile string, modules []cueModuleInfo) (cueModuleInfo, 
 		}
 	}
 	return cueModuleInfo{}, false
-}
-
-func hasCUEAnalyses(analyses []FileAnalysis) bool {
-	for _, analysis := range analyses {
-		if analysis.Language == "cue" {
-			return true
-		}
-	}
-	return false
 }
 
 func splitCUEImport(imp string) (string, string) {
@@ -590,6 +622,54 @@ func normalizeImport(imp string) string {
 	}
 
 	return imp
+}
+
+// resolvePythonRelative resolves a Python relative import. One leading dot
+// means the current package, and each additional dot climbs one package: so
+// from "pkg/sub/user.py", ".mod" is pkg/sub/mod and "..mod" is pkg/mod. What
+// follows the dots is a dotted module path, where each dot is a directory
+// separator.
+//
+// A bare run of dots ("from . import mod") names the package, not a module;
+// the imported name lives in the import list rather than the path, so it is
+// recovered during extraction. Anything that still arrives here as dots alone
+// resolves to nothing rather than to a guess at which file was meant.
+func resolvePythonRelative(imp, fromDir string, idx *fileIndex) []string {
+	level := 0
+	for level < len(imp) && imp[level] == '.' {
+		level++
+	}
+	module := imp[level:]
+	if module == "" {
+		return nil
+	}
+
+	targetDir := fromDir
+	for i := 1; i < level; i++ {
+		// filepath.Dir("") is ".", which normalizes back to "", so an
+		// unchecked loop clamps at the scan root and a dot count deeper than
+		// the file resolves to a root-level module it never named. Climbing
+		// past the root has to resolve to nothing: the package above the root
+		// is not visible, and guessing produces a fabricated edge.
+		if targetDir == "" {
+			return nil
+		}
+		targetDir = filepath.Dir(targetDir)
+		if targetDir == "." {
+			targetDir = ""
+		}
+	}
+
+	candidate := filepath.FromSlash(strings.ReplaceAll(module, ".", "/"))
+	if targetDir != "" {
+		candidate = filepath.Join(targetDir, candidate)
+	}
+	if files := tryExactMatch(candidate, idx, "python"); len(files) > 0 {
+		return files
+	}
+	// A package rather than a module: "from .sub import x" where sub/ is a
+	// package directory resolves to its __init__.py.
+	return tryExactMatch(filepath.Join(candidate, "__init__"), idx, "python")
 }
 
 // resolveRelative handles ./foo and ../bar style imports
@@ -812,7 +892,10 @@ func (fg *FileGraph) IsHub(path string) bool {
 	return CountHubImporters(fg.Importers[path]) >= HubThreshold
 }
 
-// HubFiles returns all files that qualify as hubs under IsHub.
+// HubFiles returns all files that qualify as hubs under IsHub, ordered by
+// non-test importer count descending and then by path. Map iteration order is
+// random, so callers that truncate or display the head of this list would
+// otherwise show a different set of hubs on every run over the same graph.
 func (fg *FileGraph) HubFiles() []string {
 	var hubs []string
 	for path := range fg.Importers {
@@ -820,6 +903,16 @@ func (fg *FileGraph) HubFiles() []string {
 			hubs = append(hubs, path)
 		}
 	}
+	counts := make(map[string]int, len(hubs))
+	for _, path := range hubs {
+		counts[path] = CountHubImporters(fg.Importers[path])
+	}
+	sort.Slice(hubs, func(i, j int) bool {
+		if counts[hubs[i]] != counts[hubs[j]] {
+			return counts[hubs[i]] > counts[hubs[j]]
+		}
+		return hubs[i] < hubs[j]
+	})
 	return hubs
 }
 
@@ -915,6 +1008,23 @@ func readTSConfig(configPath, root string) (map[string][]string, string) {
 	return paths, baseURL
 }
 
+// normalizeAliasTarget puts a substituted tsconfig alias target into the same
+// shape as the file index, which stores repository-relative paths with no "./"
+// prefix. create-next-app has shipped "@/*": ["./*"] for years, so the
+// substituted target is "./lib/a1" while the index holds "lib/a1" and nothing
+// matches. filepath.Join already cleaned the target when a baseUrl was set,
+// which is why this only ever bit projects without one.
+func normalizeAliasTarget(target string) string {
+	if target == "" {
+		return target
+	}
+	cleaned := filepath.ToSlash(filepath.Clean(target))
+	if cleaned == "." {
+		return ""
+	}
+	return cleaned
+}
+
 // resolvePathAlias attempts to resolve an import using TypeScript path aliases
 // e.g., "@modules/auth" with alias "@modules/*" -> ["src/modules/*"] becomes "src/modules/auth"
 func resolvePathAlias(imp string, pathAliases map[string][]string, baseURL string, idx *fileIndex, sourceLanguage string) []string {
@@ -932,6 +1042,7 @@ func resolvePathAlias(imp string, pathAliases map[string][]string, baseURL strin
 					if baseURL != "" && !filepath.IsAbs(resolved) {
 						resolved = filepath.Join(baseURL, resolved)
 					}
+					resolved = normalizeAliasTarget(resolved)
 					if files := tryExactMatch(resolved, idx, sourceLanguage); len(files) > 0 {
 						return files
 					}
@@ -966,6 +1077,8 @@ func resolvePathAlias(imp string, pathAliases map[string][]string, baseURL strin
 			if baseURL != "" && !filepath.IsAbs(resolved) {
 				resolved = filepath.Join(baseURL, resolved)
 			}
+
+			resolved = normalizeAliasTarget(resolved)
 
 			// Try to find matching files
 			if files := tryExactMatch(resolved, idx, sourceLanguage); len(files) > 0 {
