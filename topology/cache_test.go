@@ -156,6 +156,23 @@ func TestCacheIdentityChangesForFiltersManifestsFilesAndProviderVersions(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
+	reordered, err := BuildCacheIdentity(root, []scanner.FileInfo{
+		{Path: "other.go", Size: 42, Ext: ".go", IsNew: true, Added: 3, Removed: 1},
+		{Path: "main.go"},
+	}, []string{"go.mod"}, providers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reorderedAgain, err := BuildCacheIdentity(root, []scanner.FileInfo{
+		{Path: "main.go"},
+		{Path: "other.go", Size: 42, Ext: ".go", IsNew: true, Added: 3, Removed: 1},
+	}, []string{"go.mod"}, providers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reordered.ConfiguredFiles != reorderedAgain.ConfiguredFiles {
+		t.Fatal("configured file identity depends on inventory order")
+	}
 
 	writeTopologyFixture(t, root, ".codemap/config.json", `{"only":["go"],"exclude":["vendor"]}`)
 	filtered, err := BuildCacheIdentity(root, files, []string{"go.mod"}, providers)

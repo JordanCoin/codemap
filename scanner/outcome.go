@@ -32,6 +32,8 @@ type ScanOutcome struct {
 	Analyses         []FileAnalysis    `json:"analyses"`
 	Sources          []analysis.Source `json:"sources,omitempty"`
 	precomputedEdges []fileEdge
+	files            []FileInfo
+	hasFileInventory bool
 }
 
 // GraphCoverage describes graph blind spots and scanner provenance.

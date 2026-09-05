@@ -825,6 +825,14 @@ func TestScanConfiguredFilesExcludesCodemapState(t *testing.T) {
 	if !reflect.DeepEqual(paths, want) {
 		t.Fatalf("configured files = %v, want %v (no .codemap entries)", paths, want)
 	}
+
+	files, err = ScanConfiguredFilesWithFilters(context.Background(), root, NewGitIgnoreCache(root), Filters{Only: []string{"go"}, Exclude: []string{"pkg"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || filepath.ToSlash(files[0].Path) != "main.go" {
+		t.Fatalf("explicitly filtered files = %v, want main.go", files)
+	}
 }
 
 func TestFilterAnalysesContextBranches(t *testing.T) {

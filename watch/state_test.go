@@ -13,6 +13,8 @@ import (
 
 	"codemap/internal/projectpath"
 	"codemap/scanner"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 func TestHelperWatchDaemonProcess(t *testing.T) {
@@ -434,6 +436,9 @@ func TestAutomaticLinkedWorktreeUsesLocalWatchStorage(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(primary, ".codemap"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(primary, ".codemap", "config.json"), []byte(`{"only":["go"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(gitDir, "commondir"), []byte("../..\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -470,6 +475,17 @@ func TestAutomaticLinkedWorktreeUsesLocalWatchStorage(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(projectpath.ProjectRuntimeDir(primary), "state.json")); !os.IsNotExist(err) {
 		t.Fatalf("primary state unexpectedly created: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(linked, ".git"), []byte("invalid\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	textFile := filepath.Join(linked, "notes.txt")
+	if err := os.WriteFile(textFile, []byte("not configured\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if changed := d.handleConfiguredMembershipEvent(fsnotify.Event{Name: textFile, Op: fsnotify.Create}); changed {
+		t.Fatal("linked worktree stopped using its resolved primary policy")
 	}
 }
 

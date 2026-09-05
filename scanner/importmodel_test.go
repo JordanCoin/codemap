@@ -70,6 +70,22 @@ func TestResolvesFileLevelImports(t *testing.T) {
 	}
 }
 
+func TestInspectFileLanguagesFindsGraphRequirements(t *testing.T) {
+	inventory := inspectFileLanguages([]FileInfo{
+		{Path: "src/lib.rs", Ext: ".rs"},
+		{Path: "cue/app.cue", Ext: ".cue"},
+		{Path: "src/Main.java", Ext: ".java"},
+		{Path: "src/Other.java", Ext: ".java"},
+		{Path: "main.go", Ext: ".go"},
+	})
+	if !inventory.hasRust || !inventory.hasCUE {
+		t.Fatalf("language requirements = %+v, want Rust and CUE", inventory)
+	}
+	if got := inventory.symbolLevel["Java"]; got != 2 {
+		t.Fatalf("Java file count = %d, want 2", got)
+	}
+}
+
 // Coverage that already knows less must never be talked back up.
 func TestApplySymbolLevelImportCoverageOnlyRemovesConfidence(t *testing.T) {
 	swift := []FileInfo{{Path: "App/Model.swift"}}

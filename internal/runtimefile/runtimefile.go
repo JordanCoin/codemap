@@ -2,12 +2,21 @@ package runtimefile
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
 
 // WriteAtomic replaces a regular runtime file without following its endpoint.
 func WriteAtomic(path string, data []byte, mode os.FileMode) error {
+	return WriteAtomicWith(path, mode, func(w io.Writer) error {
+		_, err := w.Write(data)
+		return err
+	})
+}
+
+// WriteAtomicWith replaces a regular runtime file with streamed content.
+func WriteAtomicWith(path string, mode os.FileMode, write func(io.Writer) error) error {
 	if info, err := os.Lstat(path); err == nil && !info.Mode().IsRegular() {
 		return fmt.Errorf("unsafe runtime file %q", path)
 	} else if err != nil && !os.IsNotExist(err) {
@@ -23,7 +32,7 @@ func WriteAtomic(path string, data []byte, mode os.FileMode) error {
 		_ = tmp.Close()
 		return err
 	}
-	if _, err := tmp.Write(data); err != nil {
+	if err := write(tmp); err != nil {
 		_ = tmp.Close()
 		return err
 	}

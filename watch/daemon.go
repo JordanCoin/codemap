@@ -30,6 +30,7 @@ var (
 type Daemon struct {
 	root       string
 	configDir  string
+	configPath string
 	runtimeDir string
 	graph      *Graph
 	watcher    *fsnotify.Watcher
@@ -73,6 +74,16 @@ func (d *Daemon) runtimeStateDir() (string, error) {
 	return projectpath.CheckedRuntimeCodemapDir(d.root)
 }
 
+func (d *Daemon) loadConfig() config.ProjectConfig {
+	if d.configPath != "" {
+		return config.LoadFile(d.configPath)
+	}
+	if d.configDir != "" {
+		return config.LoadFile(filepath.Join(d.configDir, "config.json"))
+	}
+	return config.Load(d.root)
+}
+
 func (d *Daemon) ensurePublisher() error {
 	if d.publisher != nil {
 		return nil
@@ -113,6 +124,7 @@ func NewDaemon(root string, verbose bool) (*Daemon, error) {
 	d := &Daemon{
 		root:         absRoot,
 		configDir:    selection.PolicyDir,
+		configPath:   filepath.Join(selection.PolicyDir, "config.json"),
 		runtimeDir:   runtimeDir,
 		watcher:      watcher,
 		gitCache:     gitCache,
@@ -312,19 +324,24 @@ func (d *Daemon) WriteInitialState() {
 // fullScan does a complete scan of the project
 func (d *Daemon) fullScan() error {
 	start := time.Now()
+	cfg := d.loadConfig()
 
 	files, err := scanner.ScanFiles(context.Background(), d.root, d.gitCache, nil, nil)
 	if err != nil {
 		return err
 	}
-	configuredFiles, err := scanner.ScanConfiguredFiles(context.Background(), d.root, d.gitCache)
-	if err != nil {
-		return err
+	configuredPaths := make([]string, 0)
+	for i := range files {
+		file := &files[i]
+		path := filepath.ToSlash(file.Path)
+		if path != ".codemap" && !strings.HasPrefix(path, ".codemap/") && scanner.MatchesFilters(file.Path, file.Ext, cfg.Only, cfg.Exclude) {
+			configuredPaths = append(configuredPaths, file.Path)
+		}
 	}
 
 	d.graph.mu.Lock()
 	d.graph.Files = make(map[string]*scanner.FileInfo)
-	d.graph.ConfiguredFiles = make(map[string]struct{}, len(configuredFiles))
+	d.graph.ConfiguredFiles = make(map[string]struct{}, len(configuredPaths))
 	d.graph.State = make(map[string]*FileState)
 	for i := range files {
 		f := &files[i]
@@ -334,8 +351,8 @@ func (d *Daemon) fullScan() error {
 			d.graph.State[f.Path] = &FileState{Lines: lines, Size: f.Size}
 		}
 	}
-	for _, file := range configuredFiles {
-		d.graph.ConfiguredFiles[file.Path] = struct{}{}
+	for _, path := range configuredPaths {
+		d.graph.ConfiguredFiles[path] = struct{}{}
 	}
 	d.graph.LastScan = time.Now()
 	d.graph.mu.Unlock()
@@ -347,8 +364,7 @@ func (d *Daemon) fullScan() error {
 	return nil
 }
 
-func (d *Daemon) isConfiguredFile(path string) bool {
-	cfg := config.Load(d.root)
+func matchesConfiguredFile(path string, cfg config.ProjectConfig) bool {
 	return scanner.MatchesFilters(path, filepath.Ext(path), cfg.Only, cfg.Exclude)
 }
 
@@ -360,7 +376,8 @@ func (d *Daemon) refreshConfiguredFiles(resetIgnoreCache bool) error {
 		gitCache = scanner.NewGitIgnoreCache(d.root)
 		d.gitCache = gitCache
 	}
-	files, err := scanner.ScanConfiguredFiles(context.Background(), d.root, gitCache)
+	cfg := d.loadConfig()
+	files, err := scanner.ScanConfiguredFilesWithFilters(context.Background(), d.root, gitCache, scanner.Filters{Only: cfg.Only, Exclude: cfg.Exclude})
 	if err != nil {
 		return err
 	}
@@ -372,7 +389,7 @@ func (d *Daemon) refreshConfiguredFiles(resetIgnoreCache bool) error {
 	d.graph.ConfiguredFiles = configured
 	// Filters define dependency membership too, so the previous graph must not
 	// be published under a new configured-file count.
-	d.markGraphLifecycleLocked(newGraphState(d.root, config.Load(d.root), graphLifecycleStale, time.Time{}, nil))
+	d.markGraphLifecycleLocked(newGraphState(d.root, cfg, graphLifecycleStale, time.Time{}, nil))
 	d.graph.mu.Unlock()
 
 	// Invalidation alone would leave the daemon serving no hub or importer
@@ -390,6 +407,7 @@ var daemonRefreshDependencies = (*Daemon).refreshDependencies
 
 // refreshDependencies is called by eventLoop and owns the worker state flags.
 func (d *Daemon) refreshDependencies() {
+	cfg := d.loadConfig()
 	d.graph.mu.RLock()
 	stale := d.graph.GraphState.Status == graphLifecycleStale
 	configuredCount := len(d.graph.ConfiguredFiles)
@@ -399,7 +417,7 @@ func (d *Daemon) refreshDependencies() {
 	}
 	snapshot := dependencyGraphSnapshot{
 		configured: configured,
-		config:     config.Load(d.root),
+		config:     cfg,
 		generation: d.graph.graphGeneration,
 	}
 	d.graph.mu.RUnlock()
@@ -421,13 +439,13 @@ func (d *Daemon) refreshDependencies() {
 
 // buildDependencyGraph converts a worker panic into the existing failed-build
 // path so a background scan cannot terminate the daemon process.
-func buildDependencyGraph(ctx context.Context, root string, build func(context.Context, string, scanner.Filters) (*scanner.FileGraph, error)) (graph *scanner.FileGraph, err error) {
+func buildDependencyGraph(ctx context.Context, root string, filters scanner.Filters, build func(context.Context, string, scanner.Filters) (*scanner.FileGraph, error)) (graph *scanner.FileGraph, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err = fmt.Errorf("dependency graph build panicked: %v", recovered)
 		}
 	}()
-	return build(ctx, root, scanner.ConfiguredFilters(root))
+	return build(ctx, root, filters)
 }
 
 func (d *Daemon) startDependencyWorker() {
@@ -449,7 +467,8 @@ func (d *Daemon) startDependencyWorker() {
 					return
 				case snapshot := <-d.dependencyRequests:
 					started := time.Now()
-					graph, err := buildDependencyGraph(ctx, d.root, buildFileGraph)
+					filters := scanner.Filters{Only: snapshot.config.Only, Exclude: snapshot.config.Exclude}
+					graph, err := buildDependencyGraph(ctx, d.root, filters, buildFileGraph)
 					result := dependencyGraphResult{snapshot: snapshot, graph: graph, err: err, started: started}
 					select {
 					case d.dependencyResults <- result:
@@ -469,9 +488,10 @@ func (d *Daemon) handleDependencyGraphResult(result dependencyGraphResult) {
 	retry := d.dependencyPending
 	d.dependencyPending = false
 	if retry {
+		cfg := d.loadConfig()
 		d.graph.mu.Lock()
 		if d.graph.GraphState.Status != graphLifecycleStale {
-			d.markGraphLifecycleLocked(newGraphState(d.root, config.Load(d.root), graphLifecycleStale, time.Time{}, nil))
+			d.markGraphLifecycleLocked(newGraphState(d.root, cfg, graphLifecycleStale, time.Time{}, nil))
 		}
 		d.graph.mu.Unlock()
 	}
@@ -508,6 +528,7 @@ func (d *Daemon) computeDepsWithBeforePublish(build func(context.Context, string
 }
 
 func (d *Daemon) dependencyGraphSnapshot() dependencyGraphSnapshot {
+	cfg := d.loadConfig()
 	d.graph.mu.RLock()
 	defer d.graph.mu.RUnlock()
 	configured := make([]string, 0, len(d.graph.ConfiguredFiles))
@@ -516,7 +537,7 @@ func (d *Daemon) dependencyGraphSnapshot() dependencyGraphSnapshot {
 	}
 	return dependencyGraphSnapshot{
 		configured: configured,
-		config:     config.Load(d.root),
+		config:     cfg,
 		generation: d.graph.graphGeneration,
 	}
 }
@@ -530,13 +551,13 @@ func (d *Daemon) applyDependencyGraph(snapshot dependencyGraphSnapshot, fg *scan
 		return
 	}
 
+	currentConfig := d.loadConfig()
 	d.graph.mu.Lock()
 	defer d.graph.mu.Unlock()
 	configuredAfter := make([]string, 0, len(d.graph.ConfiguredFiles))
 	for file := range d.graph.ConfiguredFiles {
 		configuredAfter = append(configuredAfter, file)
 	}
-	currentConfig := config.Load(d.root)
 	if d.graph.graphGeneration != snapshot.generation ||
 		ConfiguredInventoryFingerprint(snapshot.configured) != ConfiguredInventoryFingerprint(configuredAfter) ||
 		graphFilterFingerprint(snapshot.config) != graphFilterFingerprint(currentConfig) {
@@ -567,7 +588,7 @@ func (d *Daemon) applyDependencyGraph(snapshot dependencyGraphSnapshot, fg *scan
 }
 
 func (d *Daemon) markGraphLifecycle(status GraphLifecycle) {
-	state := newGraphState(d.root, config.Load(d.root), status, time.Time{}, nil)
+	state := newGraphState(d.root, d.loadConfig(), status, time.Time{}, nil)
 	d.graph.mu.Lock()
 	defer d.graph.mu.Unlock()
 	d.markGraphLifecycleLocked(state)

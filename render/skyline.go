@@ -78,43 +78,68 @@ type extAgg struct {
 	count int
 }
 
-// filterCodeFiles returns only source code files
-func filterCodeFiles(files []scanner.FileInfo) []scanner.FileInfo {
-	var result []scanner.FileInfo
-	for _, f := range files {
-		if codeExtensions[strings.ToLower(f.Ext)] || codeFilenames[filepath.Base(f.Path)] {
-			result = append(result, f)
-		}
-	}
-	if len(result) == 0 {
-		return files
-	}
-	return result
-}
-
 // aggregateByExtension groups files by extension
 func aggregateByExtension(files []scanner.FileInfo) []extAgg {
-	groups := make(map[string]*extAgg)
+	groups := make(map[string]extAgg)
 	for _, f := range files {
 		ext := strings.ToLower(f.Ext)
 		if ext == "" {
 			ext = filepath.Base(f.Path)
 		}
-		if groups[ext] == nil {
-			groups[ext] = &extAgg{ext: ext}
-		}
-		groups[ext].size += f.Size
-		groups[ext].count++
+		agg := groups[ext]
+		agg.ext = ext
+		agg.size += f.Size
+		agg.count++
+		groups[ext] = agg
 	}
 
 	var result []extAgg
 	for _, agg := range groups {
-		result = append(result, *agg)
+		result = append(result, agg)
 	}
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].size > result[j].size
-	})
+	sortExtensionAggregates(result)
 	return result
+}
+
+func aggregateSkylineFiles(files []scanner.FileInfo) ([]extAgg, int, int64) {
+	groups := make(map[string]extAgg)
+	count := 0
+	var size, allSize int64
+	for _, file := range files {
+		allSize += file.Size
+		ext := strings.ToLower(file.Ext)
+		if !codeExtensions[ext] && !codeFilenames[filepath.Base(file.Path)] {
+			continue
+		}
+		if ext == "" {
+			ext = filepath.Base(file.Path)
+		}
+		agg := groups[ext]
+		agg.ext = ext
+		agg.size += file.Size
+		agg.count++
+		groups[ext] = agg
+		count++
+		size += file.Size
+	}
+	if count == 0 {
+		return aggregateByExtension(files), len(files), allSize
+	}
+	result := make([]extAgg, 0, len(groups))
+	for _, agg := range groups {
+		result = append(result, agg)
+	}
+	sortExtensionAggregates(result)
+	return result, count, size
+}
+
+func sortExtensionAggregates(aggregates []extAgg) {
+	sort.Slice(aggregates, func(i, j int) bool {
+		if aggregates[i].size != aggregates[j].size {
+			return aggregates[i].size > aggregates[j].size
+		}
+		return aggregates[i].ext < aggregates[j].ext
+	})
 }
 
 // getBuildingChar returns building texture character
@@ -220,8 +245,7 @@ func Skyline(w io.Writer, project scanner.Project, animate bool) {
 		width = 80
 	}
 
-	codeFiles := filterCodeFiles(files)
-	sorted := aggregateByExtension(codeFiles)
+	sorted, codeFileCount, codeSize := aggregateSkylineFiles(files)
 	arranged := createBuildings(sorted, width)
 
 	if len(arranged) == 0 {
@@ -242,15 +266,15 @@ func Skyline(w io.Writer, project scanner.Project, animate bool) {
 
 	// If writer is not os.Stdout, disable animation
 	if animate && w == os.Stdout {
-		renderAnimated(w, arranged, width, leftMargin, sceneLeft, sceneRight, sceneWidth, codeFiles, projectName, sorted)
+		renderAnimated(w, arranged, width, leftMargin, sceneLeft, sceneRight, sceneWidth, codeFileCount, codeSize, projectName, sorted)
 	} else {
-		renderStatic(w, arranged, width, leftMargin, sceneLeft, sceneRight, sceneWidth, codeFiles, projectName, sorted)
+		renderStatic(w, arranged, width, leftMargin, sceneLeft, sceneRight, sceneWidth, codeFileCount, codeSize, projectName, sorted)
 	}
 }
 
 // renderStatic renders static skyline to the given writer
 func renderStatic(w io.Writer, arranged []building, width, leftMargin, sceneLeft, sceneRight, sceneWidth int,
-	codeFiles []scanner.FileInfo, projectName string, sorted []extAgg) {
+	codeFileCount int, codeSize int64, projectName string, sorted []extAgg) {
 	// Build grid
 	grid := make([][]rune, skyHeight+maxHeight+1)
 	for i := range grid {
@@ -383,11 +407,7 @@ func renderStatic(w io.Writer, arranged []building, width, leftMargin, sceneLeft
 	title := fmt.Sprintf("─── %s ───", projectName)
 	fmt.Fprintf(w, "%s%s%s\n", BoldWhite, CenterString(title, width), Reset)
 
-	var codeSize int64
-	for _, f := range codeFiles {
-		codeSize += f.Size
-	}
-	stats := fmt.Sprintf("%d languages · %d files · %s", len(sorted), len(codeFiles), formatSize(codeSize))
+	stats := fmt.Sprintf("%d languages · %d files · %s", len(sorted), codeFileCount, formatSize(codeSize))
 	fmt.Fprintf(w, "%s%s%s\n", Cyan, CenterString(stats, width), Reset)
 	fmt.Fprintln(w)
 }
@@ -400,7 +420,6 @@ type animationModel struct {
 	sceneLeft          int
 	sceneRight         int
 	sceneWidth         int
-	codeFiles          []scanner.FileInfo
 	projectName        string
 	sorted             []extAgg
 	starPositions      [][2]int
@@ -602,7 +621,7 @@ func (m animationModel) View() string {
 
 // renderAnimated renders animated skyline using bubbletea
 func renderAnimated(w io.Writer, arranged []building, width, leftMargin, sceneLeft, sceneRight, sceneWidth int,
-	codeFiles []scanner.FileInfo, projectName string, sorted []extAgg) {
+	codeFileCount int, codeSize int64, projectName string, sorted []extAgg) {
 	// Generate star positions
 	var starPositions [][2]int
 	for row := 0; row < skyHeight; row++ {
@@ -629,7 +648,6 @@ func renderAnimated(w io.Writer, arranged []building, width, leftMargin, sceneLe
 		sceneLeft:         sceneLeft,
 		sceneRight:        sceneRight,
 		sceneWidth:        sceneWidth,
-		codeFiles:         codeFiles,
 		projectName:       projectName,
 		sorted:            sorted,
 		starPositions:     starPositions,
@@ -643,7 +661,7 @@ func renderAnimated(w io.Writer, arranged []building, width, leftMargin, sceneLe
 	p.Run()
 
 	// After animation, print static final frame to main screen
-	renderStatic(w, arranged, width, leftMargin, sceneLeft, sceneRight, sceneWidth, codeFiles, projectName, sorted)
+	renderStatic(w, arranged, width, leftMargin, sceneLeft, sceneRight, sceneWidth, codeFileCount, codeSize, projectName, sorted)
 }
 
 func max(a, b int) int {

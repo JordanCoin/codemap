@@ -97,6 +97,18 @@ func TestLoad_ValidConfig(t *testing.T) {
 	}
 }
 
+func TestLoadFileReadsResolvedConfigPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policy.json")
+	if err := os.WriteFile(path, []byte(`{"only":["go"],"depth":2}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := LoadFile(path)
+	if len(cfg.Only) != 1 || cfg.Only[0] != "go" || cfg.Depth != 2 {
+		t.Fatalf("LoadFile() = %+v", cfg)
+	}
+}
+
 func TestLoad_PartialConfig(t *testing.T) {
 	dir := t.TempDir()
 	codemapDir := filepath.Join(dir, ".codemap")
@@ -198,7 +210,7 @@ func TestConfigPathAndLoadUseSelectedSetupRoot(t *testing.T) {
 	}
 }
 
-func makeLinkedConfigWorktreeFixture(t *testing.T) (primary, linked string) {
+func makeLinkedConfigWorktreeFixture(t testing.TB) (primary, linked string) {
 	t.Helper()
 	primary = t.TempDir()
 	gitDir := filepath.Join(primary, ".git", "worktrees", "agent")
@@ -224,6 +236,27 @@ func makeLinkedConfigWorktreeFixture(t *testing.T) (primary, linked string) {
 		t.Fatal(err)
 	}
 	return primary, linked
+}
+
+func BenchmarkLoadLinkedWorktreeConfig(b *testing.B) {
+	projectpath.ResetSetupRoot()
+	b.Cleanup(projectpath.ResetSetupRoot)
+	primary, linked := makeLinkedConfigWorktreeFixture(b)
+	path := filepath.Join(primary, ".codemap", "config.json")
+	if err := os.WriteFile(path, []byte(`{"only":["go"],"exclude":["vendor"]}`), 0o644); err != nil {
+		b.Fatal(err)
+	}
+
+	b.Run("resolve-root", func(b *testing.B) {
+		for b.Loop() {
+			_ = Load(linked)
+		}
+	})
+	b.Run("resolved-path", func(b *testing.B) {
+		for b.Loop() {
+			_ = LoadFile(path)
+		}
+	})
 }
 
 func TestPolicyDefaultsAndClamps(t *testing.T) {

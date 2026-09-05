@@ -19,7 +19,10 @@ func scanCUEFiles(ctx context.Context, root string, filters Filters) (ScanOutcom
 	if err != nil {
 		return ScanOutcome{}, err
 	}
-	return scanCUEFilesFromFiles(ctx, root, files)
+	outcome, err := scanCUEFilesFromFiles(ctx, root, files)
+	outcome.files = files
+	outcome.hasFileInventory = err == nil
+	return outcome, err
 }
 
 func scanCUEFilesFromFiles(ctx context.Context, root string, files []FileInfo) (ScanOutcome, error) {

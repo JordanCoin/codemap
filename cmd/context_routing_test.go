@@ -62,7 +62,7 @@ func TestContextLexicalRouting(t *testing.T) {
 	})
 
 	t.Run("normalized duplicates resolve once", func(t *testing.T) {
-		files := routingFiles("./cmd/context.go", "cmd/context.go", "internal/context.go")
+		files := routingFiles("./cmd/context.go", "cmd//context.go", "cmd/context.go/", "cmd/context.go", "internal/context.go")
 		got := resolveContextFilesWithCase("inspect cmd/./context.go and context", files, config.ProjectConfig{}, 2, false)
 		if want := []string{"cmd/context.go"}; !reflect.DeepEqual(got, want) {
 			t.Fatalf("normalized files = %#v, want %#v", got, want)
@@ -95,7 +95,7 @@ func TestContextLexicalRouting(t *testing.T) {
 	})
 
 	t.Run("case-folded exact collisions stay unresolved", func(t *testing.T) {
-		files := routingFiles("Cmd/Foo.go", "cmd/foo.go")
+		files := routingFiles("Cmd/Foo.go", "Root/a.go", "alpha/b.go", "cmd/foo.go")
 		got := resolveContextFilesWithCase(`inspect CMD\FOO.GO`, files, config.ProjectConfig{}, 2, true)
 		if len(got) != 0 {
 			t.Fatalf("case-collision files = %#v, want none", got)
@@ -142,6 +142,17 @@ func TestContextLexicalRouting(t *testing.T) {
 		got := resolveContextFilesWithCase("trace mcp -> final_build.rs -> graph.rs", files, cfg, 3, false)
 		want := []string{"src/final_build.rs", "src/graph.rs", "mcp/server.go"}
 		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("files = %#v, want %#v", got, want)
+		}
+	})
+
+	t.Run("case-folded subsystem route fills after an explicit match", func(t *testing.T) {
+		files := routingFiles("src/build/c.go", "SRC/build/a.go", "Src/Build/b.go")
+		cfg := config.ProjectConfig{Routing: config.RoutingConfig{
+			Subsystems: []config.Subsystem{{ID: "build", Keywords: []string{"overdrive"}, Paths: []string{"src/build"}}},
+		}}
+		got := resolveContextFilesWithCase("inspect SRC/build/a.go during overdrive", files, cfg, 2, true)
+		if want := []string{"SRC/build/a.go", "Src/Build/b.go"}; !reflect.DeepEqual(got, want) {
 			t.Fatalf("files = %#v, want %#v", got, want)
 		}
 	})
@@ -206,46 +217,153 @@ func routingFiles(paths ...string) []scanner.FileInfo {
 func TestContextFileIndexPrefixes(t *testing.T) {
 	index := newContextFileIndex(routingFiles("src/build/z.go", "src/build/a.go", "src/other.go"), false)
 	var got []string
-	index.forPrefix("src/build", func(path string) bool {
-		got = append(got, path)
-		return false
-	})
-	if want := []string{"src/build/a.go", "src/build/z.go"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("prefix files = %#v, want %#v", got, want)
-	}
-}
-
-func TestContextFileIndexPrefixesRespectBoundaries(t *testing.T) {
-	index := newContextFileIndex(routingFiles("src/build.go", "src/build/a.go", "src/building/b.go"), false)
-	var got []string
-	index.forPrefix("src/build", func(path string) bool {
+	index.forPrefix("src/build", 1, func(path string) bool {
 		got = append(got, path)
 		return false
 	})
 	if want := []string{"src/build/a.go"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("prefix files = %#v, want %#v", got, want)
+	}
+}
+
+func TestContextFileIndexReusesOrderedInventory(t *testing.T) {
+	index := newContextFileIndex(routingFiles("Root/a.go", "Root/b.go"), true)
+	index.preparePaths()
+	if !index.useInventory {
+		t.Fatal("ordered inventory used fallback index")
+	}
+
+	index = newContextFileIndex(routingFiles("Root/a.go", "alpha/b.go"), true)
+	index.preparePaths()
+	if index.useInventory {
+		t.Fatal("unordered case-folded inventory used binary search")
+	}
+	if len(index.sortedPaths) != 0 {
+		t.Fatal("unordered case-folded inventory built a fallback index")
+	}
+	match, unique := index.uniqueExact("alpha/b.go")
+	if !unique || match != "alpha/b.go" {
+		t.Fatalf("direct-scan exact match = %q, %v", match, unique)
+	}
+
+	index = newContextFileIndex(routingFiles(`Root\a.go`, `Root\b.go`), true)
+	index.preparePaths()
+	if !index.useInventory {
+		t.Fatal("ordered backslash-separated inventory used fallback index")
+	}
+	match, unique = index.uniqueExact("root/a.go")
+	if !unique || match != "Root/a.go" {
+		t.Fatalf("backslash-separated exact match = %q, %v", match, unique)
+	}
+	var prefixed []string
+	index.forPrefix("root", 2, func(path string) bool {
+		prefixed = append(prefixed, path)
+		return false
+	})
+	if want := []string{"Root/a.go", "Root/b.go"}; !reflect.DeepEqual(prefixed, want) {
+		t.Fatalf("backslash-separated prefix matches = %#v, want %#v", prefixed, want)
+	}
+	basenames := index.uniqueBasenames([]string{"b.go"})
+	if match, unique = basenames.unique("b.go"); !unique || match != "Root/b.go" {
+		t.Fatalf("backslash-separated basename match = %q, %v", match, unique)
+	}
+
+	index = newContextFileIndex(routingFiles("Root/a.go", `Root\a.go`), true)
+	index.preparePaths()
+	if index.useInventory {
+		t.Fatal("separator-normalized duplicate reused inventory")
+	}
+}
+
+func TestContextFileIndexPrefixesRespectBoundaries(t *testing.T) {
+	index := newContextFileIndex(routingFiles("src/build.go", "src/build", "src/build/a.go", "src/building/b.go"), false)
+	var got []string
+	index.forPrefix("src/build", 10, func(path string) bool {
+		got = append(got, path)
+		return false
+	})
+	if want := []string{"src/build", "src/build/a.go"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("boundary files = %#v, want %#v", got, want)
 	}
 }
 
-func TestContextFileIndexPrefixesRespectCaseFolding(t *testing.T) {
-	files := routingFiles("Src/Build/z.go", "src/build/a.go", "src/building/b.go")
-	index := newContextFileIndex(files, true)
-	if want := []string{"Src/Build/z.go", "src/build/a.go"}; !reflect.DeepEqual(index.prefixPaths["src/build"], want) {
-		t.Fatalf("case-folded prefix index = %#v, want %#v", index.prefixPaths["src/build"], want)
-	}
+func TestContextFileIndexPrefixLimitCountsUniquePaths(t *testing.T) {
+	index := newContextFileIndex(routingFiles("src/a.go", `src\a.go`, "src/b.go"), false)
 	var got []string
-	index.forPrefix(index.key("src/build"), func(path string) bool {
+	index.forPrefix("src", 2, func(path string) bool {
 		got = append(got, path)
 		return false
 	})
-	if want := []string{"Src/Build/z.go", "src/build/a.go"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"src/a.go", "src/b.go"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("prefix files = %#v, want %#v", got, want)
+	}
+}
+
+func TestContextFileIndexBasenamesUseLargeKeySet(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		files           []scanner.FileInfo
+		caseInsensitive bool
+		want            string
+	}{
+		{name: "ordered", files: routingFiles("other/a.go", "pkg/a.go", "pkg/b.go", "pkg/c.go", "pkg/d.go", "pkg/e.go"), want: "pkg/e.go"},
+		{name: "unordered", files: routingFiles("pkg/e.go", "pkg/d.go", "pkg/c.go", "pkg/b.go", "pkg/a.go", "other/a.go"), want: "pkg/e.go"},
+		{name: "normalized fallback", files: routingFiles("./pkg/e.go", "pkg/d.go", "pkg/c.go", "pkg/b.go", "pkg/a.go", "other/a.go"), want: "pkg/e.go"},
+		{name: "case-folded separators", files: routingFiles(`Other\a.go`, `Pkg\a.go`, `Pkg\b.go`, `Pkg\c.go`, `Pkg\d.go`, `Pkg\e.go`), caseInsensitive: true, want: "Pkg/e.go"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			index := newContextFileIndex(test.files, test.caseInsensitive)
+			keys := []string{"a.go", "b.go", "c.go", "d.go", "e.go"}
+			for keyIndex := range keys {
+				keys[keyIndex] = index.key(keys[keyIndex])
+			}
+			matches := index.uniqueBasenames(keys)
+			if _, unique := matches.unique(index.key("a.go")); unique {
+				t.Fatal("ambiguous basename resolved")
+			}
+			if got, unique := matches.unique(index.key("e.go")); !unique || got != test.want {
+				t.Fatalf("unique basename = %q, %v, want %s, true", got, unique, test.want)
+			}
+		})
+	}
+
+	index := newContextFileIndex(routingFiles("pkg/Ä.go", "pkg/b.go", "pkg/c.go", "pkg/d.go", "pkg/e.go"), true)
+	keys := []string{index.key("ä.go"), "b.go", "c.go", "d.go", "e.go"}
+	matches := index.uniqueBasenames(keys)
+	if got, unique := matches.unique(index.key("ä.go")); !unique || got != "pkg/Ä.go" {
+		t.Fatalf("Unicode basename = %q, %v, want pkg/Ä.go, true", got, unique)
+	}
+}
+
+func TestContextFileIndexPrefixesRespectCaseFolding(t *testing.T) {
+	files := routingFiles("src/Build/d.go", "Src/build/a.go", "SRC/BUILD/c.go", "src/build/b.go", "src/building/e.go")
+	index := newContextFileIndex(files, true)
+	if index.pathsReady {
+		t.Fatal("case-folded inventory prepared eagerly")
+	}
+	var got []string
+	index.forPrefix(index.key("src/build"), 2, func(path string) bool {
+		got = append(got, path)
+		return false
+	})
+	if want := []string{"SRC/BUILD/c.go", "Src/build/a.go"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("case-folded files = %#v, want %#v", got, want)
+	}
+	if !index.pathsReady {
+		t.Fatal("case-folded inventory was not prepared on demand")
 	}
 	cfg := config.ProjectConfig{Routing: config.RoutingConfig{
 		Subsystems: []config.Subsystem{{ID: "build", Keywords: []string{"build"}, Paths: []string{"src/build"}}},
 	}}
-	if got := resolveContextFilesWithCase("build", files, cfg, 1, true); !reflect.DeepEqual(got, []string{"Src/Build/z.go"}) {
+	if got := resolveContextFilesWithCase("build", files, cfg, 1, true); !reflect.DeepEqual(got, []string{"SRC/BUILD/c.go"}) {
 		t.Fatalf("case-folded top-k files = %#v, want first path", got)
+	}
+
+	index = newContextFileIndex(routingFiles("Ärea/a.go", "ärea/b.go"), true)
+	got = nil
+	index.forPrefix(index.key("ÄREA"), 2, func(path string) bool { got = append(got, path); return false })
+	if want := []string{"Ärea/a.go", "ärea/b.go"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Unicode case-folded files = %#v, want %#v", got, want)
 	}
 }
 

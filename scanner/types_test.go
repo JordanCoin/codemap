@@ -15,3 +15,14 @@ func TestNewDepsProjectWithCoverageAndFiltersClonesEffectiveFilters(t *testing.T
 		t.Fatalf("effective filters were not cloned: %+v", project.EffectiveFilters)
 	}
 }
+
+func TestResolverExtensionsReturnsIsolatedOrder(t *testing.T) {
+	first := ResolverExtensions()
+	if len(first) == 0 || first[len(first)-1] != "" {
+		t.Fatalf("extensions = %#v, want bare-path fallback last", first)
+	}
+	first[0] = "changed"
+	if second := ResolverExtensions(); second[0] == "changed" {
+		t.Fatal("caller mutation changed resolver extension order")
+	}
+}

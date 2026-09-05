@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"math/rand/v2"
-	"reflect"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -235,6 +235,27 @@ func TestGetTopLargeFilesFewerThan5(t *testing.T) {
 	}
 }
 
+func TestGetTopLargeFilesBreaksSizeTiesByPath(t *testing.T) {
+	files := []scanner.FileInfo{
+		{Path: "z.go", Size: 100, Ext: ".go"},
+		{Path: "f.go", Size: 100, Ext: ".go"},
+		{Path: "a.go", Size: 100, Ext: ".go"},
+		{Path: "b.go", Size: 100, Ext: ".go"},
+		{Path: "c.go", Size: 100, Ext: ".go"},
+		{Path: "d.go", Size: 100, Ext: ".go"},
+		{Path: "e.go", Size: 100, Ext: ".go"},
+	}
+	top := getTopLargeFiles(files)
+	for _, path := range []string{"a.go", "b.go", "c.go", "d.go", "e.go"} {
+		if !top[path] {
+			t.Fatalf("top files = %v, want %s", top, path)
+		}
+	}
+	if top["f.go"] || top["z.go"] {
+		t.Fatalf("top files include a larger tie-break path: %v", top)
+	}
+}
+
 func TestTreeNodeStructure(t *testing.T) {
 	// Test treeNode creation
 	node := &treeNode{
@@ -257,6 +278,17 @@ func TestTreeNodeStructure(t *testing.T) {
 	}
 	if len(node.children) != 1 {
 		t.Errorf("Expected 1 child, got %d", len(node.children))
+	}
+}
+
+func TestBuildTreeStructureCountsDuplicatePathOnce(t *testing.T) {
+	root := buildTreeStructure([]scanner.FileInfo{
+		{Path: filepath.Join("src", "main.go"), Size: 10},
+		{Path: filepath.Join("src", "main.go"), Size: 20},
+	})
+	count, size := getDirStats(root.children["src"])
+	if count != 1 || size != 20 {
+		t.Fatalf("duplicate path stats = (%d, %d), want (1, 20)", count, size)
 	}
 }
 
@@ -298,48 +330,6 @@ func TestGetSystemName(t *testing.T) {
 			got := getSystemName(tt.path)
 			if got != tt.want {
 				t.Errorf("getSystemName(%q) = %q, want %q", tt.path, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestFilterCodeFiles(t *testing.T) {
-	tests := []struct {
-		name  string
-		files []scanner.FileInfo
-		want  []scanner.FileInfo
-	}{
-		{
-			name: "filters to code extensions and known code filenames",
-			files: []scanner.FileInfo{
-				{Path: "main.go", Ext: ".go"},
-				{Path: "README.md", Ext: ".md"},
-				{Path: "Dockerfile", Ext: ""},
-				{Path: "assets/logo.png", Ext: ".png"},
-			},
-			want: []scanner.FileInfo{
-				{Path: "main.go", Ext: ".go"},
-				{Path: "Dockerfile", Ext: ""},
-			},
-		},
-		{
-			name: "returns original slice when no code files match",
-			files: []scanner.FileInfo{
-				{Path: "README.md", Ext: ".md"},
-				{Path: "assets/logo.png", Ext: ".png"},
-			},
-			want: []scanner.FileInfo{
-				{Path: "README.md", Ext: ".md"},
-				{Path: "assets/logo.png", Ext: ".png"},
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := filterCodeFiles(tt.files)
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("filterCodeFiles() = %#v, want %#v", got, tt.want)
 			}
 		})
 	}

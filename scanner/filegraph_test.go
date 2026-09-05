@@ -2,21 +2,17 @@ package scanner
 
 import (
 	"context"
-
-	"codemap/analysis"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"sort"
 	"testing"
+
+	"codemap/analysis"
 )
 
 func TestRustWorkspaceImportersRespectCrateBoundaries(t *testing.T) {
-	if !NewAstGrepAnalyzer().Available() {
-		t.Skip("ast-grep not available")
-	}
-
 	root := t.TempDir()
 	files := map[string]string{
 		"Cargo.toml": `[workspace]
@@ -57,9 +53,27 @@ but-api = { path = "../but-api" }
 		}
 	}
 
-	graph, err := BuildFileGraph(context.Background(), root, ConfiguredFilters(root))
+	analyses := []FileAnalysis{
+		{Path: "crate-a/src/lib.rs", Language: "rust", References: []ImportReference{{Path: "workspace", Kind: "rust-module"}}},
+		{Path: "crate-a/src/workspace.rs", Language: "rust"},
+		{Path: "but-api/src/lib.rs", Language: "rust", References: []ImportReference{{Path: "workspace", Kind: "rust-module"}}},
+		{Path: "but-api/src/workspace.rs", Language: "rust"},
+		{Path: "consumer/src/lib.rs", Language: "rust", References: []ImportReference{{Path: "but_api::workspace::run", Kind: "rust-path"}}},
+	}
+	metadata := cargoMetadataJSON(t, root, []map[string]any{
+		cargoPackage(root, "crate-a", "crate-a", "crate_a", nil),
+		cargoPackage(root, "but-api", "but-api", "but_api", nil),
+		cargoPackage(root, "consumer", "consumer", "consumer", []map[string]any{{
+			"name": "but-api",
+			"path": filepath.Join(root, "but-api"),
+		}}),
+	})
+	graph, err := buildFileGraphFromAnalysesWithCargoMetadata(
+		context.Background(), root, analyses,
+		func(context.Context, string) ([]byte, error) { return metadata, nil },
+	)
 	if err != nil {
-		t.Fatalf("BuildFileGraph() error: %v", err)
+		t.Fatalf("buildFileGraphFromAnalysesWithCargoMetadata() error: %v", err)
 	}
 
 	want := []string{"but-api/src/lib.rs", "consumer/src/lib.rs"}
@@ -185,8 +199,14 @@ func TestNormalizeImport(t *testing.T) {
 func TestBuildFileIndex(t *testing.T) {
 	files := []FileInfo{
 		{Path: "main.go"},
+		{Path: "exact.go"},
+		{Path: "exact.go.go"},
 		{Path: filepath.Join("pkg", "util", "helpers.go")},
+		{Path: filepath.Join("src", "foobar", "config.py")},
+		{Path: filepath.Join("src", "bar", "config.py")},
 		{Path: filepath.Join("src", "app", "core", "config.py")},
+		{Path: filepath.Join("ba", "café", "config.py")},
+		{Path: filepath.Join("az", "café", "config.py")},
 	}
 
 	idx := buildFileIndex(files, "example.com/project")
@@ -198,13 +218,41 @@ func TestBuildFileIndex(t *testing.T) {
 	}{
 		{
 			name: "exact lookup without extension",
-			got:  idx.byExact[filepath.Join("pkg", "util", "helpers")],
+			got:  tryExactMatch(filepath.Join("pkg", "util", "helpers"), idx, "go"),
 			want: []string{filepath.Join("pkg", "util", "helpers.go")},
 		},
 		{
+			name: "explicit extension wins before appended extensions",
+			got:  tryExactMatch("exact.go", idx, "go"),
+			want: []string{"exact.go"},
+		},
+		{
 			name: "suffix lookup for nested path",
-			got:  idx.bySuffix[filepath.Join("app", "core", "config.py")],
+			got:  idx.suffixMatches(filepath.Join("app", "core", "config.py")),
 			want: []string{filepath.Join("src", "app", "core", "config.py")},
+		},
+		{
+			name: "ambiguous Unicode suffix lookup",
+			got:  idx.suffixMatches(filepath.Join("café", "config.py")),
+			want: []string{
+				filepath.Join("az", "café", "config.py"),
+				filepath.Join("ba", "café", "config.py"),
+			},
+		},
+		{
+			name: "suffix lookup requires a directory boundary",
+			got:  idx.suffixMatches(filepath.Join("bar", "config.py")),
+			want: []string{filepath.Join("src", "bar", "config.py")},
+		},
+		{
+			name: "exact path is not a nested suffix match",
+			got:  idx.suffixMatches(filepath.Join("src", "bar", "config.py")),
+			want: nil,
+		},
+		{
+			name: "empty suffix has no matches",
+			got:  idx.suffixMatches(""),
+			want: nil,
 		},
 		{
 			name: "directory lookup",
@@ -224,6 +272,11 @@ func TestBuildFileIndex(t *testing.T) {
 				t.Errorf("%s: got %v, want %v", tt.name, tt.got, tt.want)
 			}
 		})
+	}
+
+	duplicate := buildFileIndex([]FileInfo{{Path: "duplicate.go"}, {Path: "duplicate.go"}}, "")
+	if got := tryExactMatch("duplicate", duplicate, "go"); got != nil {
+		t.Fatalf("duplicate exact match = %#v, want ambiguous", got)
 	}
 }
 
@@ -310,6 +363,43 @@ func TestTrySuffixMatch(t *testing.T) {
 				t.Errorf("trySuffixMatch(%q) = %v, want %v", tt.normalized, got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestSuffixMatchesMatchesLinearScan(t *testing.T) {
+	paths := []string{
+		filepath.Join("src", "alpha", "config.go"),
+		filepath.Join("src", "alphabet", "config.go"),
+		filepath.Join("vendor", "alpha", "config.go"),
+		filepath.Join("alpha", "nested", "config.go"),
+		filepath.Join("src", "café", "config.go"),
+		"config.go",
+	}
+	files := make([]FileInfo, len(paths))
+	for i, path := range paths {
+		files[i].Path = path
+	}
+	idx := buildFileIndex(files, "")
+
+	for _, suffix := range []string{
+		"",
+		"config.go",
+		filepath.Join("alpha", "config.go"),
+		filepath.Join("alphabet", "config.go"),
+		filepath.Join("nested", "config.go"),
+		filepath.Join("café", "config.go"),
+		filepath.Join("missing", "config.go"),
+	} {
+		var want []string
+		for _, path := range paths {
+			if suffix != "" && hasPathSuffix(path, suffix) {
+				want = append(want, path)
+			}
+		}
+		sort.Strings(want)
+		if got := idx.suffixMatches(suffix); !reflect.DeepEqual(got, want) {
+			t.Fatalf("suffixMatches(%q) = %#v, want %#v", suffix, got, want)
+		}
 	}
 }
 
