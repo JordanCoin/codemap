@@ -501,6 +501,14 @@ func fuzzyResolveWithWorkspace(
 
 	// Strategy 2: Relative path resolution (./foo, ../bar)
 	if strings.HasPrefix(imp, ".") {
+		// Python spells relative imports as a run of dots that counts package
+		// levels, not as path segments: "from .mod import x" is a sibling
+		// module, not a directory called ".mod". Routing it through the
+		// JS-shaped resolver produced "pkg/.mod", which matches nothing, so
+		// every intra-package edge in a Python project was lost.
+		if sourceLanguage == "python" {
+			return resolvePythonRelative(imp, fromDir, idx)
+		}
 		return resolveRelative(imp, fromDir, idx, sourceLanguage)
 	}
 
@@ -613,6 +621,54 @@ func normalizeImport(imp string) string {
 	}
 
 	return imp
+}
+
+// resolvePythonRelative resolves a Python relative import. One leading dot
+// means the current package, and each additional dot climbs one package: so
+// from "pkg/sub/user.py", ".mod" is pkg/sub/mod and "..mod" is pkg/mod. What
+// follows the dots is a dotted module path, where each dot is a directory
+// separator.
+//
+// A bare run of dots ("from . import mod") names the package, not a module;
+// the imported name lives in the import list rather than the path, so it is
+// recovered during extraction. Anything that still arrives here as dots alone
+// resolves to nothing rather than to a guess at which file was meant.
+func resolvePythonRelative(imp, fromDir string, idx *fileIndex) []string {
+	level := 0
+	for level < len(imp) && imp[level] == '.' {
+		level++
+	}
+	module := imp[level:]
+	if module == "" {
+		return nil
+	}
+
+	targetDir := fromDir
+	for i := 1; i < level; i++ {
+		// filepath.Dir("") is ".", which normalizes back to "", so an
+		// unchecked loop clamps at the scan root and a dot count deeper than
+		// the file resolves to a root-level module it never named. Climbing
+		// past the root has to resolve to nothing: the package above the root
+		// is not visible, and guessing produces a fabricated edge.
+		if targetDir == "" {
+			return nil
+		}
+		targetDir = filepath.Dir(targetDir)
+		if targetDir == "." {
+			targetDir = ""
+		}
+	}
+
+	candidate := filepath.FromSlash(strings.ReplaceAll(module, ".", "/"))
+	if targetDir != "" {
+		candidate = filepath.Join(targetDir, candidate)
+	}
+	if files := tryExactMatch(candidate, idx, "python"); len(files) > 0 {
+		return files
+	}
+	// A package rather than a module: "from .sub import x" where sub/ is a
+	// package directory resolves to its __init__.py.
+	return tryExactMatch(filepath.Join(candidate, "__init__"), idx, "python")
 }
 
 // resolveRelative handles ./foo and ../bar style imports
