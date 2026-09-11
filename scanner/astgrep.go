@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -513,6 +514,10 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 			if mod != "" {
 				fileMap[relPath].Imports = append(fileMap[relPath].Imports, mod)
 			}
+		} else if strings.HasSuffix(m.RuleID, "-types") {
+			if name := extractTypeName(m.Text); name != "" {
+				fileMap[relPath].Types = append(fileMap[relPath].Types, name)
+			}
 		} else if strings.HasSuffix(m.RuleID, "-functions") {
 			// Extract function name from text
 			name := extractFunctionName(m.Text, fileMap[relPath].Language)
@@ -526,6 +531,7 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 	var results []FileAnalysis
 	for _, a := range fileMap {
 		a.Functions = dedupe(a.Functions)
+		a.Types = dedupe(a.Types)
 		a.Imports = dedupe(a.Imports)
 		a.References = dedupeImportReferences(a.References)
 		results = append(results, *a)
@@ -695,6 +701,25 @@ func extractImportPath(text string) string {
 	}
 
 	return ""
+}
+
+// typeDeclarationName picks the declared name out of a Swift type declaration.
+// tree-sitter-swift files class, struct, enum, actor and extension under one
+// node kind; an extension declares nothing new, so it yields no name. The
+// keyword must be the first token after modifiers so that a nested "class
+// func" or "class var" inside the body is never read as a declaration.
+var typeDeclarationName = regexp.MustCompile(`^(?:(?:public|private|internal|fileprivate|open|final|indirect|@[A-Za-z_]+(?:\([^)]*\))?)\s+)*(class|struct|enum|actor|protocol)\s+([A-Za-z_][A-Za-z0-9_]*)`)
+
+func extractTypeName(text string) string {
+	m := typeDeclarationName.FindStringSubmatch(strings.TrimSpace(text))
+	if m == nil {
+		return ""
+	}
+	switch m[2] {
+	case "func", "var", "let", "init":
+		return ""
+	}
+	return m[2]
 }
 
 func extractFunctionName(text string, lang string) string {
