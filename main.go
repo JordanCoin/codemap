@@ -395,6 +395,9 @@ func main() {
 	}
 
 	// Load project config (CLI flags take precedence)
+	if tempDir == "" {
+		cmd.EnsureProjectConfig(absRoot)
+	}
 	projCfg := config.Load(absRoot)
 	if len(only) == 0 && len(projCfg.Only) > 0 {
 		only = projCfg.Only

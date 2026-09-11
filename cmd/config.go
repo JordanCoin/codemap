@@ -19,8 +19,72 @@ var errConfigExists = errors.New("config already exists")
 type configInitResult struct {
 	Path         string
 	TopExts      []string
+	Exclude      []string
 	TotalFiles   int
 	MatchedFiles int
+}
+
+// noiseDirs are directories that are never project source and that the
+// scanner does not already skip (Pods, build, dist, vendor, node_modules,
+// target, DerivedData, testdata live in scanner.IgnoredDirs). Init excludes
+// one only when it exists at the root or one level down, so a config never
+// carries excludes for noise the repo does not have.
+var noiseDirs = []string{"Carthage", "coverage", "fixtures", "__snapshots__", ".xcassets"}
+
+// noiseExts are binary assets excluded when a repo carries them in volume.
+var noiseExts = []string{"png", "jpg", "gif", "pdf", "otf", "ttf", "mp3", "mp4", "zip"}
+
+const noiseExtThreshold = 10
+
+// detectNoise returns exclude patterns for noise that is present in files.
+func detectNoise(files []scanner.FileInfo) []string {
+	dirs := make(map[string]bool)
+	extCount := make(map[string]int)
+	for _, f := range files {
+		parts := strings.Split(filepath.ToSlash(f.Path), "/")
+		for i := 0; i < len(parts)-1 && i < 2; i++ {
+			for _, noise := range noiseDirs {
+				if parts[i] == noise || (strings.HasPrefix(noise, ".") && strings.HasSuffix(parts[i], noise)) {
+					dirs[noise] = true
+				}
+			}
+		}
+		extCount[strings.TrimPrefix(strings.ToLower(f.Ext), ".")]++
+	}
+	var out []string
+	for _, noise := range noiseDirs {
+		if dirs[noise] {
+			out = append(out, noise)
+		}
+	}
+	for _, ext := range noiseExts {
+		if extCount[ext] >= noiseExtThreshold {
+			out = append(out, "."+ext)
+		}
+	}
+	return out
+}
+
+// EnsureProjectConfig writes an auto-detected .codemap/config.json when none
+// exists and root is a git checkout. Every analysis entry point calls this so
+// a repo never stays in the "missing" state past its first codemap command.
+// Write failures (read-only checkout) are silent: the caller still runs.
+func EnsureProjectConfig(root string) bool {
+	if _, err := os.Stat(config.ConfigPath(root)); err == nil {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(root, ".git")); err != nil {
+		return false
+	}
+	if _, err := initProjectConfig(root); err != nil {
+		return false
+	}
+	// Only a person at a terminal needs the notice; piped consumers that
+	// merge stderr into a JSON stream must not see it.
+	if info, err := os.Stderr.Stat(); err == nil && info.Mode()&os.ModeCharDevice != 0 {
+		fmt.Fprintln(os.Stderr, "codemap: wrote .codemap/config.json (auto-detected); tune with: codemap skill show config-setup")
+	}
+	return true
 }
 
 // nonCodeExtensions are extensions excluded from "config init" auto-detection.
@@ -37,6 +101,8 @@ var nonCodeExtensions = map[string]bool{
 	"log": true, "jsonl": true, "pid": true, "tmp": true,
 	"bak": true, "out": true, "cache": true, "swp": true,
 	"gitignore": true, "gitattributes": true, "editorconfig": true,
+	// Binary assets: an `only` slot for these contradicts the noise excludes.
+	"otf": true, "pdf": true, "mp3": true, "mp4": true, "zip": true,
 }
 
 // RunConfig dispatches the "config" subcommand.
@@ -86,6 +152,9 @@ func configInit(root string) {
 		fmt.Println("No code extensions detected — wrote empty config.")
 	} else {
 		fmt.Printf("  only: %s\n", strings.Join(result.TopExts, ", "))
+		if len(result.Exclude) > 0 {
+			fmt.Printf("  exclude: %s\n", strings.Join(result.Exclude, ", "))
+		}
 		if result.TotalFiles > 0 {
 			fmt.Printf("  (%d of %d files)\n", result.MatchedFiles, result.TotalFiles)
 		}
@@ -138,7 +207,10 @@ func initProjectConfig(root string) (configInitResult, error) {
 		result.TopExts = append(result.TopExts, e.Ext)
 	}
 
-	cfg := config.ProjectConfig{Only: result.TopExts}
+	// Mode is written explicitly: an init that looked for noise is a
+	// decision, not a bootstrap, so the config assesses as ready.
+	result.Exclude = detectNoise(files)
+	cfg := config.ProjectConfig{Only: result.TopExts, Exclude: result.Exclude, Mode: "auto"}
 
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0755); err != nil {
 		return result, fmt.Errorf("create .codemap directory: %w", err)

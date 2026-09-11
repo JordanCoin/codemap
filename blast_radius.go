@@ -442,6 +442,7 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 		return blastRadiusBundle{}, &blastRadiusDiffError{ref: ref, err: err}
 	}
 
+	cmd.EnsureProjectConfig(absRoot)
 	cfg := config.Load(absRoot)
 	filters := scanner.Filters{Only: cfg.Only, Exclude: cfg.Exclude}
 	gitCache := scanner.NewGitIgnoreCache(absRoot)

@@ -573,8 +573,11 @@ func TestShowConfigSetupHint(t *testing.T) {
 		if !strings.Contains(out, "codemap:config") {
 			t.Fatalf("expected config marker, got:\n%s", out)
 		}
-		if !strings.Contains(out, "config setup recommended") {
-			t.Fatalf("expected setup heading, got:\n%s", out)
+		if !strings.Contains(out, "🛑 Codemap setup is not finished. Before continuing the user's task") {
+			t.Fatalf("expected escalated setup heading, got:\n%s", out)
+		}
+		if !strings.Contains(out, "Run now: codemap skill show config-setup") {
+			t.Fatalf("expected run-now line, got:\n%s", out)
 		}
 		if !strings.Contains(out, "config-setup") {
 			t.Fatalf("expected config-setup guidance, got:\n%s", out)
@@ -592,6 +595,18 @@ func TestShowConfigSetupHint(t *testing.T) {
 		out := captureOutput(func() { showConfigSetupHint(root) })
 		if strings.TrimSpace(out) != "" {
 			t.Fatalf("expected no output for ready config, got:\n%s", out)
+		}
+	})
+
+	t.Run("boilerplate config escalates", func(t *testing.T) {
+		root := t.TempDir()
+		writeProjectConfig(t, root, config.ProjectConfig{Only: []string{"go"}})
+		out := captureOutput(func() { showConfigSetupHint(root) })
+		if !strings.Contains(out, "🛑 Codemap setup is not finished. Before continuing the user's task") {
+			t.Fatalf("expected escalated line for boilerplate config, got:\n%s", out)
+		}
+		if !strings.Contains(out, `"state":"boilerplate"`) {
+			t.Fatalf("expected boilerplate marker, got:\n%s", out)
 		}
 	})
 }
