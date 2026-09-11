@@ -31,13 +31,25 @@ func runFindSubcommand(args []string, launchDir string) int {
 		fmt.Fprintln(os.Stderr, "Options:")
 		fs.PrintDefaults()
 	}
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
+	// Flags may follow the query (`codemap find "theme" --limit 3`), so keep
+	// parsing until only positional words remain.
+	var words []string
+	rest := args
+	for {
+		if err := fs.Parse(rest); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return 0
+			}
+			return 2
 		}
-		return 2
+		rest = fs.Args()
+		if len(rest) == 0 {
+			break
+		}
+		words = append(words, rest[0])
+		rest = rest[1:]
 	}
-	query := strings.TrimSpace(strings.Join(fs.Args(), " "))
+	query := strings.TrimSpace(strings.Join(words, " "))
 	if query == "" {
 		fmt.Fprintln(os.Stderr, "Error: codemap find needs a query")
 		return 2
@@ -59,6 +71,7 @@ func runFindSubcommand(args []string, launchDir string) int {
 		return 1
 	}
 
+	cmd.EnsureProjectConfig(absRoot)
 	cfg := config.Load(absRoot)
 	report, err := find.Run(context.Background(), absRoot, scanner.Filters{Only: cfg.Only, Exclude: cfg.Exclude}, query, *limit)
 	if err != nil {

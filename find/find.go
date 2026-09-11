@@ -81,7 +81,7 @@ func Rank(analyses []scanner.FileAnalysis, query string, limit int) []Hit {
 	df := make(map[string]int)
 	totalLen := 0
 	for i, a := range analyses {
-		docs[i] = tokenize(strings.Join(append([]string{a.Path}, a.Functions...), " "))
+		docs[i] = tokenize(strings.Join(append(append([]string{a.Path}, a.Functions...), a.Types...), " "))
 		totalLen += len(docs[i])
 		for _, tok := range unique(docs[i]) {
 			df[tok]++
@@ -197,7 +197,7 @@ func names(a scanner.FileAnalysis) []string {
 	if i := strings.LastIndexAny(base, `/\`); i >= 0 {
 		base = base[i+1:]
 	}
-	return append([]string{base}, a.Functions...)
+	return append(append([]string{base}, a.Functions...), a.Types...)
 }
 
 // hasWord reports whether q is one of name's split words (loadTheme has

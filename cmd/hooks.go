@@ -1031,6 +1031,12 @@ func showMatchedSkills(root string, intent TaskIntent) {
 		names[i] = r.Name
 	}
 	fmt.Printf("Skills matched: %s — run `codemap skill show <name>` for guidance\n", strings.Join(names, ", "))
+	for _, r := range refs {
+		if r.Name == "config-setup" && strings.HasPrefix(r.Reason, "config:") {
+			fmt.Println("🛑 Codemap setup is not finished. Before continuing the user's task: run `codemap skill show config-setup`, tune .codemap/config.json, rerun `codemap .`, then proceed.")
+			break
+		}
+	}
 }
 
 type codemapNextStep struct {
