@@ -9,8 +9,10 @@ import (
 )
 
 // A Swift project is the clearest case of a language whose files never import
-// each other: the graph is structurally empty, so reporting complete coverage
-// tells a consumer a change is isolated when nothing checked that.
+// each other. Type-name reference resolution recovers the edges, but it is a
+// name match rather than compiler resolution, so coverage must never read as
+// complete: a consumer would conclude a change is isolated when nothing
+// checked that.
 func TestSwiftFixtureNeverReportsCompleteCoverage(t *testing.T) {
 	graph, err := BuildFileGraph(context.Background(), "../testdata/symbol-imports-swift", Filters{})
 	if err != nil {
@@ -19,16 +21,28 @@ func TestSwiftFixtureNeverReportsCompleteCoverage(t *testing.T) {
 	if graph.Coverage.Status == analysis.CoverageComplete {
 		t.Fatalf("swift fixture coverage = %q, want anything but complete", graph.Coverage.Status)
 	}
-	if edges := len(graph.Imports) + len(graph.Importers); edges != 0 {
-		t.Fatalf("swift fixture produced %d edges, want 0 (the fixture has no file-level imports)", edges)
+	// Same-module files never import each other, so every edge here comes
+	// from type-name reference resolution: B.swift mentions a type A.swift
+	// declares, so B -> A. Coverage stays partial and the source says mixed.
+	if got := graph.Imports["Sources/App/UserViewModel.swift"]; len(got) != 1 || got[0] != "Sources/App/Models.swift" {
+		t.Fatalf("UserViewModel.swift imports = %v, want exactly [Sources/App/Models.swift] (it mentions User)", got)
+	}
+	if got := graph.Imports["Sources/App/ContentView.swift"]; len(got) != 1 || got[0] != "Sources/App/UserViewModel.swift" {
+		t.Fatalf("ContentView.swift imports = %v, want exactly [Sources/App/UserViewModel.swift]", got)
+	}
+	if got := graph.Imports["Sources/App/Models.swift"]; len(got) != 0 {
+		t.Fatalf("Models.swift imports = %v, want none (it references no project type)", got)
 	}
 
 	var named bool
 	for _, source := range graph.Coverage.Sources {
 		if source.Name == "symbol-imports/swift" {
 			named = true
-			if !strings.Contains(source.Detail, "Swift (3 files)") {
-				t.Fatalf("source detail = %q, want it to name the language and file count", source.Detail)
+			if source.Status != analysis.SourceMixed {
+				t.Fatalf("symbol-imports/swift status = %q, want mixed once type-name edges are resolved", source.Status)
+			}
+			if !strings.Contains(source.Detail, "Swift (3 files)") || !strings.Contains(source.Detail, "type-name reference") {
+				t.Fatalf("source detail = %q, want it to name the language, file count and resolver", source.Detail)
 			}
 		}
 	}
@@ -144,8 +158,8 @@ func TestFixtureImporterListsAreExact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build swift fixture graph: %v", err)
 	}
-	if got := swift.Importers["Sources/App/Models.swift"]; len(got) != 0 {
-		t.Fatalf("swift Models.swift importers = %v, want none (no file-level import exists to find)", got)
+	if got := swift.Importers["Sources/App/Models.swift"]; len(got) != 1 || got[0] != "Sources/App/UserViewModel.swift" {
+		t.Fatalf("swift Models.swift importers = %v, want exactly [Sources/App/UserViewModel.swift] (the one file that mentions User)", got)
 	}
 
 	golang, err := BuildFileGraph(context.Background(), "../testdata/file-imports-go", Filters{})
@@ -168,6 +182,29 @@ func TestEffectiveStatusSpellsOutComplete(t *testing.T) {
 	for _, status := range []analysis.CoverageStatus{analysis.CoveragePartial, analysis.CoverageUnavailable} {
 		if got := (GraphCoverage{Status: status}).EffectiveStatus(); got != status {
 			t.Fatalf("EffectiveStatus() = %q, want %q preserved", got, status)
+		}
+	}
+}
+
+// The declaration head decides the name: "class func" is a static method, not
+// a type, and an extension declares nothing new.
+func TestExtractTypeName(t *testing.T) {
+	cases := map[string]string{
+		"public final class Foo<T>: Bar { }":    "Foo",
+		"struct Baz: Codable { }":               "Baz",
+		"indirect enum Qux { case a }":          "Qux",
+		"actor Act { }":                         "Act",
+		"protocol Proto: AnyObject { }":         "Proto",
+		"@objc class Obj: NSObject { }":         "Obj",
+		"@available(iOS 15, *) struct Av { }":   "Av",
+		"extension Foo { }":                     "",
+		"class func shared() -> Foo { }":        "",
+		"class var count: Int { 0 }":            "",
+		"class Outer {\n  class func f() {}\n}": "Outer",
+	}
+	for text, want := range cases {
+		if got := extractTypeName(text); got != want {
+			t.Errorf("extractTypeName(%q) = %q, want %q", text, got, want)
 		}
 	}
 }

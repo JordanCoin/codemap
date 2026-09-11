@@ -92,6 +92,11 @@ make deps
 - Run `go fmt` before committing
 - Test your changes with `./codemap` on a real project
 
+
+## Every line codemap prints
+
+Output is reviewed against [docs/OUTPUT-STANDARD.md](docs/OUTPUT-STANDARD.md): sourced, precise, bounded, useful. A PR that adds or changes a printed line quotes it and says which tests it passes.
+
 ## Questions?
 
 Open an issue or reach out. We're happy to help!

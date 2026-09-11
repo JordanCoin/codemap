@@ -177,3 +177,50 @@ func TestInitProjectConfigSkipsNoiseExtensions(t *testing.T) {
 		t.Fatalf("TopExts = %v, want [go]", result.TopExts)
 	}
 }
+
+func TestInitProjectConfigExcludesPresentNoise(t *testing.T) {
+	root := t.TempDir()
+	mustWriteConfigFixture(t, filepath.Join(root, "App", "main.swift"), "import UIKit\n")
+	mustWriteConfigFixture(t, filepath.Join(root, "App", "view.swift"), "import UIKit\n")
+	mustWriteConfigFixture(t, filepath.Join(root, "Carthage", "Build", "Alamofire.swift"), "import Foundation\n")
+	for i := 0; i < 20; i++ {
+		mustWriteConfigFixture(t, filepath.Join(root, "App", "Assets.xcassets", "icon"+strings.Repeat("x", i)+".png"), "png\n")
+	}
+
+	result, err := initProjectConfig(root)
+	if err != nil {
+		t.Fatalf("initProjectConfig: %v", err)
+	}
+	if got, want := strings.Join(result.Exclude, ","), "Carthage,.xcassets,.png"; got != want {
+		t.Fatalf("Exclude = %q, want %q", got, want)
+	}
+	if got := config.AssessSetup(root).State; got != config.SetupStateReady {
+		t.Fatalf("state after init = %q, want ready", got)
+	}
+}
+
+func TestEnsureProjectConfigWritesOnlyInsideRepos(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteConfigFixture(t, filepath.Join(repo, "main.go"), "package main\n")
+	if !EnsureProjectConfig(repo) {
+		t.Fatal("expected config to be written in a repo")
+	}
+	if _, err := os.Stat(config.ConfigPath(repo)); err != nil {
+		t.Fatalf("config not written: %v", err)
+	}
+	if EnsureProjectConfig(repo) {
+		t.Fatal("second call must not rewrite an existing config")
+	}
+
+	plain := t.TempDir()
+	mustWriteConfigFixture(t, filepath.Join(plain, "main.go"), "package main\n")
+	if EnsureProjectConfig(plain) {
+		t.Fatal("must not write config outside a repo")
+	}
+	if _, err := os.Stat(config.ConfigPath(plain)); !os.IsNotExist(err) {
+		t.Fatalf("config unexpectedly present in non-repo: %v", err)
+	}
+}

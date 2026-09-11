@@ -40,6 +40,7 @@ type FileAnalysis struct {
 	Language   string            `json:"language"`
 	Package    string            `json:"-"`
 	Functions  []string          `json:"functions"`
+	Types      []string          `json:"types,omitempty"`
 	Imports    []string          `json:"imports"`
 	References []ImportReference `json:"-"`
 }
@@ -135,11 +136,13 @@ func newDepsProjectWithFilters(root string, files []FileAnalysis, externalDeps m
 		if files[index].Functions == nil {
 			files[index].Functions = []string{}
 		}
+		files[index].Types = slices.Clone(files[index].Types)
 		files[index].Imports = slices.Clone(files[index].Imports)
 		if files[index].Imports == nil {
 			files[index].Imports = []string{}
 		}
 		slices.Sort(files[index].Functions)
+		slices.Sort(files[index].Types)
 		slices.Sort(files[index].Imports)
 	}
 	sort.Slice(files, func(i, j int) bool {

@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"codemap/config"
+	"codemap/find"
 	"codemap/handoff"
 	"codemap/internal/buildinfo"
 	"codemap/internal/projectpath"
@@ -76,6 +77,7 @@ var statusTools = []statusTool{
 	{"get_diff", "Changed files vs branch"},
 	{"find_file", "Search by filename"},
 	{"get_importers", "Find what imports a file"},
+	{"find", "Rank files by path and symbol match"},
 	{"status", "Verify MCP connection"},
 	{"start_watch", "Start watching a project"},
 	{"stop_watch", "Stop watching a project"},
@@ -169,6 +171,12 @@ type FindInput struct {
 	Pattern string `json:"pattern" jsonschema:"Filename pattern to search for (case-insensitive substring match)"`
 }
 
+type FindQueryInput struct {
+	Path  string `json:"path" jsonschema:"Path to the project directory to search"`
+	Query string `json:"query" jsonschema:"Natural-language or identifier query, e.g. 'theme persistence' or 'loadTheme'"`
+	Limit int    `json:"limit,omitempty" jsonschema:"Maximum hits to return (default 10)"`
+}
+
 type ImportersInput struct {
 	Path string `json:"path" jsonschema:"Path to the project directory"`
 	File string `json:"file" jsonschema:"Relative path to the file to check (e.g. src/utils.ts)"`
@@ -247,6 +255,12 @@ func NewServer(options RuntimeOptions) *mcp.Server {
 		Description:  "Find all files that import/depend on a specific file. Use this to understand the impact of changing a file.",
 		OutputSchema: mustSchemaFor[ImportersOutput](),
 	}, handleGetImporters)
+
+	// Tool: find - Rank files against a query using paths and function names
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "find",
+		Description: "Rank project files by how well their path and function names match a query (lexical BM25 over split identifiers). Each hit reports importer count and hub status, so it says where the code is and how risky it is to edit. Use before grep when you know what the code does but not where it lives.",
+	}, handleFind)
 
 	// Tool: status - Verify MCP connection
 	mcp.AddTool(server, &mcp.Tool{
@@ -905,6 +919,29 @@ func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input Imp
 	}
 
 	return textResult(fmt.Sprintf("%d files import '%s':%s\n%s%s", len(importers), file, hubNote, strings.Join(importers, "\n"), mcpCoverageText(fg))), structured, nil
+}
+
+func handleFind(ctx context.Context, req *mcp.CallToolRequest, input FindQueryInput) (*mcp.CallToolResult, any, error) {
+	if cancelled := cancellationResult(ctx, "Find"); cancelled != nil {
+		return cancelled, nil, nil
+	}
+	absRoot, invalid := validateProjectPath(input.Path)
+	if invalid != nil {
+		return invalid, nil, nil
+	}
+	if strings.TrimSpace(input.Query) == "" {
+		return errorResult("find needs a query"), nil, nil
+	}
+	report, err := find.Run(ctx, absRoot, scanner.ConfiguredFilters(absRoot), input.Query, input.Limit)
+	if err != nil {
+		if cancelled := cancellationResult(ctx, "Find"); cancelled != nil {
+			return cancelled, nil, nil
+		}
+		return errorResult("Failed to scan project: " + err.Error()), nil, nil
+	}
+	var buf strings.Builder
+	find.Render(&buf, report)
+	return textResult(buf.String()), nil, nil
 }
 
 func normalizeImporterFile(root, file string) string {

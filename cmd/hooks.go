@@ -412,6 +412,7 @@ func hookSessionStart(root string) error {
 		state = waitForDaemonState(root, 2*time.Second)
 	}
 	fileCount, fileCountKnown = configuredStateFileCount(root, state)
+	EnsureProjectConfig(root)
 	projCfg := config.Load(root)
 	structureBudget := projCfg.SessionStartOutputBytes()
 	maxHubs := projCfg.HubDisplayLimit()
@@ -887,6 +888,7 @@ func hookPromptSubmit(root string) error {
 		return nil
 	}
 
+	EnsureProjectConfig(root)
 	projCfg := config.Load(root)
 	topK := projCfg.RoutingTopKOrDefault()
 	info := getValidatedHubInfo(root)
@@ -1029,6 +1031,12 @@ func showMatchedSkills(root string, intent TaskIntent) {
 		names[i] = r.Name
 	}
 	fmt.Printf("Skills matched: %s — run `codemap skill show <name>` for guidance\n", strings.Join(names, ", "))
+	for _, r := range refs {
+		if r.Name == "config-setup" && strings.HasPrefix(r.Reason, "config:") {
+			fmt.Println("🛑 Codemap setup is not finished. Before continuing the user's task: run `codemap skill show config-setup`, tune .codemap/config.json, rerun `codemap .`, then proceed.")
+			break
+		}
+	}
 }
 
 type codemapNextStep struct {
@@ -1195,11 +1203,11 @@ func showConfigSetupHint(root string) {
 		fmt.Printf("<!-- codemap:config %s -->\n", string(data))
 	}
 
-	fmt.Println("⚙️  Codemap config setup recommended:")
+	fmt.Println("🛑 Codemap setup is not finished. Before continuing the user's task: run `codemap skill show config-setup`, tune .codemap/config.json, rerun `codemap .`, then proceed.")
 	for _, reason := range assessment.Reasons {
 		fmt.Printf("   • %s\n", reason)
 	}
-	fmt.Println("   • Run `codemap skill show config-setup` and tune `.codemap/config.json` before deeper analysis.")
+	fmt.Println("Run now: codemap skill show config-setup")
 	fmt.Println()
 }
 

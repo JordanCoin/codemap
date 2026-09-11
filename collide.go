@@ -233,6 +233,7 @@ func runCollideSubcommand(args []string, launchDir string) int {
 		return 1
 	}
 
+	cmd.EnsureProjectConfig(resolvedRoot)
 	cfg := config.Load(resolvedRoot)
 	filters := scanner.Filters{Only: cfg.Only, Exclude: cfg.Exclude}
 	// The scan outcome is kept rather than discarded: a package-resolved
