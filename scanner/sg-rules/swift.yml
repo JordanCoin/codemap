@@ -7,3 +7,10 @@ id: swift-functions
 language: swift
 rule:
   kind: function_declaration
+---
+id: swift-types
+language: swift
+rule:
+  any:
+    - kind: class_declaration
+    - kind: protocol_declaration

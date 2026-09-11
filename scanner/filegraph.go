@@ -7,6 +7,8 @@ import (
 	"os"
 	pathpkg "path"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -189,12 +191,6 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 			fg.Coverage.AddSource(ScanSourceOutcome{Name: "rust-cargo", Status: ScanSourceMixed, Detail: rustCoverageNote})
 		}
 	}
-	// Languages whose imports name modules rather than files cannot produce
-	// intra-project edges at all, so an empty graph over them is a blind spot
-	// rather than a finding. Recording it here is what keeps --importers and
-	// blast-radius honest too: both read this graph's provenance.
-	fg.Coverage.addSymbolLevelImportCoverage(languages.symbolLevel)
-
 	var jsResolver *jsWorkspaceResolver
 	if useJSWorkspace {
 		jsResolver, err = buildJSWorkspaceResolver(ctx, absRoot, allFiles)
@@ -254,8 +250,82 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	// Languages whose imports name modules rather than files cannot produce
+	// intra-project edges from imports, so an empty graph over them is a blind
+	// spot rather than a finding. Swift gets type-name reference edges instead
+	// and is reported mixed; the rest stay unavailable. Recording it here is
+	// what keeps --importers and blast-radius honest too: both read this
+	// graph's provenance.
+	resolved := map[string]bool{}
+	if addSwiftTypeReferenceEdges(absRoot, analyses, fg) {
+		resolved[symbolLevelImportLanguages["swift"]] = true
+	}
+	fg.Coverage.addSymbolLevelImportCoverage(languages.symbolLevel, resolved)
 	fg.sortEdges()
 	return fg, nil
+}
+
+// swiftIdentifier matches one identifier token; type references in Swift are
+// bare names, so a word-boundary scan over the source is the resolver.
+var swiftIdentifier = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`)
+
+// swiftImportLine strips import statements before the scan: "import Firebase"
+// names a module, and a project enum that happens to share the name would
+// otherwise gain every file in the app as an importer.
+var swiftImportLine = regexp.MustCompile(`(?m)^\s*(?:@testable\s+)?import\s+[^\n]*`)
+
+// addSwiftTypeReferenceEdges adds file -> file edges for every Swift file that
+// mentions a type declared in another Swift file. Reports whether any Swift
+// type was declared at all, which is what decides the coverage status.
+//
+// ponytail: name match, not symbol resolution. Two files declaring the same
+// type name both become targets; a mention inside a comment or string counts.
+// Upgrade path is a SourceKit or swift-syntax pass if precision matters.
+func addSwiftTypeReferenceEdges(absRoot string, analyses []FileAnalysis, fg *FileGraph) bool {
+	declaredBy := make(map[string][]string)
+	for _, a := range analyses {
+		if a.Language != "swift" {
+			continue
+		}
+		for _, name := range a.Types {
+			if len(name) < 3 {
+				continue
+			}
+			declaredBy[name] = append(declaredBy[name], a.Path)
+		}
+	}
+	if len(declaredBy) == 0 {
+		return false
+	}
+	for _, a := range analyses {
+		if a.Language != "swift" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(absRoot, filepath.FromSlash(a.Path)))
+		if err != nil {
+			continue
+		}
+		seen := make(map[string]bool)
+		var targets []string
+		for _, ident := range swiftIdentifier.FindAll(swiftImportLine.ReplaceAll(data, nil), -1) {
+			for _, target := range declaredBy[string(ident)] {
+				if target == a.Path || seen[target] || slices.Contains(fg.Imports[a.Path], target) {
+					continue
+				}
+				seen[target] = true
+				targets = append(targets, target)
+			}
+		}
+		if len(targets) == 0 {
+			continue
+		}
+		sort.Strings(targets)
+		fg.Imports[a.Path] = append(fg.Imports[a.Path], targets...)
+		for _, target := range targets {
+			fg.Importers[target] = append(fg.Importers[target], a.Path)
+		}
+	}
+	return true
 }
 
 // sortEdges orders the reverse edge lists. Importers are appended while

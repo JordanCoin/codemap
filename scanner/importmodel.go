@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -32,6 +33,11 @@ var symbolLevelImportLanguages = map[string]string{
 // covered by file-level import resolution, in the terms a consumer needs to
 // decide whether to trust a zero-dependent answer.
 const symbolLevelCoverageNote = "imports name modules, not files, and same-package files need no import: intra-project edges need symbol-reference resolution and are not represented"
+
+// swiftTypeReferenceNote explains what the Swift type-name resolver stands
+// behind and what it cannot see, so a consumer reading a Swift importer list
+// knows it is name-matched rather than compiler-resolved.
+const swiftTypeReferenceNote = "intra-project edges resolved by type-name reference; extensions, same-name types, and protocol-only or generic references may be missed"
 
 // ResolvesFileLevelImports reports whether import resolution can produce
 // file-to-file edges for a language.
@@ -83,7 +89,7 @@ func symbolLevelInventory(files []FileInfo) map[string]int {
 // symbolLevelSources renders one source per symbol-level language present, so
 // the source list names which slice of the project the graph cannot see rather
 // than emitting a bare "partial" with nothing to point at.
-func symbolLevelSources(counts map[string]int) []analysis.Source {
+func symbolLevelSources(counts map[string]int, resolved map[string]bool) []analysis.Source {
 	if len(counts) == 0 {
 		return nil
 	}
@@ -95,10 +101,14 @@ func symbolLevelSources(counts map[string]int) []analysis.Source {
 
 	sources := make([]analysis.Source, 0, len(displays))
 	for _, display := range displays {
+		status, note := analysis.SourceUnavailable, symbolLevelCoverageNote
+		if resolved[display] {
+			status, note = analysis.SourceMixed, swiftTypeReferenceNote
+		}
 		sources = append(sources, analysis.Source{
 			Name:   "symbol-imports/" + strings.ToLower(display),
-			Status: analysis.SourceUnavailable,
-			Detail: fmt.Sprintf("%s (%d files): %s", display, counts[display], symbolLevelCoverageNote),
+			Status: status,
+			Detail: fmt.Sprintf("%s (%d files): %s", display, counts[display], note),
 		})
 	}
 	return sources
@@ -114,7 +124,7 @@ func symbolLevelSources(counts map[string]int) []analysis.Source {
 // Coverage that is already partial or unavailable keeps its status; this only
 // ever removes confidence.
 func ApplySymbolLevelImportCoverage(coverage analysis.Coverage, files []FileInfo) analysis.Coverage {
-	sources := symbolLevelSources(symbolLevelInventory(files))
+	sources := symbolLevelSources(symbolLevelInventory(files), nil)
 	if len(sources) == 0 {
 		return coverage
 	}
@@ -131,24 +141,25 @@ func (c *GraphCoverage) AddSymbolLevelImportCoverage(files []FileInfo) {
 	if c == nil {
 		return
 	}
-	c.addSymbolLevelImportCoverage(symbolLevelInventory(files))
+	c.addSymbolLevelImportCoverage(symbolLevelInventory(files), nil)
 }
 
-func (c *GraphCoverage) addSymbolLevelImportCoverage(counts map[string]int) {
+// resolved names the display languages whose intra-project edges a symbol
+// resolver produced; they are reported mixed rather than unavailable.
+func (c *GraphCoverage) addSymbolLevelImportCoverage(counts map[string]int, resolved map[string]bool) {
 	if c == nil {
 		return
 	}
-	sources := symbolLevelSources(counts)
+	sources := symbolLevelSources(counts, resolved)
 	if len(sources) == 0 {
 		return
 	}
 	c.Sources = append(c.Sources, sources...)
-	displays := make([]string, 0, len(counts))
-	for display := range counts {
-		displays = append(displays, display)
+	for _, source := range sources {
+		if !slices.Contains(c.Notes, source.Detail) {
+			c.Notes = append(c.Notes, source.Detail)
+		}
 	}
-	sort.Strings(displays)
-	c.Notes = append(c.Notes, fmt.Sprintf("%s: %s", strings.Join(displays, ", "), symbolLevelCoverageNote))
 	if c.Status == "" || c.Status == analysis.CoverageComplete {
 		c.Status = analysis.CoveragePartial
 	}
