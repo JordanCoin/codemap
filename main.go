@@ -211,6 +211,15 @@ func main() {
 		return
 	}
 
+	// Handle "find" subcommand before global flag parsing
+	if len(os.Args) >= 2 && os.Args[1] == "find" {
+		root, _ := os.Getwd()
+		if code := runFindSubcommand(os.Args[2:], root); code != 0 {
+			os.Exit(code)
+		}
+		return
+	}
+
 	// Handle "collide" subcommand before global flag parsing
 	if len(os.Args) >= 2 && os.Args[1] == "collide" {
 		root, _ := os.Getwd()
@@ -303,6 +312,7 @@ func main() {
 		fmt.Println("  codemap handoff [path]          # Build handoff artifact for agent switching")
 		fmt.Println("  codemap blast-radius [path]     # Compact bounded blast-radius bundle")
 		fmt.Println("  codemap collide                 # Rank open PRs by shared-file merge-order hazard")
+		fmt.Println("  codemap find <query>            # Rank files by path and symbol match, with importer counts")
 		fmt.Println()
 		fmt.Println("Project config:")
 		fmt.Println("  codemap config init             # Create .codemap/config.json (auto-detects extensions)")

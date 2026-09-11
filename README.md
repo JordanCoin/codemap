@@ -156,6 +156,7 @@ codemap --deps .       # dependency flow
 codemap --importers f  # who imports a file
 codemap blast-radius   # review bundle: diff + deps + importers
 codemap collide        # rank open PRs by shared-file merge-order hazard
+codemap find "<query>" # rank files by path and symbol match, with importer counts
 codemap handoff .      # save layered handoff for cross-agent continuation
 codemap context        # machine-readable project context JSON
 codemap doctor         # validate agent integrations
@@ -310,11 +311,11 @@ The prompt-submit hook classifies intent, surfaces hub-file risk, shows your wor
 
 ### MCP
 
-`codemap mcp` serves 16 tools over stdio:
+`codemap mcp` serves 19 tools over stdio:
 
 | Category | Tools |
 |----------|-------|
-| Structure | `get_structure`, `find_file`, `get_hubs`, `get_file_context` |
+| Structure | `get_structure`, `find`, `find_file`, `get_hubs`, `get_file_context` |
 | Dependencies | `get_dependencies`, `get_importers`, `get_diff` |
 | Session | `get_working_set`, `get_activity`, `get_handoff` |
 | Daemon | `start_watch`, `stop_watch`, `status` |
