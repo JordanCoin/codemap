@@ -10,25 +10,67 @@
 
 ![codemap screenshot](assets/codemap.png)
 
+## Your agent's first minute
+
+```bash
+brew tap JordanCoin/tap && brew install codemap   # one static binary
+cd your-repo && codemap setup                      # hooks + MCP for Claude Code and Codex
+codemap mcp                                        # stdio MCP server for any other client
+```
+
+After `codemap setup`, the agent gets three answers it cannot get from the source text, at session start, before an edit, and on request.
+
+**Where things are.** `codemap .`
+
+```
+╭────────────────────────────── codemap ──────────────────────────────╮
+│ Files: 289 | Size: 2.3MB                                            │
+│ Top Extensions: .go (227), .yml (35), .md (23), .sh (2), .ps1 (1)   │
+╰─────────────────────────────────────────────────────────────────────╯
+codemap
+├── analysis/ (2 files, 3.6KB, all .go)
+├── cmd/ (47 files, 463.2KB, all .go)
+├── config/ (2 files, 23.2KB, all .go)
+...
+```
+
+**Who depends on this.** `codemap --importers config/config.go`
+
+```
+⚠️  HUB FILE: config/config.go
+   Imported by 40 files - changes have wide impact!
+
+   Dependents:
+   • blast_radius.go
+   • cmd/config.go
+   ... and 38 more
+Coverage: complete
+```
+
+**Where is the code that does X.** `codemap find "hub importers"`
+
+```
+main.go
+  matched: resolveImportersInvocation, buildImportersReport, runImportersMode
+  importers: 0
+Coverage: complete
+```
+
+Ranked by path and symbol match, each hit tagged with its importer count. Lexical only, and it says so.
+
+**And the one line every answer carries.** Every dependency answer reports a coverage status: `complete`, `partial`, or `unavailable`, with the source that could not be trusted. A partial graph never reads as a complete one, so "nothing imports this" and "I couldn't tell" are different answers.
+
 ## What it's for
 
-An agent reading your repo can see what a file *says*. It can't cheaply see what depends on that file — that answer lives in `go.mod`, Cargo workspace membership, `package.json` `exports` maps, and `tsconfig` path aliases, not in the source text.
+An agent reading your repo can see what a file *says*. It can't cheaply see what depends on that file. That answer lives in `go.mod`, Cargo workspace membership, `package.json` `exports` maps, and `tsconfig` path aliases, not in the source text.
 
 codemap computes three things:
 
 | | |
 |---|---|
 | **Orientation** | A structure map with the most-imported files called out. Cheap cold start, useful when an agent has no memory of the last hour. |
-| **Dependency graph** | Imports resolved through each ecosystem's real rules — not string matching. |
+| **Dependency graph** | Imports resolved through each ecosystem's real rules, not string matching. |
 | **Blast radius** | Who breaks if you change this file. |
-
-And one thing that matters more than any of them: **it tells you when it doesn't know.** Every dependency answer carries a coverage status, so a partial graph never reads as a complete one.
-
-```bash
-codemap .                        # structure + hubs
-codemap --importers path/to/file # who depends on this
-codemap --diff                   # what changed vs main
-```
 
 ## Install
 
@@ -478,6 +520,10 @@ Next:
 - [ ] Per-edge provenance — which resolver produced each edge, so "why does codemap think A imports B?" is answerable
 - [ ] Community skill registry (`codemap skill add <name>`)
 - [ ] Enhanced analysis (entry points, key types)
+
+## Peers
+
+[sem](https://github.com/Ataraxy-Labs/sem) does symbol-level impact analysis. [serena](https://github.com/oraios/serena) and [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) are broader MCP servers with semantic retrieval, and [zvec-grep](https://github.com/zvec-ai/zvec-grep) is hybrid search. codemap's difference: imports resolved through each ecosystem's real rules, a coverage status on every answer, and hub warnings before an edit.
 
 ## Contributing
 
