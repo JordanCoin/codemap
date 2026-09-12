@@ -469,7 +469,7 @@ func hookSessionStart(root string) error {
 				break
 			}
 			importers := len(info.Importers[hub])
-			fmt.Printf("   ⚠️  HUB FILE: %s (imported by %d files)\n", hub, importers)
+			fmt.Printf("   ⚠️  HUB FILE: %s (imported by %s)\n", hub, filesText(importers))
 		}
 	} else if shouldSkipHubAnalysis(fileCount, fileCountKnown) {
 		fmt.Printf("ℹ️  Hub analysis skipped for large repo (%d files)\n", fileCount)
@@ -915,9 +915,9 @@ func hookPromptSubmit(root string) error {
 		for _, file := range filesMentioned {
 			if importers := info.Importers[file]; len(importers) > 0 {
 				if scanner.CountHubImporters(importers) >= scanner.HubThreshold {
-					output = append(output, fmt.Sprintf("   ⚠️  %s is a HUB (imported by %d files)", file, len(importers)))
+					output = append(output, fmt.Sprintf("   ⚠️  %s is a HUB (imported by %s)", file, filesText(len(importers))))
 				} else {
-					output = append(output, fmt.Sprintf("   📍 %s (imported by %d files)", file, len(importers)))
+					output = append(output, fmt.Sprintf("   📍 %s (imported by %s)", file, filesText(len(importers))))
 				}
 			}
 		}
@@ -1084,9 +1084,9 @@ func planCodemapNextSteps(intent TaskIntent, info *hubInfo) []codemapNextStep {
 		reason := "check callers before editing"
 		switch {
 		case hubImporterCount >= scanner.HubThreshold:
-			reason = fmt.Sprintf("check blast radius before editing this hub (%d importers)", importerCount)
+			reason = fmt.Sprintf("check blast radius before editing this hub (%s)", importersNoun(importerCount))
 		case importerCount > 0:
-			reason = fmt.Sprintf("check callers before editing (%d importers)", importerCount)
+			reason = fmt.Sprintf("check callers before editing (%s)", importersNoun(importerCount))
 		}
 		add("codemap --importers "+shellQuoteIfNeeded(primaryFile), reason)
 		if hubImporterCount >= scanner.HubThreshold {
@@ -2321,4 +2321,19 @@ func indexOf(slice []string, val string) int {
 		}
 	}
 	return len(slice)
+}
+
+// filesText and importersNoun keep counts grammatical: "1 file", "2 files".
+func filesText(n int) string {
+	if n == 1 {
+		return "1 file"
+	}
+	return fmt.Sprintf("%d files", n)
+}
+
+func importersNoun(n int) string {
+	if n == 1 {
+		return "1 importer"
+	}
+	return fmt.Sprintf("%d importers", n)
 }
