@@ -26,6 +26,23 @@ type FileGraph struct {
 	PathAliases map[string][]string // TS/JS path aliases from tsconfig.json (e.g., "@modules/*" -> ["src/modules/*"])
 	BaseURL     string              // TS/JS baseUrl from tsconfig.json
 	Coverage    GraphCoverage
+	// KnownFiles is every file this graph actually scanned (post filters),
+	// keyed by slash-separated path relative to Root. A path absent here was
+	// never indexed at all — e.g. it lives under an excluded or hidden
+	// directory — which is a distinct, worse state than "indexed and found
+	// to have zero importers": see Indexed.
+	KnownFiles map[string]bool
+}
+
+// Indexed reports whether path (slash-separated, relative to fg.Root) was
+// part of this graph's scanned inventory. A false result means codemap never
+// looked at the file at all, so an empty Importers/Imports entry for it is a
+// coverage gap, not a confirmed zero.
+func (fg *FileGraph) Indexed(path string) bool {
+	if fg == nil {
+		return false
+	}
+	return fg.KnownFiles[path]
 }
 
 // fileIndex provides fast lookup of files by various import-like keys
@@ -131,6 +148,10 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 				files = append(files, file)
 			}
 		}
+	}
+	fg.KnownFiles = make(map[string]bool, len(files))
+	for _, file := range files {
+		fg.KnownFiles[filepath.ToSlash(file.Path)] = true
 	}
 	languages := inspectFileLanguages(files)
 	hasCUEAnalysis := analysisLanguages.hasCUE

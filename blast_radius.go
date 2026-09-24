@@ -1367,6 +1367,16 @@ func renderImportersReportString(report scanner.ImportersReport) string {
 // this command and deserves an explanation when the answer is "none".
 func renderImportersReportCLI(w io.Writer, report scanner.ImportersReport) {
 	if len(report.Importers) == 0 && len(report.HubImports) == 0 {
+		if report.NotIndexed {
+			// Distinct from "scanned and found zero importers": codemap never
+			// looked at this file, so a bare "No files import X" here would be
+			// indistinguishable from a genuine negative and read as a
+			// confident answer instead of a blind spot.
+			fmt.Fprintf(w, "%s: not indexed (under a hidden or excluded folder, or the path doesn't exist).\n", report.File)
+			fmt.Fprintln(w, "   codemap never scanned this file, so this is not a confirmed zero-importers result.")
+			renderCoverage(w, report.CoverageStatus, report.CoverageNotes)
+			return
+		}
 		fmt.Fprintf(w, "No files import %s.\n", report.File)
 		if strings.EqualFold(filepath.Ext(report.File), ".go") {
 			fmt.Fprintln(w, "   Note: files in the same package never import each other (Go resolves")
@@ -1448,6 +1458,15 @@ func buildImportersReportFromGraph(root, file string, fg *scanner.FileGraph) (sc
 	importers := append([]string(nil), fg.Importers[file]...)
 	imports := append([]string(nil), fg.Imports[file]...)
 
+	// NotIndexed distinguishes "codemap scanned this file and it genuinely
+	// has zero importers" from "codemap never looked at this file at all"
+	// (e.g. it lives under a hidden or excluded directory, or the path
+	// doesn't exist). CoverageStatus/CoverageNotes below still describe the
+	// *scan as a whole* (complete/partial/unavailable) and are left as-is:
+	// an authoritative, complete scan can still miss one particular file
+	// simply because that file was outside its scanned set, which is
+	// exactly the gap NotIndexed exists to surface without redefining what
+	// "complete" means for the project overall.
 	report := scanner.ImportersReport{
 		Root:           root,
 		Mode:           "importers",
@@ -1456,6 +1475,7 @@ func buildImportersReportFromGraph(root, file string, fg *scanner.FileGraph) (sc
 		Imports:        imports,
 		ImporterCount:  len(importers),
 		IsHub:          fg.IsHub(file),
+		NotIndexed:     !fg.Indexed(file),
 		CoverageStatus: string(fg.Coverage.EffectiveStatus()),
 		CoverageNotes:  append([]string(nil), fg.Coverage.Notes...),
 	}
