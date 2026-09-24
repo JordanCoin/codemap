@@ -573,3 +573,203 @@ class App extends StatelessWidget {
 		}
 	}
 }
+
+// TestScanDirectoryInvokesAstGrepWithHiddenDirsEnabled locks in the exact
+// invocation shape the hidden-directory fix depends on: --no-ignore hidden
+// (so ast-grep stops skipping dot-directories by default), --globs excludes
+// for the directories codemap has always treated as never-source (so
+// relaxing that default doesn't newly index .git, vendor, node_modules,
+// etc.), a "." scan path, and cmd.Dir set to root. The last two matter
+// together: ast-grep's --globs match the literal walked path with no
+// awareness of where root begins, so an absolute root under a directory
+// that happens to share a name with one of those excludes (this repo's own
+// scanner tests build fixtures under ../testdata/) would otherwise be
+// wrongly excluded in its entirety. See TestScanDirectoryDoesNotExcludeRootsNestedUnderAnIgnoredDirName.
+func TestScanDirectoryInvokesAstGrepWithHiddenDirsEnabled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires shell script execution")
+	}
+
+	tmpDir := t.TempDir()
+	capturedArgs := filepath.Join(tmpDir, "args.txt")
+	capturedPwd := filepath.Join(tmpDir, "pwd.txt")
+	fakeBinary := filepath.Join(tmpDir, "fake-sg.sh")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE_ARGS\"\npwd > \"$CAPTURE_PWD\"\nprintf '[]\\n'\n"
+	if err := os.WriteFile(fakeBinary, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CAPTURE_ARGS", capturedArgs)
+	t.Setenv("CAPTURE_PWD", capturedPwd)
+
+	scanner := &AstGrepScanner{rulesDir: tmpDir, binary: fakeBinary}
+	if _, err := scanner.ScanDirectory(context.Background(), tmpDir); err != nil {
+		t.Fatalf("ScanDirectory() error = %v", err)
+	}
+
+	args, err := os.ReadFile(capturedArgs)
+	if err != nil {
+		t.Fatalf("read captured args: %v", err)
+	}
+	argLines := strings.Split(strings.TrimRight(string(args), "\n"), "\n")
+
+	if !strings.Contains(string(args), "--no-ignore\nhidden\n") {
+		t.Fatalf("expected --no-ignore hidden in args, got: %s", args)
+	}
+	for _, want := range []string{"!**/.git/**", "!**/node_modules/**", "!**/vendor/**", "!**/testdata/**"} {
+		if !strings.Contains(string(args), want) {
+			t.Errorf("expected a --globs exclude for %q, got: %s", want, args)
+		}
+	}
+	if got := argLines[len(argLines)-1]; got != "." {
+		t.Fatalf("scan path argument = %q, want %q (root-relative, via cmd.Dir)", got, ".")
+	}
+
+	pwdBytes, err := os.ReadFile(capturedPwd)
+	if err != nil {
+		t.Fatalf("read captured pwd: %v", err)
+	}
+	gotPwd := canonicalTestPath(strings.TrimSpace(string(pwdBytes)))
+	wantPwd := canonicalTestPath(tmpDir)
+	if gotPwd != wantPwd {
+		t.Fatalf("ast-grep cwd = %q, want %q (root)", gotPwd, wantPwd)
+	}
+}
+
+// TestScanDirectoryIndexesHiddenDirectories is the end-to-end regression for
+// the reported bug: a project whose source lives only under a dot-directory
+// (not .git) was invisible to --deps/--importers with no way to opt in,
+// because ast-grep skips hidden files and directories by default and
+// codemap never overrode that default.
+func TestScanDirectoryIndexesHiddenDirectories(t *testing.T) {
+	scanner, err := NewAstGrepScanner()
+	if err != nil {
+		t.Fatalf("NewAstGrepScanner() error = %v", err)
+	}
+	t.Cleanup(scanner.Close)
+	if !scanner.Available() {
+		t.Skip("ast-grep not available")
+	}
+
+	root := t.TempDir()
+	hidden := filepath.Join(root, ".agents")
+	if err := os.MkdirAll(hidden, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hidden, "a.js"), []byte("const b = require('./b');\nmodule.exports = { b };\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hidden, "b.js"), []byte("module.exports = { hello: () => 'hi' };\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	outcome, err := scanner.ScanDirectory(context.Background(), root)
+	if err != nil {
+		t.Fatalf("ScanDirectory() error = %v", err)
+	}
+	paths := make(map[string]bool)
+	for _, a := range outcome.Analyses {
+		paths[filepath.ToSlash(a.Path)] = true
+	}
+	if !paths[".agents/a.js"] {
+		t.Fatalf("analyses = %#v, want .agents/a.js indexed", outcome.Analyses)
+	}
+
+	fg, err := BuildFileGraphFromOutcome(context.Background(), root, outcome, Filters{})
+	if err != nil {
+		t.Fatalf("BuildFileGraphFromOutcome() error = %v", err)
+	}
+	importers := fg.Importers[".agents/b.js"]
+	if len(importers) != 1 || importers[0] != ".agents/a.js" {
+		t.Fatalf("importers of .agents/b.js = %v, want [.agents/a.js]", importers)
+	}
+}
+
+// TestScanDirectoryDoesNotExcludeRootsNestedUnderAnIgnoredDirName is the
+// regression for a bug the hidden-directory fix's first draft introduced:
+// excluding codemap's never-source directory names (node_modules, vendor,
+// testdata, ...) via bare --globs patterns matches those names anywhere in
+// the walked path, including ancestors of root that happen to share the
+// name. A project checked out under a path like ".../testdata/myproject"
+// (exactly how this package's own fixtures live, under ../testdata/) must
+// still be scanned in full.
+func TestScanDirectoryDoesNotExcludeRootsNestedUnderAnIgnoredDirName(t *testing.T) {
+	scanner, err := NewAstGrepScanner()
+	if err != nil {
+		t.Fatalf("NewAstGrepScanner() error = %v", err)
+	}
+	t.Cleanup(scanner.Close)
+	if !scanner.Available() {
+		t.Skip("ast-grep not available")
+	}
+
+	base := t.TempDir()
+	// "testdata" and "vendor" are both in IgnoredDirs; root sits under one
+	// of them as an ancestor, not as a subdirectory of root.
+	root := filepath.Join(base, "testdata", "myproject")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.js"), []byte("const b = require('./b');\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	outcome, err := scanner.ScanDirectory(context.Background(), root)
+	if err != nil {
+		t.Fatalf("ScanDirectory() error = %v", err)
+	}
+	if len(outcome.Analyses) == 0 {
+		t.Fatalf("analyses is empty; root nested under an ignored-dir-named ancestor was wrongly excluded in full")
+	}
+	paths := make(map[string]bool)
+	for _, a := range outcome.Analyses {
+		paths[filepath.ToSlash(a.Path)] = true
+	}
+	if !paths["a.js"] {
+		t.Fatalf("analyses = %#v, want a.js indexed", outcome.Analyses)
+	}
+}
+
+// TestScanDirectoryStillExcludesKnownNeverSourceDirs confirms that turning
+// on hidden-directory scanning did not also start indexing .git internals
+// or vendored/build directories that codemap's walker has always excluded.
+func TestScanDirectoryStillExcludesKnownNeverSourceDirs(t *testing.T) {
+	scanner, err := NewAstGrepScanner()
+	if err != nil {
+		t.Fatalf("NewAstGrepScanner() error = %v", err)
+	}
+	t.Cleanup(scanner.Close)
+	if !scanner.Available() {
+		t.Skip("ast-grep not available")
+	}
+
+	root := t.TempDir()
+	for _, dir := range []string{".git/hooks", "node_modules/pkg", "vendor/pkg"} {
+		full := filepath.Join(root, filepath.FromSlash(dir))
+		if err := os.MkdirAll(full, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(full, "dep.js"), []byte("const x = require('./x');\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "real.js"), []byte("const x = require('./x');\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	outcome, err := scanner.ScanDirectory(context.Background(), root)
+	if err != nil {
+		t.Fatalf("ScanDirectory() error = %v", err)
+	}
+	paths := make(map[string]bool)
+	for _, a := range outcome.Analyses {
+		paths[filepath.ToSlash(a.Path)] = true
+	}
+	if !paths["real.js"] {
+		t.Fatalf("analyses = %#v, want real.js indexed", outcome.Analyses)
+	}
+	for path := range paths {
+		if strings.Contains(path, ".git/") || strings.Contains(path, "node_modules/") || strings.Contains(path, "vendor/") {
+			t.Fatalf("analyses = %#v, still indexed a never-source directory (%s)", outcome.Analyses, path)
+		}
+	}
+}
