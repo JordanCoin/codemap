@@ -1047,3 +1047,113 @@ func TestFuzzyResolveCsharpNamespace(t *testing.T) {
 		}
 	})
 }
+
+// TestGitignoreOnlyRecoverable is a fast, ast-grep-independent unit test for
+// the exact-match on-disk fallback: a plain relative require/import naming a
+// file that ScanFiles excluded purely by .gitignore must still resolve,
+// while the same on-disk file must stay unresolvable when an explicit
+// --exclude/--only filter or one of the scanner's own never-source
+// directory names (IgnoredDirs) is *also* in play — those exclusions are
+// deliberate and must not be reversed by this recovery path.
+func TestGitignoreOnlyRecoverable(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, content string) {
+		t.Helper()
+		full := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("pkg/adapters/helper.js", "module.exports = {}\n")
+	write("blocked/target.js", "module.exports = {}\n")
+	write("node_modules/vendored.js", "module.exports = {}\n")
+	write(".gitignore", "pkg/adapters/helper.js\nblocked/target.js\nnode_modules/\n")
+
+	cache := NewGitIgnoreCache(root)
+	scanned, err := ScanFiles(context.Background(), root, cache, nil, []string{filepath.FromSlash("blocked/target.js")})
+	if err != nil {
+		t.Fatalf("ScanFiles() error: %v", err)
+	}
+	for _, gitignored := range []string{"pkg/adapters/helper.js", "blocked/target.js", "node_modules/vendored.js"} {
+		for _, file := range scanned {
+			if filepath.ToSlash(file.Path) == gitignored {
+				t.Fatalf("fixture setup: %s should have been excluded from ScanFiles by .gitignore, got it in inventory", gitignored)
+			}
+		}
+	}
+
+	idx, err := buildFileIndexContext(context.Background(), scanned, "", root, Filters{Exclude: []string{filepath.FromSlash("blocked/target.js")}})
+	if err != nil {
+		t.Fatalf("buildFileIndexContext() error: %v", err)
+	}
+
+	if got := tryExactMatch("pkg/adapters/helper", idx, "javascript"); len(got) != 1 || got[0] != filepath.FromSlash("pkg/adapters/helper.js") {
+		t.Errorf("gitignore-only exclusion should still resolve, got %v", got)
+	}
+	if got := tryExactMatch("blocked/target", idx, "javascript"); got != nil {
+		t.Errorf("an explicitly --exclude'd path must stay unresolved even though it's also gitignored and present on disk, got %v", got)
+	}
+	if got := tryExactMatch("node_modules/vendored", idx, "javascript"); got != nil {
+		t.Errorf("a path under an IgnoredDirs-named directory must stay unresolved even though it's present on disk, got %v", got)
+	}
+}
+
+// TestGitignoredExactRelativeImportTargetStillResolves is the end-to-end
+// regression for the reported bug (Nick's adgen/reviewAdapters/helpers.js
+// case): a plain relative require('./x') whose target is gitignored had its
+// importer edge silently dropped, indistinguishable from the target never
+// having existed. Root cause, isolated by testing gitignore and read-only
+// permissions independently: it was .gitignore excluding the target from
+// ScanFiles' inventory (which the import-resolution index is built from),
+// not the read-only permission bit — a read-only, non-gitignored copy
+// resolved correctly, and only adding .gitignore reproduced the drop.
+func TestGitignoredExactRelativeImportTargetStillResolves(t *testing.T) {
+	if !NewAstGrepAnalyzer().Available() {
+		t.Skip("ast-grep not available")
+	}
+
+	root := t.TempDir()
+	files := map[string]string{
+		"helpers.js": "module.exports = { hello: () => 'root-hi' }\n",
+		"adgen/src/services/quoteRotationService.js":   "const helpers = require('./reviewAdapters/helpers');\nmodule.exports = { helpers };\n",
+		"adgen/src/services/reviewAdapters/helpers.js": "module.exports = { hello: () => 'hi' }\n",
+		".gitignore": "adgen/src/services/reviewAdapters/helpers.js\n",
+	}
+	for path, content := range files {
+		full := filepath.Join(root, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Read-only, matching the reported fixture exactly; TestGitignoreOnlyRecoverable
+	// already isolates that permissions alone are not the trigger.
+	if err := os.Chmod(filepath.Join(root, filepath.FromSlash("adgen/src/services/reviewAdapters/helpers.js")), 0o444); err != nil {
+		t.Fatal(err)
+	}
+
+	graph, err := BuildFileGraph(context.Background(), root, Filters{})
+	if err != nil {
+		t.Fatalf("BuildFileGraph() error: %v", err)
+	}
+
+	target := filepath.FromSlash("adgen/src/services/reviewAdapters/helpers.js")
+	source := filepath.FromSlash("adgen/src/services/quoteRotationService.js")
+	got := graph.Importers[target]
+	if len(got) != 1 || got[0] != source {
+		t.Fatalf("importers of gitignored %s = %v, want exactly [%s]", target, got, source)
+	}
+	if !graph.Indexed(filepath.ToSlash(target)) {
+		t.Fatalf("%s has a resolved importer, so it must read as indexed, not as a coverage gap", target)
+	}
+	// The root copy is a different file at a different path; nothing should
+	// alias the gitignored copy's importer onto it.
+	if got := graph.Importers["helpers.js"]; len(got) != 0 {
+		t.Fatalf("root copy importers = %v, want none (the import names the adgen copy specifically)", got)
+	}
+}
