@@ -231,16 +231,17 @@ override:
 codemap -C /tmp/independent-clone --setup-root /path/to/original context
 ```
 
-`-C`/`--project-root` selects the repository Codemap operates on.
-`--setup-root` explicitly reuses `<repository>/.codemap` policy and runtime state
-from another checkout. Both accept a repository or subdirectory; relative setup
-paths resolve from the project root.
+`-C`/`--project-root` operates on exactly the named directory, like `git -C`;
+it may be a subdirectory of a repository, and storage and config discovery still
+walk up to the git root. `--setup-root` explicitly reuses `<repository>/.codemap`
+policy and runtime state from another checkout. Both accept a repository or
+subdirectory; relative setup paths resolve from the project root.
 
 | Flag | Description |
 
 | Flag | Description |
 |------|-------------|
-| `-C, --project-root <repo>` | Operate on code in `<repo>` |
+| `-C, --project-root <dir>` | Operate on exactly `<dir>` (may be a subdirectory of a repository; storage and config discovery still walk up to the git root) |
 | `--setup-root <repo>` | Explicitly reuse policy and runtime state from `<repo>/.codemap` |
 | `--depth, -d <n>` | Limit tree depth (0 = unlimited) |
 | `--only <exts>` | Only include files with these extensions |
@@ -252,6 +253,7 @@ paths resolve from the project root.
 | `--skyline` | City skyline visualization |
 | `--animate` | Animate the skyline (with `--skyline`) |
 | `--json` | Output JSON |
+| `--color <mode>` | `auto` (default): ANSI colour only when stdout is a terminal and `NO_COLOR` is unset; `always` keeps colour when piping into `less -R`; `never` turns it off |
 
 > Flags come before the path/URL: `codemap --json github.com/user/repo`
 

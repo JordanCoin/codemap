@@ -7,23 +7,47 @@ import (
 	"golang.org/x/term"
 )
 
-// ANSI color codes
+// ANSI color codes. These are variables, not constants: every one of them is
+// the escape sequence below while colour is enabled and the empty string while
+// it is disabled, so renderers can concatenate them unconditionally. See
+// SetColorMode for the switch; the default resolves ColorAuto against stdout
+// when the package initializes.
+var (
+	Reset     = ansiReset
+	Bold      = ansiBold
+	Dim       = ansiDim
+	White     = ansiWhite
+	Cyan      = ansiCyan
+	Yellow    = ansiYellow
+	Magenta   = ansiMagenta
+	Green     = ansiGreen
+	Red       = ansiRed
+	Blue      = ansiBlue
+	BoldWhite = ansiBoldWhite
+	BoldRed   = ansiBoldRed
+	BoldBlue  = ansiBoldBlue
+	DimWhite  = ansiDimWhite
+	BoldGreen = ansiBoldGreen
+)
+
+// The palette: the escape sequences the exported variables take while colour
+// is enabled.
 const (
-	Reset     = "\033[0m"
-	Bold      = "\033[1m"
-	Dim       = "\033[2m"
-	White     = "\033[37m"
-	Cyan      = "\033[36m"
-	Yellow    = "\033[33m"
-	Magenta   = "\033[35m"
-	Green     = "\033[32m"
-	Red       = "\033[31m"
-	Blue      = "\033[34m"
-	BoldWhite = "\033[1;37m"
-	BoldRed   = "\033[1;31m"
-	BoldBlue  = "\033[1;34m"
-	DimWhite  = "\033[2;37m"
-	BoldGreen = "\033[1;32m"
+	ansiReset     = "\033[0m"
+	ansiBold      = "\033[1m"
+	ansiDim       = "\033[2m"
+	ansiWhite     = "\033[37m"
+	ansiCyan      = "\033[36m"
+	ansiYellow    = "\033[33m"
+	ansiMagenta   = "\033[35m"
+	ansiGreen     = "\033[32m"
+	ansiRed       = "\033[31m"
+	ansiBlue      = "\033[34m"
+	ansiBoldWhite = "\033[1;37m"
+	ansiBoldRed   = "\033[1;31m"
+	ansiBoldBlue  = "\033[1;34m"
+	ansiDimWhite  = "\033[2;37m"
+	ansiBoldGreen = "\033[1;32m"
 )
 
 // Asset extensions to exclude from "top large files"

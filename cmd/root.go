@@ -13,6 +13,8 @@ import (
 type GlobalRootOptions struct {
 	Directory string
 	SetupRoot string
+	// Color is the --color value (auto, always, never); empty means auto.
+	Color string
 }
 
 // Active reports whether this invocation overrides either root.
@@ -73,6 +75,18 @@ func ParseGlobalRootOptions(args []string) (GlobalRootOptions, []string, error) 
 			if strings.TrimSpace(opts.SetupRoot) == "" {
 				return GlobalRootOptions{}, nil, fmt.Errorf("--setup-root requires a path")
 			}
+		case arg == "--color":
+			// Bare --color means always, like ls and grep; "--color <mode>" is also accepted.
+			opts.Color = "always"
+			if i+1 < len(args) && isColorMode(args[i+1]) {
+				i++
+				opts.Color = args[i]
+			}
+		case strings.HasPrefix(arg, "--color="):
+			opts.Color = strings.TrimPrefix(arg, "--color=")
+			if !isColorMode(opts.Color) {
+				return GlobalRootOptions{}, nil, fmt.Errorf("--color: unknown mode %q (want auto, always or never)", opts.Color)
+			}
 		default:
 			remaining = append(remaining, arg)
 		}
@@ -82,8 +96,17 @@ func ParseGlobalRootOptions(args []string) (GlobalRootOptions, []string, error) 
 }
 
 func isGlobalRootOption(arg string) bool {
-	return arg == "-C" || arg == "--project-root" || arg == "--setup-root" ||
-		strings.HasPrefix(arg, "--project-root=") || strings.HasPrefix(arg, "--setup-root=")
+	return arg == "-C" || arg == "--project-root" || arg == "--setup-root" || arg == "--color" ||
+		strings.HasPrefix(arg, "--project-root=") || strings.HasPrefix(arg, "--setup-root=") ||
+		strings.HasPrefix(arg, "--color=")
+}
+
+func isColorMode(arg string) bool {
+	switch strings.ToLower(arg) {
+	case "auto", "always", "never":
+		return true
+	}
+	return false
 }
 
 // ResolveGlobalRoots resolves both inputs with nearest-repository recovery.

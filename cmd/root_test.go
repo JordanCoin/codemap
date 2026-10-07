@@ -410,6 +410,41 @@ func TestParseGlobalRootOptions(t *testing.T) {
 		}
 	})
 
+	t.Run("color accepts equals, separate value and bare forms", func(t *testing.T) {
+		cases := []struct {
+			args      []string
+			wantColor string
+			wantArgs  []string
+		}{
+			{[]string{"--color=never", "."}, "never", []string{"."}},
+			{[]string{"--color", "always", "."}, "always", []string{"."}},
+			{[]string{"--color", "."}, "always", []string{"."}},
+			{[]string{"hook", "session-start", "--color=auto"}, "auto", []string{"hook", "session-start"}},
+			{[]string{"."}, "", []string{"."}},
+		}
+		for _, tc := range cases {
+			opts, args, err := ParseGlobalRootOptions(tc.args)
+			if err != nil {
+				t.Fatalf("ParseGlobalRootOptions(%#v) error: %v", tc.args, err)
+			}
+			if opts.Color != tc.wantColor {
+				t.Fatalf("ParseGlobalRootOptions(%#v).Color = %q, want %q", tc.args, opts.Color, tc.wantColor)
+			}
+			if opts.Active() {
+				t.Fatalf("--color alone must not activate root options: %#v", opts)
+			}
+			if !reflect.DeepEqual(args, tc.wantArgs) {
+				t.Fatalf("args = %#v, want %#v", args, tc.wantArgs)
+			}
+		}
+		if _, _, err := ParseGlobalRootOptions([]string{"--color=sometimes"}); err == nil {
+			t.Fatal("ParseGlobalRootOptions(--color=sometimes) unexpectedly succeeded")
+		}
+		if _, _, err := ParseGlobalRootOptions([]string{"-C", "--color=never"}); err == nil {
+			t.Fatal("ParseGlobalRootOptions(-C --color=never) unexpectedly succeeded")
+		}
+	})
+
 	for _, args := range [][]string{{"-C"}, {"--project-root"}, {"--project-root="}, {"--setup-root"}, {"--setup-root="}} {
 		args := args
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
