@@ -45,6 +45,67 @@ func (fg *FileGraph) Indexed(path string) bool {
 	return fg.KnownFiles[path]
 }
 
+// UnindexedExplanation says why a file has no dependency answer in a graph
+// and what to do about it. Reason is one clause naming the single cause that
+// applies; Next is the action that would get the file an answer.
+type UnindexedExplanation struct {
+	Reason string
+	Next   string
+}
+
+// ExplainUnindexed reports whether path (relative to fg.Root, either
+// separator) is a file this graph cannot answer for, and names the one reason
+// why. ok is false when the graph vouches for the file (it was scanned and its
+// extension has import analysis), so callers keep their normal output; it is
+// also false when the graph carries no inventory at all (KnownFiles == nil,
+// e.g. a graph rebuilt from a daemon cache): with nothing scanned, the honest
+// answer is "unknown", never "not indexed". filters are the project filters
+// the graph was built with, so a file dropped by only/exclude is named as such
+// instead of being lumped in with ignored paths.
+func (fg *FileGraph) ExplainUnindexed(path string, filters Filters) (UnindexedExplanation, bool) {
+	if fg == nil || fg.KnownFiles == nil {
+		return UnindexedExplanation{}, false
+	}
+	rel := filepath.ToSlash(filepath.Clean(path))
+	abs := filepath.Join(fg.Root, filepath.FromSlash(rel))
+	info, err := os.Stat(abs)
+	switch {
+	case err != nil && os.IsNotExist(err):
+		return UnindexedExplanation{Reason: "path does not exist", Next: "check the path with find_file, then retry with the path it returns"}, true
+	case err != nil:
+		return UnindexedExplanation{Reason: "path is not readable: " + err.Error(), Next: "fix the path's permissions, then retry"}, true
+	case info.IsDir():
+		return UnindexedExplanation{Reason: "path is a directory, not a file", Next: "pass one file path; use get_structure for a directory"}, true
+	}
+	ext := filepath.Ext(rel)
+	if !fg.KnownFiles[rel] {
+		if !MatchesFilters(rel, ext, filters.Only, filters.Exclude) {
+			return UnindexedExplanation{Reason: "excluded by config: only/exclude in .codemap/config.json", Next: "change only/exclude in .codemap/config.json to include it, then retry"}, true
+		}
+		for _, part := range strings.Split(pathpkg.Dir(rel), "/") {
+			if IgnoredDirs[part] {
+				return UnindexedExplanation{Reason: "under ignored directory " + part + "/", Next: "codemap always skips " + part + "/; nothing to configure"}, true
+			}
+		}
+		cache := NewGitIgnoreCache(fg.Root)
+		for dir := filepath.Dir(abs); dir != fg.Root && strings.HasPrefix(dir, fg.Root); dir = filepath.Dir(dir) {
+			cache.EnsureDir(dir)
+		}
+		if cache.ShouldIgnore(abs) {
+			return UnindexedExplanation{Reason: "ignored by .gitignore", Next: "remove the .gitignore rule covering it to include it in the scan"}, true
+		}
+		return UnindexedExplanation{Reason: "absent from the scan inventory (newer than the scan, or the walk skipped it)", Next: "rerun the scan, then retry"}, true
+	}
+	if !IsSourceExt(ext) {
+		kind := ext + " has no import analysis"
+		if ext == "" {
+			kind = "no extension, so no import analysis"
+		}
+		return UnindexedExplanation{Reason: "unsupported file type: " + kind, Next: "dependency analysis covers source files only; use find_file to locate it"}, true
+	}
+	return UnindexedExplanation{}, false
+}
+
 // fileIndex provides fast lookup of files by various import-like keys
 type fileIndex struct {
 	byExact     map[string]uint32   // exact path -> inventory count

@@ -42,6 +42,9 @@ type Daemon struct {
 	eventLoopWG  sync.WaitGroup
 	publisher    *statePublisher
 	closeWatcher func() error
+	// publishFailureLogged is set while a state-write failure streak has
+	// been logged, so reportPublicationError logs each streak once.
+	publishFailureLogged bool
 
 	dependencyRequests chan dependencyGraphSnapshot
 	dependencyResults  chan dependencyGraphResult

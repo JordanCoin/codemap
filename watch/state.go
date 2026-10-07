@@ -71,6 +71,48 @@ func ReadState(root string) *State {
 	return &state
 }
 
+// stateWriteErrorFile sits beside state.json and exists only while the
+// daemon's state writes are failing.
+const stateWriteErrorFile = "state.write-error.json"
+
+// StateWriteError is the daemon's record of a state.json write that keeps
+// failing: the error text, when the streak started, when it was last tried
+// and how many times. `codemap watch status` reports it so a daemon that
+// cannot publish state is never mistaken for one that is quietly idle.
+type StateWriteError struct {
+	Path          string    `json:"path"`
+	Error         string    `json:"error"`
+	FirstFailedAt time.Time `json:"first_failed_at"`
+	LastFailedAt  time.Time `json:"last_failed_at"`
+	Attempts      int       `json:"attempts"`
+}
+
+// ReadStateWriteError returns the active daemon's current state-write failure,
+// or nil when state writes succeed or no record can be read.
+func ReadStateWriteError(root string) *StateWriteError {
+	active, err := ResolveActiveRuntime(root)
+	if err != nil {
+		return nil
+	}
+	return readStateWriteErrorAt(active.Directory)
+}
+
+func readStateWriteErrorAt(dir string) *StateWriteError {
+	path := filepath.Join(dir, stateWriteErrorFile)
+	if err := requireRegularRuntimeFile(path); err != nil {
+		return nil
+	}
+	data, err := runtimefile.Read(path)
+	if err != nil {
+		return nil
+	}
+	var record StateWriteError
+	if err := json.Unmarshal(data, &record); err != nil || record.Error == "" {
+		return nil
+	}
+	return &record
+}
+
 // WritePID writes the daemon PID to the project's runtime namespace.
 func WritePID(root string) error {
 	return WriteProcessPID(root, os.Getpid())

@@ -942,13 +942,30 @@ func runWatchSubcommand(subCmd, root string) error {
 		}
 		if active.PID > 0 {
 			state := watch.ReadState(absRoot)
+			// A daemon whose state writes fail is still "running"; without
+			// this line its stale numbers would read as current (#140).
+			writeFailure := watch.ReadStateWriteError(absRoot)
+			reportWriteFailure := func() {
+				if writeFailure == nil {
+					return
+				}
+				fmt.Printf("  state write failing: %s (%d attempts since %s, last %s)\n",
+					writeFailure.Error, writeFailure.Attempts,
+					writeFailure.FirstFailedAt.Local().Format("15:04:05"), writeFailure.LastFailedAt.Local().Format("15:04:05"))
+				fmt.Printf("  Next: make %s writable; the daemon retries on its own.\n", writeFailure.Path)
+			}
 			if state != nil {
 				fmt.Printf("Watch daemon running\n")
+				reportWriteFailure()
+				if writeFailure != nil {
+					fmt.Printf("  Files and Hubs below are from the last successful write (%s), not live\n", state.UpdatedAt.Local().Format("15:04:05"))
+				}
 				fmt.Printf("  Files: %d\n", state.FileCount)
 				fmt.Printf("  Hubs: %d\n", len(state.Hubs))
 				fmt.Printf("  Updated: %s\n", state.UpdatedAt.Format("15:04:05"))
 			} else {
 				fmt.Println("Watch daemon running (no state)")
+				reportWriteFailure()
 			}
 		} else {
 			fmt.Println("Watch daemon not running")

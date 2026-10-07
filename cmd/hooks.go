@@ -341,6 +341,10 @@ func runHookOutput(hookName string, fn func() error) error {
 	}
 
 	event := ""
+	// Codex treats a PostToolUse hook's empty stdout as an invalid JSON
+	// response (#156), so post-edit always answers with one envelope, a
+	// no-op when the payload named no file.
+	alwaysEmit := false
 	switch hookName {
 	case "session-start":
 		event = "SessionStart"
@@ -352,10 +356,11 @@ func runHookOutput(hookName string, fn func() error) error {
 		event = "PreToolUse"
 	case "post-edit":
 		event = "PostToolUse"
+		alwaysEmit = true
 	default:
 		return fn()
 	}
-	return emitCodexHookContext(event, fn)
+	return emitCodexHookContext(event, fn, alwaysEmit)
 }
 
 func runHookWithoutStdout(fn func() error) error {
@@ -829,7 +834,13 @@ func hookPostEdit(root string) error {
 	return nil
 }
 
-func emitCodexHookContext(event string, fn func() error) error {
+// emitCodexHookContext runs fn with stdout captured and re-emits whatever it
+// printed as one Codex hook JSON envelope. With alwaysEmit, an empty capture
+// still produces exactly one envelope, the no-op {"continue": true}, which
+// carries no context and is valid under the common hook-output schema;
+// without it, an empty capture stays silent (session-start, prompt-submit,
+// pre-compact and pre-edit keep that behaviour).
+func emitCodexHookContext(event string, fn func() error, alwaysEmit bool) error {
 	if os.Getenv("CODEX") != "1" {
 		return fn()
 	}
@@ -859,8 +870,14 @@ func emitCodexHookContext(event string, fn func() error) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	if result.err != nil || len(strings.TrimSpace(string(result.output))) == 0 {
+	if result.err != nil {
 		return result.err
+	}
+	if len(strings.TrimSpace(string(result.output))) == 0 {
+		if !alwaysEmit {
+			return nil
+		}
+		return json.NewEncoder(original).Encode(map[string]any{"continue": true})
 	}
 	return json.NewEncoder(original).Encode(map[string]any{
 		"hookSpecificOutput": map[string]any{

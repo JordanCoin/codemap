@@ -826,9 +826,26 @@ func (d *Daemon) writeState() error {
 	return d.publisher.publish()
 }
 
+// reportPublicationError logs a state-write failure once per failure streak
+// and its recovery once, so a daemon that cannot write state.json says so
+// without repeating itself on every debounce tick. The publisher's sidecar
+// carries the detail to `codemap watch status` (#140).
 func (d *Daemon) reportPublicationError(err error) {
-	if err != nil && d.verbose {
-		fmt.Printf("[watch] State publication failed: %v\n", err)
+	if err == nil {
+		if d.publishFailureLogged {
+			d.publishFailureLogged = false
+			if d.verbose {
+				fmt.Printf("[watch] State publication recovered\n")
+			}
+		}
+		return
+	}
+	if d.publishFailureLogged {
+		return
+	}
+	d.publishFailureLogged = true
+	if d.verbose {
+		fmt.Printf("[watch] State publication failing: %v (retrying; `codemap watch status` reports this until it recovers)\n", err)
 	}
 }
 

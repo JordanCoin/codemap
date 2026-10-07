@@ -896,7 +896,8 @@ func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input Imp
 	if invalid != nil {
 		return invalid, nil, nil
 	}
-	fg, err := scanner.BuildFileGraph(ctx, absRoot, scanner.ConfiguredFilters(absRoot))
+	filters := scanner.ConfiguredFilters(absRoot)
+	fg, err := scanner.BuildFileGraph(ctx, absRoot, filters)
 	if err != nil {
 		if cancelled := cancellationResult(ctx, "Importer analysis"); cancelled != nil {
 			return cancelled, nil, nil
@@ -909,6 +910,14 @@ func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input Imp
 	sort.Strings(importers)
 	structured := newImportersOutput(absRoot, file, fg)
 	if len(importers) == 0 {
+		// A zero for a file the graph never scanned is a blind spot, not an
+		// answer (#140): say so, and name the one reason that applies.
+		if why, unindexed := fg.ExplainUnindexed(file, filters); unindexed {
+			structured.Kind = "not_indexed"
+			structured.NotIndexed = true
+			structured.NotIndexedReason = why.Reason
+			return textResult(notIndexedText(file, why, fg)), structured, nil
+		}
 		return textResult("No files import '" + file + "'" + mcpCoverageText(fg)), structured, nil
 	}
 
@@ -952,6 +961,15 @@ func normalizeImporterFile(root, file string) string {
 		}
 	}
 	return filepath.Clean(file)
+}
+
+// notIndexedText is the MCP answer for a file the graph cannot vouch for. It
+// states the one reason, says the zeros are unknowns rather than counts, and
+// names the next action, so an agent that mistyped a path is not told the
+// file is a harmless leaf (#140).
+func notIndexedText(file string, why scanner.UnindexedExplanation, fg *scanner.FileGraph) string {
+	return fmt.Sprintf("not indexed: %s is not in the scanned file set (%s)\nImports and importers: unknown, not 0 (codemap never scanned this file).\nNext: %s.%s",
+		file, why.Reason, why.Next, mcpCoverageText(fg))
 }
 
 func mcpCoverageText(fg *scanner.FileGraph) string {
@@ -1397,7 +1415,8 @@ func handleGetFileContext(ctx context.Context, req *mcp.CallToolRequest, input I
 	if invalid != nil {
 		return invalid, nil, nil
 	}
-	fg, err := scanner.BuildFileGraph(ctx, absRoot, scanner.ConfiguredFilters(absRoot))
+	filters := scanner.ConfiguredFilters(absRoot)
+	fg, err := scanner.BuildFileGraph(ctx, absRoot, filters)
 	if err != nil {
 		if cancelled := cancellationResult(ctx, "File context analysis"); cancelled != nil {
 			return cancelled, nil, nil
@@ -1416,6 +1435,16 @@ func handleGetFileContext(ctx context.Context, req *mcp.CallToolRequest, input I
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("=== File Context: %s ===\n\n", file))
+
+	// "leaf file" and "entry point or unused" are claims about a scanned
+	// file. For a file the graph never scanned they are fiction (#140), so
+	// check the inventory before either zero gets an explanation.
+	if len(imports) == 0 && len(importers) == 0 {
+		if why, unindexed := fg.ExplainUnindexed(file, filters); unindexed {
+			sb.WriteString(notIndexedText(file, why, fg))
+			return textResult(sb.String()), nil, nil
+		}
+	}
 
 	// Hub status
 	if isHub {
