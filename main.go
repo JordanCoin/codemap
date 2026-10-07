@@ -569,8 +569,11 @@ func applyGlobalRootOptions(args []string) ([]string, bool, error) {
 	if canonical, err := filepath.EvalSymlinks(roots.Setup); err == nil {
 		roots.Setup = canonical
 	}
-	if err := os.Chdir(roots.Project); err != nil {
-		return nil, false, fmt.Errorf("change to project root %q: %w", roots.Project, err)
+	// Chdir into the literal requested directory (matching `git -C`), not the
+	// Git-boundary walk-up used for storage/setup discovery: see
+	// cmd.InvocationRoots.Operate.
+	if err := os.Chdir(roots.Operate); err != nil {
+		return nil, false, fmt.Errorf("change to project root %q: %w", roots.Operate, err)
 	}
 	if opts.SetupRoot != "" {
 		projectpath.SetSetupRoot(roots.Setup)

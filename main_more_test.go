@@ -74,7 +74,12 @@ func TestApplyGlobalRootOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantDir, err := filepath.EvalSymlinks(projectRoot)
+	// -C/--project-root operates on exactly the named directory (matching
+	// `git -C`), not the Git repository root it happens to sit inside: see
+	// cmd.InvocationRoots.Operate. Storage/setup discovery below still walks
+	// up to the Git boundary on its own, which is what the setup-root
+	// assertion below exercises.
+	wantDir, err := filepath.EvalSymlinks(projectNested)
 	if err != nil {
 		t.Fatal(err)
 	}

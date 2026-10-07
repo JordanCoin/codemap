@@ -27,6 +27,15 @@ type InvocationRoots struct {
 	Setup   string
 	Runtime string
 	Source  projectpath.Source
+	// Operate is the directory the invocation should actually chdir into and
+	// scan, matching `git -C <dir>`: exactly the directory the caller named,
+	// not the nearest enclosing Git root. Project/Setup/Runtime remain
+	// walked up to a Git boundary because storage discovery (skills,
+	// .codemap/config.json inheritance, linked-worktree/submodule detection)
+	// self-heals by walking up from any cwd (see projectpath.Select), so
+	// re-anchoring cwd itself only needs to satisfy the "-C must resolve
+	// inside a Git repository" safety check, not become that repository's root.
+	Operate string
 }
 
 // ParseGlobalRootOptions extracts root options wherever they appear before --.
@@ -128,7 +137,26 @@ func ResolveGlobalRoots(opts GlobalRootOptions, launchDir string) (InvocationRoo
 		return InvocationRoots{}, fmt.Errorf("resolve setup root: %w", err)
 	}
 
-	return InvocationRoots{Project: projectRoot, Setup: setupRoot, Runtime: runtimeRoot, Source: source}, nil
+	operateRoot := resolveOperateRoot(projectInput, projectRoot)
+
+	return InvocationRoots{Project: projectRoot, Setup: setupRoot, Runtime: runtimeRoot, Source: source, Operate: operateRoot}, nil
+}
+
+// resolveOperateRoot picks the directory `-C`/`--project-root` should chdir
+// into. `projectInput` is the caller's literal request (already made
+// absolute); when it names a real directory, that directory is used as-is —
+// matching `git -C <dir>`, which never reinterprets its argument back to a
+// repository root. `projectRoot` (the Git-boundary walk-up result) is only a
+// fallback for inputs that don't exist as a directory yet, so a bad path
+// still fails the same way it always has instead of silently chdir'ing
+// somewhere unexpected.
+func resolveOperateRoot(projectInput, projectRoot string) string {
+	if canonical, err := filepath.EvalSymlinks(projectInput); err == nil {
+		if info, statErr := os.Stat(canonical); statErr == nil && info.IsDir() {
+			return canonical
+		}
+	}
+	return projectRoot
 }
 
 func validateCodemapStorageRoot(root string) error {

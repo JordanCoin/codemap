@@ -186,6 +186,56 @@ func TestStandardSubmoduleUsesProjectLocalSetup(t *testing.T) {
 	}
 }
 
+// TestDashCScopesToTheGivenDirectory is the regression for the reported bug:
+// `-C <subdir>` was silently re-anchoring the scan to the enclosing Git
+// repository root instead of operating on exactly the named directory, so a
+// user pointing codemap at a subfolder (e.g. a skill folder that is not
+// itself a Git repo) still got the whole repository's file count back. `git
+// -C <dir>` never does this — it's the documented contract codemap's own
+// `--help` text claims ("Operate on code in <repo>"). This asserts `-C sub`
+// from the repo root reports the same file count as running codemap
+// directly from inside `sub`, and that both differ from the whole-repo
+// count.
+func TestDashCScopesToTheGivenDirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(root, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "root.js"), []byte("console.log('root')\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "sub.js"), []byte("console.log('sub')\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	wholeRepoOut, err := runRootOptionsBinary(root, ".")
+	if err != nil {
+		t.Fatalf("codemap . failed: %v\n%s", err, wholeRepoOut)
+	}
+	if !strings.Contains(wholeRepoOut, "Files: 2") {
+		t.Fatalf("expected whole-repo scan to report Files: 2, got:\n%s", wholeRepoOut)
+	}
+
+	dashCOut, err := runRootOptionsBinary(root, "-C", "sub", ".")
+	if err != nil {
+		t.Fatalf("codemap -C sub . failed: %v\n%s", err, dashCOut)
+	}
+	directOut, err := runRootOptionsBinary(sub, ".")
+	if err != nil {
+		t.Fatalf("codemap . (from sub) failed: %v\n%s", err, directOut)
+	}
+	if !strings.Contains(directOut, "Files: 1") {
+		t.Fatalf("expected a direct scan from inside sub to report Files: 1, got:\n%s", directOut)
+	}
+	if !strings.Contains(dashCOut, "Files: 1") {
+		t.Fatalf("-C sub . scanned the whole repo instead of just sub, got:\n%s", dashCOut)
+	}
+}
+
 func writeTestSkill(t *testing.T, root, name string) {
 	t.Helper()
 	dir := filepath.Join(root, ".codemap", "skills")
