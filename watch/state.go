@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"codemap/internal/gitexclude"
 	"codemap/internal/projectpath"
 	"codemap/internal/runtimefile"
 )
@@ -85,7 +86,7 @@ func WriteProcessPID(root string, pid int) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+	if err := gitexclude.MkdirAll(runtimeDir, 0o755); err != nil {
 		return err
 	}
 	pidFile := filepath.Join(runtimeDir, "watch.pid")

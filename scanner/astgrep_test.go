@@ -5,7 +5,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -771,5 +773,75 @@ func TestScanDirectoryStillExcludesKnownNeverSourceDirs(t *testing.T) {
 		if strings.Contains(path, ".git/") || strings.Contains(path, "node_modules/") || strings.Contains(path, "vendor/") {
 			t.Fatalf("analyses = %#v, still indexed a never-source directory (%s)", outcome.Analyses, path)
 		}
+	}
+}
+
+// TestScanDirectoryExcludesNestedWorktreesByPath locks in that the ast-grep
+// invocation excludes every nested repository the file walker skips (issue
+// #131): a linked worktree under a dotted directory and a plain clone two
+// levels down, each by its root-relative path, so --deps agrees with
+// `codemap .` on what is project source.
+func TestScanDirectoryExcludesNestedWorktreesByPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires shell script execution")
+	}
+	root := nestedRepoFixture(t)
+
+	tmpDir := t.TempDir()
+	capturedArgs := filepath.Join(tmpDir, "args.txt")
+	fakeBinary := filepath.Join(tmpDir, "fake-sg.sh")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE_ARGS\"\nprintf '[]\\n'\n"
+	if err := os.WriteFile(fakeBinary, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CAPTURE_ARGS", capturedArgs)
+
+	scanner := &AstGrepScanner{rulesDir: tmpDir, binary: fakeBinary}
+	if _, err := scanner.ScanDirectory(context.Background(), root); err != nil {
+		t.Fatalf("ScanDirectory() error = %v", err)
+	}
+	args, err := os.ReadFile(capturedArgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"--globs\n!.claude/worktrees/agent-x/**\n", "--globs\n!tools/sub-clone/**\n"} {
+		if !strings.Contains(string(args), want) {
+			t.Errorf("expected %q in ast-grep args, got:\n%s", want, args)
+		}
+	}
+	if strings.Contains(string(args), "!lib/**") {
+		t.Errorf("plain source directory must not be excluded, got:\n%s", args)
+	}
+}
+
+// TestScanDirectoryRealAstGrepSkipsNestedWorktree runs the real ast-grep on
+// the same fixture and checks the nested repositories' files are not indexed.
+func TestScanDirectoryRealAstGrepSkipsNestedWorktree(t *testing.T) {
+	scanner, err := NewAstGrepScanner()
+	if err != nil {
+		t.Fatalf("NewAstGrepScanner() error = %v", err)
+	}
+	t.Cleanup(scanner.Close)
+	if !scanner.Available() {
+		t.Skip("ast-grep not available")
+	}
+	root := nestedRepoFixture(t)
+	for _, name := range []string{"a.js", ".claude/worktrees/agent-x/a.js", "tools/sub-clone/a.js"} {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(name)), []byte("const b = require('./b');\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	outcome, err := scanner.ScanDirectory(context.Background(), root)
+	if err != nil {
+		t.Fatalf("ScanDirectory() error = %v", err)
+	}
+	var paths []string
+	for _, a := range outcome.Analyses {
+		paths = append(paths, filepath.ToSlash(a.Path))
+	}
+	sort.Strings(paths)
+	if !reflect.DeepEqual(paths, []string{"a.js"}) {
+		t.Fatalf("analyses = %v, want only a.js (nested worktree and clone excluded)", paths)
 	}
 }
