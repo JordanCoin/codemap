@@ -95,7 +95,7 @@ func benchmarkBuildFileIndex(b *testing.B, files []FileInfo) {
 	b.ResetTimer()
 	for range b.N {
 		var err error
-		benchmarkFileIndex, err = buildFileIndexContext(context.Background(), files, "example.com/bench")
+		benchmarkFileIndex, err = buildFileIndexContext(context.Background(), files, "example.com/bench", "", Filters{})
 		if err != nil {
 			b.Fatal(err)
 		}

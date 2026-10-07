@@ -26,6 +26,23 @@ type FileGraph struct {
 	PathAliases map[string][]string // TS/JS path aliases from tsconfig.json (e.g., "@modules/*" -> ["src/modules/*"])
 	BaseURL     string              // TS/JS baseUrl from tsconfig.json
 	Coverage    GraphCoverage
+	// KnownFiles is every file this graph actually scanned (post filters),
+	// keyed by slash-separated path relative to Root. A path absent here was
+	// never indexed at all — e.g. it lives under an excluded or hidden
+	// directory — which is a distinct, worse state than "indexed and found
+	// to have zero importers": see Indexed.
+	KnownFiles map[string]bool
+}
+
+// Indexed reports whether path (slash-separated, relative to fg.Root) was
+// part of this graph's scanned inventory. A false result means codemap never
+// looked at the file at all, so an empty Importers/Imports entry for it is a
+// coverage gap, not a confirmed zero.
+func (fg *FileGraph) Indexed(path string) bool {
+	if fg == nil {
+		return false
+	}
+	return fg.KnownFiles[path]
 }
 
 // fileIndex provides fast lookup of files by various import-like keys
@@ -36,6 +53,17 @@ type fileIndex struct {
 	goPkgs      map[string][]string // Go package path -> files
 	cueModules  []cueModuleInfo
 	cuePackages map[string]string
+	// absRoot and filters back a narrow fallback in tryExactMatch: a file
+	// excluded from the scanned inventory purely by .gitignore can still be
+	// the exact, unambiguous target of a plain relative import from a file
+	// that *was* scanned. absRoot empty disables the fallback entirely
+	// (e.g. tests that build a fileIndex from bare FileInfo values with no
+	// real directory behind them). filters is still enforced in that
+	// fallback so it recovers gitignore's blind spot without also
+	// resurrecting a file the project or caller explicitly excluded via
+	// --only/--exclude or config.json, which must stay absolutely excluded.
+	absRoot string
+	filters Filters
 }
 
 // BuildFileGraph scans a project with explicit filters and builds its file
@@ -132,6 +160,10 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 			}
 		}
 	}
+	fg.KnownFiles = make(map[string]bool, len(files))
+	for _, file := range files {
+		fg.KnownFiles[filepath.ToSlash(file.Path)] = true
+	}
 	languages := inspectFileLanguages(files)
 	hasCUEAnalysis := analysisLanguages.hasCUE
 	if languages.hasCUE && !hasCUEAnalysis {
@@ -159,7 +191,7 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 	}
 
 	// Build file index for fast fuzzy matching
-	idx, err := buildFileIndexContext(ctx, files, fg.Module)
+	idx, err := buildFileIndexContext(ctx, files, fg.Module, absRoot, filters)
 	if err != nil {
 		return nil, err
 	}
@@ -261,6 +293,17 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 		resolved[symbolLevelImportLanguages["swift"]] = true
 	}
 	fg.Coverage.addSymbolLevelImportCoverage(languages.symbolLevel, resolved)
+	// A file resolved via tryExactMatch's on-disk fallback (above) is, by
+	// construction, real and present — it just wasn't part of the scanned
+	// inventory KnownFiles was built from (e.g. gitignored). Now that it has
+	// a proven importer, it should read as indexed rather than "not
+	// indexed": the whole point of the fallback is to turn a dropped edge
+	// into a correct one, and leaving KnownFiles stale would have the
+	// importers report claim the edge while simultaneously claiming the
+	// target was never looked at.
+	for imported := range fg.Importers {
+		fg.KnownFiles[filepath.ToSlash(imported)] = true
+	}
 	fg.sortEdges()
 	return fg, nil
 }
@@ -384,19 +427,24 @@ func inspectAnalysisLanguages(analyses []FileAnalysis) analysisLanguageInventory
 	return inventory
 }
 
-// buildFileIndex creates a multi-key index for fast import resolution
+// buildFileIndex creates a multi-key index for fast import resolution. It has
+// no project root behind it (callers pass bare FileInfo values, often in
+// tests), so the on-disk fallback in tryExactMatch stays disabled; use
+// buildFileIndexContext directly to enable it.
 func buildFileIndex(files []FileInfo, goModule string) *fileIndex {
-	idx, _ := buildFileIndexContext(context.Background(), files, goModule)
+	idx, _ := buildFileIndexContext(context.Background(), files, goModule, "", Filters{})
 	return idx
 }
 
-func buildFileIndexContext(ctx context.Context, files []FileInfo, goModule string) (*fileIndex, error) {
+func buildFileIndexContext(ctx context.Context, files []FileInfo, goModule string, absRoot string, filters Filters) (*fileIndex, error) {
 	directoryHint := min(len(files), 1024)
 	idx := &fileIndex{
 		byExact:  make(map[string]uint32, len(files)),
 		bySuffix: make([]string, 0, len(files)),
 		byDir:    make(map[string][]string, directoryHint),
 		goPkgs:   make(map[string][]string, directoryHint),
+		absRoot:  absRoot,
+		filters:  filters,
 	}
 	goPackagePaths := make(map[string]string, directoryHint)
 
@@ -793,7 +841,61 @@ func tryExactMatch(path string, idx *fileIndex, sourceLanguage string) []string 
 		}
 	}
 
+	// A candidate absent from the scanned inventory (count 0, as opposed to
+	// the ambiguous count >= 2 case above, which is deliberately left
+	// unresolved) may still be a real, readable file that the scan excluded
+	// for an orthogonal reason — most commonly .gitignore, since ScanFiles
+	// applies the project's gitignore rules to build the inventory this
+	// index is drawn from. A plain relative require('./x') naming an exact,
+	// unambiguous path is confident evidence the file is genuinely part of
+	// the dependency graph even though it isn't part of the scanned file
+	// set, so this on-disk check recovers exactly that edge without
+	// widening the fuzzy/suffix resolution strategies to gitignored files.
+	if idx.absRoot != "" {
+		if idx.byExact[path] == 0 && languagesCompatible(sourceLanguage, DetectLanguage(path)) && idx.gitignoreOnlyRecoverable(path) {
+			return []string{path}
+		}
+		for _, candidate := range typescriptSourceCandidates(path, sourceLanguage) {
+			if idx.byExact[candidate] == 0 && languagesCompatible(sourceLanguage, DetectLanguage(candidate)) && idx.gitignoreOnlyRecoverable(candidate) {
+				return []string{candidate}
+			}
+		}
+		for _, ext := range resolverExtensions[:len(resolverExtensions)-1] {
+			candidate := path + ext
+			if idx.byExact[candidate] == 0 && languagesCompatible(sourceLanguage, DetectLanguage(candidate)) && idx.gitignoreOnlyRecoverable(candidate) {
+				return []string{candidate}
+			}
+		}
+	}
+
 	return nil
+}
+
+// gitignoreOnlyRecoverable reports whether relPath is missing from the
+// scanned inventory *solely* because of .gitignore, as opposed to an
+// explicit --only/--exclude filter, a config.json exclude, or one of the
+// scanner's own never-source directory names (node_modules, vendor,
+// testdata, ...) — all of which must stay absolutely excluded, unlike
+// .gitignore's blind spot. ScanFiles' only exclusion mechanisms are those
+// three plus .gitignore, so a real, regular file that clears the other two
+// and is still absent can only be missing because of .gitignore.
+func (idx *fileIndex) gitignoreOnlyRecoverable(relPath string) bool {
+	if !MatchesFilters(filepath.ToSlash(relPath), filepath.Ext(relPath), idx.filters.Only, idx.filters.Exclude) {
+		return false
+	}
+	for dir := filepath.ToSlash(filepath.Dir(relPath)); dir != "." && dir != "/" && dir != ""; dir = pathpkg.Dir(dir) {
+		if IgnoredDirs[pathpkg.Base(dir)] {
+			return false
+		}
+	}
+	return isRegularFile(idx.absRoot, relPath)
+}
+
+// isRegularFile reports whether root-relative path exists on disk under
+// absRoot as a regular (not directory, not symlink-to-directory) file.
+func isRegularFile(absRoot, relPath string) bool {
+	info, err := os.Stat(filepath.Join(absRoot, filepath.FromSlash(relPath)))
+	return err == nil && info.Mode().IsRegular()
 }
 
 // typescriptEmitExtensions maps an emitted JavaScript extension to the
