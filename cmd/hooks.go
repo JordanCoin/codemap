@@ -2153,7 +2153,7 @@ func checkFileImportersWithPhase(root, filePath, phase string) error {
 		}
 	}
 	if len(hubImports) > 0 {
-		fmt.Printf("   Imports %d hub(s): %s\n", len(hubImports), strings.Join(hubImports, ", "))
+		fmt.Printf("   Imports %d hub(s): %s\n", len(hubImports), strings.Join(scanner.CollapseGoPackageFiles(hubImports), ", "))
 		fmt.Println()
 	}
 

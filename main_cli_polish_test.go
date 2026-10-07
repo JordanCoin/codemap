@@ -9,19 +9,25 @@ import (
 
 func TestRenderImportersReportExplainsEmptyResult(t *testing.T) {
 	report := scanner.ImportersReport{
-		Root: "/repo",
-		Mode: "importers",
-		File: "watch/events.go",
+		Root:            "/repo",
+		Mode:            "importers",
+		File:            "watch/events.go",
+		Package:         "codemap/watch",
+		PackageSiblings: 10,
 	}
 
 	var buf strings.Builder
 	renderImportersReportCLI(&buf, report)
 	out := buf.String()
-	if !strings.Contains(out, "No files import watch/events.go") {
-		t.Fatalf("empty importers result must say so instead of printing nothing:\n%q", out)
+	// A Go file inside a multi-file package: the zero is a cross-package
+	// zero, and the line must say what the graph does not model, with the
+	// count, instead of a bare "No files import" (#138 part 1).
+	want := "No cross-package importers of watch/events.go. Same-package references are not modeled (10 other files in package codemap/watch).\n"
+	if !strings.Contains(out, want) {
+		t.Fatalf("empty Go importers result must name the unmodeled siblings:\n got %q\nwant %q", out, want)
 	}
-	if !strings.Contains(out, "same package") {
-		t.Fatalf("empty result should explain the same-package limitation for Go:\n%q", out)
+	if strings.Contains(out, "No files import") {
+		t.Fatalf("a Go file with package siblings must not print a bare zero:\n%q", out)
 	}
 
 	// The token-budgeted blast-radius renderer must keep omitting empty

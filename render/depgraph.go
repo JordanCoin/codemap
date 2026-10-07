@@ -51,6 +51,8 @@ func getSystemName(dirPath string) string {
 	return "Root"
 }
 
+var depgraphExtPattern = regexp.MustCompile(`\.[^.]+$`)
+
 // Depgraph renders the dependency flow visualization. The file graph is built
 // from the caller's analyses (BuildFileGraphFromAnalyses) rather than by
 // re-running the ast-grep scan, and ctx propagates cancellation through that
@@ -68,7 +70,7 @@ func Depgraph(ctx context.Context, w io.Writer, project scanner.DepsProject) {
 
 	// Build internal names lookup
 	internalNames := make(map[string]bool)
-	extPattern := regexp.MustCompile(`\.[^.]+$`)
+	extPattern := depgraphExtPattern
 	for _, f := range files {
 		basename := filepath.Base(f.Path)
 		name := strings.ToLower(extPattern.ReplaceAllString(basename, ""))
@@ -84,6 +86,7 @@ func Depgraph(ctx context.Context, w io.Writer, project scanner.DepsProject) {
 	fg, err := scanner.BuildFileGraphFromAnalyses(ctx, project.Root, files, graphFilters)
 	var internalDeps map[string][]string
 	var depCounts map[string]int
+	depImporters := make(map[string][]string)
 	if err == nil && fg != nil {
 		// Build set of files we're displaying (may be filtered by --diff)
 		displayedFiles := make(map[string]bool)
@@ -114,14 +117,15 @@ func Depgraph(ctx context.Context, w io.Writer, project scanner.DepsProject) {
 			if !displayedFiles[file] {
 				continue
 			}
-			count := 0
+			var shown []string
 			for _, imp := range importers {
 				if displayedFiles[imp] {
-					count++
+					shown = append(shown, imp)
 				}
 			}
-			if count > 0 {
-				depCounts[file] = count
+			if len(shown) > 0 {
+				depCounts[file] = len(shown)
+				depImporters[file] = shown
 			}
 		}
 	} else {
@@ -269,6 +273,12 @@ func Depgraph(ctx context.Context, w io.Writer, project scanner.DepsProject) {
 				continue
 			}
 
+			// Go imports name packages, so one import of a multi-file package
+			// is one edge per file in the graph (and in --json). The text view
+			// draws it once, as "dir/ (N files)", so the output grows with the
+			// number of imports rather than with how packages are split up.
+			targetStrs := depgraphTargetNames(targets)
+
 			if len(targets) == 1 {
 				t := targets[0]
 				tName := extPattern.ReplaceAllString(t, "")
@@ -299,13 +309,10 @@ func Depgraph(ctx context.Context, w io.Writer, project scanner.DepsProject) {
 				} else {
 					fmt.Fprintf(w, "  %s ───▶ %s\n", nameNoExt, tName)
 				}
+			} else if len(targetStrs) == 1 {
+				fmt.Fprintf(w, "  %s ───▶ %s\n", nameNoExt, targetStrs[0])
 			} else {
-				var targetStrs []string
-				for _, t := range targets {
-					targetStrs = append(targetStrs, extPattern.ReplaceAllString(t, ""))
-				}
-
-				if len(targets) <= 4 {
+				if len(targetStrs) <= 4 {
 					fmt.Fprintf(w, "  %s ───▶ %s\n", nameNoExt, strings.Join(targetStrs, ", "))
 				} else {
 					fmt.Fprintf(w, "  %s ──┬──▶ %s\n", nameNoExt, targetStrs[0])
@@ -337,19 +344,7 @@ func Depgraph(ctx context.Context, w io.Writer, project scanner.DepsProject) {
 
 	// HUBS section
 	if len(depCounts) > 0 {
-		type hub struct {
-			name  string
-			count int
-		}
-		var hubs []hub
-		for name, count := range depCounts {
-			if count >= 2 {
-				hubs = append(hubs, hub{name, count})
-			}
-		}
-		sort.Slice(hubs, func(i, j int) bool {
-			return hubs[i].count > hubs[j].count
-		})
+		hubs := depgraphHubs(depCounts, depImporters)
 		if len(hubs) > 6 {
 			hubs = hubs[:6]
 		}
@@ -358,7 +353,7 @@ func Depgraph(ctx context.Context, w io.Writer, project scanner.DepsProject) {
 			fmt.Fprintln(w, strings.Repeat("─", 61))
 			var hubStrs []string
 			for _, h := range hubs {
-				hubStrs = append(hubStrs, fmt.Sprintf("%s (%d←)", extPattern.ReplaceAllString(h.name, ""), h.count))
+				hubStrs = append(hubStrs, h.String())
 			}
 			fmt.Fprintf(w, "HUBS: %s\n", strings.Join(hubStrs, ", "))
 		}
@@ -371,11 +366,95 @@ func Depgraph(ctx context.Context, w io.Writer, project scanner.DepsProject) {
 	}
 	internalCount := 0
 	for _, targets := range internalDeps {
-		internalCount += len(targets)
+		internalCount += len(depgraphTargetNames(targets))
 	}
 	fmt.Fprintf(w, "%d files · %d functions · %d deps\n", len(files), totalFuncs, internalCount)
 	renderCoverageLine(w, project.Coverage)
 	fmt.Fprintln(w)
+}
+
+// depgraphTargetNames is the text form of one file's resolved imports: the
+// files of a multi-file Go package collapse to one "dir/ (N files)" entry and
+// every other path loses its extension. The graph itself (and --json) keeps
+// the per-file edges.
+func depgraphTargetNames(targets []string) []string {
+	names := make([]string, 0, len(targets))
+	for _, t := range scanner.CollapseGoPackageFiles(targets) {
+		if strings.HasSuffix(t, " files)") {
+			names = append(names, t)
+			continue
+		}
+		names = append(names, depgraphExtPattern.ReplaceAllString(t, ""))
+	}
+	return names
+}
+
+type depgraphHub struct {
+	name  string
+	count int
+	files int // non-zero when name is a multi-file Go package
+}
+
+func (h depgraphHub) String() string {
+	if h.files > 0 {
+		return fmt.Sprintf("%s (%d←, %d files)", h.name, h.count, h.files)
+	}
+	return fmt.Sprintf("%s (%d←)", h.name, h.count)
+}
+
+// depgraphHubs ranks hubs by displayed importer count. The files of one
+// multi-file Go package all carry the same importers (an import names the
+// package), so they are reported once, as the package, with the number of
+// distinct files importing it; a single-file package stays a file. Ties break
+// on name so the head of the list is stable across runs.
+func depgraphHubs(depCounts map[string]int, depImporters map[string][]string) []depgraphHub {
+	goFilesPerDir := make(map[string]int)
+	for name := range depCounts {
+		if strings.EqualFold(filepath.Ext(name), ".go") {
+			goFilesPerDir[pathDir(name)]++
+		}
+	}
+	packageImporters := make(map[string]map[string]bool)
+	var hubs []depgraphHub
+	for name, count := range depCounts {
+		if strings.EqualFold(filepath.Ext(name), ".go") && goFilesPerDir[pathDir(name)] >= 2 {
+			dir := pathDir(name)
+			if packageImporters[dir] == nil {
+				packageImporters[dir] = make(map[string]bool)
+			}
+			for _, imp := range depImporters[name] {
+				packageImporters[dir][imp] = true
+			}
+			continue
+		}
+		if count >= 2 {
+			hubs = append(hubs, depgraphHub{name: depgraphExtPattern.ReplaceAllString(name, ""), count: count})
+		}
+	}
+	for dir, importers := range packageImporters {
+		if len(importers) >= 2 {
+			label := dir
+			if label == "." {
+				label = ""
+			}
+			hubs = append(hubs, depgraphHub{name: label + "/", count: len(importers), files: goFilesPerDir[dir]})
+		}
+	}
+	sort.Slice(hubs, func(i, j int) bool {
+		if hubs[i].count != hubs[j].count {
+			return hubs[i].count > hubs[j].count
+		}
+		return hubs[i].name < hubs[j].name
+	})
+	return hubs
+}
+
+func pathDir(path string) string {
+	dir := filepath.ToSlash(filepath.Dir(filepath.FromSlash(path)))
+	if dir == "" {
+		return "."
+	}
+	return dir
 }
 
 // renderCoverageLine surfaces degraded scan coverage in text output so a
