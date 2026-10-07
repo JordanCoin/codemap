@@ -22,6 +22,15 @@ func gitRun(t *testing.T, dir string, args ...string) string {
 	return string(out)
 }
 
+func canonical(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%q): %v", path, err)
+	}
+	return resolved
+}
+
 func freshClone(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -120,9 +129,11 @@ func TestEnsureIgnoredIfNeededUsesSharedExcludeInLinkedWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(root, ".git", "info", "exclude")
-	if wrote != want {
-		t.Fatalf("wrote %q, want the primary's shared exclude %q", wrote, want)
+	// git reports the common dir with symlinks resolved (macOS keeps
+	// t.TempDir under /var -> /private/var), so compare canonical paths.
+	want := canonical(t, filepath.Join(root, ".git", "info", "exclude"))
+	if got := canonical(t, wrote); got != want {
+		t.Fatalf("wrote %q, want the primary's shared exclude %q", got, want)
 	}
 	if err := os.MkdirAll(filepath.Join(wt, ".codemap"), 0o755); err != nil {
 		t.Fatal(err)
