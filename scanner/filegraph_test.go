@@ -608,7 +608,14 @@ func TestBuildFileGraphGoPackageTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := []string{filepath.FromSlash("pkg/only/only.go")}
+	// A package import links the importer to every non-test file of the
+	// package, however many there are (#191); _test.go files and packages
+	// with only test files are never targets.
+	want := []string{
+		filepath.FromSlash("pkg/only/only.go"),
+		filepath.FromSlash("pkg/multi/a.go"),
+		filepath.FromSlash("pkg/multi/b.go"),
+	}
 	for _, caller := range []string{"cmd/caller.go", "cmd/caller_test.go"} {
 		caller = filepath.FromSlash(caller)
 		if got := graph.Imports[caller]; !reflect.DeepEqual(got, want) {
@@ -766,7 +773,7 @@ func TestBuildFileGraphImportResolutionBoundaries(t *testing.T) {
 	assertImports("python/main.py", []string{"python/services/__init__.py"})
 	assertImports("MyApp/Program.cs", []string{"MyApp/Models/User.cs"})
 	assertImports("cmd/main.go", []string{"pkg/single/util.go"})
-	assertImports("cmd/multi.go", nil)
+	assertImports("cmd/multi.go", []string{"pkg/multi/a.go", "pkg/multi/b.go"})
 	assertImports("README.md", nil)
 }
 

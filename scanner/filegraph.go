@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	pathpkg "path"
 	"path/filepath"
@@ -249,7 +250,6 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 		if a.Language == "rust" {
 			resolvedImports = resolveRustReferences(absRoot, a, idx, rustWorkspace)
 		} else {
-			sourceLanguage := DetectLanguage(a.Path)
 			for _, imp := range a.Imports {
 				if err := ctx.Err(); err != nil {
 					return nil, err
@@ -257,15 +257,14 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 				resolved := fuzzyResolveWithWorkspace(
 					imp, a.Path, idx, fg.Module, fg.PathAliases, fg.BaseURL, jsResolver, dartResolver,
 				)
-				// Exclude multi-file Go package imports to avoid inflating hub counts.
-				// Go package imports start with the module prefix and resolve to all
-				// files in that package. For all other imports (e.g., C# namespace
-				// imports that resolve via directory matching), allow multi-file
-				// resolution so inter-namespace dependencies are tracked.
-				isGoPkg := sourceLanguage == "go" && isLocalGoImport(imp, fg.Module) && len(resolved) > 1
-				if !isGoPkg && len(resolved) > 0 {
-					resolvedImports = append(resolvedImports, resolved...)
-				}
+				// A Go import names a package, and a package is every non-test
+				// .go file in its directory, so one import fans out to one edge
+				// per file. Dropping the multi-file case (as this once did, to
+				// keep hub counts small) made every importer of a package with
+				// two or more files vanish from --deps and --importers: see #191.
+				// Text renderers that need package granularity collapse these
+				// edges themselves; the graph keeps the file edges.
+				resolvedImports = append(resolvedImports, resolved...)
 			}
 		}
 
@@ -1062,6 +1061,68 @@ func (fg *FileGraph) IsHub(path string) bool {
 		return false
 	}
 	return CountHubImporters(fg.Importers[path]) >= HubThreshold
+}
+
+// GoPackage reports the Go package that path belongs to when this graph
+// resolved Go imports at package granularity: the package's import path and
+// its non-test files, which include path itself unless path is a _test.go
+// file (one lives in the package but is never an import target, so it is
+// absent from Packages). ok is false for a non-Go file, for a graph with no
+// go.mod, and for a directory the index never saw.
+func (fg *FileGraph) GoPackage(path string) (importPath string, files []string, ok bool) {
+	if fg == nil || fg.Module == "" || len(fg.Packages) == 0 {
+		return "", nil, false
+	}
+	if !strings.EqualFold(filepath.Ext(path), ".go") {
+		return "", nil, false
+	}
+	importPath = fg.Module
+	if dir := pathpkg.Dir(filepath.ToSlash(path)); dir != "" && dir != "." {
+		importPath += "/" + dir
+	}
+	files, ok = fg.Packages[importPath]
+	if !ok {
+		return "", nil, false
+	}
+	return importPath, files, true
+}
+
+// CollapseGoPackageFiles rewrites a list of file paths for text output so Go
+// files that were linked as one package read as one entry. Go imports name
+// packages, so every non-test .go file of a directory arrives in an edge list
+// together, and printing each one inflates the output without adding an edge
+// the reader can act on. Two or more .go paths in one directory become
+// "dir/ (N files)" with N the number of paths collapsed into it, placed at the
+// first of their positions; every other path is returned unchanged.
+func CollapseGoPackageFiles(paths []string) []string {
+	perDir := make(map[string]int, len(paths))
+	for _, path := range paths {
+		if strings.EqualFold(filepath.Ext(path), ".go") {
+			perDir[pathpkg.Dir(filepath.ToSlash(path))]++
+		}
+	}
+	out := make([]string, 0, len(paths))
+	emitted := make(map[string]bool, len(perDir))
+	for _, path := range paths {
+		if !strings.EqualFold(filepath.Ext(path), ".go") {
+			out = append(out, path)
+			continue
+		}
+		dir := pathpkg.Dir(filepath.ToSlash(path))
+		if perDir[dir] < 2 {
+			out = append(out, path)
+			continue
+		}
+		if emitted[dir] {
+			continue
+		}
+		emitted[dir] = true
+		if dir == "." {
+			dir = ""
+		}
+		out = append(out, fmt.Sprintf("%s/ (%d files)", dir, perDir[pathpkg.Dir(filepath.ToSlash(path))]))
+	}
+	return out
 }
 
 // HubFiles returns all files that qualify as hubs under IsHub, ordered by
