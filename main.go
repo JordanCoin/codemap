@@ -96,6 +96,8 @@ func main() {
 		}
 		hookName := os.Args[2]
 		root, _ := os.Getwd()
+		// Hook stdout is an agent prompt, never a terminal: no colour, ever.
+		render.SetColorMode(render.ColorNever)
 		hookAgent := "claude"
 		hookIntegration := ""
 		for _, arg := range os.Args[3:] {
@@ -262,6 +264,7 @@ func main() {
 		fmt.Println("  --version           Show build version")
 		fmt.Println("  -C, --project-root <repo> Operate on code in <repo>.")
 		fmt.Println("  --setup-root <repo> Reuse state from <repo>/.codemap.")
+		fmt.Println("  --color <mode>      Colour output: auto (default: only on a terminal, off when NO_COLOR is set), always, never")
 		fmt.Println("  --skyline           City skyline visualization")
 		fmt.Println("  --animate           Animated skyline (use with --skyline)")
 		fmt.Println("  --deps              Dependency flow map (functions & imports)")
@@ -545,6 +548,11 @@ func applyGlobalRootOptions(args []string) ([]string, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
+	colorMode, err := render.ParseColorMode(opts.Color)
+	if err != nil {
+		return nil, false, err
+	}
+	render.SetColorMode(colorMode)
 	if !opts.Active() {
 		launchDir, err := os.Getwd()
 		if err != nil {
