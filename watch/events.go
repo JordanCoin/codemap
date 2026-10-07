@@ -152,8 +152,22 @@ func (d *eventDebouncer) nextDelay(now time.Time) (time.Duration, bool) {
 }
 
 // eventLoop processes file system events
+// defaultWriteDebounceWindow is how long a burst of WRITE events for one
+// path is coalesced before the trailing event is processed.
+const defaultWriteDebounceWindow = 100 * time.Millisecond
+
+// writeDebounceWindow returns the daemon's configured window, or the default
+// when none was set. Tests widen it so a burst of writes always lands inside
+// one window regardless of how slowly the runner schedules them (#135).
+func (d *Daemon) writeDebounceWindow() time.Duration {
+	if d.debounceWindow > 0 {
+		return d.debounceWindow
+	}
+	return defaultWriteDebounceWindow
+}
+
 func (d *Daemon) eventLoop() {
-	debouncer := newEventDebouncer(100 * time.Millisecond)
+	debouncer := newEventDebouncer(d.writeDebounceWindow())
 	timer := time.NewTimer(time.Hour)
 	timer.Stop()
 	defer timer.Stop()

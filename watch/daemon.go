@@ -45,6 +45,9 @@ type Daemon struct {
 	// publishFailureLogged is set while a state-write failure streak has
 	// been logged, so reportPublicationError logs each streak once.
 	publishFailureLogged bool
+	// debounceWindow overrides defaultWriteDebounceWindow when > 0. It is
+	// read once, when the event loop starts, so set it before Start.
+	debounceWindow time.Duration
 
 	dependencyRequests chan dependencyGraphSnapshot
 	dependencyResults  chan dependencyGraphResult
