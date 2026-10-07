@@ -33,6 +33,11 @@ type statePublisher struct {
 	deadline   time.Time
 	pending    map[string]flushRequest
 	seen       map[string]time.Time
+	// writeFailure is the current streak of failed state.json writes, nil
+	// while writes succeed. It is mirrored to a sidecar file beside
+	// state.json so `codemap watch status` can report the failure instead
+	// of the stale numbers of the last good write (#140).
+	writeFailure *StateWriteError
 }
 
 func newDaemonInstance() (string, error) {
@@ -100,8 +105,10 @@ func (p *statePublisher) publish() error {
 		p.dirty = true
 		ackErr := p.failPending("publication_failed")
 		p.deadline = time.Now().Add(publicationRetryDelay)
+		p.recordWriteFailure(err)
 		return errors.Join(err, ackErr)
 	}
+	p.clearWriteFailure(p.generation == 0)
 	p.generation = next
 	p.dirty = false
 	p.deadline = time.Time{}
@@ -111,6 +118,40 @@ func (p *statePublisher) publish() error {
 		delete(p.pending, nonce)
 	}
 	return ackErr
+}
+
+func (p *statePublisher) writeFailurePath() string {
+	return filepath.Join(filepath.Dir(p.path), stateWriteErrorFile)
+}
+
+// recordWriteFailure keeps a failing publish visible: in memory for the
+// daemon's own log line, and as a sidecar beside state.json for `codemap
+// watch status`. The sidecar is best effort; when the directory itself cannot
+// be written nothing can land there, and the in-memory record still drives
+// the log.
+func (p *statePublisher) recordWriteFailure(err error) {
+	now := time.Now()
+	if p.writeFailure == nil {
+		p.writeFailure = &StateWriteError{Path: p.path, FirstFailedAt: now}
+	}
+	p.writeFailure.Error = err.Error()
+	p.writeFailure.LastFailedAt = now
+	p.writeFailure.Attempts++
+	if data, marshalErr := json.Marshal(p.writeFailure); marshalErr == nil {
+		_ = runtimefile.WriteAtomic(p.writeFailurePath(), data, 0o644)
+	}
+}
+
+// clearWriteFailure ends a failure streak after a successful write. The
+// sidecar is removed after a tracked failure, and on this daemon's first
+// successful publish so a record left by an earlier daemon does not outlive
+// the condition it described.
+func (p *statePublisher) clearWriteFailure(first bool) {
+	if p.writeFailure == nil && !first {
+		return
+	}
+	p.writeFailure = nil
+	_ = os.Remove(p.writeFailurePath())
 }
 
 func (p *statePublisher) failPending(code string) error {

@@ -1495,3 +1495,51 @@ func TestRunDepsFromStdinRejectsEscapingPaths(t *testing.T) {
 		})
 	}
 }
+
+// TestRunWatchSubcommandStatusReportsStateWriteFailure: a running daemon whose
+// state.json writes fail must say so in `codemap watch status` instead of
+// presenting the last good write's numbers as current (#140 part 1).
+func TestRunWatchSubcommandStatusReportsStateWriteFailure(t *testing.T) {
+	root := t.TempDir()
+	writeMainWatchState(t, root, watch.State{
+		UpdatedAt: time.Now().Add(-10 * time.Minute),
+		FileCount: 9,
+		Hubs:      []string{"pkg/types.go"},
+	}, true)
+	runtimeDir := projectpath.ProjectRuntimeDir(root)
+	record := watch.StateWriteError{
+		Path:          filepath.Join(runtimeDir, "state.json"),
+		Error:         `unsafe runtime file "` + filepath.Join(runtimeDir, "state.json") + `"`,
+		FirstFailedAt: time.Now().Add(-time.Minute),
+		LastFailedAt:  time.Now(),
+		Attempts:      12,
+	}
+	data, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeDir, "state.write-error.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _ := captureMainStreams(t, func() { runWatchSubcommand("status", root) })
+	for _, check := range []string{
+		"Watch daemon running",
+		"state write failing: " + record.Error + " (12 attempts since " + record.FirstFailedAt.Local().Format("15:04:05") + ", last " + record.LastFailedAt.Local().Format("15:04:05") + ")",
+		"Next: make " + record.Path + " writable; the daemon retries on its own.",
+		"Files and Hubs below are from the last successful write (",
+		"Files: 9",
+	} {
+		if !strings.Contains(stdout, check) {
+			t.Fatalf("expected %q in status output, got:\n%s", check, stdout)
+		}
+	}
+
+	if err := os.Remove(filepath.Join(runtimeDir, "state.write-error.json")); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _ = captureMainStreams(t, func() { runWatchSubcommand("status", root) })
+	if strings.Contains(stdout, "state write failing") {
+		t.Fatalf("status reported a write failure after the sidecar was cleared:\n%s", stdout)
+	}
+}
