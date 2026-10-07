@@ -19,6 +19,7 @@ import (
 
 	"codemap/config"
 	"codemap/handoff"
+	"codemap/internal/gitexclude"
 	"codemap/internal/projectpath"
 	"codemap/limits"
 	"codemap/scanner"
@@ -1492,7 +1493,7 @@ func hookPreCompact(root string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(codemapDir, 0755); err != nil {
+	if err := gitexclude.MkdirAll(codemapDir, 0755); err != nil {
 		return err
 	}
 
@@ -1886,7 +1887,7 @@ func updateSessionLeaseContext(ctx context.Context, root, sessionID string, acti
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(codemapDir, 0o755); err != nil {
+	if err := gitexclude.MkdirAll(codemapDir, 0o755); err != nil {
 		return err
 	}
 	lockPath := filepath.Join(codemapDir, "sessions.lock")
@@ -2170,7 +2171,7 @@ func checkFileImportersWithPhase(root, filePath, phase string) error {
 		}
 	}
 	if len(hubImports) > 0 {
-		fmt.Printf("   Imports %d hub(s): %s\n", len(hubImports), strings.Join(hubImports, ", "))
+		fmt.Printf("   Imports %d hub(s): %s\n", len(hubImports), strings.Join(scanner.CollapseGoPackageFiles(hubImports), ", "))
 		fmt.Println()
 	}
 

@@ -12,6 +12,7 @@ import (
 
 	"codemap/analysis"
 	"codemap/config"
+	"codemap/internal/gitexclude"
 	"codemap/internal/projectpath"
 	"codemap/limits"
 	"codemap/scanner"
@@ -98,7 +99,7 @@ func (d *Daemon) ensurePublisher() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+	if err := gitexclude.MkdirAll(runtimeDir, 0o755); err != nil {
 		return err
 	}
 	d.publisher = newStatePublisher(d, filepath.Join(runtimeDir, "state.json"), "legacy-test-instance")
@@ -169,13 +170,13 @@ func (d *Daemon) Start() error {
 		return fmt.Errorf("resolve runtime state: %w", err)
 	}
 	codemapDir := runtimeDir
-	if err := os.MkdirAll(codemapDir, 0755); err != nil {
+	if err := gitexclude.MkdirAll(codemapDir, 0755); err != nil {
 		return fmt.Errorf("failed to create .codemap dir: %w", err)
 	}
 	// Ensure the config directory exists; it is watched so config edits can
 	// refresh the configured-file inventory.
 	configDir := d.configDir
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := gitexclude.MkdirAll(configDir, 0755); err != nil {
 		return fmt.Errorf("failed to create .codemap dir: %w", err)
 	}
 

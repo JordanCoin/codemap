@@ -858,7 +858,12 @@ func TestRunDepsModeJSONAndMainDispatchesDepsAndImporters(t *testing.T) {
 	}
 }
 
-func TestBinaryDependencyModesHonorCLIFiltersOverConfig(t *testing.T) {
+// TestBinaryDependencyModesMergeCLIFiltersWithConfig locks in the two
+// precedence rules: --only replaces the config's only list for one run, while
+// --exclude adds to the config's exclude list (issue #150). The fixture's
+// config is only=[ts] exclude=[a]; the CLI passes --only go --exclude c, so
+// Go files are scanned, and both a/ (config) and c/ (CLI) stay excluded.
+func TestBinaryDependencyModesMergeCLIFiltersWithConfig(t *testing.T) {
 	if !scanner.NewAstGrepAnalyzer().Available() {
 		t.Skip("ast-grep not available")
 	}
@@ -882,8 +887,8 @@ func TestBinaryDependencyModesHonorCLIFiltersOverConfig(t *testing.T) {
 					t.Fatalf("decode deps JSON: %v\n%s", err, output)
 				}
 				requirePaths(t, analysisPaths(project.Files),
-					[]string{"a/a.go", "pkg/shared/shared.go"},
-					[]string{"c/c.go", "ts/ignored.ts"})
+					[]string{"pkg/shared/shared.go"},
+					[]string{"a/a.go", "c/c.go", "ts/ignored.ts"})
 			},
 		},
 		{
@@ -895,7 +900,7 @@ func TestBinaryDependencyModesHonorCLIFiltersOverConfig(t *testing.T) {
 				if err := json.Unmarshal([]byte(output), &report); err != nil {
 					t.Fatalf("decode importers JSON: %v\n%s", err, output)
 				}
-				requirePaths(t, report.Importers, []string{"a/a.go"}, []string{"c/c.go", "ts/ignored.ts"})
+				requirePaths(t, report.Importers, nil, []string{"a/a.go", "c/c.go", "ts/ignored.ts"})
 			},
 		},
 		{

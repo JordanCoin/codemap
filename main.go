@@ -407,7 +407,10 @@ func main() {
 		}
 	}
 
-	// Load project config (CLI flags take precedence)
+	// Load project config. --only and --depth override the config; --exclude
+	// adds to the config's exclude list (issue #150), since a config exclude
+	// is a standing decision about the repo and one run narrowing further
+	// must not silently re-admit it.
 	if tempDir == "" {
 		cmd.EnsureProjectConfig(absRoot)
 	}
@@ -415,9 +418,7 @@ func main() {
 	if len(only) == 0 && len(projCfg.Only) > 0 {
 		only = projCfg.Only
 	}
-	if len(exclude) == 0 && len(projCfg.Exclude) > 0 {
-		exclude = projCfg.Exclude
-	}
+	exclude = config.MergeExcludes(projCfg.Exclude, exclude)
 	if *depthLimit == 0 && projCfg.Depth > 0 {
 		*depthLimit = projCfg.Depth
 	}

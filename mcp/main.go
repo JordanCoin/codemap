@@ -909,16 +909,38 @@ func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input Imp
 	importers := append([]string(nil), fg.Importers[file]...)
 	sort.Strings(importers)
 	structured := newImportersOutput(absRoot, file, fg)
+	// Go imports name packages, so a Go file's importers are its package's
+	// importers and its own package's files are never among them. Label the
+	// count with that unit, and turn an empty answer into the statement of
+	// what is not modeled instead of a bare zero.
+	granularity := ""
+	empty := "No files import '" + file + "'"
+	if pkg, pkgFiles, ok := fg.GoPackage(file); ok {
+		granularity = fmt.Sprintf(" (package %s: Go imports name packages, not files)", pkg)
+		siblings := len(pkgFiles)
+		if !scanner.IsTestFile(file) {
+			siblings--
+		}
+		if siblings > 0 {
+			noun := "other files"
+			if siblings == 1 {
+				noun = "other file"
+			}
+			empty = fmt.Sprintf("No cross-package importers of '%s'. Same-package references are not modeled (%d %s in package %s)", file, siblings, noun, pkg)
+		}
+	}
 	if len(importers) == 0 {
 		// A zero for a file the graph never scanned is a blind spot, not an
-		// answer (#140): say so, and name the one reason that applies.
+		// answer (#140): say so, and name the one reason that applies. This
+		// runs before the Go package wording above is used, since an
+		// unindexed file has no package to be a sibling of.
 		if why, unindexed := fg.ExplainUnindexed(file, filters); unindexed {
 			structured.Kind = "not_indexed"
 			structured.NotIndexed = true
 			structured.NotIndexedReason = why.Reason
 			return textResult(notIndexedText(file, why, fg)), structured, nil
 		}
-		return textResult("No files import '" + file + "'" + mcpCoverageText(fg)), structured, nil
+		return textResult(empty + mcpCoverageText(fg)), structured, nil
 	}
 
 	isHub := scanner.CountHubImporters(importers) >= scanner.HubThreshold
@@ -927,7 +949,7 @@ func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input Imp
 		hubNote = " ⚠️ HUB FILE"
 	}
 
-	return textResult(fmt.Sprintf("%d files import '%s':%s\n%s%s", len(importers), file, hubNote, strings.Join(importers, "\n"), mcpCoverageText(fg))), structured, nil
+	return textResult(fmt.Sprintf("%d files import '%s'%s:%s\n%s%s", len(importers), file, granularity, hubNote, strings.Join(importers, "\n"), mcpCoverageText(fg))), structured, nil
 }
 
 func handleFind(ctx context.Context, req *mcp.CallToolRequest, input FindQueryInput) (*mcp.CallToolResult, any, error) {

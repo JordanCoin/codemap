@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"codemap/internal/gitexclude"
 	"codemap/internal/projectpath"
 )
 
@@ -44,7 +45,7 @@ func AcquireTransition(root string) (*Transition, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(selection.RuntimeDir, 0o755); err != nil {
+	if err := gitexclude.MkdirAll(selection.RuntimeDir, 0o755); err != nil {
 		return nil, err
 	}
 	if info, err := os.Lstat(selection.RuntimeDir); err != nil || !info.IsDir() {

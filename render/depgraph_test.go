@@ -336,3 +336,45 @@ func TestDepgraphRendersSharedCoverageDetailOnce(t *testing.T) {
 		t.Fatalf("expected partial coverage line, got:\n%s", output)
 	}
 }
+
+// A Go import of a multi-file package is one edge per file in the graph; the
+// text view draws it once at package granularity so output grows with imports
+// rather than with how a package is split, and the hub line reports the
+// package with its distinct importer count rather than every file in it.
+func TestDepgraphRendersGoPackageImportsAtPackageGranularity(t *testing.T) {
+	root := t.TempDir()
+	writeDepgraphFile(t, root, "go.mod", "module example.com/demo\n\ngo 1.22\n")
+	writeDepgraphFile(t, root, "app/main.go", "package main\n")
+	writeDepgraphFile(t, root, "cli/run.go", "package cli\n")
+	writeDepgraphFile(t, root, "multi/a.go", "package multi\n")
+	writeDepgraphFile(t, root, "multi/b.go", "package multi\n")
+	writeDepgraphFile(t, root, "single/single.go", "package single\n")
+
+	project := scanner.DepsProject{
+		Root: root,
+		Files: []scanner.FileAnalysis{
+			{Path: "app/main.go", Language: "go", Functions: []string{"main"}, Imports: []string{"example.com/demo/multi", "example.com/demo/single"}},
+			{Path: "cli/run.go", Language: "go", Functions: []string{"Run"}, Imports: []string{"example.com/demo/multi"}},
+			{Path: "multi/a.go", Language: "go", Functions: []string{"A"}},
+			{Path: "multi/b.go", Language: "go", Functions: []string{"B"}},
+			{Path: "single/single.go", Language: "go", Functions: []string{"One"}},
+		},
+	}
+
+	var buf bytes.Buffer
+	Depgraph(context.Background(), &buf, project)
+	output := buf.String()
+	for _, want := range []string{
+		"  main ───▶ multi/ (2 files), single/single\n",
+		"  run ───▶ multi/ (2 files)\n",
+		"HUBS: multi/ (2←, 2 files)\n",
+		"5 files · 5 functions · 3 deps\n",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("deps text missing %q:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, "multi/a") {
+		t.Errorf("deps text lists a package member file instead of the package:\n%s", output)
+	}
+}
