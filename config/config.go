@@ -225,6 +225,31 @@ func (c ProjectConfig) RoutingTopKOrDefault() int {
 	return clampRange(c.Routing.Retrieval.TopK, defaultRoutingTopK, 1, 20)
 }
 
+// MergeExcludes unions the project config's exclude patterns with the
+// patterns passed on the command line: `--exclude` adds to the config's list
+// rather than replacing it (issue #150), so a config exclude keeps applying
+// when a caller narrows a single run further. Config patterns come first,
+// then CLI patterns; blank entries and duplicates are dropped and nil is
+// returned when nothing remains.
+func MergeExcludes(configured, cli []string) []string {
+	seen := make(map[string]struct{}, len(configured)+len(cli))
+	var merged []string
+	for _, list := range [][]string{configured, cli} {
+		for _, pattern := range list {
+			pattern = strings.TrimSpace(pattern)
+			if pattern == "" {
+				continue
+			}
+			if _, dup := seen[pattern]; dup {
+				continue
+			}
+			seen[pattern] = struct{}{}
+			merged = append(merged, pattern)
+		}
+	}
+	return merged
+}
+
 // ConfigPath returns the path to .codemap/config.json for the given root.
 func ConfigPath(root string) string {
 	return filepath.Join(projectpath.CodemapDir(root), "config.json")

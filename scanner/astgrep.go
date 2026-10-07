@@ -290,26 +290,12 @@ func hiddenScanExcludes() []string {
 	return names
 }
 
-// findNestedGitRepos returns subdirectory names that contain their own .git
-// These are separate repositories (not submodules) that should be excluded
-// from scanning to avoid hanging on large nested repos.
+// findNestedGitRepos returns the root-relative paths of every repository
+// nested under root (linked worktrees, plain clones, submodules), at any
+// depth, so the ast-grep scan and the Go fallback exclude exactly what the
+// file walker skips. See NestedGitRepos.
 func findNestedGitRepos(root string) []string {
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return nil
-	}
-
-	var repos []string
-	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		gitPath := filepath.Join(root, e.Name(), ".git")
-		if info, err := os.Stat(gitPath); err == nil && info.IsDir() {
-			repos = append(repos, e.Name())
-		}
-	}
-	return repos
+	return NestedGitRepos(root)
 }
 
 // ScanDirectory analyzes all files in a directory while honoring caller
@@ -401,8 +387,11 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 	for _, name := range hiddenScanExcludes() {
 		args = append(args, "--globs", "!**/"+name+"/**")
 	}
+	// Nested repositories are excluded by their root-relative path (the
+	// scan runs with cwd=root, so the glob is anchored there and cannot
+	// match a same-named directory elsewhere in the tree).
 	for _, repo := range findNestedGitRepos(root) {
-		args = append(args, "--globs", "!"+repo+"/**")
+		args = append(args, "--globs", "!"+filepath.ToSlash(repo)+"/**")
 	}
 	args = append(args, ".")
 

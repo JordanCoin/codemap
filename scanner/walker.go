@@ -3,8 +3,10 @@ package scanner
 import (
 	"bufio"
 	"context"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"codemap/config"
@@ -147,6 +149,56 @@ var IgnoredDirs = map[string]bool{
 	"grammars":       true,
 }
 
+// IsNestedGitRepo reports whether dir is the root of a git repository other
+// than the one being scanned: it holds a `.git` entry that is either a
+// directory (a plain clone or an old-style submodule checkout) or a regular
+// file (a linked worktree's or modern submodule's `gitdir:` pointer). Such a
+// directory is a repository boundary, not project source, so every walker
+// skips it. Callers never apply this to the scan root itself, whose `.git`
+// is expected.
+func IsNestedGitRepo(dir string) bool {
+	info, err := os.Lstat(filepath.Join(dir, ".git"))
+	if err != nil {
+		return false
+	}
+	return info.IsDir() || info.Mode().IsRegular()
+}
+
+// NestedGitRepos returns the root-relative paths (OS separators, sorted) of
+// every git repository nested anywhere under root: linked worktrees (for
+// example `.claude/worktrees/agent-x`), plain clones, and submodules, at any
+// depth and under dotted directories too. IgnoredDirs and gitignored
+// directories are not entered, matching ScanFiles, and a nested repository's
+// own subtree is not entered either. The file walker, the ast-grep scan and
+// the Go fallback all exclude exactly this set, so `codemap .`, `context`,
+// `handoff` and `--deps` agree on what is project source.
+func NestedGitRepos(root string) []string {
+	absRoot := projectpath.CanonicalPath(root)
+	cache := NewGitIgnoreCache(absRoot)
+	var repos []string
+	_ = filepath.WalkDir(absRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d == nil || !d.IsDir() || path == absRoot {
+			return nil
+		}
+		if IgnoredDirs[d.Name()] {
+			return filepath.SkipDir
+		}
+		if IsNestedGitRepo(path) {
+			if rel, relErr := filepath.Rel(absRoot, path); relErr == nil {
+				repos = append(repos, rel)
+			}
+			return filepath.SkipDir
+		}
+		cache.tryLoadGitignore(path)
+		if cache.ShouldIgnore(path) {
+			return filepath.SkipDir
+		}
+		return nil
+	})
+	sort.Strings(repos)
+	return repos
+}
+
 // matchesPattern does smart pattern matching:
 // - ".png" or "png" → extension match (case-insensitive)
 // - "Fonts" → directory/component match (contains /Fonts/ or ends with /Fonts)
@@ -264,6 +316,12 @@ func ScanFiles(ctx context.Context, root string, cache *GitIgnoreCache, only []s
 
 		// For directories: load any .gitignore, then check if dir itself should be skipped
 		if info.IsDir() {
+			// A nested repository (linked worktree, plain clone, submodule)
+			// is a boundary, not project source, whether or not the parent
+			// repo's .gitignore happens to cover it (issue #131).
+			if path != absRoot && IsNestedGitRepo(path) {
+				return filepath.SkipDir
+			}
 			if cache != nil {
 				cache.tryLoadGitignore(path)
 				if cache.ShouldIgnore(path) {
