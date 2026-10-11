@@ -21,12 +21,14 @@ const (
 	LargeRepoFileCount  = 5000
 
 	// DefaultMaxScanFiles bounds the files a scan keeps and the size of repo
-	// a dependency scan is attempted on. Measured on 2026-10-11: --deps on a
-	// synthetic 60k-file TypeScript repo peaked at 421 MB RSS, so two
-	// concurrent scans of 200k-file repos exhaust a laptop (#186). Raised
-	// per run with --max-files or per repo with config max_files; a
-	// negative value removes the bound.
-	DefaultMaxScanFiles = 50000
+	// a dependency scan is attempted on. Measured on 2026-10-11 with
+	// synthetic TypeScript repos: --deps peaked at 421 MB RSS on 60k files
+	// and 1,565 MB on 200k, about 8 MB per 1,000 files, linear. 100k is
+	// therefore roughly 800 MB and 10 s: the point where a default should
+	// stop and ask rather than let two concurrent scans exhaust a laptop
+	// (#186). Raised per run with --max-files or per repo with config
+	// max_files; a negative value removes the bound.
+	DefaultMaxScanFiles = 100000
 )
 
 // ScanFileBound resolves a configured bound: zero means the default,
