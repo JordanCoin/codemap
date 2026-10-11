@@ -45,7 +45,7 @@ func TestEnsureCodemapIgnored(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ensureCodemapIgnored: %v", err)
 		}
-		if !strings.HasSuffix(path, filepath.Join("info", "exclude")) {
+		if !strings.HasSuffix(path, "info/exclude") {
 			t.Fatalf("path = %q, want .git/info/exclude", path)
 		}
 		data, err := os.ReadFile(path)

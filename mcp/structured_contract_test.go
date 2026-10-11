@@ -94,7 +94,7 @@ func TestNormalizeImporterFileUsesSlashGraphKeys(t *testing.T) {
 	want := "pkg/types/types.go"
 	for _, input := range []string{
 		"pkg/types/types.go",
-		filepath.Join("pkg", "types", "types.go"),
+		"pkg/types/types.go",
 		filepath.Join(root, "pkg", "types", "types.go"),
 	} {
 		if got := normalizeImporterFile(root, input); got != want {

@@ -75,7 +75,7 @@ func TestMergeFragmentsRejectsEscapingPathsAndUnknownEndpoints(t *testing.T) {
 	root := t.TempDir()
 	valid := testNode("test:settings.gradle.kts:valid", "valid")
 	escaping := testNode("test:settings.gradle.kts:escape", "escape")
-	escaping.Root = filepath.Join("..", "escape")
+	escaping.Root = "../escape"
 
 	graph := MergeFragments(root, []Fragment{{
 		Provider: "test",
@@ -87,7 +87,7 @@ func TestMergeFragmentsRejectsEscapingPathsAndUnknownEndpoints(t *testing.T) {
 			Evidence: Evidence{Manifest: "settings.gradle.kts"},
 		}},
 		Members: map[ID][]string{
-			valid.ID: {filepath.Join("..", "outside.kt")},
+			valid.ID: {"../outside.kt"},
 		},
 		Coverage: Coverage{Status: CoverageComplete},
 	}})
@@ -108,12 +108,12 @@ func TestMergeFragmentsRejectsEscapingPathsAndUnknownEndpoints(t *testing.T) {
 
 func TestNormalizeRepoPathRejectsAbsoluteAndEscapingPaths(t *testing.T) {
 	root := t.TempDir()
-	for _, path := range []string{"", filepath.Join("..", "outside"), filepath.Join(root, "inside")} {
+	for _, path := range []string{"", "../outside", filepath.Join(root, "inside")} {
 		if _, err := normalizeRepoPath(root, path); err == nil {
 			t.Fatalf("normalizeRepoPath(%q) succeeded", path)
 		}
 	}
-	if got, err := normalizeRepoPath(root, filepath.Join("nested", "file.go")); err != nil || got != filepath.Join("nested", "file.go") {
+	if got, err := normalizeRepoPath(root, "nested/file.go"); err != nil || got != "nested/file.go" {
 		t.Fatalf("normalizeRepoPath(valid) = %q, %v", got, err)
 	}
 }

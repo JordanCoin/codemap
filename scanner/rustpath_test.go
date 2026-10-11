@@ -287,7 +287,7 @@ func TestRustLogicalModuleWalkHonorsCancellation(t *testing.T) {
 
 func TestResolveRustExplicitModuleRequiresOneIndexedRustFile(t *testing.T) {
 	root := t.TempDir()
-	path := filepath.Join("src", "module.rs")
+	path := "src/module.rs"
 	if err := os.MkdirAll(filepath.Join(root, "src"), 0o755); err != nil {
 		t.Fatal(err)
 	}

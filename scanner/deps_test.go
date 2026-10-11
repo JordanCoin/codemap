@@ -520,7 +520,7 @@ func TestDepsBuildFileIndex(t *testing.T) {
 	if got := tryExactMatch(handlerNoExt, idx, "go"); len(got) != 1 || got[0] != handlerPath {
 		t.Fatalf("expected extensionless import to resolve handler.go, got %v", got)
 	}
-	handlerSuffix := filepath.Join("service", "handler.go")
+	handlerSuffix := "service/handler.go"
 	if got := idx.suffixMatches(handlerSuffix); len(got) != 1 || got[0] != handlerPath {
 		t.Fatalf("expected suffix match for service/handler.go, got %v", got)
 	}

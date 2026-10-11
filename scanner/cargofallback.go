@@ -246,7 +246,8 @@ func buildCargoFallbackOutcome(ctx context.Context, root string, files []FileInf
 				if !ok || dependencyPackage.packageInfo.lib == nil || !allowed[dependencyPackage.packageInfo.lib.rootFile] {
 					continue
 				}
-				edgeSet[fileEdge{from: target.rootFile, to: dependencyPackage.packageInfo.lib.rootFile}] = true
+				// Edges are graph keys: forward-slashed on every OS.
+				edgeSet[fileEdge{from: keyPath(target.rootFile), to: keyPath(dependencyPackage.packageInfo.lib.rootFile)}] = true
 			}
 		}
 	}

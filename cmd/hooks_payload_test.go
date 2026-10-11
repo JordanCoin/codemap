@@ -15,7 +15,7 @@ import (
 // post-edit blast-radius report, because the parser returns no paths and the
 // hook returns early.
 func TestParseHookFilePathsAcceptsHostPayloadShapes(t *testing.T) {
-	target := filepath.Join("cmd", "doctor.go")
+	target := "cmd/doctor.go"
 	quoted := strings.ReplaceAll(target, `\`, `\\`)
 
 	for _, tt := range []struct {

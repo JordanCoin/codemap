@@ -112,7 +112,8 @@ func (c *GitIgnoreCache) ShouldIgnore(absPath string) bool {
 
 	combined := ignore.CompileIgnoreLines(allPatterns...)
 	relPath, _ := filepath.Rel(c.root, absPath)
-	return combined.MatchesPath(relPath)
+	// go-gitignore matches against forward-slash paths on every OS.
+	return combined.MatchesPath(filepath.ToSlash(relPath))
 }
 
 // IgnoredDirs are directories to skip during scanning
@@ -187,7 +188,7 @@ func NestedGitRepos(root string) []string {
 		}
 		if IsNestedGitRepo(path) {
 			if rel, relErr := filepath.Rel(absRoot, path); relErr == nil {
-				repos = append(repos, rel)
+				repos = append(repos, filepath.ToSlash(rel))
 			}
 			return filepath.SkipDir
 		}

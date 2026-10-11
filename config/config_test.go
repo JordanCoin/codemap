@@ -172,7 +172,7 @@ func TestLoad_EmptyObject(t *testing.T) {
 
 func TestConfigPath(t *testing.T) {
 	got := ConfigPath("/my/project")
-	want := filepath.Join("/my/project", ".codemap", "config.json")
+	want := "/my/project/.codemap/config.json"
 	if got != want {
 		t.Errorf("ConfigPath = %q, want %q", got, want)
 	}

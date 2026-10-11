@@ -250,7 +250,7 @@ func TestFileContextUsesNativeKeysAndKeepsProjectRootsRequestLocal(t *testing.T)
 
 	alphaAgain, _, err := handleGetFileContext(context.Background(), nil, ImportersInput{
 		Path: alpha,
-		File: filepath.ToSlash(filepath.Join("pkg", "types", "types.go")),
+		File: filepath.ToSlash("pkg/types/types.go"),
 	})
 	if err != nil {
 		t.Fatal(err)

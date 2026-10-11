@@ -24,7 +24,7 @@ func TestBuildFileGraphFromAnalysesResolvesCUEPackage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := graph.Imports["main.cue"], []string{filepath.Join("types", "types.cue")}; !reflect.DeepEqual(got, want) {
+	if got, want := graph.Imports["main.cue"], []string{"types/types.cue"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("graph imports = %v, want %v", got, want)
 	}
 }
@@ -45,7 +45,7 @@ func TestBuildFileGraphScansCUEFromFileInventory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := graph.Imports["main.cue"], []string{filepath.Join("types", "types.cue")}; !reflect.DeepEqual(got, want) {
+	if got, want := graph.Imports["main.cue"], []string{"types/types.cue"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("graph imports = %v, want %v", got, want)
 	}
 }
