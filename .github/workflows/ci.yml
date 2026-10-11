@@ -120,7 +120,11 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: 'stable'
+          # staticcheck@latest lags new Go releases; 'stable' moved to a
+          # toolchain whose export data it cannot read and every PR's Lint
+          # job failed with "export data version 5 is greater than maximum
+          # supported version 4". Lint with the module's own Go version.
+          go-version-file: go.mod
 
       - name: Check formatting
         run: |
