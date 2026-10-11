@@ -579,9 +579,41 @@ func resultText(t *testing.T, res *mcp.CallToolResult) string {
 	return text.Text
 }
 
+// setHome points os.UserHomeDir at dir on every OS: HOME on Unix, USERPROFILE
+// on Windows. Tests that set only HOME passed on Windows by supplying the
+// variable Windows would not have, which is how #139 stayed invisible.
+func setHome(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+}
+
+func TestExpandHome(t *testing.T) {
+	home := t.TempDir()
+	setHome(t, home)
+	for _, in := range []string{"~/x", `~\x`} {
+		got, err := expandHome(in)
+		if err != nil || got != filepath.Join(home, "x") {
+			t.Fatalf("expandHome(%q) = %q, %v; want %q", in, got, err, filepath.Join(home, "x"))
+		}
+	}
+	if got, err := expandHome("~"); err != nil || got != home {
+		t.Fatalf("expandHome(~) = %q, %v; want %q", got, err, home)
+	}
+	if got, err := expandHome("plain/x"); err != nil || got != "plain/x" {
+		t.Fatalf("expandHome(plain/x) = %q, %v; want unchanged", got, err)
+	}
+	// No home at all: an error naming the path, never a cwd-relative guess.
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+	if got, err := expandHome("~/x"); err == nil || !strings.Contains(err.Error(), "~/x") {
+		t.Fatalf("expandHome without home = %q, %v; want error naming the path", got, err)
+	}
+}
+
 func TestValidateProjectPathExpandsHomeAndRejectsInvalidRoots(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHome(t, home)
 	proj := filepath.Join(home, "proj")
 	if err := os.MkdirAll(filepath.Join(proj, ".git"), 0o755); err != nil {
 		t.Fatal(err)
