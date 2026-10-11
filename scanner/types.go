@@ -32,6 +32,16 @@ type Project struct {
 	Depth     int          `json:"depth,omitempty"`   // Max tree depth (0 = unlimited)
 	Only      []string     `json:"only,omitempty"`    // Extension filter (e.g., ["swift", "go"])
 	Exclude   []string     `json:"exclude,omitempty"` // Exclusion patterns (e.g., [".xcassets", "Fonts"])
+	// DiffTotals describes the whole diff when Files holds only a shown
+	// subset, so a renderer never presents the subset's counts as the total.
+	DiffTotals *DiffTotals `json:"diff_totals,omitempty"`
+}
+
+// DiffTotals are the counts over every changed file, shown or not.
+type DiffTotals struct {
+	Files   int `json:"files"`
+	Added   int `json:"added"`
+	Removed int `json:"removed"`
 }
 
 // FileAnalysis holds extracted info about a single file for deps mode.

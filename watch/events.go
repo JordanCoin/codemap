@@ -466,9 +466,6 @@ func (d *Daemon) debounceAction(debouncer *eventDebouncer, event fsnotify.Event,
 		seen = false
 	}
 	rapid := debouncer.shouldSkip(event, now)
-	if !rapid && !seen {
-		return debounceProcess
-	}
 	relPath, err := filepath.Rel(projectpath.CanonicalPath(d.root), event.Name)
 	if err != nil {
 		return debounceProcess
@@ -488,6 +485,19 @@ func (d *Daemon) debounceAction(debouncer *eventDebouncer, event fsnotify.Event,
 
 	info, err := os.Stat(event.Name)
 	if err != nil {
+		return debounceProcess
+	}
+	// os.WriteFile truncates before it writes, and on Linux inotify reports
+	// the empty file as its own WRITE. Recording it replaced the line
+	// baseline with 0, so the content WRITE a moment later was measured
+	// against that instead of the user's file: 3 lines edited to 5 reported
+	// +5 (#135). Hold the empty observation through the window; the trailing
+	// event is measured against the last real snapshot, and a file that
+	// truly became empty still reports 0 lines with the right delta.
+	if info.Size() == 0 && cachedSize > 0 {
+		return debounceDefer
+	}
+	if !rapid && !seen {
 		return debounceProcess
 	}
 	// An unchanged repeat can arrive after a rebuild delayed the event loop.
