@@ -200,10 +200,48 @@ func NestedGitRepos(root string) []string {
 }
 
 // matchesPattern does smart pattern matching:
-// - ".png" or "png" → extension match (case-insensitive)
-// - "Fonts" → directory/component match (contains /Fonts/ or ends with /Fonts)
-// - "*test*" → glob pattern (only if contains * or ?)
+//   - ".png" or "png" → extension match (case-insensitive)
+//   - "Fonts" → directory/component match (contains /Fonts/ or ends with /Fonts)
+//   - "*test*" → glob pattern (only if contains * or ?)
+//   - "/tool" → anchored to the project root, like .gitignore: matches the
+//     root entry "tool" (file or directory) and nothing nested
+//   - "tool/" → directories only, at any depth: a root binary named "tool"
+//     next to cmd/tool/ is kept while the directory is excluded
+//   - "/tool/" → the root directory "tool" only
+//
+// Anchors are read before globs; a pattern with * or ? is matched as a glob
+// unchanged, so "/build/*.log" is not anchored.
 func matchesPattern(relPath string, pattern string) bool {
+	return matchesPatternPath(relPath, false, pattern)
+}
+
+// matchesPatternPath is matchesPattern with the one fact the file walker has
+// and a bare relative path does not carry: whether relPath is a directory.
+// The anchored and directory-only forms need it; a file named "tool" and a
+// directory named "tool" must answer differently to "tool/".
+func matchesPatternPath(relPath string, isDir bool, pattern string) bool {
+	relPath = filepath.ToSlash(relPath)
+	if anchored, dirOnly := strings.HasPrefix(pattern, "/"), strings.HasSuffix(pattern, "/"); (anchored || dirOnly) && !strings.ContainsAny(pattern, "*?") {
+		name := strings.TrimSuffix(strings.TrimPrefix(pattern, "/"), "/")
+		if name == "" {
+			return false
+		}
+		// "/a/b/c/" form: every directory ends in "/", files do not, so a
+		// directory-only pattern can only match a "/name/" segment.
+		full := "/" + relPath
+		if isDir {
+			full += "/"
+		}
+		switch {
+		case anchored && dirOnly:
+			return strings.HasPrefix(full, "/"+name+"/")
+		case anchored:
+			return full == "/"+name || strings.HasPrefix(full, "/"+name+"/")
+		default:
+			return strings.Contains(full, "/"+name+"/")
+		}
+	}
+
 	// If pattern contains glob characters, use glob matching
 	if strings.ContainsAny(pattern, "*?") {
 		// Match against filename
@@ -333,7 +371,7 @@ func ScanFiles(ctx context.Context, root string, cache *GitIgnoreCache, only []s
 			if relPath != "." {
 				for _, pattern := range exclude {
 					pattern = strings.TrimSpace(pattern)
-					if pattern != "" && matchesPattern(relPath, pattern) {
+					if pattern != "" && matchesPatternPath(relPath, true, pattern) {
 						return filepath.SkipDir
 					}
 				}
