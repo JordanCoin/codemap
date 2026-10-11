@@ -384,20 +384,6 @@ func printTreeNode(w io.Writer, node *treeNode, prefix string, isLast bool, topL
 			availableWidth = 40
 		}
 
-		// Check if all files have the same extension (strip if so, like Python)
-		stripExt := ""
-		if len(fileNodes) > 1 {
-			extSet := make(map[string]bool)
-			for _, f := range fileNodes {
-				extSet[f.file.Ext] = true
-			}
-			if len(extSet) == 1 {
-				for ext := range extSet {
-					stripExt = ext
-				}
-			}
-		}
-
 		// Build file entries with colors
 		type fileEntry struct {
 			display string
@@ -407,14 +393,10 @@ func printTreeNode(w io.Writer, node *treeNode, prefix string, isLast bool, topL
 		var entries []fileEntry
 		for _, f := range fileNodes {
 			color := GetFileColor(f.file.Ext)
+			// Always the full file name. Stripping a shared extension made
+			// multi-file and single-file directories render differently, so
+			// a path could not be copied out of the tree (#154).
 			displayName := f.name
-			// Strip extension if all files have same extension
-			if stripExt != "" {
-				displayName = strings.TrimSuffix(displayName, stripExt)
-				if displayName == "" {
-					displayName = f.name // Keep original if stripping leaves empty
-				}
-			}
 
 			// Prefix: diff status indicator OR star for large files
 			prefix := ""

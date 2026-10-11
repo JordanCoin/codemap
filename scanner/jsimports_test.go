@@ -84,6 +84,9 @@ func TestExtractImportPathQuoteStyles(t *testing.T) {
 		{"bare esm import", `import './side-effect';`, "./side-effect"},
 		{"dynamic require yields nothing", `require(someVariable)`, ""},
 		{"computed require yields nothing", `require(base + '/x')`, "/x"},
+		{"bash source literal", `source ./lib.sh`, "./lib.sh"},
+		{"bash source variable yields nothing", `source "$SOME_VAR"`, ""},
+		{"bash source substitution yields nothing", "source `dirname $0`/lib.sh", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := extractImportPath(tc.text); got != tc.want {
