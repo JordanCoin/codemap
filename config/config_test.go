@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -465,4 +466,27 @@ func TestAssessSetup(t *testing.T) {
 			t.Fatal("did not expect tuned config to need attention")
 		}
 	})
+}
+
+func TestMergeExcludesUnionsConfigAndCLI(t *testing.T) {
+	tests := []struct {
+		name       string
+		configured []string
+		cli        []string
+		want       []string
+	}{
+		{name: "both empty", want: nil},
+		{name: "config only", configured: []string{"vendorx"}, want: []string{"vendorx"}},
+		{name: "cli only", cli: []string{"docs"}, want: []string{"docs"}},
+		{name: "cli adds to config", configured: []string{"vendorx"}, cli: []string{"ZZZNOMATCH"}, want: []string{"vendorx", "ZZZNOMATCH"}},
+		{name: "duplicates and blanks dropped", configured: []string{"vendorx", " "}, cli: []string{"vendorx", "", "docs"}, want: []string{"vendorx", "docs"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := MergeExcludes(tt.configured, tt.cli)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("MergeExcludes(%v, %v) = %v, want %v", tt.configured, tt.cli, got, tt.want)
+			}
+		})
+	}
 }

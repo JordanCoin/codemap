@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"codemap/config"
+	"codemap/internal/gitexclude"
 	"codemap/scanner"
 )
 
@@ -76,13 +77,22 @@ func EnsureProjectConfig(root string) bool {
 	if _, err := os.Stat(filepath.Join(root, ".git")); err != nil {
 		return false
 	}
-	if _, err := initProjectConfig(root); err != nil {
+	result, err := initProjectConfig(root)
+	if err != nil {
 		return false
 	}
+	// The auto-write just created .codemap/ in a checkout that never asked
+	// for it, so keep it out of `git status` (issue #184): the rule goes to
+	// the clone-local info/exclude, never a tracked .gitignore, and only
+	// when no existing rule already ignores the directory.
+	excludeFile, _ := gitexclude.EnsureIgnoredIfNeeded(filepath.Dir(filepath.Dir(result.Path)))
 	// Only a person at a terminal needs the notice; piped consumers that
 	// merge stderr into a JSON stream must not see it.
 	if info, err := os.Stderr.Stat(); err == nil && info.Mode()&os.ModeCharDevice != 0 {
 		fmt.Fprintln(os.Stderr, "codemap: wrote .codemap/config.json (auto-detected); tune with: codemap skill show config-setup")
+		if excludeFile != "" {
+			fmt.Fprintf(os.Stderr, "codemap: added %s to %s so git status stays clean; verify with: git check-ignore -v .codemap\n", gitexclude.Entry, excludeFile)
+		}
 	}
 	return true
 }

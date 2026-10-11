@@ -96,6 +96,8 @@ func main() {
 		}
 		hookName := os.Args[2]
 		root, _ := os.Getwd()
+		// Hook stdout is an agent prompt, never a terminal: no colour, ever.
+		render.SetColorMode(render.ColorNever)
 		hookAgent := "claude"
 		hookIntegration := ""
 		for _, arg := range os.Args[3:] {
@@ -262,6 +264,7 @@ func main() {
 		fmt.Println("  --version           Show build version")
 		fmt.Println("  -C, --project-root <repo> Operate on code in <repo>.")
 		fmt.Println("  --setup-root <repo> Reuse state from <repo>/.codemap.")
+		fmt.Println("  --color <mode>      Colour output: auto (default: only on a terminal, off when NO_COLOR is set), always, never")
 		fmt.Println("  --skyline           City skyline visualization")
 		fmt.Println("  --animate           Animated skyline (use with --skyline)")
 		fmt.Println("  --deps              Dependency flow map (functions & imports)")
@@ -404,7 +407,10 @@ func main() {
 		}
 	}
 
-	// Load project config (CLI flags take precedence)
+	// Load project config. --only and --depth override the config; --exclude
+	// adds to the config's exclude list (issue #150), since a config exclude
+	// is a standing decision about the repo and one run narrowing further
+	// must not silently re-admit it.
 	if tempDir == "" {
 		cmd.EnsureProjectConfig(absRoot)
 	}
@@ -412,9 +418,7 @@ func main() {
 	if len(only) == 0 && len(projCfg.Only) > 0 {
 		only = projCfg.Only
 	}
-	if len(exclude) == 0 && len(projCfg.Exclude) > 0 {
-		exclude = projCfg.Exclude
-	}
+	exclude = config.MergeExcludes(projCfg.Exclude, exclude)
 	if *depthLimit == 0 && projCfg.Depth > 0 {
 		*depthLimit = projCfg.Depth
 	}
@@ -545,6 +549,11 @@ func applyGlobalRootOptions(args []string) ([]string, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
+	colorMode, err := render.ParseColorMode(opts.Color)
+	if err != nil {
+		return nil, false, err
+	}
+	render.SetColorMode(colorMode)
 	if !opts.Active() {
 		launchDir, err := os.Getwd()
 		if err != nil {
@@ -569,8 +578,11 @@ func applyGlobalRootOptions(args []string) ([]string, bool, error) {
 	if canonical, err := filepath.EvalSymlinks(roots.Setup); err == nil {
 		roots.Setup = canonical
 	}
-	if err := os.Chdir(roots.Project); err != nil {
-		return nil, false, fmt.Errorf("change to project root %q: %w", roots.Project, err)
+	// Chdir into the literal requested directory (matching `git -C`), not the
+	// Git-boundary walk-up used for storage/setup discovery: see
+	// cmd.InvocationRoots.Operate.
+	if err := os.Chdir(roots.Operate); err != nil {
+		return nil, false, fmt.Errorf("change to project root %q: %w", roots.Operate, err)
 	}
 	if opts.SetupRoot != "" {
 		projectpath.SetSetupRoot(roots.Setup)
@@ -931,13 +943,30 @@ func runWatchSubcommand(subCmd, root string) error {
 		}
 		if active.PID > 0 {
 			state := watch.ReadState(absRoot)
+			// A daemon whose state writes fail is still "running"; without
+			// this line its stale numbers would read as current (#140).
+			writeFailure := watch.ReadStateWriteError(absRoot)
+			reportWriteFailure := func() {
+				if writeFailure == nil {
+					return
+				}
+				fmt.Printf("  state write failing: %s (%d attempts since %s, last %s)\n",
+					writeFailure.Error, writeFailure.Attempts,
+					writeFailure.FirstFailedAt.Local().Format("15:04:05"), writeFailure.LastFailedAt.Local().Format("15:04:05"))
+				fmt.Printf("  Next: make %s writable; the daemon retries on its own.\n", writeFailure.Path)
+			}
 			if state != nil {
 				fmt.Printf("Watch daemon running\n")
+				reportWriteFailure()
+				if writeFailure != nil {
+					fmt.Printf("  Files and Hubs below are from the last successful write (%s), not live\n", state.UpdatedAt.Local().Format("15:04:05"))
+				}
 				fmt.Printf("  Files: %d\n", state.FileCount)
 				fmt.Printf("  Hubs: %d\n", len(state.Hubs))
 				fmt.Printf("  Updated: %s\n", state.UpdatedAt.Format("15:04:05"))
 			} else {
 				fmt.Println("Watch daemon running (no state)")
+				reportWriteFailure()
 			}
 		} else {
 			fmt.Println("Watch daemon not running")

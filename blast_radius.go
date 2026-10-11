@@ -1367,10 +1367,26 @@ func renderImportersReportString(report scanner.ImportersReport) string {
 // this command and deserves an explanation when the answer is "none".
 func renderImportersReportCLI(w io.Writer, report scanner.ImportersReport) {
 	if len(report.Importers) == 0 && len(report.HubImports) == 0 {
-		fmt.Fprintf(w, "No files import %s.\n", report.File)
-		if strings.EqualFold(filepath.Ext(report.File), ".go") {
-			fmt.Fprintln(w, "   Note: files in the same package never import each other (Go resolves")
-			fmt.Fprintln(w, "   imports at package level), so only cross-package importers appear here.")
+		if report.NotIndexed {
+			// Distinct from "scanned and found zero importers": codemap never
+			// looked at this file, so a bare "No files import X" here would be
+			// indistinguishable from a genuine negative and read as a
+			// confident answer instead of a blind spot.
+			fmt.Fprintf(w, "%s: not indexed (under a hidden or excluded folder, or the path doesn't exist).\n", report.File)
+			fmt.Fprintln(w, "   codemap never scanned this file, so this is not a confirmed zero-importers result.")
+			renderCoverage(w, report.CoverageStatus, report.CoverageNotes)
+			return
+		}
+		if report.Package != "" && report.PackageSiblings > 0 {
+			// A Go file's importers are the files that import its package, so
+			// a zero here says nothing about the package's own files: those
+			// references are not edges in this graph, and the reader has to
+			// check them by hand. Say so, with the count, instead of printing
+			// a bare zero that reads as "nothing depends on this".
+			fmt.Fprintf(w, "No cross-package importers of %s. Same-package references are not modeled (%s in package %s).\n",
+				report.File, pluralFiles(report.PackageSiblings, "other file"), report.Package)
+		} else {
+			fmt.Fprintf(w, "No files import %s.\n", report.File)
 		}
 		// Show scan provenance even for an empty answer, so a partial scan
 		// isn't read as a confident negative.
@@ -1380,10 +1396,28 @@ func renderImportersReportCLI(w io.Writer, report scanner.ImportersReport) {
 	renderImportersReport(w, report)
 }
 
+// importersGranularity names the unit an importer count was measured at when
+// it is not the file: Go imports name packages, so "21 files import
+// watch/events.go" means 21 files import package watch, and a reader must not
+// take the number as evidence that any of them references events.go itself.
+func importersGranularity(report scanner.ImportersReport) string {
+	if report.Package == "" {
+		return ""
+	}
+	return fmt.Sprintf(" (package %s: Go imports name packages, not files)", report.Package)
+}
+
+func pluralFiles(n int, noun string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, noun)
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
+}
+
 func renderImportersReport(w io.Writer, report scanner.ImportersReport) {
 	if scanner.CountHubImporters(report.Importers) >= scanner.HubThreshold {
 		fmt.Fprintf(w, "⚠️  HUB FILE: %s\n", report.File)
-		fmt.Fprintf(w, "   Imported by %d files - changes have wide impact!\n", len(report.Importers))
+		fmt.Fprintf(w, "   Imported by %d files%s - changes have wide impact!\n", len(report.Importers), importersGranularity(report))
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "   Dependents:")
 		for i, imp := range report.Importers {
@@ -1395,7 +1429,7 @@ func renderImportersReport(w io.Writer, report scanner.ImportersReport) {
 		}
 	} else if len(report.Importers) > 0 {
 		fmt.Fprintf(w, "📍 File: %s\n", report.File)
-		fmt.Fprintf(w, "   Imported by %d file(s)\n", len(report.Importers))
+		fmt.Fprintf(w, "   Imported by %d file(s)%s\n", len(report.Importers), importersGranularity(report))
 		for _, imp := range report.Importers {
 			fmt.Fprintf(w, "   • %s\n", imp)
 		}
@@ -1405,7 +1439,9 @@ func renderImportersReport(w io.Writer, report scanner.ImportersReport) {
 		if len(report.Importers) == 0 {
 			fmt.Fprintf(w, "📍 File: %s\n", report.File)
 		}
-		fmt.Fprintf(w, "   Imports %d hub(s): %s\n", len(report.HubImports), strings.Join(report.HubImports, ", "))
+		// Every non-test file of a hub Go package is a hub, so list the
+		// package once with its file count rather than each file.
+		fmt.Fprintf(w, "   Imports %d hub(s): %s\n", len(report.HubImports), strings.Join(scanner.CollapseGoPackageFiles(report.HubImports), ", "))
 	}
 
 	renderCoverage(w, report.CoverageStatus, report.CoverageNotes)
@@ -1448,6 +1484,15 @@ func buildImportersReportFromGraph(root, file string, fg *scanner.FileGraph) (sc
 	importers := append([]string(nil), fg.Importers[file]...)
 	imports := append([]string(nil), fg.Imports[file]...)
 
+	// NotIndexed distinguishes "codemap scanned this file and it genuinely
+	// has zero importers" from "codemap never looked at this file at all"
+	// (e.g. it lives under a hidden or excluded directory, or the path
+	// doesn't exist). CoverageStatus/CoverageNotes below still describe the
+	// *scan as a whole* (complete/partial/unavailable) and are left as-is:
+	// an authoritative, complete scan can still miss one particular file
+	// simply because that file was outside its scanned set, which is
+	// exactly the gap NotIndexed exists to surface without redefining what
+	// "complete" means for the project overall.
 	report := scanner.ImportersReport{
 		Root:           root,
 		Mode:           "importers",
@@ -1456,8 +1501,19 @@ func buildImportersReportFromGraph(root, file string, fg *scanner.FileGraph) (sc
 		Imports:        imports,
 		ImporterCount:  len(importers),
 		IsHub:          fg.IsHub(file),
+		NotIndexed:     !fg.Indexed(file),
 		CoverageStatus: string(fg.Coverage.EffectiveStatus()),
 		CoverageNotes:  append([]string(nil), fg.Coverage.Notes...),
+	}
+
+	if pkg, pkgFiles, ok := fg.GoPackage(file); ok {
+		report.Package = pkg
+		report.PackageSiblings = len(pkgFiles)
+		if !scanner.IsTestFile(file) {
+			// pkgFiles holds this file too; a _test.go file is in the package
+			// but never in the index, so every indexed file is a sibling of it.
+			report.PackageSiblings--
+		}
 	}
 
 	for _, imp := range imports {

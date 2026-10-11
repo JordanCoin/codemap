@@ -175,14 +175,31 @@ func newDepsProjectWithFilters(root string, files []FileAnalysis, externalDeps m
 
 // ImportersReport is the JSON output for --importers mode.
 type ImportersReport struct {
-	Root           string   `json:"root"`
-	Mode           string   `json:"mode"`
-	File           string   `json:"file"`
-	Importers      []string `json:"importers"`
-	Imports        []string `json:"imports,omitempty"`
-	HubImports     []string `json:"hub_imports,omitempty"`
-	ImporterCount  int      `json:"importer_count"`
-	IsHub          bool     `json:"is_hub"`
+	Root          string   `json:"root"`
+	Mode          string   `json:"mode"`
+	File          string   `json:"file"`
+	Importers     []string `json:"importers"`
+	Imports       []string `json:"imports,omitempty"`
+	HubImports    []string `json:"hub_imports,omitempty"`
+	ImporterCount int      `json:"importer_count"`
+	IsHub         bool     `json:"is_hub"`
+	// Package is the Go import path of the package File belongs to, set only
+	// when the graph resolved File's language at package granularity (Go with
+	// a go.mod). Importers of a Go file are the files that import its package,
+	// so PackageSiblings — the other non-test files in that package — is the
+	// set a reader must check by hand: same-package references are not edges.
+	Package         string `json:"package,omitempty"`
+	PackageSiblings int    `json:"package_siblings,omitempty"`
+	// NotIndexed is true when the queried file was never part of the scanned
+	// file set at all — e.g. it lives under a hidden or excluded directory,
+	// or the path doesn't exist — as opposed to being scanned and genuinely
+	// having zero importers. A zero-importer answer for an unindexed file is
+	// a coverage gap, not a confirmed negative, so callers should check this
+	// before treating an empty Importers list as meaningful. It defaults to
+	// false (assume indexed) so any report built without this field in mind —
+	// including plenty of existing callers and tests — keeps meaning what it
+	// always meant.
+	NotIndexed     bool     `json:"not_indexed,omitempty"`
 	CoverageStatus string   `json:"coverage_status"`
 	CoverageNotes  []string `json:"coverage_notes,omitempty"`
 }

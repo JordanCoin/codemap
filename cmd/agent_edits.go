@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"codemap/internal/gitexclude"
 )
 
 // The watch daemon sees every write on disk — including git merges, checkouts,
@@ -54,7 +56,7 @@ func recordAgentEdit(root, sessionID, path string, now time.Time) error {
 	if strings.TrimSpace(path) == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
+	if err := gitexclude.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
 		return err
 	}
 	record := agentEditRecord{

@@ -43,8 +43,11 @@ const (
 	skyHeight     = 6
 )
 
-// Building colors
-var buildingColors = []string{
+// Building colours while colour is enabled; buildingColors is the live list,
+// blanked by applyColors when colour is off.
+var buildingColors []string
+
+var buildingPalette = []string{
 	"\033[36m", // cyan
 	"\033[33m", // yellow
 	"\033[35m", // magenta

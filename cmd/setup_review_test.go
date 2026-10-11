@@ -597,3 +597,40 @@ func TestDoctorCheckLocalCodemapIgnoreFailsWhenGitUnavailable(t *testing.T) {
 		t.Fatalf("expected MISS local-ignore diagnosis, got:\n%s", out)
 	}
 }
+
+// TestRunDoctorReportsTrackedCodemapState locks in the doctor line for
+// .codemap/ files that are already committed: an ignore rule cannot hide
+// them, so doctor names the count and the git command that removes them
+// from the index (issue #184).
+func TestRunDoctorReportsTrackedCodemapState(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root := makeRepoOnBranch(t, "main")
+	if _, err := ensureCodemapIgnored(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".codemap", "config.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureOutput(func() { RunDoctor([]string{root}, ".") })
+	if !strings.Contains(out, "OK   tracked codemap state: 0 files under .codemap/ are committed") {
+		t.Fatalf("expected clean tracked-state line, got:\n%s", out)
+	}
+
+	runGitTestCmd(t, root, "add", "-f", ".codemap")
+	runGitTestCmd(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "track codemap state")
+
+	var code int
+	out = captureOutput(func() { code = RunDoctor([]string{root}, ".") })
+	if code == 0 {
+		t.Fatalf("RunDoctor exit code = 0, want tracked state to fail\n%s", out)
+	}
+	if !strings.Contains(out, "MISS tracked codemap state: 1 file(s) under .codemap/ are committed; run: git rm -r --cached .codemap") {
+		t.Fatalf("expected tracked-state diagnosis, got:\n%s", out)
+	}
+}

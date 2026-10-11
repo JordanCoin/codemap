@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"codemap/config"
+	"codemap/internal/gitexclude"
 	"codemap/scanner"
 )
 
@@ -186,7 +187,7 @@ func WriteCacheAt(cacheDir string, envelope CacheEnvelope) error {
 	}
 	data = append(data, '\n')
 
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+	if err := gitexclude.MkdirAll(cacheDir, 0o755); err != nil {
 		return err
 	}
 	temp, err := os.CreateTemp(cacheDir, ".topology-state-*.tmp")

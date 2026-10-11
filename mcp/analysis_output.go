@@ -26,19 +26,26 @@ type DiffOutput struct {
 }
 
 type ImportersOutput struct {
-	Kind           string   `json:"kind"`
-	Root           string   `json:"root"`
-	Mode           string   `json:"mode"`
-	File           string   `json:"file"`
-	Importers      []string `json:"importers"`
-	Imports        []string `json:"imports"`
-	HubImports     []string `json:"hub_imports"`
-	ImporterCount  int      `json:"importer_count"`
-	IsHub          bool     `json:"is_hub"`
-	CoverageStatus string   `json:"coverage_status"`
-	CoverageNotes  []string `json:"coverage_notes"`
-	Truncated      bool     `json:"truncated"`
-	OmittedCount   int      `json:"omitted_count"`
+	Kind          string   `json:"kind"`
+	Root          string   `json:"root"`
+	Mode          string   `json:"mode"`
+	File          string   `json:"file"`
+	Importers     []string `json:"importers"`
+	Imports       []string `json:"imports"`
+	HubImports    []string `json:"hub_imports"`
+	ImporterCount int      `json:"importer_count"`
+	IsHub         bool     `json:"is_hub"`
+	// NotIndexed mirrors scanner.ImportersReport.NotIndexed: true when the
+	// queried file was never part of the scanned set, so importer_count 0 is
+	// a coverage gap, not a confirmed zero. NotIndexedReason names the one
+	// cause (path does not exist, excluded by config, ...). Kind is
+	// "not_indexed" in that case.
+	NotIndexed       bool     `json:"not_indexed"`
+	NotIndexedReason string   `json:"not_indexed_reason,omitempty"`
+	CoverageStatus   string   `json:"coverage_status"`
+	CoverageNotes    []string `json:"coverage_notes"`
+	Truncated        bool     `json:"truncated"`
+	OmittedCount     int      `json:"omitted_count"`
 }
 
 type HandoffOutput struct {

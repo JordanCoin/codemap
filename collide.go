@@ -364,13 +364,11 @@ func collidePackageOf(fg *scanner.FileGraph, path string) (string, bool) {
 
 // collidePackageImporterCounts counts, per package, the files that import it.
 //
-// This cannot be read off FileGraph.Importers. BuildFileGraph deliberately
-// drops a Go import that resolves to more than one file rather than fanning one
-// import into an edge per file (it would inflate every hub count in the
-// repository), so a multi-file package has no file-level edges at all and the
-// graph's own answer for "who imports scanner/filegraph.go" is a structural
-// zero. The raw import strings do carry it, which is why the scan outcome is
-// kept.
+// It is read off the raw import strings rather than FileGraph.Importers so
+// the count is per package, not per file: BuildFileGraph fans one Go import
+// out into an edge per file of the imported package, which is right for
+// "who imports scanner/filegraph.go" but would make a package's weight here
+// depend on how many files it happens to be split into.
 //
 // A file importing its own package is not counted: a package is not a second
 // party to a collision inside itself. Its siblings are counted separately.

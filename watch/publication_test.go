@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -329,4 +330,86 @@ func canonicalDaemonRoot(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return root
+}
+
+// TestStatePublisherRecordsWriteFailureForStatus is #140 part 1: a daemon
+// whose state.json write fails must not believe it is publishing. The
+// failure is counted in memory, mirrored to a sidecar `codemap watch status`
+// reads, logged once per streak (not once per retry), and all of it is
+// cleared by the next successful write.
+func TestStatePublisherRecordsWriteFailureForStatus(t *testing.T) {
+	root := t.TempDir()
+	d, err := NewDaemon(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.watcher.Close()
+	path := filepath.Join(root, "state.json")
+	// A directory at state.json is unwritable for every user, root included.
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := newStatePublisher(d, path, "instance-a")
+
+	for range 3 {
+		d.reportPublicationError(p.publish())
+	}
+	if p.writeFailure == nil || p.writeFailure.Attempts != 3 || p.writeFailure.Path != path {
+		t.Fatalf("in-memory failure record = %+v, want 3 attempts at %s", p.writeFailure, path)
+	}
+	if p.writeFailure.FirstFailedAt.After(p.writeFailure.LastFailedAt) {
+		t.Fatalf("failure window inverted: %+v", p.writeFailure)
+	}
+	record := readStateWriteErrorAt(root)
+	if record == nil {
+		t.Fatalf("no %s beside the unwritable state file", stateWriteErrorFile)
+	}
+	if record.Attempts != 3 || record.Path != path || !strings.Contains(record.Error, "state.json") {
+		t.Fatalf("sidecar = %+v, want 3 attempts naming %s", record, path)
+	}
+	if !d.publishFailureLogged {
+		t.Fatal("failure streak was not logged")
+	}
+
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	d.reportPublicationError(p.publish())
+	if p.writeFailure != nil {
+		t.Fatalf("recovered publish kept failure record %+v", p.writeFailure)
+	}
+	if record := readStateWriteErrorAt(root); record != nil {
+		t.Fatalf("sidecar outlived recovery: %+v", record)
+	}
+	if d.publishFailureLogged {
+		t.Fatal("recovery did not reset the log-once flag")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("state.json not written after recovery: %v", err)
+	}
+}
+
+// A sidecar left by an earlier daemon describes a condition this daemon may
+// not have, so its first successful publish removes it.
+func TestStatePublisherFirstPublishClearsStaleWriteFailure(t *testing.T) {
+	root := t.TempDir()
+	d, err := NewDaemon(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.watcher.Close()
+	stale := filepath.Join(root, stateWriteErrorFile)
+	if err := os.WriteFile(stale, []byte(`{"path":"old","error":"disk full","attempts":9}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if readStateWriteErrorAt(root) == nil {
+		t.Fatal("fixture sidecar unreadable")
+	}
+	p := newStatePublisher(d, filepath.Join(root, "state.json"), "instance-b")
+	if err := p.publish(); err != nil {
+		t.Fatal(err)
+	}
+	if record := readStateWriteErrorAt(root); record != nil {
+		t.Fatalf("stale sidecar survived first publish: %+v", record)
+	}
 }

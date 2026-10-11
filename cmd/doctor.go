@@ -16,6 +16,7 @@ import (
 
 	"codemap/config"
 	"codemap/internal/buildinfo"
+	"codemap/internal/gitexclude"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/pelletier/go-toml/v2"
@@ -114,6 +115,7 @@ func RunDoctor(args []string, defaultRoot string) int {
 	checkFile("project config", config.ConfigPath(root), validateJSONFile)
 	if isGitWorkTree(root) {
 		doctorCheckLocalCodemapIgnore(root, &failures)
+		doctorCheckTrackedCodemapState(root, &failures)
 	}
 	claudeSettings, claudeSettingsErr := claudeSettingsPath(root, *global)
 	claudeMCP, claudeMCPErr := claudeMCPPath(root, *global)
@@ -200,6 +202,24 @@ func doctorCheckLocalCodemapIgnore(root string, failures *int) {
 	}
 	fmt.Printf("MISS local Codemap ignore: %s does not ignore %s; repair with `codemap setup --no-hooks --no-mcp --no-config %s`\n", path, ignoreEntry, root)
 	*failures++
+}
+
+// doctorCheckTrackedCodemapState reports .codemap/ files git already tracks
+// (`git ls-files .codemap`): an ignore rule cannot hide those, so they show
+// up in every diff until they are removed from the index.
+func doctorCheckTrackedCodemapState(root string, failures *int) {
+	tracked, err := gitexclude.TrackedStateFiles(root)
+	if err != nil {
+		fmt.Printf("MISS tracked codemap state: %v\n", err)
+		*failures++
+		return
+	}
+	if len(tracked) > 0 {
+		fmt.Printf("MISS tracked codemap state: %d file(s) under .codemap/ are committed; run: git rm -r --cached .codemap\n", len(tracked))
+		*failures++
+		return
+	}
+	fmt.Println("OK   tracked codemap state: 0 files under .codemap/ are committed (git ls-files .codemap)")
 }
 
 func reportCodexRuntimeVersions(cliPath string) bool {

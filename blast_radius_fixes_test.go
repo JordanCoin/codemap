@@ -279,6 +279,54 @@ func TestBuildImportersReportFromGraphCarriesCoverage(t *testing.T) {
 	}
 }
 
+// TestBuildImportersReportFromGraphMarksNotIndexedFile is the regression for
+// the "false complete coverage" bug: a file that was never part of the
+// scanned inventory (KnownFiles) must be reported as not indexed rather than
+// as a confirmed zero-importers result, and that must be visible both to
+// JSON/machine consumers (NotIndexed) and to a human running --importers
+// (renderImportersReportCLI's message), while a file that genuinely was
+// scanned and has zero importers must keep reading as a plain negative.
+func TestBuildImportersReportFromGraphMarksNotIndexedFile(t *testing.T) {
+	fg := &scanner.FileGraph{
+		Imports:    map[string][]string{},
+		Importers:  map[string][]string{},
+		KnownFiles: map[string]bool{"lonely.js": true},
+	}
+
+	unindexed, err := buildImportersReportFromGraph("/repo", "node_modules/dep.js", fg)
+	if err != nil {
+		t.Fatalf("buildImportersReportFromGraph() error: %v", err)
+	}
+	if !unindexed.NotIndexed {
+		t.Fatalf("report.NotIndexed = false, want true for a file absent from KnownFiles")
+	}
+	if got := renderImportersReportString(unindexed); strings.Contains(got, "No files import") {
+		t.Fatalf("bundle renderer must not claim a confirmed zero-importers result for an unindexed file:\n%s", got)
+	}
+	var buf strings.Builder
+	renderImportersReportCLI(&buf, unindexed)
+	cliOut := buf.String()
+	if !strings.Contains(cliOut, "not indexed") {
+		t.Fatalf("CLI output should say the file was not indexed, got:\n%s", cliOut)
+	}
+	if strings.Contains(cliOut, "No files import") {
+		t.Fatalf("CLI output must not read as a confirmed zero-importers result:\n%s", cliOut)
+	}
+
+	indexed, err := buildImportersReportFromGraph("/repo", "lonely.js", fg)
+	if err != nil {
+		t.Fatalf("buildImportersReportFromGraph() error: %v", err)
+	}
+	if indexed.NotIndexed {
+		t.Fatalf("report.NotIndexed = true, want false for a file present in KnownFiles")
+	}
+	buf.Reset()
+	renderImportersReportCLI(&buf, indexed)
+	if !strings.Contains(buf.String(), "No files import lonely.js") {
+		t.Fatalf("a genuinely scanned, zero-importer file should read as a plain negative, got:\n%s", buf.String())
+	}
+}
+
 func TestBuildImportersReportFromGraphRejectsFileOutsideRoot(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
@@ -435,5 +483,50 @@ func TestCoverageNotesFromSources(t *testing.T) {
 	want := []string{"scanner failed", "partial Rust"}
 	if !reflect.DeepEqual(notes, want) {
 		t.Fatalf("coverageNotesFromSources() = %#v, want %#v", notes, want)
+	}
+}
+
+// TestImportersDistinguishesNotIndexedFromZeroImporters is the end-to-end
+// regression for issue #2 in the bug report: codemap answered "No files
+// import X. Coverage: complete" for a file it had never actually indexed
+// (here, one under node_modules/, which the walker has always excluded),
+// indistinguishable from a genuine zero-importers result. It must now say
+// the file was not indexed, while a real, scanned, zero-importer file keeps
+// reading as a plain negative.
+func TestImportersDistinguishesNotIndexedFromZeroImporters(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "node_modules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "node_modules", "dep.js"), []byte("module.exports = {};\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "lonely.js"), []byte("module.exports = {};\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	notIndexedOut, err := runRootOptionsBinary(root, "--importers", "node_modules/dep.js")
+	if err != nil {
+		t.Fatalf("codemap --importers node_modules/dep.js failed: %v\n%s", err, notIndexedOut)
+	}
+	if !strings.Contains(notIndexedOut, "not indexed") {
+		t.Fatalf("expected a not-indexed answer for an excluded file, got:\n%s", notIndexedOut)
+	}
+	if strings.Contains(notIndexedOut, "No files import") {
+		t.Fatalf("an unindexed file must not be reported as a confirmed zero-importers result:\n%s", notIndexedOut)
+	}
+
+	zeroImportersOut, err := runRootOptionsBinary(root, "--importers", "lonely.js")
+	if err != nil {
+		t.Fatalf("codemap --importers lonely.js failed: %v\n%s", err, zeroImportersOut)
+	}
+	if !strings.Contains(zeroImportersOut, "No files import lonely.js") {
+		t.Fatalf("a genuinely scanned, zero-importer file should read as a plain negative, got:\n%s", zeroImportersOut)
+	}
+	if strings.Contains(zeroImportersOut, "not indexed") {
+		t.Fatalf("a genuinely scanned file must not be reported as not indexed:\n%s", zeroImportersOut)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	pathpkg "path"
 	"path/filepath"
@@ -26,6 +27,84 @@ type FileGraph struct {
 	PathAliases map[string][]string // TS/JS path aliases from tsconfig.json (e.g., "@modules/*" -> ["src/modules/*"])
 	BaseURL     string              // TS/JS baseUrl from tsconfig.json
 	Coverage    GraphCoverage
+	// KnownFiles is every file this graph actually scanned (post filters),
+	// keyed by slash-separated path relative to Root. A path absent here was
+	// never indexed at all — e.g. it lives under an excluded or hidden
+	// directory — which is a distinct, worse state than "indexed and found
+	// to have zero importers": see Indexed.
+	KnownFiles map[string]bool
+}
+
+// Indexed reports whether path (slash-separated, relative to fg.Root) was
+// part of this graph's scanned inventory. A false result means codemap never
+// looked at the file at all, so an empty Importers/Imports entry for it is a
+// coverage gap, not a confirmed zero.
+func (fg *FileGraph) Indexed(path string) bool {
+	if fg == nil {
+		return false
+	}
+	return fg.KnownFiles[path]
+}
+
+// UnindexedExplanation says why a file has no dependency answer in a graph
+// and what to do about it. Reason is one clause naming the single cause that
+// applies; Next is the action that would get the file an answer.
+type UnindexedExplanation struct {
+	Reason string
+	Next   string
+}
+
+// ExplainUnindexed reports whether path (relative to fg.Root, either
+// separator) is a file this graph cannot answer for, and names the one reason
+// why. ok is false when the graph vouches for the file (it was scanned and its
+// extension has import analysis), so callers keep their normal output; it is
+// also false when the graph carries no inventory at all (KnownFiles == nil,
+// e.g. a graph rebuilt from a daemon cache): with nothing scanned, the honest
+// answer is "unknown", never "not indexed". filters are the project filters
+// the graph was built with, so a file dropped by only/exclude is named as such
+// instead of being lumped in with ignored paths.
+func (fg *FileGraph) ExplainUnindexed(path string, filters Filters) (UnindexedExplanation, bool) {
+	if fg == nil || fg.KnownFiles == nil {
+		return UnindexedExplanation{}, false
+	}
+	rel := filepath.ToSlash(filepath.Clean(path))
+	abs := filepath.Join(fg.Root, filepath.FromSlash(rel))
+	info, err := os.Stat(abs)
+	switch {
+	case err != nil && os.IsNotExist(err):
+		return UnindexedExplanation{Reason: "path does not exist", Next: "check the path with find_file, then retry with the path it returns"}, true
+	case err != nil:
+		return UnindexedExplanation{Reason: "path is not readable: " + err.Error(), Next: "fix the path's permissions, then retry"}, true
+	case info.IsDir():
+		return UnindexedExplanation{Reason: "path is a directory, not a file", Next: "pass one file path; use get_structure for a directory"}, true
+	}
+	ext := filepath.Ext(rel)
+	if !fg.KnownFiles[rel] {
+		if !MatchesFilters(rel, ext, filters.Only, filters.Exclude) {
+			return UnindexedExplanation{Reason: "excluded by config: only/exclude in .codemap/config.json", Next: "change only/exclude in .codemap/config.json to include it, then retry"}, true
+		}
+		for _, part := range strings.Split(pathpkg.Dir(rel), "/") {
+			if IgnoredDirs[part] {
+				return UnindexedExplanation{Reason: "under ignored directory " + part + "/", Next: "codemap always skips " + part + "/; nothing to configure"}, true
+			}
+		}
+		cache := NewGitIgnoreCache(fg.Root)
+		for dir := filepath.Dir(abs); dir != fg.Root && strings.HasPrefix(dir, fg.Root); dir = filepath.Dir(dir) {
+			cache.EnsureDir(dir)
+		}
+		if cache.ShouldIgnore(abs) {
+			return UnindexedExplanation{Reason: "ignored by .gitignore", Next: "remove the .gitignore rule covering it to include it in the scan"}, true
+		}
+		return UnindexedExplanation{Reason: "absent from the scan inventory (newer than the scan, or the walk skipped it)", Next: "rerun the scan, then retry"}, true
+	}
+	if !IsSourceExt(ext) {
+		kind := ext + " has no import analysis"
+		if ext == "" {
+			kind = "no extension, so no import analysis"
+		}
+		return UnindexedExplanation{Reason: "unsupported file type: " + kind, Next: "dependency analysis covers source files only; use find_file to locate it"}, true
+	}
+	return UnindexedExplanation{}, false
 }
 
 // fileIndex provides fast lookup of files by various import-like keys
@@ -36,6 +115,17 @@ type fileIndex struct {
 	goPkgs      map[string][]string // Go package path -> files
 	cueModules  []cueModuleInfo
 	cuePackages map[string]string
+	// absRoot and filters back a narrow fallback in tryExactMatch: a file
+	// excluded from the scanned inventory purely by .gitignore can still be
+	// the exact, unambiguous target of a plain relative import from a file
+	// that *was* scanned. absRoot empty disables the fallback entirely
+	// (e.g. tests that build a fileIndex from bare FileInfo values with no
+	// real directory behind them). filters is still enforced in that
+	// fallback so it recovers gitignore's blind spot without also
+	// resurrecting a file the project or caller explicitly excluded via
+	// --only/--exclude or config.json, which must stay absolutely excluded.
+	absRoot string
+	filters Filters
 }
 
 // BuildFileGraph scans a project with explicit filters and builds its file
@@ -132,6 +222,10 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 			}
 		}
 	}
+	fg.KnownFiles = make(map[string]bool, len(files))
+	for _, file := range files {
+		fg.KnownFiles[filepath.ToSlash(file.Path)] = true
+	}
 	languages := inspectFileLanguages(files)
 	hasCUEAnalysis := analysisLanguages.hasCUE
 	if languages.hasCUE && !hasCUEAnalysis {
@@ -159,7 +253,7 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 	}
 
 	// Build file index for fast fuzzy matching
-	idx, err := buildFileIndexContext(ctx, files, fg.Module)
+	idx, err := buildFileIndexContext(ctx, files, fg.Module, absRoot, filters)
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +311,6 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 		if a.Language == "rust" {
 			resolvedImports = resolveRustReferences(absRoot, a, idx, rustWorkspace)
 		} else {
-			sourceLanguage := DetectLanguage(a.Path)
 			for _, imp := range a.Imports {
 				if err := ctx.Err(); err != nil {
 					return nil, err
@@ -225,15 +318,14 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 				resolved := fuzzyResolveWithWorkspace(
 					imp, a.Path, idx, fg.Module, fg.PathAliases, fg.BaseURL, jsResolver, dartResolver,
 				)
-				// Exclude multi-file Go package imports to avoid inflating hub counts.
-				// Go package imports start with the module prefix and resolve to all
-				// files in that package. For all other imports (e.g., C# namespace
-				// imports that resolve via directory matching), allow multi-file
-				// resolution so inter-namespace dependencies are tracked.
-				isGoPkg := sourceLanguage == "go" && isLocalGoImport(imp, fg.Module) && len(resolved) > 1
-				if !isGoPkg && len(resolved) > 0 {
-					resolvedImports = append(resolvedImports, resolved...)
-				}
+				// A Go import names a package, and a package is every non-test
+				// .go file in its directory, so one import fans out to one edge
+				// per file. Dropping the multi-file case (as this once did, to
+				// keep hub counts small) made every importer of a package with
+				// two or more files vanish from --deps and --importers: see #191.
+				// Text renderers that need package granularity collapse these
+				// edges themselves; the graph keeps the file edges.
+				resolvedImports = append(resolvedImports, resolved...)
 			}
 		}
 
@@ -261,6 +353,17 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 		resolved[symbolLevelImportLanguages["swift"]] = true
 	}
 	fg.Coverage.addSymbolLevelImportCoverage(languages.symbolLevel, resolved)
+	// A file resolved via tryExactMatch's on-disk fallback (above) is, by
+	// construction, real and present — it just wasn't part of the scanned
+	// inventory KnownFiles was built from (e.g. gitignored). Now that it has
+	// a proven importer, it should read as indexed rather than "not
+	// indexed": the whole point of the fallback is to turn a dropped edge
+	// into a correct one, and leaving KnownFiles stale would have the
+	// importers report claim the edge while simultaneously claiming the
+	// target was never looked at.
+	for imported := range fg.Importers {
+		fg.KnownFiles[filepath.ToSlash(imported)] = true
+	}
 	fg.sortEdges()
 	return fg, nil
 }
@@ -384,19 +487,24 @@ func inspectAnalysisLanguages(analyses []FileAnalysis) analysisLanguageInventory
 	return inventory
 }
 
-// buildFileIndex creates a multi-key index for fast import resolution
+// buildFileIndex creates a multi-key index for fast import resolution. It has
+// no project root behind it (callers pass bare FileInfo values, often in
+// tests), so the on-disk fallback in tryExactMatch stays disabled; use
+// buildFileIndexContext directly to enable it.
 func buildFileIndex(files []FileInfo, goModule string) *fileIndex {
-	idx, _ := buildFileIndexContext(context.Background(), files, goModule)
+	idx, _ := buildFileIndexContext(context.Background(), files, goModule, "", Filters{})
 	return idx
 }
 
-func buildFileIndexContext(ctx context.Context, files []FileInfo, goModule string) (*fileIndex, error) {
+func buildFileIndexContext(ctx context.Context, files []FileInfo, goModule string, absRoot string, filters Filters) (*fileIndex, error) {
 	directoryHint := min(len(files), 1024)
 	idx := &fileIndex{
 		byExact:  make(map[string]uint32, len(files)),
 		bySuffix: make([]string, 0, len(files)),
 		byDir:    make(map[string][]string, directoryHint),
 		goPkgs:   make(map[string][]string, directoryHint),
+		absRoot:  absRoot,
+		filters:  filters,
 	}
 	goPackagePaths := make(map[string]string, directoryHint)
 
@@ -796,7 +904,61 @@ func tryExactMatch(path string, idx *fileIndex, sourceLanguage string) []string 
 		}
 	}
 
+	// A candidate absent from the scanned inventory (count 0, as opposed to
+	// the ambiguous count >= 2 case above, which is deliberately left
+	// unresolved) may still be a real, readable file that the scan excluded
+	// for an orthogonal reason — most commonly .gitignore, since ScanFiles
+	// applies the project's gitignore rules to build the inventory this
+	// index is drawn from. A plain relative require('./x') naming an exact,
+	// unambiguous path is confident evidence the file is genuinely part of
+	// the dependency graph even though it isn't part of the scanned file
+	// set, so this on-disk check recovers exactly that edge without
+	// widening the fuzzy/suffix resolution strategies to gitignored files.
+	if idx.absRoot != "" {
+		if idx.byExact[path] == 0 && languagesCompatible(sourceLanguage, DetectLanguage(path)) && idx.gitignoreOnlyRecoverable(path) {
+			return []string{path}
+		}
+		for _, candidate := range typescriptSourceCandidates(path, sourceLanguage) {
+			if idx.byExact[candidate] == 0 && languagesCompatible(sourceLanguage, DetectLanguage(candidate)) && idx.gitignoreOnlyRecoverable(candidate) {
+				return []string{candidate}
+			}
+		}
+		for _, ext := range resolverExtensions[:len(resolverExtensions)-1] {
+			candidate := path + ext
+			if idx.byExact[candidate] == 0 && languagesCompatible(sourceLanguage, DetectLanguage(candidate)) && idx.gitignoreOnlyRecoverable(candidate) {
+				return []string{candidate}
+			}
+		}
+	}
+
 	return nil
+}
+
+// gitignoreOnlyRecoverable reports whether relPath is missing from the
+// scanned inventory *solely* because of .gitignore, as opposed to an
+// explicit --only/--exclude filter, a config.json exclude, or one of the
+// scanner's own never-source directory names (node_modules, vendor,
+// testdata, ...) — all of which must stay absolutely excluded, unlike
+// .gitignore's blind spot. ScanFiles' only exclusion mechanisms are those
+// three plus .gitignore, so a real, regular file that clears the other two
+// and is still absent can only be missing because of .gitignore.
+func (idx *fileIndex) gitignoreOnlyRecoverable(relPath string) bool {
+	if !MatchesFilters(filepath.ToSlash(relPath), filepath.Ext(relPath), idx.filters.Only, idx.filters.Exclude) {
+		return false
+	}
+	for dir := filepath.ToSlash(filepath.Dir(relPath)); dir != "." && dir != "/" && dir != ""; dir = pathpkg.Dir(dir) {
+		if IgnoredDirs[pathpkg.Base(dir)] {
+			return false
+		}
+	}
+	return isRegularFile(idx.absRoot, relPath)
+}
+
+// isRegularFile reports whether root-relative path exists on disk under
+// absRoot as a regular (not directory, not symlink-to-directory) file.
+func isRegularFile(absRoot, relPath string) bool {
+	info, err := os.Stat(filepath.Join(absRoot, filepath.FromSlash(relPath)))
+	return err == nil && info.Mode().IsRegular()
 }
 
 // typescriptEmitExtensions maps an emitted JavaScript extension to the
@@ -963,6 +1125,68 @@ func (fg *FileGraph) IsHub(path string) bool {
 		return false
 	}
 	return CountHubImporters(fg.Importers[path]) >= HubThreshold
+}
+
+// GoPackage reports the Go package that path belongs to when this graph
+// resolved Go imports at package granularity: the package's import path and
+// its non-test files, which include path itself unless path is a _test.go
+// file (one lives in the package but is never an import target, so it is
+// absent from Packages). ok is false for a non-Go file, for a graph with no
+// go.mod, and for a directory the index never saw.
+func (fg *FileGraph) GoPackage(path string) (importPath string, files []string, ok bool) {
+	if fg == nil || fg.Module == "" || len(fg.Packages) == 0 {
+		return "", nil, false
+	}
+	if !strings.EqualFold(filepath.Ext(path), ".go") {
+		return "", nil, false
+	}
+	importPath = fg.Module
+	if dir := pathpkg.Dir(filepath.ToSlash(path)); dir != "" && dir != "." {
+		importPath += "/" + dir
+	}
+	files, ok = fg.Packages[importPath]
+	if !ok {
+		return "", nil, false
+	}
+	return importPath, files, true
+}
+
+// CollapseGoPackageFiles rewrites a list of file paths for text output so Go
+// files that were linked as one package read as one entry. Go imports name
+// packages, so every non-test .go file of a directory arrives in an edge list
+// together, and printing each one inflates the output without adding an edge
+// the reader can act on. Two or more .go paths in one directory become
+// "dir/ (N files)" with N the number of paths collapsed into it, placed at the
+// first of their positions; every other path is returned unchanged.
+func CollapseGoPackageFiles(paths []string) []string {
+	perDir := make(map[string]int, len(paths))
+	for _, path := range paths {
+		if strings.EqualFold(filepath.Ext(path), ".go") {
+			perDir[pathpkg.Dir(filepath.ToSlash(path))]++
+		}
+	}
+	out := make([]string, 0, len(paths))
+	emitted := make(map[string]bool, len(perDir))
+	for _, path := range paths {
+		if !strings.EqualFold(filepath.Ext(path), ".go") {
+			out = append(out, path)
+			continue
+		}
+		dir := pathpkg.Dir(filepath.ToSlash(path))
+		if perDir[dir] < 2 {
+			out = append(out, path)
+			continue
+		}
+		if emitted[dir] {
+			continue
+		}
+		emitted[dir] = true
+		if dir == "." {
+			dir = ""
+		}
+		out = append(out, fmt.Sprintf("%s/ (%d files)", dir, perDir[pathpkg.Dir(filepath.ToSlash(path))]))
+	}
+	return out
 }
 
 // HubFiles returns all files that qualify as hubs under IsHub, ordered by

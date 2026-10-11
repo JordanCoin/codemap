@@ -43,6 +43,39 @@ func TestDaemonStartStop(t *testing.T) {
 	daemon.Stop()
 }
 
+// waitForWatching polls until the daemon's watcher has at least one path
+// registered, which is the point after which a write can be observed.
+func waitForWatching(t *testing.T, daemon *Daemon) {
+	t.Helper()
+	waitForWatchCondition(t, 5*time.Second, func() bool {
+		return len(daemon.watcher.WatchList()) > 0
+	})
+}
+
+// writeEventFor returns the most recent WRITE event for path, if any.
+func writeEventFor(daemon *Daemon, path string) (Event, bool) {
+	events := daemon.GetEvents(100)
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Op == "WRITE" && events[i].Path == path {
+			return events[i], true
+		}
+	}
+	return Event{}, false
+}
+
+// waitForWriteEvent polls until a WRITE event for path exists or the deadline
+// passes. It reports whether one arrived; callers decide what a miss means.
+func waitForWriteEvent(daemon *Daemon, path string, timeout time.Duration) (Event, bool) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if event, ok := writeEventFor(daemon, path); ok {
+			return event, true
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return writeEventFor(daemon, path)
+}
+
 // TestEventDetection tests that file changes are detected
 func TestEventDetection(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "codemap-watch-test")
@@ -66,8 +99,7 @@ func TestEventDetection(t *testing.T) {
 	}
 	defer daemon.Stop()
 
-	// Wait for watcher to be fully ready
-	time.Sleep(500 * time.Millisecond)
+	waitForWatching(t, daemon)
 
 	// Modify the file (with different content to ensure a change)
 	newContent := "package main\n\nfunc main() {}\n\n// new line added\n"
@@ -75,34 +107,16 @@ func TestEventDetection(t *testing.T) {
 		t.Fatalf("Failed to modify test file: %v", err)
 	}
 
-	// Wait for event to be processed (longer wait for reliability)
-	time.Sleep(500 * time.Millisecond)
-
-	// Check events
-	events := daemon.GetEvents(10)
-	if len(events) == 0 {
-		// Try waiting a bit longer
-		time.Sleep(500 * time.Millisecond)
-		events = daemon.GetEvents(10)
-	}
-
-	if len(events) == 0 {
-		t.Skip("fsnotify may not work reliably in temp directories on this platform")
-	}
-
-	// Find the WRITE event
-	var foundWrite bool
-	for _, e := range events {
-		if e.Op == "WRITE" && e.Path == "test.go" {
-			foundWrite = true
-			if e.Delta <= 0 {
-				t.Errorf("Expected positive line delta, got %d", e.Delta)
-			}
+	// Poll for the WRITE event instead of sleeping a fixed interval (#135).
+	event, ok := waitForWriteEvent(daemon, "test.go", 5*time.Second)
+	if !ok {
+		if len(daemon.GetEvents(10)) == 0 {
+			t.Skip("fsnotify may not work reliably in temp directories on this platform")
 		}
+		t.Fatal("Expected WRITE event for test.go")
 	}
-
-	if !foundWrite {
-		t.Error("Expected WRITE event for test.go")
+	if event.Delta <= 0 {
+		t.Errorf("Expected positive line delta, got %d", event.Delta)
 	}
 }
 
@@ -130,7 +144,7 @@ func TestLineDelta(t *testing.T) {
 	}
 	defer daemon.Stop()
 
-	time.Sleep(500 * time.Millisecond)
+	waitForWatching(t, daemon)
 
 	// Add 2 more lines
 	newContent := "line1\nline2\nline3\nline4\nline5\n" // 5 lines
@@ -138,30 +152,20 @@ func TestLineDelta(t *testing.T) {
 		t.Fatalf("Failed to modify test file: %v", err)
 	}
 
-	time.Sleep(500 * time.Millisecond)
-
-	events := daemon.GetEvents(10)
-	if len(events) == 0 {
-		time.Sleep(500 * time.Millisecond)
-		events = daemon.GetEvents(10)
-	}
-
-	if len(events) == 0 {
-		t.Skip("fsnotify may not work reliably in temp directories on this platform")
-	}
-
-	for _, e := range events {
-		if e.Op == "WRITE" && e.Path == "counter.go" {
-			if e.Delta != 2 {
-				t.Errorf("Expected delta of +2, got %d", e.Delta)
-			}
-			if e.Lines != 5 {
-				t.Errorf("Expected 5 lines, got %d", e.Lines)
-			}
-			return
+	// Poll for the WRITE event instead of sleeping a fixed interval (#135).
+	event, ok := waitForWriteEvent(daemon, "counter.go", 5*time.Second)
+	if !ok {
+		if len(daemon.GetEvents(10)) == 0 {
+			t.Skip("fsnotify may not work reliably in temp directories on this platform")
 		}
+		t.Fatal("No WRITE event found for counter.go")
 	}
-	t.Error("No WRITE event found for counter.go")
+	if event.Delta != 2 {
+		t.Errorf("Expected delta of +2, got %d", event.Delta)
+	}
+	if event.Lines != 5 {
+		t.Errorf("Expected 5 lines, got %d", event.Lines)
+	}
 }
 
 // TestNewFileCreation tests CREATE event for new files
@@ -276,13 +280,18 @@ func TestDebounce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDaemon failed: %v", err)
 	}
+	// A generous window so five writes a few milliseconds apart always fall
+	// inside one debounce window, however slowly the runner schedules them;
+	// with the 100ms default a loaded CI host spread them over four events
+	// (#135). The default is untouched for production.
+	daemon.debounceWindow = time.Second
 
 	if err := daemon.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer daemon.Stop()
 
-	time.Sleep(100 * time.Millisecond)
+	waitForWatching(t, daemon)
 
 	// Rapid fire writes (within debounce window)
 	for i := 0; i < 5; i++ {
@@ -292,17 +301,21 @@ func TestDebounce(t *testing.T) {
 		}
 	}
 
-	time.Sleep(300 * time.Millisecond)
-
-	events := daemon.GetEvents(100)
-	writeCount := 0
-	lastWriteLines := 0
-	for _, e := range events {
-		if e.Op == "WRITE" && e.Path == "rapid.go" {
-			writeCount++
-			lastWriteLines = e.Lines
+	countWrites := func() (writeCount, lastWriteLines int) {
+		for _, e := range daemon.GetEvents(100) {
+			if e.Op == "WRITE" && e.Path == "rapid.go" {
+				writeCount++
+				lastWriteLines = e.Lines
+			}
 		}
+		return writeCount, lastWriteLines
 	}
+	// Poll for the trailing event instead of sleeping past the window.
+	waitForWatchCondition(t, 5*time.Second, func() bool {
+		writeCount, lastWriteLines := countWrites()
+		return writeCount >= 1 && lastWriteLines == 6
+	})
+	writeCount, lastWriteLines := countWrites()
 
 	// The first write may be processed immediately; the changed-size burst must
 	// collapse to at most one trailing event with the latest contents.

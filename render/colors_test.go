@@ -5,7 +5,15 @@ import (
 	"testing"
 )
 
+// withColorMode forces a colour mode for one test and restores auto afterwards.
+func withColorMode(t *testing.T, mode ColorMode) {
+	t.Helper()
+	SetColorMode(mode)
+	t.Cleanup(func() { SetColorMode(ColorAuto) })
+}
+
 func TestGetFileColor(t *testing.T) {
+	withColorMode(t, ColorAlways)
 	tests := []struct {
 		ext      string
 		expected string
@@ -74,6 +82,7 @@ func TestGetFileColor(t *testing.T) {
 }
 
 func TestGetFileColorCaseInsensitive(t *testing.T) {
+	withColorMode(t, ColorAlways)
 	// Test that color detection is case-insensitive
 	tests := []string{".GO", ".Go", ".go", ".PY", ".Py", ".py"}
 
@@ -190,7 +199,8 @@ func TestGetTerminalWidth(t *testing.T) {
 }
 
 func TestANSIConstants(t *testing.T) {
-	// Verify ANSI constants are properly defined escape sequences
+	// Verify the colour variables carry proper escape sequences while colour is on
+	withColorMode(t, ColorAlways)
 	constants := map[string]string{
 		"Reset":     Reset,
 		"Bold":      Bold,

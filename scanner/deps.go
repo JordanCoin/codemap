@@ -38,7 +38,7 @@ func ReadExternalDeps(ctx context.Context, root string, manifestByteBudget int64
 		if info.IsDir() {
 			// The walk root is what the user asked for, so it is never one of
 			// the hardcoded ignored directories.
-			if IgnoredDirs[info.Name()] && path != root {
+			if path != root && (IgnoredDirs[info.Name()] || IsNestedGitRepo(path)) {
 				return filepath.SkipDir
 			}
 			return nil

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -232,4 +233,87 @@ func runMainWithArgs(t *testing.T, args []string) string {
 	}()
 
 	return captureMainOutput(func() { main() })
+}
+
+// TestMainExcludeFlagAddsToConfigExcludes is the regression for issue #150:
+// --exclude used to replace the config's exclude list, so a non-matching CLI
+// pattern silently re-admitted everything the config excluded.
+func TestMainExcludeFlagAddsToConfigExcludes(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		".codemap/config.json": "{\"exclude\": [\"vendorx\"]}\n",
+		"main.go":              "package main\n",
+		"src/a.go":             "package src\n",
+		"src/b.go":             "package src\n",
+		"vendorx/x.go":         "package vendorx\n",
+		"vendorx/y.go":         "package vendorx\n",
+	}
+	for path, content := range files {
+		full := filepath.Join(root, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	count := func(args ...string) int {
+		t.Helper()
+		out := runMainWithArgs(t, append([]string{"codemap", "--json"}, append(args, root)...))
+		var project scanner.Project
+		if err := json.Unmarshal([]byte(out), &project); err != nil {
+			t.Fatalf("expected JSON output, got error %v with body:\n%s", err, out)
+		}
+		n := 0
+		for _, file := range project.Files {
+			// The tree inventory lists codemap's own config; only project
+			// files matter here.
+			if !strings.HasPrefix(filepath.ToSlash(file.Path), ".codemap/") {
+				n++
+			}
+		}
+		return n
+	}
+
+	if got := count(); got != 3 {
+		t.Fatalf("config exclude alone: %d files, want 3 (main.go, src/a.go, src/b.go)", got)
+	}
+	if got := count("--exclude", "ZZZNOMATCH"); got != 3 {
+		t.Fatalf("config exclude + non-matching --exclude: %d files, want 3 (config exclude must keep applying)", got)
+	}
+	if got := count("--exclude", "src"); got != 1 {
+		t.Fatalf("config exclude + matching --exclude: %d files, want 1 (both sets removed)", got)
+	}
+}
+
+// TestMainFreshCloneLeavesGitStatusClean is the exit test from issue #184:
+// a fresh clone of a repo with no codemap config, `codemap .`, and
+// `git status --porcelain` is empty.
+func TestMainFreshCloneLeavesGitStatusClean(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	src := makeMainGitRepo(t, "main")
+	clone := filepath.Join(t.TempDir(), "clone")
+	runGitMainTestCmd(t, src, "clone", "-q", src, clone)
+
+	out := runMainWithArgs(t, []string{"codemap", clone})
+	if !strings.Contains(out, "Files:") {
+		t.Fatalf("expected a structure summary, got:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(clone, ".codemap", "config.json")); err != nil {
+		t.Fatalf("auto-init config not written: %v", err)
+	}
+	status := exec.Command("git", "status", "--porcelain")
+	status.Dir = clone
+	statusOut, err := status.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(statusOut)) != "" {
+		t.Fatalf("git status --porcelain not empty after `codemap .`:\n%s", statusOut)
+	}
+	if _, err := os.Stat(filepath.Join(clone, ".gitignore")); !os.IsNotExist(err) {
+		t.Fatal("codemap must not create a tracked .gitignore")
+	}
 }

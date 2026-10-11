@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"codemap/internal/gitexclude"
 	"codemap/internal/projectpath"
 	"codemap/internal/runtimefile"
 )
@@ -91,7 +92,7 @@ func WriteLatest(root string, artifact *Artifact) error {
 		return err
 	}
 	path := filepath.Join(runtimeDir, latestFilename)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := gitexclude.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
 

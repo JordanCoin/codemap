@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -855,5 +856,121 @@ func TestFilterAnalysesContextBranches(t *testing.T) {
 	cancel()
 	if _, err := filterAnalysesContext(ctx, analyses, Filters{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled filter error = %v, want context.Canceled", err)
+	}
+}
+
+// nestedRepoFixture builds a git repo at root with three project files, a
+// linked worktree (created by `git worktree add`, so its .git is a gitdir
+// pointer file) under a dotted directory, and a nested plain clone (whose
+// .git is a directory). It returns root; callers must skip when git is
+// missing.
+func nestedRepoFixture(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root := t.TempDir()
+	git := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	for _, name := range []string{"main.go", "lib/lib.go", "lib/util.go"} {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("package p\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git(root, "init", "-q", "-b", "main")
+	git(root, "add", ".")
+	git(root, "commit", "-q", "-m", "init")
+	// Linked worktree under a dotted directory, like .claude/worktrees/<agent>.
+	git(root, "worktree", "add", "-q", filepath.Join(".claude", "worktrees", "agent-x"), "HEAD")
+	// Nested plain clone, two levels down.
+	git(root, "clone", "-q", root, filepath.Join("tools", "sub-clone"))
+	return root
+}
+
+// TestScanFilesSkipsNestedWorktreesAndClones is the regression for issue
+// #131: a linked worktree's .git is a file, not a directory, and IgnoredDirs
+// only matched a directory literally named .git, so `git worktree add` inside
+// the repo doubled the file count.
+func TestScanFilesSkipsNestedWorktreesAndClones(t *testing.T) {
+	root := nestedRepoFixture(t)
+
+	files, err := ScanFiles(context.Background(), root, NewGitIgnoreCache(root), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	for _, f := range files {
+		paths = append(paths, filepath.ToSlash(f.Path))
+	}
+	sort.Strings(paths)
+	want := []string{"lib/lib.go", "lib/util.go", "main.go"}
+	if !reflect.DeepEqual(paths, want) {
+		t.Fatalf("ScanFiles = %v, want %v (nested worktree and clone must not be counted)", paths, want)
+	}
+
+	// The scan root itself is a repository too; it must still be scanned.
+	wt := filepath.Join(root, ".claude", "worktrees", "agent-x")
+	wtFiles, err := ScanFiles(context.Background(), wt, NewGitIgnoreCache(wt), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wtFiles) != 3 {
+		t.Fatalf("scanning the linked worktree as root returned %d files, want 3", len(wtFiles))
+	}
+}
+
+func TestNestedGitReposFindsWorktreesAtAnyDepth(t *testing.T) {
+	root := nestedRepoFixture(t)
+
+	got := NestedGitRepos(root)
+	want := []string{filepath.Join(".claude", "worktrees", "agent-x"), filepath.Join("tools", "sub-clone")}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("NestedGitRepos = %v, want %v", got, want)
+	}
+
+	if !IsNestedGitRepo(filepath.Join(root, ".claude", "worktrees", "agent-x")) {
+		t.Fatal("a linked worktree (.git file) must be a repository boundary")
+	}
+	if !IsNestedGitRepo(filepath.Join(root, "tools", "sub-clone")) {
+		t.Fatal("a plain clone (.git directory) must be a repository boundary")
+	}
+	if IsNestedGitRepo(filepath.Join(root, "lib")) {
+		t.Fatal("a plain source directory is not a repository boundary")
+	}
+}
+
+func TestReadExternalDepsSkipsNestedRepos(t *testing.T) {
+	root := nestedRepoFixture(t)
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/outer\n\ngo 1.22\n\nrequire (\n\texample.com/outerdep v1.0.0\n)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "tools", "sub-clone", "go.mod"), []byte("module example.com/inner\n\ngo 1.22\n\nrequire (\n\texample.com/innerdep v1.0.0\n)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps, err := ReadExternalDeps(context.Background(), root, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dep := range deps["go"] {
+		if strings.Contains(dep, "innerdep") {
+			t.Fatalf("manifest inside a nested clone leaked into external deps: %v", deps["go"])
+		}
+	}
+	if len(deps["go"]) == 0 {
+		t.Fatalf("outer go.mod was not read: %v", deps)
 	}
 }

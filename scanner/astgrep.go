@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -271,26 +272,30 @@ func (s *AstGrepScanner) Available() bool {
 	return s.binary != ""
 }
 
-// findNestedGitRepos returns subdirectory names that contain their own .git
-// These are separate repositories (not submodules) that should be excluded
-// from scanning to avoid hanging on large nested repos.
-func findNestedGitRepos(root string) []string {
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return nil
+// hiddenScanExcludes lists directory names ast-grep must keep skipping once
+// --no-ignore hidden lets it walk into dot-directories in general: `.git`
+// (whose internals are never source) plus every name codemap's own walker
+// already treats as never-source (IgnoredDirs — vendor trees, build output,
+// language caches), so relaxing the hidden-file default doesn't also start
+// indexing those. `.codemap` is codemap's own state directory (skills,
+// config, cache) and is excluded the same way the plain file walker strips
+// it from its inventory (see ScanConfiguredFilesWithFilters).
+func hiddenScanExcludes() []string {
+	names := make([]string, 0, len(IgnoredDirs)+1)
+	for name := range IgnoredDirs {
+		names = append(names, name)
 	}
+	names = append(names, ".codemap")
+	sort.Strings(names)
+	return names
+}
 
-	var repos []string
-	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		gitPath := filepath.Join(root, e.Name(), ".git")
-		if info, err := os.Stat(gitPath); err == nil && info.IsDir() {
-			repos = append(repos, e.Name())
-		}
-	}
-	return repos
+// findNestedGitRepos returns the root-relative paths of every repository
+// nested under root (linked worktrees, plain clones, submodules), at any
+// depth, so the ast-grep scan and the Go fallback exclude exactly what the
+// file walker skips. See NestedGitRepos.
+func findNestedGitRepos(root string) []string {
+	return NestedGitRepos(root)
 }
 
 // ScanDirectory analyzes all files in a directory while honoring caller
@@ -362,15 +367,39 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 	} else {
 		args = append(args, "--inline-rules", inlineRules)
 	}
-	for _, repo := range findNestedGitRepos(root) {
-		args = append(args, "--globs", "!"+repo+"/**")
+	// ast-grep skips dot-directories by default (its "hidden" ignore rule),
+	// so a project whose source lives under e.g. `.agents/` is invisible to
+	// it with no way to opt in. --no-ignore hidden turns that default off,
+	// but it also stops ast-grep from treating `.git` as special and opens
+	// up every other genuinely-internal dot-directory codemap already
+	// excludes by name (IgnoredDirs) — so both are re-excluded explicitly
+	// via --globs, at any depth, right alongside it.
+	//
+	// ast-grep's --globs match the literal path string it walks, with no
+	// awareness of where "root" begins: given an absolute root, a pattern
+	// like "**/testdata/**" matches even when "testdata" is an *ancestor* of
+	// root rather than something inside it (this repo's own scanner tests,
+	// which build fixtures under ../testdata/, hit exactly that false
+	// exclusion). Running the scan with its cwd set to root and "." as the
+	// scanned path keeps every walked path root-relative, so the globs can
+	// never see anything above root.
+	args = append(args, "--no-ignore", "hidden")
+	for _, name := range hiddenScanExcludes() {
+		args = append(args, "--globs", "!**/"+name+"/**")
 	}
-	args = append(args, root)
+	// Nested repositories are excluded by their root-relative path (the
+	// scan runs with cwd=root, so the glob is anchored there and cannot
+	// match a same-named directory elsewhere in the tree).
+	for _, repo := range findNestedGitRepos(root) {
+		args = append(args, "--globs", "!"+filepath.ToSlash(repo)+"/**")
+	}
+	args = append(args, ".")
 
 	ctx, cancel := context.WithTimeout(parent, astGrepScanTimeout)
 	defer cancel()
 
 	cmd := astGrepCommand(ctx, s.binary, args...)
+	cmd.Dir = root
 	cmd.WaitDelay = 100 * time.Millisecond
 	out, err := cmd.Output()
 	if err != nil {
