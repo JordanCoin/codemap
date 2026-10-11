@@ -49,6 +49,59 @@ const (
 // burst to settle before refreshing configured files once.
 const controlRefreshWindow = 150 * time.Millisecond
 
+// A checkout storm (rebase, branch switch) delivers one CREATE and one RENAME
+// per touched file with no debounce, and handleEvent used to pay a git
+// subprocess, a state write and a topology recompute for each one (#201).
+// When more than burstThreshold source events arrive within burstDetectWindow
+// the loop stops handling them one by one and queues them until burstSettle
+// of quiet, or burstCeiling since the burst began, then handles the union in
+// one batch: one git call, one state write, one topology pass, one graph kick.
+const (
+	burstThreshold    = 16                     // events within burstDetectWindow that open a burst
+	burstDetectWindow = 250 * time.Millisecond // window the threshold is counted over
+	burstSettle       = 250 * time.Millisecond // quiet time that closes a burst
+	burstCeiling      = 2 * time.Second        // longest a burst may stay open before a forced flush
+)
+
+// burstBatch carries the per-batch results handleEvent reads instead of doing
+// per-file work while a burst is being flushed. It is nil outside a flush.
+type burstBatch struct {
+	dirty        map[string]bool // relPath -> tracked and modified, from one git call
+	wantState    bool            // a synchronous state write was requested
+	wantTopology bool            // a topology recompute was requested
+	invalidated  bool            // the dependency graph was invalidated
+}
+
+// isFileDirtyFn and dirtyPathsFn are seams so tests can count git calls.
+var (
+	isFileDirtyFn = isFileDirty
+	dirtyPathsFn  = dirtyPaths
+)
+
+// daemonComputeTopology is a seam so tests can count topology recomputes.
+var daemonComputeTopology = (*Daemon).computeTopology
+
+// dirtyPaths answers isFileDirty for many paths with one git subprocess.
+func dirtyPaths(root string, relPaths []string) map[string]bool {
+	dirty := make(map[string]bool, len(relPaths))
+	if len(relPaths) == 0 {
+		return dirty
+	}
+	args := append([]string{"diff", "--name-only", "--"}, relPaths...)
+	cmd := exec.Command("git", args...)
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		return dirty
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			dirty[filepath.FromSlash(line)] = true
+		}
+	}
+	return dirty
+}
+
 func newEventDebouncer(window time.Duration) *eventDebouncer {
 	pruneAfter := 10 * window
 	if pruneAfter < time.Second {
@@ -239,11 +292,79 @@ func (d *Daemon) eventLoop() {
 		}
 	}()
 
+	// Burst state: arrivals is the recent source-event timestamps used to
+	// detect a storm; queue holds the storm's events, last op per path, in
+	// first-seen order, until the burst settles or hits its ceiling.
+	var (
+		arrivals   []time.Time
+		queue      []fsnotify.Event
+		queued     map[string]int
+		burstStart time.Time
+		burstTimer = time.NewTimer(time.Hour)
+		burstC     <-chan time.Time
+	)
+	burstTimer.Stop()
+	defer burstTimer.Stop()
+	armBurst := func(delay time.Duration) {
+		if !burstTimer.Stop() {
+			select {
+			case <-burstTimer.C:
+			default:
+			}
+		}
+		burstTimer.Reset(delay)
+		burstC = burstTimer.C
+	}
+	enqueue := func(event fsnotify.Event, now time.Time) {
+		if queued == nil {
+			queued = make(map[string]int)
+			burstStart = now
+		}
+		if i, ok := queued[event.Name]; ok {
+			queue[i] = event
+		} else {
+			queued[event.Name] = len(queue)
+			queue = append(queue, event)
+		}
+		if remaining := burstCeiling - now.Sub(burstStart); remaining < burstSettle {
+			armBurst(max(remaining, 0))
+		} else {
+			armBurst(burstSettle)
+		}
+	}
+	flushBurst := func() {
+		burstC = nil
+		events := queue
+		queue, queued = nil, nil
+		arrivals = arrivals[:0]
+		d.handleBurst(events)
+	}
+	inBurst := func(now time.Time) bool {
+		if queued != nil {
+			return true
+		}
+		cut := 0
+		for cut < len(arrivals) && now.Sub(arrivals[cut]) > burstDetectWindow {
+			cut++
+		}
+		arrivals = append(arrivals[cut:], now)
+		return len(arrivals) > burstThreshold
+	}
+	defer func() {
+		if len(queue) > 0 {
+			d.handleBurst(queue)
+		}
+	}()
+
 	for {
 		select {
 		case <-d.done:
 			d.drainQueued(debouncer, d.watcher.Events)
 			return
+
+		case <-burstC:
+			flushBurst()
+			armTimer(time.Now())
 
 		case <-timerC:
 			now := time.Now()
@@ -308,6 +429,12 @@ func (d *Daemon) eventLoop() {
 			// vite.config.ts.timestamp-*.mjs) so transient churn never
 			// reaches the event log or working set.
 			if isTransientFile(event.Name) {
+				continue
+			}
+
+			if inBurst(now) {
+				debouncer.cancelPending(event.Name)
+				enqueue(event, now)
 				continue
 			}
 
@@ -531,6 +658,45 @@ func isTransientFile(path string) bool {
 	return false
 }
 
+// handleBurst handles a storm's events as one batch: the git dirty check
+// runs once over every path, and the state write, topology recompute and
+// dependency refresh that handleEvent would have issued per file run once
+// after the last event.
+func (d *Daemon) handleBurst(events []fsnotify.Event) {
+	if len(events) == 0 {
+		return
+	}
+	batch := &burstBatch{}
+	if d.graph.IsGitRepo {
+		paths := make([]string, 0, len(events))
+		for _, event := range events {
+			if event.Op&(fsnotify.Create|fsnotify.Write) == 0 {
+				continue
+			}
+			if rel, err := filepath.Rel(projectpath.CanonicalPath(d.root), projectpath.CanonicalPath(event.Name)); err == nil {
+				paths = append(paths, rel)
+			}
+		}
+		batch.dirty = dirtyPathsFn(d.root, paths)
+	}
+	d.batch = batch
+	for _, event := range events {
+		if d.handleEvent(event) {
+			batch.invalidated = true
+		}
+	}
+	d.batch = nil
+	if batch.wantState {
+		d.reportPublicationError(d.writeState())
+	}
+	if batch.wantTopology {
+		daemonComputeTopology(d)
+	}
+	if batch.invalidated {
+		daemonRefreshDependencies(d)
+	}
+}
+
 // handleEvent processes a single file event
 func (d *Daemon) handleEvent(fsEvent fsnotify.Event) bool {
 	fsEvent.Name = projectpath.CanonicalPath(fsEvent.Name)
@@ -672,7 +838,11 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) bool {
 
 	// Check if file is dirty (uncommitted) - only if git repo
 	if d.graph.IsGitRepo && (op == "CREATE" || op == "WRITE") {
-		event.Dirty = isFileDirty(d.root, relPath)
+		if d.batch != nil {
+			event.Dirty = d.batch.dirty[relPath]
+		} else {
+			event.Dirty = isFileDirtyFn(d.root, relPath)
+		}
 	}
 
 	// Enrich with structural context from file graph (if available)
@@ -708,14 +878,22 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) bool {
 	// Persist the stale graph state synchronously so hooks and direct callers
 	// observe the invalidation even when the coalesced publish loop is idle.
 	if wasConfigured || isConfigured {
-		d.reportPublicationError(d.writeState())
+		if d.batch != nil {
+			d.batch.wantState = true
+		} else {
+			d.reportPublicationError(d.writeState())
+		}
 	}
 
 	// Log event
 	d.logEvent(event)
 
 	if topologyManifest || sourceMembershipChange {
-		d.computeTopology()
+		if d.batch != nil {
+			d.batch.wantTopology = true
+		} else {
+			daemonComputeTopology(d)
+		}
 	}
 
 	if d.verbose {

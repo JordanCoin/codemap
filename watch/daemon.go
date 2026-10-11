@@ -59,6 +59,9 @@ type Daemon struct {
 	// and results through the channels above.
 	dependencyBusy    bool
 	dependencyPending bool
+	// batch is non-nil only while handleBurst is flushing a checkout storm;
+	// handleEvent then records per-file work on it instead of doing it.
+	batch *burstBatch
 }
 
 type dependencyGraphSnapshot struct {
