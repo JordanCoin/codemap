@@ -173,9 +173,14 @@ codemap --json --deps . | jq .coverage
     { "name": "cargo-metadata", "status": "mixed",
       "detail": "2 of 5 Cargo manifests used fallback topology" }
   ],
-  "issues": []
+  "issues": [
+    { "code": "unresolved-import", "path": "src/app.ts",
+      "message": "import ./gone resolved to no file in the project" }
+  ]
 }
 ```
+
+`issues` lists each project-relative import that resolved to no file, one entry per reference. The key is omitted when there are none.
 
 - `status` is `complete`, `partial`, or `unavailable`.
 - Each source reports `authoritative`, `mixed`, `fallback`, `timeout`, `unavailable`, or `failed`.

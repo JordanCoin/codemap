@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"codemap/analysis"
 	"fmt"
 	"path"
 	"sort"
@@ -24,6 +25,7 @@ type unresolvedImportTally struct {
 	seen     map[string]int      // display language -> project-looking imports
 	missing  map[string]int      // display language -> those that resolved to nothing
 	examples map[string][]string // display language -> up to three "file -> specifier"
+	issues   []analysis.Issue    // every miss, one issue each, for the contract
 }
 
 func newUnresolvedImportTally(idx *fileIndex) *unresolvedImportTally {
@@ -59,6 +61,9 @@ func (t *unresolvedImportTally) record(language, from, imp string, aliases map[s
 		if len(t.examples[display]) < 3 {
 			t.examples[display] = append(t.examples[display], from+" -> "+imp)
 		}
+		// No Line: ImportReference.Line is ast-grep's 0-based start and no
+		// surface converts it; a line here would be off by one (#137).
+		t.issues = append(t.issues, analysis.Issue{Code: "unresolved-import", Path: from, Message: "import " + imp + " resolved to no file in the project"})
 	}
 }
 
