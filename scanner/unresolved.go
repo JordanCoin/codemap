@@ -92,8 +92,10 @@ func (t *unresolvedImportTally) projectLooking(language, imp string, aliases map
 		if imp == "." || imp == ".." || strings.HasPrefix(imp, "./") || strings.HasPrefix(imp, "../") {
 			return true
 		}
+		// A "*" catch-all (openclaw's tsconfig) would make every npm
+		// package alias-shaped; only a key with a literal prefix is an alias.
 		for pattern := range aliases {
-			if prefix, wildcard := strings.CutSuffix(pattern, "*"); (wildcard && strings.HasPrefix(imp, prefix)) || imp == pattern {
+			if prefix, wildcard := strings.CutSuffix(pattern, "*"); (wildcard && prefix != "" && strings.HasPrefix(imp, prefix)) || imp == pattern {
 				return true
 			}
 		}
