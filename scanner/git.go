@@ -272,21 +272,27 @@ func AnalyzeImpactFromAnalyses(changedFiles []FileInfo, analyses []FileAnalysis)
 		}
 	}
 
-	// Build impact info
-	var impacts []ImpactInfo
+	// Usage count descending, then full path ascending. usageCounts is a map,
+	// and a sort on count alone left equal counts in map order, so the diff
+	// impact footer and blast-radius JSON reordered between identical runs
+	// and an output budget then showed a different subset each time. The
+	// tie-break is the full path, not the rendered basename, so two changed
+	// files with the same name in different directories still order the same.
+	paths := make([]string, 0, len(usageCounts))
 	for file, count := range usageCounts {
 		if count > 0 {
-			impacts = append(impacts, ImpactInfo{
-				File:   filepath.Base(file),
-				UsedBy: count,
-			})
+			paths = append(paths, file)
 		}
 	}
-
-	// Sort by usage count descending
-	sort.Slice(impacts, func(i, j int) bool {
-		return impacts[i].UsedBy > impacts[j].UsedBy
+	sort.Slice(paths, func(i, j int) bool {
+		if usageCounts[paths[i]] != usageCounts[paths[j]] {
+			return usageCounts[paths[i]] > usageCounts[paths[j]]
+		}
+		return paths[i] < paths[j]
 	})
-
+	impacts := make([]ImpactInfo, 0, len(paths))
+	for _, file := range paths {
+		impacts = append(impacts, ImpactInfo{File: filepath.Base(file), UsedBy: usageCounts[file]})
+	}
 	return impacts
 }
