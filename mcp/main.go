@@ -998,7 +998,8 @@ func normalizeImporterFile(root, file string) string {
 			file = relative
 		}
 	}
-	return filepath.Clean(file)
+	// Graph keys are forward-slashed on every OS (scanner.keyPath).
+	return filepath.ToSlash(filepath.Clean(file))
 }
 
 // notIndexedText is the MCP answer for a file the graph cannot vouch for. It

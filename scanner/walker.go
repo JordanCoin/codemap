@@ -413,7 +413,7 @@ func ScanFilesBounded(ctx context.Context, root string, cache *GitIgnoreCache, f
 			return nil
 		}
 		files = append(files, FileInfo{
-			Path: relPath,
+			Path: filepath.ToSlash(relPath),
 			Size: info.Size(),
 			Ext:  ext,
 		})

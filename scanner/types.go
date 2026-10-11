@@ -389,6 +389,32 @@ var LangDisplay = map[string]string{
 }
 
 // dedupe removes duplicate strings from a slice
+// keyPath is the one spelling of a project-relative path that the file
+// graph, the file index, and every resolver agree on: cleaned and
+// forward-slashed. filepath.Clean, Join and Dir emit the native separator,
+// so on Windows a key built by one of them never matched an import written
+// with "/" and every file reported no importers. Normalise at the boundary,
+// on both the stored key and the probe, and the rest of the code can keep
+// using filepath for filesystem access.
+func keyPath(p string) string {
+	if p == "" {
+		return ""
+	}
+	return filepath.ToSlash(filepath.Clean(p))
+}
+
+// slashPaths returns keyPath applied to every element.
+func slashPaths(items []string) []string {
+	if len(items) == 0 {
+		return items
+	}
+	out := make([]string, len(items))
+	for i, item := range items {
+		out[i] = keyPath(item)
+	}
+	return out
+}
+
 func dedupe(items []string) []string {
 	seen := make(map[string]bool)
 	result := make([]string, 0, len(items))

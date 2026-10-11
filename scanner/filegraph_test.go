@@ -180,12 +180,12 @@ func TestNormalizeImport(t *testing.T) {
 		expected string
 	}{
 		{name: "removes quotes", input: "\"pkg/util\"", expected: "pkg/util"},
-		{name: "python dots to slashes", input: "app.core.config", expected: filepath.Join("app", "core", "config")},
+		{name: "python dots to slashes", input: "app.core.config", expected: "app/core/config"},
 		{name: "relative dotted import unchanged", input: "../app.core", expected: "../app.core"},
 		{name: "c header keeps its extension", input: "\"b.h\"", expected: "b.h"},
 		{name: "php require keeps its extension", input: "'b.php'", expected: "b.php"},
-		{name: "crate import converted", input: "crate::feature::parser", expected: filepath.Join("feature", "parser")},
-		{name: "super import converted", input: "super::module::item", expected: filepath.Join("super", "module", "item")},
+		{name: "crate import converted", input: "crate::feature::parser", expected: "feature/parser"},
+		{name: "super import converted", input: "super::module::item", expected: "super/module/item"},
 	}
 
 	for _, tt := range tests {
@@ -1164,5 +1164,29 @@ func TestGitignoredExactRelativeImportTargetStillResolves(t *testing.T) {
 	// alias the gitignored copy's importer onto it.
 	if got := graph.Importers["helpers.js"]; len(got) != 0 {
 		t.Fatalf("root copy importers = %v, want none (the import names the adgen copy specifically)", got)
+	}
+}
+
+// A Windows walker hands the index native paths while every import is
+// written with "/"; before keyPath the index key and the probe never agreed
+// and every file reported no importers. FromSlash makes the probe native on
+// Windows and leaves it alone elsewhere, so this passes on both and would
+// have failed on Windows before the fix.
+func TestIndexMatchesNativeProbeAgainstSlashKeys(t *testing.T) {
+	idx := buildFileIndex([]FileInfo{
+		{Path: "core/src/lib.rs"},
+		{Path: filepath.FromSlash("core/src/util.rs")},
+	}, "")
+	for _, probe := range []string{"core/src/lib", filepath.FromSlash("core/src/lib")} {
+		got := tryExactMatch(probe, idx, "rust")
+		if len(got) != 1 || got[0] != "core/src/lib.rs" {
+			t.Fatalf("tryExactMatch(%q) = %v, want [core/src/lib.rs]", probe, got)
+		}
+	}
+	if got, ok := idx.dir(filepath.FromSlash("core/src")); !ok || len(got) != 2 || got[0] != "core/src/lib.rs" || got[1] != "core/src/util.rs" {
+		t.Fatalf("dir(core/src) = %v, %v; want both files with slash keys", got, ok)
+	}
+	if got := idx.suffixMatches(filepath.FromSlash("src/util.rs")); len(got) != 1 || got[0] != "core/src/util.rs" {
+		t.Fatalf("suffixMatches = %v, want [core/src/util.rs]", got)
 	}
 }
