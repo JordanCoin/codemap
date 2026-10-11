@@ -3,6 +3,7 @@ package scanner
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"codemap/config"
 	"codemap/internal/projectpath"
+	"codemap/limits"
 
 	ignore "github.com/sabhiram/go-gitignore"
 )
@@ -325,10 +327,24 @@ func LoadGitignore(root string) *ignore.GitIgnore {
 // only: list of extensions to include (empty = all)
 // exclude: list of patterns to exclude
 func ScanFiles(ctx context.Context, root string, cache *GitIgnoreCache, only []string, exclude []string) ([]FileInfo, error) {
+	files, _, err := ScanFilesBounded(ctx, root, cache, Filters{Only: only, Exclude: exclude, MaxFiles: -1})
+	return files, err
+}
+
+// ScanFilesBounded walks like ScanFiles but keeps at most the configured
+// number of files (limits.ScanFileBound) and reports how many matched in
+// total, so a caller can say "scanned N of M" instead of presenting the
+// prefix as the repository. The walk continues past the bound to count,
+// which is a stat per file and no allocation; a repo that is too large to
+// graph is still cheap to measure.
+func ScanFilesBounded(ctx context.Context, root string, cache *GitIgnoreCache, filters Filters) ([]FileInfo, int, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
+	only, exclude := filters.Only, filters.Exclude
+	bound := limits.ScanFileBound(filters.MaxFiles)
 	var files []FileInfo
+	total := 0
 	absRoot := projectpath.CanonicalPath(root)
 
 	err := filepath.Walk(absRoot, func(path string, info os.FileInfo, err error) error {
@@ -392,6 +408,10 @@ func ScanFiles(ctx context.Context, root string, cache *GitIgnoreCache, only []s
 			return nil
 		}
 
+		total++
+		if bound > 0 && total > bound {
+			return nil
+		}
 		files = append(files, FileInfo{
 			Path: relPath,
 			Size: info.Size(),
@@ -404,34 +424,59 @@ func ScanFiles(ctx context.Context, root string, cache *GitIgnoreCache, only []s
 		err = ctx.Err()
 	}
 
-	return files, err
+	return files, total, err
+}
+
+// scanBoundSource names the coverage source recorded when a dependency scan
+// was refused because the repository is above the file bound.
+const scanBoundSource = "scan-bound"
+
+// refusedByBound reports whether this outcome is the bound refusal rather
+// than a scan, so callers skip the passes that would walk the tree again.
+func (o ScanOutcome) refusedByBound() bool {
+	for _, source := range o.Sources {
+		if source.Name == scanBoundSource {
+			return true
+		}
+	}
+	return false
+}
+
+// ScanBoundNote is the coverage line printed when a scan stopped at the file
+// bound. scanned is the number kept, total the number that matched.
+func ScanBoundNote(scanned, total, bound int) string {
+	return fmt.Sprintf("bounded: scanned %d of %d files (limit %d; raise with --max-files or config max_files)", scanned, total, bound)
 }
 
 // Filters controls which files scanner operations include.
 type Filters struct {
 	Only    []string
 	Exclude []string
+	// MaxFiles bounds the scan: 0 = limits.DefaultMaxScanFiles, negative =
+	// unbounded (see limits.ScanFileBound).
+	MaxFiles int
 }
 
 // ConfiguredFilters returns the project's configured dependency filters.
 func ConfiguredFilters(root string) Filters {
 	cfg := config.Load(root)
-	return Filters{Only: cfg.Only, Exclude: cfg.Exclude}
+	return Filters{Only: cfg.Only, Exclude: cfg.Exclude, MaxFiles: cfg.MaxFiles}
 }
 
 // ScanConfiguredFiles scans using the active setup root's project filters
 // while honoring caller cancellation.
 func ScanConfiguredFiles(ctx context.Context, root string, cache *GitIgnoreCache) ([]FileInfo, error) {
-	cfg := config.Load(root)
-	return ScanConfiguredFilesWithFilters(ctx, root, cache, Filters{Only: cfg.Only, Exclude: cfg.Exclude})
+	return ScanConfiguredFilesWithFilters(ctx, root, cache, ConfiguredFilters(root))
 }
 
 // ScanConfiguredFilesWithFilters scans files using already resolved filters.
+// The result honours the file bound; hooks and the watch daemon therefore
+// degrade to a prefix on a repo above it instead of holding every file.
 func ScanConfiguredFilesWithFilters(ctx context.Context, root string, cache *GitIgnoreCache, filters Filters) ([]FileInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	files, err := ScanFiles(ctx, root, cache, filters.Only, filters.Exclude)
+	files, _, err := ScanFilesBounded(ctx, root, cache, filters)
 	if err != nil {
 		return nil, err
 	}
@@ -479,6 +524,9 @@ func ScanForDeps(ctx context.Context, root string, filters Filters) (ScanOutcome
 	}, loadCargoFallbackMetadata, false)
 	if err != nil {
 		return outcome, err
+	}
+	if outcome.refusedByBound() {
+		return outcome, nil
 	}
 	outcome, err = appendCUEOutcome(ctx, root, filters, outcome)
 	if err != nil {

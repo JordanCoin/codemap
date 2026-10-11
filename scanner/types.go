@@ -35,6 +35,24 @@ type Project struct {
 	// DiffTotals describes the whole diff when Files holds only a shown
 	// subset, so a renderer never presents the subset's counts as the total.
 	DiffTotals *DiffTotals `json:"diff_totals,omitempty"`
+	// ScanBound is set when the walk kept fewer files than matched, so Files
+	// is a prefix of the repository, not the repository (#186).
+	ScanBound *ScanBound `json:"scan_bound,omitempty"`
+}
+
+// ScanBound records a walk that stopped keeping files at Limit.
+type ScanBound struct {
+	Scanned int `json:"scanned"`
+	Total   int `json:"total"`
+	Limit   int `json:"limit"`
+}
+
+// Note renders the bound as the coverage line every mode prints.
+func (b *ScanBound) Note() string {
+	if b == nil {
+		return ""
+	}
+	return ScanBoundNote(b.Scanned, b.Total, b.Limit)
 }
 
 // DiffTotals are the counts over every changed file, shown or not.

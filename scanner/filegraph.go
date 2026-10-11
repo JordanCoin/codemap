@@ -159,7 +159,7 @@ func BuildFileGraphFromAnalyses(ctx context.Context, root string, analyses []Fil
 
 func buildFileGraphFromAnalysesWithCargoMetadata(ctx context.Context, root string, analyses []FileAnalysis, loader cargoMetadataLoader) (*FileGraph, error) {
 	cfg := config.Load(root)
-	filters := Filters{Only: cfg.Only, Exclude: cfg.Exclude}
+	filters := Filters{Only: cfg.Only, Exclude: cfg.Exclude, MaxFiles: cfg.MaxFiles}
 	filtered, err := filterAnalysesContext(ctx, analyses, filters)
 	if err != nil {
 		return nil, err

@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"codemap/analysis"
 	"codemap/config"
 	"codemap/find"
 	"codemap/handoff"
@@ -939,6 +940,10 @@ func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input Imp
 			structured.NotIndexed = true
 			structured.NotIndexedReason = why.Reason
 			return textResult(notIndexedText(file, why, fg)), structured, nil
+		}
+		if fg.Coverage.EffectiveStatus() == analysis.CoverageUnavailable {
+			// No scan ran (file bound, ast-grep missing): unknown, not zero.
+			empty = fmt.Sprintf("Importers of '%s': unknown, no dependency scan ran", file)
 		}
 		return textResult(empty + mcpCoverageText(fg)), structured, nil
 	}
