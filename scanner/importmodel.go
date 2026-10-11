@@ -23,6 +23,7 @@ import (
 // there is a real finding and stays complete.
 var symbolLevelImportLanguages = map[string]string{
 	"csharp": "C#",
+	"elixir": "Elixir",
 	"java":   "Java",
 	"kotlin": "Kotlin",
 	"scala":  "Scala",
