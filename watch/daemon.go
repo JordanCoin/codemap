@@ -52,7 +52,8 @@ type Daemon struct {
 
 	dependencyRequests chan dependencyGraphSnapshot
 	dependencyResults  chan dependencyGraphResult
-	dependencyOnce     sync.Once
+	dependencyMu       sync.Mutex // guards dependencyStarted, dependencyCancel and WG.Add against Stop
+	dependencyStarted  bool
 	dependencyCancel   context.CancelFunc
 	dependencyWorkerWG sync.WaitGroup
 	// These flags are owned by eventLoop; the worker only exchanges snapshots
@@ -273,9 +274,14 @@ func (d *Daemon) computeTopology() {
 // Stop gracefully shuts down the daemon
 func (d *Daemon) Stop() {
 	close(d.done)
+	// Under the same lock as the lazy start: a start that wins the lock
+	// first sets dependencyCancel before we read it; one that loses sees
+	// done closed and never starts, so no worker outlives Stop (#217).
+	d.dependencyMu.Lock()
 	if d.dependencyCancel != nil {
 		d.dependencyCancel()
 	}
+	d.dependencyMu.Unlock()
 	d.eventLoopWG.Wait()
 	d.dependencyWorkerWG.Wait()
 	_ = d.closeWatcher()
@@ -459,36 +465,46 @@ func buildDependencyGraph(ctx context.Context, root string, filters scanner.Filt
 }
 
 func (d *Daemon) startDependencyWorker() {
-	d.dependencyOnce.Do(func() {
-		if d.dependencyRequests == nil {
-			d.dependencyRequests = make(chan dependencyGraphSnapshot, 1)
-		}
-		if d.dependencyResults == nil {
-			d.dependencyResults = make(chan dependencyGraphResult, 1)
-		}
-		ctx, cancel := context.WithCancel(context.Background())
-		d.dependencyCancel = cancel
-		d.dependencyWorkerWG.Add(1)
-		go func() {
-			defer d.dependencyWorkerWG.Done()
-			for {
+	d.dependencyMu.Lock()
+	defer d.dependencyMu.Unlock()
+	if d.dependencyStarted {
+		return
+	}
+	select {
+	case <-d.done:
+		// Stop already ran; starting now would leak a worker it cannot cancel.
+		return
+	default:
+	}
+	d.dependencyStarted = true
+	if d.dependencyRequests == nil {
+		d.dependencyRequests = make(chan dependencyGraphSnapshot, 1)
+	}
+	if d.dependencyResults == nil {
+		d.dependencyResults = make(chan dependencyGraphResult, 1)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	d.dependencyCancel = cancel
+	d.dependencyWorkerWG.Add(1)
+	go func() {
+		defer d.dependencyWorkerWG.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case snapshot := <-d.dependencyRequests:
+				started := time.Now()
+				filters := scanner.Filters{Only: snapshot.config.Only, Exclude: snapshot.config.Exclude, MaxFiles: snapshot.config.MaxFiles}
+				graph, err := buildDependencyGraph(ctx, d.root, filters, buildFileGraph)
+				result := dependencyGraphResult{snapshot: snapshot, graph: graph, err: err, started: started}
 				select {
+				case d.dependencyResults <- result:
 				case <-ctx.Done():
 					return
-				case snapshot := <-d.dependencyRequests:
-					started := time.Now()
-					filters := scanner.Filters{Only: snapshot.config.Only, Exclude: snapshot.config.Exclude, MaxFiles: snapshot.config.MaxFiles}
-					graph, err := buildDependencyGraph(ctx, d.root, filters, buildFileGraph)
-					result := dependencyGraphResult{snapshot: snapshot, graph: graph, err: err, started: started}
-					select {
-					case d.dependencyResults <- result:
-					case <-ctx.Done():
-						return
-					}
 				}
 			}
-		}()
-	})
+		}
+	}()
 }
 
 // handleDependencyGraphResult is called by eventLoop and owns the worker state flags.
