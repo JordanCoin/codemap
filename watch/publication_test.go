@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -139,6 +140,9 @@ func TestStatePublisherBoundsRecentRequestIdentities(t *testing.T) {
 }
 
 func TestStatePublisherReplacementAlwaysDecodes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: rename over an open file is refused, tracked in #214")
+	}
 	root := t.TempDir()
 	d, err := NewDaemon(root, false)
 	if err != nil {

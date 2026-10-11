@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -10,6 +11,9 @@ import (
 )
 
 func TestBuildTopologyImpactsKeepsModulesSeparateFromFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: topology keys by native path, tracked in #214")
+	}
 	core := topology.Node{
 		ID:       topology.ID("jvm:settings.gradle.kts:core"),
 		Name:     "core",

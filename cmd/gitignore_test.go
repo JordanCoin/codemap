@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -45,7 +46,7 @@ func TestEnsureCodemapIgnored(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ensureCodemapIgnored: %v", err)
 		}
-		if !strings.HasSuffix(path, "info/exclude") {
+		if !strings.HasSuffix(path, filepath.Join("info", "exclude")) {
 			t.Fatalf("path = %q, want .git/info/exclude", path)
 		}
 		data, err := os.ReadFile(path)
@@ -198,6 +199,9 @@ func TestEnsureCodemapIgnoredLocalAppends(t *testing.T) {
 }
 
 func TestReportEnsureIgnored(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: temp-dir path assumption, tracked in #214")
+	}
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}

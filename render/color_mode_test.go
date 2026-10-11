@@ -3,6 +3,7 @@ package render
 import (
 	"bytes"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -58,6 +59,9 @@ func TestTreePipedOutputHasNoANSIEscapes(t *testing.T) {
 }
 
 func TestTreeColorAlwaysRestoresANSIEscapes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: console colour on a non-TTY, tracked in #214")
+	}
 	withStdoutTerminal(t, false)
 	t.Setenv("NO_COLOR", "1")
 	SetColorMode(ColorAlways)

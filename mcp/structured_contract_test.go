@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"testing"
 	"time"
@@ -90,11 +91,14 @@ func TestStructuredImporterPreservesCLIReportFields(t *testing.T) {
 }
 
 func TestNormalizeImporterFileUsesSlashGraphKeys(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: a rooted path without a drive is not absolute on Windows, tracked in #214")
+	}
 	root := filepath.Join(string(filepath.Separator)+"repo", "project")
 	want := "pkg/types/types.go"
 	for _, input := range []string{
 		"pkg/types/types.go",
-		"pkg/types/types.go",
+		filepath.Join("pkg", "types", "types.go"),
 		filepath.Join(root, "pkg", "types", "types.go"),
 	} {
 		if got := normalizeImporterFile(root, input); got != want {

@@ -69,7 +69,7 @@ func TestRustPathModuleResolvesLogicalAncestryAndDirectoryOwnership(t *testing.T
 			t.Errorf("%s imports = %#v, want %#v", from, got, want)
 		}
 	}
-	if got := graph.Importers[filepath.FromSlash("shared/redirect/child.rs")]; len(got) != 0 {
+	if got := graph.Importers["shared/redirect/child.rs"]; len(got) != 0 {
 		t.Fatalf("wrong physical child importers = %#v, want none", got)
 	}
 }

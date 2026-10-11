@@ -620,10 +620,10 @@ func TestMatchesPattern(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			relPath := filepath.ToSlash(filepath.FromSlash(tt.relPath))
+			relPath := filepath.ToSlash(tt.relPath)
 			pattern := tt.pattern
 			if strings.Contains(pattern, "/") {
-				pattern = filepath.ToSlash(filepath.FromSlash(pattern))
+				pattern = filepath.ToSlash(pattern)
 			}
 
 			got := matchesPatternPath(relPath, tt.isDir, pattern)
@@ -830,7 +830,7 @@ func TestScanConfiguredFilesExcludesCodemapState(t *testing.T) {
 		".codemap/state.json": "{}",
 		"pkg/util.go":         "package pkg\n",
 	} {
-		full := filepath.Join(root, filepath.FromSlash(path))
+		full := filepath.Join(root, path)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			t.Fatal(err)
 		}

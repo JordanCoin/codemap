@@ -15,7 +15,7 @@ import (
 func writeRustCargoFixture(t *testing.T, root string, files map[string]string) {
 	t.Helper()
 	for path, content := range files {
-		full := filepath.Join(root, filepath.FromSlash(path))
+		full := filepath.Join(root, path)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -48,7 +48,7 @@ func cargoPackage(root, rel, name, libName string, dependencies []map[string]any
 }
 
 func cargoPackageWithTargets(root, rel, name string, targets, dependencies []map[string]any) map[string]any {
-	manifest := filepath.Join(root, filepath.FromSlash(rel), "Cargo.toml")
+	manifest := filepath.Join(root, rel, "Cargo.toml")
 	return map[string]any{
 		"id":            "path+file://" + filepath.ToSlash(filepath.Dir(manifest)) + "#0.1.0",
 		"name":          name,
@@ -62,7 +62,7 @@ func cargoTargetJSON(root, rel, name, kind string) map[string]any {
 	return map[string]any{
 		"name":     name,
 		"kind":     []string{kind},
-		"src_path": filepath.Join(root, filepath.FromSlash(rel)),
+		"src_path": filepath.Join(root, rel),
 	}
 }
 
@@ -223,14 +223,14 @@ func TestCargoMetadataRecoversLocalCargoTopology(t *testing.T) {
 			for key, value := range tt.dependency {
 				dependency[key] = value
 			}
-			dependency["path"] = filepath.Join(root, filepath.FromSlash(tt.corePath))
+			dependency["path"] = filepath.Join(root, tt.corePath)
 			appPackage := cargoPackage(root, tt.appPath, "app", "app", []map[string]any{dependency})
 			corePackage := cargoPackage(root, tt.corePath, tt.coreName, tt.coreLibName, nil)
 			responses := map[string]cargoMetadataResponse{}
-			workspaceManifest := filepath.Join(root, filepath.FromSlash(tt.workspacePath))
+			workspaceManifest := filepath.Join(root, tt.workspacePath)
 			if tt.standalone {
 				responses[workspaceManifest] = cargoMetadataResponse{data: cargoMetadataJSON(t, root, []map[string]any{appPackage})}
-				responses[filepath.Join(root, filepath.FromSlash(tt.corePath), "Cargo.toml")] = cargoMetadataResponse{data: cargoMetadataJSON(t, filepath.Join(root, filepath.FromSlash(tt.corePath)), []map[string]any{corePackage})}
+				responses[filepath.Join(root, tt.corePath, "Cargo.toml")] = cargoMetadataResponse{data: cargoMetadataJSON(t, filepath.Join(root, tt.corePath), []map[string]any{corePackage})}
 			} else {
 				responses[workspaceManifest] = cargoMetadataResponse{data: cargoMetadataJSON(t, filepath.Dir(workspaceManifest), []map[string]any{appPackage, corePackage})}
 			}

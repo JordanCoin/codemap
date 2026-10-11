@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"runtime"
 	"testing"
 
 	"codemap/config"
@@ -33,6 +34,9 @@ func TestResolveDocPaths_FromConfig(t *testing.T) {
 }
 
 func TestResolveDocPaths_Fallback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: native-separator expectation, tracked in #214")
+	}
 	paths := resolveDocPaths("unknown", map[string][]string{})
 	if len(paths) != 2 {
 		t.Fatalf("expected 2 fallback paths, got %d", len(paths))

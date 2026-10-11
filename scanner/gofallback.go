@@ -105,7 +105,7 @@ func goFallbackFileExcluded(path string, nestedRepos []string) bool {
 		}
 	}
 	for _, repo := range nestedRepos {
-		if path == repo || strings.HasPrefix(path, repo+string(filepath.Separator)) {
+		if path == repo || strings.HasPrefix(path, repo+"/") {
 			return true
 		}
 	}

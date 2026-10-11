@@ -16,7 +16,7 @@ func TestExplainUnindexedNamesOneReason(t *testing.T) {
 	root := t.TempDir()
 	write := func(rel, content string) {
 		t.Helper()
-		full := filepath.Join(root, filepath.FromSlash(rel))
+		full := filepath.Join(root, rel)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -55,7 +55,7 @@ func TestExplainUnindexedNamesOneReason(t *testing.T) {
 		{"NOTES.md", "unsupported file type: .md has no import analysis"},
 		{"Makefile", "unsupported file type: no extension, so no import analysis"},
 	} {
-		why, ok := fg.ExplainUnindexed(filepath.FromSlash(tc.path), filters)
+		why, ok := fg.ExplainUnindexed(tc.path, filters)
 		if !ok {
 			t.Errorf("ExplainUnindexed(%q) = indexed, want reason %q", tc.path, tc.reason)
 			continue
@@ -69,7 +69,7 @@ func TestExplainUnindexedNamesOneReason(t *testing.T) {
 	}
 
 	for _, indexed := range []string{"main.go", "pkg/types/types.go"} {
-		if why, ok := fg.ExplainUnindexed(filepath.FromSlash(indexed), filters); ok {
+		if why, ok := fg.ExplainUnindexed(indexed, filters); ok {
 			t.Errorf("ExplainUnindexed(%q) = %q, want indexed", indexed, why.Reason)
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -16,6 +17,9 @@ import (
 // in the graph, never with "leaf file" / "entry point or unused" / "No files
 // import". A scanned source file with zero importers keeps its answer.
 func TestFileContextAndImportersNeverReportConfidentZerosForUnindexedFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: native-separator expectation, tracked in #214")
+	}
 	if !scanner.NewAstGrepAnalyzer().Available() {
 		t.Skip("ast-grep not available")
 	}

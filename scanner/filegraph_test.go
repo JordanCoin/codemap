@@ -578,7 +578,7 @@ func TestBuildFileGraphGoPackageTargets(t *testing.T) {
 		"pkg/multi/b.go",
 	}
 	for _, path := range paths {
-		fullPath := filepath.Join(root, filepath.FromSlash(path))
+		fullPath := filepath.Join(root, path)
 		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -601,8 +601,8 @@ func TestBuildFileGraphGoPackageTargets(t *testing.T) {
 		module + "/pkg/multi",
 	}
 	analyses := []FileAnalysis{
-		{Path: filepath.FromSlash("cmd/caller.go"), Language: "go", Imports: imports},
-		{Path: filepath.FromSlash("cmd/caller_test.go"), Language: "go", Imports: imports},
+		{Path: "cmd/caller.go", Language: "go", Imports: imports},
+		{Path: "cmd/caller_test.go", Language: "go", Imports: imports},
 	}
 
 	graph, err := BuildFileGraphFromAnalyses(context.Background(), root, analyses, ConfiguredFilters(root))
@@ -614,19 +614,18 @@ func TestBuildFileGraphGoPackageTargets(t *testing.T) {
 	// package, however many there are (#191); _test.go files and packages
 	// with only test files are never targets.
 	want := []string{
-		filepath.FromSlash("pkg/only/only.go"),
-		filepath.FromSlash("pkg/multi/a.go"),
-		filepath.FromSlash("pkg/multi/b.go"),
+		"pkg/only/only.go",
+		"pkg/multi/a.go",
+		"pkg/multi/b.go",
 	}
 	for _, caller := range []string{"cmd/caller.go", "cmd/caller_test.go"} {
-		caller = filepath.FromSlash(caller)
 		if got := graph.Imports[caller]; !reflect.DeepEqual(got, want) {
 			t.Errorf("imports[%q] = %v, want %v", caller, got, want)
 		}
 	}
 	if got := graph.Importers[want[0]]; !reflect.DeepEqual(got, []string{
-		filepath.FromSlash("cmd/caller.go"),
-		filepath.FromSlash("cmd/caller_test.go"),
+		"cmd/caller.go",
+		"cmd/caller_test.go",
 	}) {
 		t.Errorf("importers[%q] = %v", want[0], got)
 	}
@@ -701,7 +700,7 @@ func TestBuildFileGraphImportResolutionBoundaries(t *testing.T) {
 		"cmd/multi.go",
 	}
 	for _, path := range paths {
-		fullPath := filepath.Join(root, filepath.FromSlash(path))
+		fullPath := filepath.Join(root, path)
 		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -750,7 +749,7 @@ func TestBuildFileGraphImportResolutionBoundaries(t *testing.T) {
 
 	assertImporters := func(path string, want []string) {
 		t.Helper()
-		got := append([]string(nil), fg.Importers[filepath.FromSlash(path)]...)
+		got := append([]string(nil), fg.Importers[path]...)
 		sort.Strings(got)
 		sort.Strings(want)
 		if !reflect.DeepEqual(got, want) {
@@ -759,7 +758,7 @@ func TestBuildFileGraphImportResolutionBoundaries(t *testing.T) {
 	}
 	assertImports := func(path string, want []string) {
 		t.Helper()
-		got := append([]string(nil), fg.Imports[filepath.FromSlash(path)]...)
+		got := append([]string(nil), fg.Imports[path]...)
 		sort.Strings(got)
 		sort.Strings(want)
 		if !reflect.DeepEqual(got, want) {
@@ -792,7 +791,7 @@ func TestFilteredImportResolutionTargets(t *testing.T) {
 		"pkg/filteredpkg/target_test.go": "package target\n",
 	}
 	for path, content := range files {
-		fullPath := filepath.Join(root, filepath.FromSlash(path))
+		fullPath := filepath.Join(root, path)
 		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -802,8 +801,8 @@ func TestFilteredImportResolutionTargets(t *testing.T) {
 	}
 
 	filters := Filters{Exclude: []string{
-		filepath.FromSlash("blocked/target.ts"),
-		filepath.FromSlash("pkg/filteredpkg/target.go"),
+		"blocked/target.ts",
+		"pkg/filteredpkg/target.go",
 	}}
 	scanned, err := ScanFiles(context.Background(), root, NewGitIgnoreCache(root), filters.Only, filters.Exclude)
 	if err != nil {
@@ -811,7 +810,7 @@ func TestFilteredImportResolutionTargets(t *testing.T) {
 	}
 	retainedTestTarget := false
 	for _, file := range scanned {
-		if file.Path == filepath.FromSlash("pkg/filteredpkg/target_test.go") {
+		if file.Path == "pkg/filteredpkg/target_test.go" {
 			retainedTestTarget = true
 			break
 		}
@@ -820,16 +819,16 @@ func TestFilteredImportResolutionTargets(t *testing.T) {
 		t.Fatalf("fixture did not retain the _test.go-only Go package target; scanned = %#v", scanned)
 	}
 	analyses := []FileAnalysis{
-		{Path: filepath.FromSlash("src/app.ts"), Language: "typescript", Imports: []string{"@blocked/target"}},
-		{Path: filepath.FromSlash("cmd/caller.go"), Language: "go", Imports: []string{module + "/pkg/filteredpkg"}},
+		{Path: "src/app.ts", Language: "typescript", Imports: []string{"@blocked/target"}},
+		{Path: "cmd/caller.go", Language: "go", Imports: []string{module + "/pkg/filteredpkg"}},
 	}
 
 	assertFilteredTargets := func(t *testing.T, graph *FileGraph) {
 		t.Helper()
-		if got := graph.Imports[filepath.FromSlash("src/app.ts")]; len(got) != 0 {
+		if got := graph.Imports["src/app.ts"]; len(got) != 0 {
 			t.Errorf("filtered alias target resolved: %v", got)
 		}
-		if got := graph.Imports[filepath.FromSlash("cmd/caller.go")]; len(got) != 0 {
+		if got := graph.Imports["cmd/caller.go"]; len(got) != 0 {
 			t.Errorf("filtered Go package target resolved: %v", got)
 		}
 		if got := graph.Packages[module+"/pkg/filteredpkg"]; len(got) != 0 {
@@ -1068,7 +1067,7 @@ func TestGitignoreOnlyRecoverable(t *testing.T) {
 	root := t.TempDir()
 	write := func(rel, content string) {
 		t.Helper()
-		full := filepath.Join(root, filepath.FromSlash(rel))
+		full := filepath.Join(root, rel)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -1082,7 +1081,7 @@ func TestGitignoreOnlyRecoverable(t *testing.T) {
 	write(".gitignore", "pkg/adapters/helper.js\nblocked/target.js\nnode_modules/\n")
 
 	cache := NewGitIgnoreCache(root)
-	scanned, err := ScanFiles(context.Background(), root, cache, nil, []string{filepath.FromSlash("blocked/target.js")})
+	scanned, err := ScanFiles(context.Background(), root, cache, nil, []string{"blocked/target.js"})
 	if err != nil {
 		t.Fatalf("ScanFiles() error: %v", err)
 	}
@@ -1094,12 +1093,12 @@ func TestGitignoreOnlyRecoverable(t *testing.T) {
 		}
 	}
 
-	idx, err := buildFileIndexContext(context.Background(), scanned, "", root, Filters{Exclude: []string{filepath.FromSlash("blocked/target.js")}})
+	idx, err := buildFileIndexContext(context.Background(), scanned, "", root, Filters{Exclude: []string{"blocked/target.js"}})
 	if err != nil {
 		t.Fatalf("buildFileIndexContext() error: %v", err)
 	}
 
-	if got := tryExactMatch("pkg/adapters/helper", idx, "javascript"); len(got) != 1 || got[0] != filepath.FromSlash("pkg/adapters/helper.js") {
+	if got := tryExactMatch("pkg/adapters/helper", idx, "javascript"); len(got) != 1 || got[0] != "pkg/adapters/helper.js" {
 		t.Errorf("gitignore-only exclusion should still resolve, got %v", got)
 	}
 	if got := tryExactMatch("blocked/target", idx, "javascript"); got != nil {
@@ -1132,7 +1131,7 @@ func TestGitignoredExactRelativeImportTargetStillResolves(t *testing.T) {
 		".gitignore": "adgen/src/services/reviewAdapters/helpers.js\n",
 	}
 	for path, content := range files {
-		full := filepath.Join(root, filepath.FromSlash(path))
+		full := filepath.Join(root, path)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -1142,7 +1141,7 @@ func TestGitignoredExactRelativeImportTargetStillResolves(t *testing.T) {
 	}
 	// Read-only, matching the reported fixture exactly; TestGitignoreOnlyRecoverable
 	// already isolates that permissions alone are not the trigger.
-	if err := os.Chmod(filepath.Join(root, filepath.FromSlash("adgen/src/services/reviewAdapters/helpers.js")), 0o444); err != nil {
+	if err := os.Chmod(filepath.Join(root, "adgen/src/services/reviewAdapters/helpers.js"), 0o444); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1151,8 +1150,8 @@ func TestGitignoredExactRelativeImportTargetStillResolves(t *testing.T) {
 		t.Fatalf("BuildFileGraph() error: %v", err)
 	}
 
-	target := filepath.FromSlash("adgen/src/services/reviewAdapters/helpers.js")
-	source := filepath.FromSlash("adgen/src/services/quoteRotationService.js")
+	target := "adgen/src/services/reviewAdapters/helpers.js"
+	source := "adgen/src/services/quoteRotationService.js"
 	got := graph.Importers[target]
 	if len(got) != 1 || got[0] != source {
 		t.Fatalf("importers of gitignored %s = %v, want exactly [%s]", target, got, source)

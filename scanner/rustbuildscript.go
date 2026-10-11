@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	pathpkg "path"
 	"path/filepath"
 	"strings"
 )
@@ -25,7 +26,7 @@ func parseRustBuildScriptInput(literal string) (string, bool) {
 
 func resolveRustBuildScriptInput(fromFile, input string, idx *fileIndex, workspace *rustWorkspaceIndex) string {
 	target, ok := workspace.targetForFile(fromFile, idx)
-	if !ok || target.kind != rustTargetCustomBuild || target.rootFile != filepath.Clean(fromFile) {
+	if !ok || target.kind != rustTargetCustomBuild || target.rootFile != keyPath(fromFile) {
 		return ""
 	}
 	pkg, ok := workspace.packageForFile(fromFile)
@@ -33,12 +34,12 @@ func resolveRustBuildScriptInput(fromFile, input string, idx *fileIndex, workspa
 		return ""
 	}
 
-	path := filepath.Clean(filepath.FromSlash(input))
-	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" || path == ".." || strings.HasPrefix(path, ".."+string(filepath.Separator)) || strings.ContainsAny(input, "*?[") {
+	path := keyPath(input)
+	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" || path == ".." || strings.HasPrefix(path, "../") || strings.ContainsAny(input, "*?[") {
 		return ""
 	}
-	candidate := filepath.Clean(filepath.Join(pkg.root, path))
-	if candidate == fromFile {
+	candidate := pathpkg.Join(pkg.root, path)
+	if candidate == keyPath(fromFile) {
 		return ""
 	}
 	// Duplicate inventory entries make ownership ambiguous.

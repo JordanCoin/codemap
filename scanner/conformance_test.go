@@ -65,7 +65,7 @@ func TestConformanceResolvesEachLanguage(t *testing.T) {
 		t.Run(lang, func(t *testing.T) {
 			dir := t.TempDir()
 			for name, body := range c.files {
-				p := filepath.Join(dir, filepath.FromSlash(name))
+				p := filepath.Join(dir, name)
 				if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 					t.Fatal(err)
 				}

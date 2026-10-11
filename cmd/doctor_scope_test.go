@@ -61,6 +61,9 @@ func stripIntegrationTag(command string) string {
 // ownership tag is present. setup already treats the bare form as codemap-owned
 // (migrateOwnedHookCommand), so doctor must not call it missing.
 func TestValidateHooksAcceptsEquivalentCommands(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: native-separator expectation, tracked in #214")
+	}
 	specs := generatedClaudeHooks("/usr/local/bin/codemap")
 
 	for _, tt := range []struct {

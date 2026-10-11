@@ -2,7 +2,6 @@ package scanner
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 )
 
@@ -20,7 +19,7 @@ func TestDartWorkspaceResolvesPackageAndRelativeImports(t *testing.T) {
 	})
 
 	analyses := []FileAnalysis{{
-		Path:     filepath.FromSlash("lib/main.dart"),
+		Path:     "lib/main.dart",
 		Language: "dart",
 		Imports: []string{
 			"package:app/src/widget.dart",
@@ -38,9 +37,9 @@ func TestDartWorkspaceResolvesPackageAndRelativeImports(t *testing.T) {
 	}
 
 	assertWorkspaceImports(t, graph, "lib/main.dart", []string{
-		filepath.FromSlash("lib/src/shared.dart"),
-		filepath.FromSlash("lib/src/widget.dart"),
-		filepath.FromSlash("packages/design/lib/button.dart"),
+		"lib/src/shared.dart",
+		"lib/src/widget.dart",
+		"packages/design/lib/button.dart",
 	})
 }
 
@@ -58,7 +57,7 @@ func TestDartWorkspaceRequiresDeclaredPackageDependency(t *testing.T) {
 			})
 
 			graph, err := BuildFileGraphFromAnalyses(context.Background(), root, []FileAnalysis{{
-				Path:     filepath.FromSlash("lib/main.dart"),
+				Path:     "lib/main.dart",
 				Language: "dart",
 				Imports: []string{
 					"package:shared/api.dart",
@@ -70,7 +69,7 @@ func TestDartWorkspaceRequiresDeclaredPackageDependency(t *testing.T) {
 			}
 
 			assertWorkspaceImports(t, graph, "lib/main.dart", []string{
-				filepath.FromSlash("packages/shared/lib/api.dart"),
+				"packages/shared/lib/api.dart",
 			})
 		})
 	}
@@ -90,7 +89,7 @@ func TestDartWorkspaceRejectsAmbiguousPackageNames(t *testing.T) {
 	})
 
 	graph, err := BuildFileGraphFromAnalyses(context.Background(), root, []FileAnalysis{{
-		Path:     filepath.FromSlash("lib/main.dart"),
+		Path:     "lib/main.dart",
 		Language: "dart",
 		Imports: []string{
 			"package:duplicate/api.dart",
@@ -101,6 +100,6 @@ func TestDartWorkspaceRejectsAmbiguousPackageNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertWorkspaceImports(t, graph, "lib/main.dart", []string{
-		filepath.FromSlash("packages/three/lib/api.dart"),
+		"packages/three/lib/api.dart",
 	})
 }

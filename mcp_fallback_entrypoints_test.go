@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,9 @@ import (
 )
 
 func TestMCPEntrypointsMatchConfigFallback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: second test binary built without .exe, tracked in #214")
+	}
 	binDir := t.TempDir()
 	cli := buildFallbackTestBinary(t, filepath.Join(binDir, "codemap"), ".")
 	standalone := buildFallbackTestBinary(t, filepath.Join(binDir, "codemap-mcp"), "./cmd/codemap-mcp")

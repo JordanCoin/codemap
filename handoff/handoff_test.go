@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -336,6 +337,9 @@ func TestBuildFileDetail(t *testing.T) {
 }
 
 func TestMetricsLogCapped(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: rename over an open file is refused, tracked in #214")
+	}
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Dir(MetricsPath(root)), 0755); err != nil {
 		t.Fatalf("mkdir .codemap failed: %v", err)

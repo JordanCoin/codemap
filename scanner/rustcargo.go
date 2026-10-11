@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -289,7 +290,7 @@ func rustPackageFromCargoMetadata(root string, metadata cargoMetadataPackage) (r
 	}
 	pkg := rustPackage{
 		crateID:       normalizeRustCrateID(metadata.Name),
-		root:          filepath.Dir(manifestPath),
+		root:          pathpkg.Dir(manifestPath),
 		authoritative: true,
 	}
 	if pkg.root == "" {
@@ -304,7 +305,7 @@ func rustPackageFromCargoMetadata(root string, metadata cargoMetadataPackage) (r
 		if kind == "" {
 			continue
 		}
-		target := rustTarget{rootFile: rootFile, sourceDir: filepath.Dir(rootFile), kind: kind}
+		target := rustTarget{rootFile: rootFile, sourceDir: pathpkg.Dir(rootFile), kind: kind}
 		pkg.targets = append(pkg.targets, target)
 		if kind == rustTargetLib && pkg.lib == nil {
 			lib := target
@@ -356,5 +357,5 @@ func projectRelativePath(root, path string) (string, bool) {
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", false
 	}
-	return filepath.Clean(rel), true
+	return keyPath(rel), true
 }

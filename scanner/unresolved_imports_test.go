@@ -14,7 +14,7 @@ func writeRepo(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
 	for name, body := range files {
-		p := filepath.Join(dir, filepath.FromSlash(name))
+		p := filepath.Join(dir, name)
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatal(err)
 		}

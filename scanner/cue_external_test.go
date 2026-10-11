@@ -52,7 +52,7 @@ func TestBuildFileGraphScansCUEFromFileInventory(t *testing.T) {
 
 func writeCUE(t *testing.T, root, name, content string) {
 	t.Helper()
-	path := filepath.Join(root, filepath.FromSlash(name))
+	path := filepath.Join(root, name)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}

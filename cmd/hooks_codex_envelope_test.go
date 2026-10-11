@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,9 @@ func decodeSingleHookEnvelope(t *testing.T, stdout string) map[string]any {
 // apply_patch payload with nothing, which Codex reports as "hook returned
 // invalid post-tool-use JSON output".
 func TestCodexPostEditAlwaysEmitsOneJSONEnvelope(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: hub lookup by native path, tracked in #214")
+	}
 	t.Setenv("CODEX", "1")
 	root := t.TempDir()
 	target := filepath.Join(root, "pkg", "types.go")

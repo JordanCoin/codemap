@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -126,13 +127,13 @@ func buildRustFallbackWorkspaceIndex(root string, analyses []FileAnalysis) *rust
 		}
 		for _, match := range matches {
 			if rel, err := filepath.Rel(root, match); err == nil {
-				excluded[filepath.Clean(rel)] = true
+				excluded[keyPath(rel)] = true
 			}
 		}
 	}
 
 	for _, memberDir := range dedupe(memberDirs) {
-		memberDir = filepath.Clean(memberDir)
+		memberDir = keyPath(memberDir)
 		if excluded[memberDir] {
 			continue
 		}
@@ -142,10 +143,10 @@ func buildRustFallbackWorkspaceIndex(root string, analyses []FileAnalysis) *rust
 		}
 		libFile := manifest.Lib.Path
 		if libFile == "" {
-			libFile = filepath.Join("src", "lib.rs")
+			libFile = "src/lib.rs"
 		}
-		libFile = filepath.Clean(filepath.Join(memberDir, libFile))
-		lib := rustTarget{rootFile: libFile, sourceDir: filepath.Dir(libFile), kind: rustTargetLib}
+		libFile = pathpkg.Join(memberDir, libFile)
+		lib := rustTarget{rootFile: libFile, sourceDir: pathpkg.Dir(libFile), kind: rustTargetLib}
 		pkg := rustPackage{
 			crateID: strings.ReplaceAll(manifest.Package.Name, "-", "_"),
 			root:    memberDir,
@@ -330,7 +331,7 @@ func (index *rustWorkspaceIndex) buildRustModuleLocations(ctx context.Context, r
 			return err
 		}
 		if strings.EqualFold(filepath.Ext(file.Path), ".rs") {
-			fileCounts[filepath.Clean(file.Path)]++
+			fileCounts[keyPath(file.Path)]++
 		}
 	}
 
@@ -342,7 +343,7 @@ func (index *rustWorkspaceIndex) buildRustModuleLocations(ctx context.Context, r
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		location.file = filepath.Clean(location.file)
+		location.file = keyPath(location.file)
 		key := rustModuleLocationKey(location)
 		if candidates[location.file] == nil {
 			candidates[location.file] = make(map[string]rustModuleLocation)
@@ -395,12 +396,12 @@ func (index *rustWorkspaceIndex) buildRustModuleLocations(ctx context.Context, r
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			rootFile := filepath.Clean(target.rootFile)
+			rootFile := keyPath(target.rootFile)
 			if fileCounts[rootFile] != 1 {
 				continue
 			}
 			location := rustModuleLocation{
-				file: rootFile, childBase: filepath.Dir(rootFile), packageRoot: pkg.root, target: target,
+				file: rootFile, childBase: pathpkg.Dir(rootFile), packageRoot: pkg.root, target: target,
 			}
 			if err := walk(location, nil); err != nil {
 				return err
@@ -464,14 +465,14 @@ func resolveRustModuleDeclaration(root string, parent rustModuleLocation, declar
 		if target == "" || fileCounts[target] != 1 {
 			return "", ""
 		}
-		return target, filepath.Dir(target)
+		return target, pathpkg.Dir(target)
 	}
 	var resolved string
 	for _, candidate := range []string{
-		filepath.Join(parent.childBase, declaration.name+".rs"),
-		filepath.Join(parent.childBase, declaration.name, "mod.rs"),
+		pathpkg.Join(parent.childBase, declaration.name+".rs"),
+		pathpkg.Join(parent.childBase, declaration.name, "mod.rs"),
 	} {
-		candidate = filepath.Clean(candidate)
+		candidate = keyPath(candidate)
 		if fileCounts[candidate] == 1 {
 			if resolved != "" {
 				return "", ""
@@ -482,7 +483,7 @@ func resolveRustModuleDeclaration(root string, parent rustModuleLocation, declar
 	if resolved == "" {
 		return "", ""
 	}
-	return resolved, filepath.Clean(filepath.Join(parent.childBase, declaration.name))
+	return resolved, pathpkg.Join(parent.childBase, declaration.name)
 }
 
 func resolveRustLiteralPath(root, declaringFile, literal string) string {
@@ -498,7 +499,7 @@ func resolveRustLiteralPath(root, declaringFile, literal string) string {
 	if !ok {
 		return ""
 	}
-	return filepath.Clean(rel)
+	return keyPath(rel)
 }
 
 func resolveRustExplicitModule(root, declaringFile, literal string) string {
@@ -634,7 +635,7 @@ func resolveRustAskamaTemplate(root, fromFile, literal string, idx *fileIndex, w
 	if !ok || value == "" {
 		return ""
 	}
-	path := filepath.FromSlash(value)
+	path := filepath.ToSlash(value)
 	if filepath.IsAbs(path) {
 		return ""
 	}
@@ -648,8 +649,8 @@ func resolveRustAskamaTemplate(root, fromFile, literal string, idx *fileIndex, w
 	if _, err := os.Stat(filepath.Join(root, pkg.root, "askama.toml")); !os.IsNotExist(err) {
 		return ""
 	}
-	templateRoot := filepath.Clean(filepath.Join(pkg.root, "templates"))
-	target := filepath.Clean(filepath.Join(templateRoot, path))
+	templateRoot := pathpkg.Join(pkg.root, "templates")
+	target := pathpkg.Join(templateRoot, path)
 	if !pathWithin(target, templateRoot) {
 		return ""
 	}
@@ -707,7 +708,7 @@ func resolveRustReferences(root string, analysis FileAnalysis, idx *fileIndex, w
 }
 
 func resolveRustModule(name, fromFile string, idx *fileIndex, workspace *rustWorkspaceIndex) string {
-	fromFile = filepath.Clean(fromFile)
+	fromFile = keyPath(fromFile)
 	if target := workspace.moduleChildren[fromFile][name]; target != "" {
 		return target
 	}
@@ -720,8 +721,8 @@ func resolveRustModule(name, fromFile string, idx *fileIndex, workspace *rustWor
 		return ""
 	}
 	for _, candidate := range []string{
-		filepath.Join(dir, name+".rs"),
-		filepath.Join(dir, name, "mod.rs"),
+		pathpkg.Join(dir, name+".rs"),
+		pathpkg.Join(dir, name, "mod.rs"),
 	} {
 		if idx.exact(candidate) == 1 {
 			return candidate
@@ -731,10 +732,10 @@ func resolveRustModule(name, fromFile string, idx *fileIndex, workspace *rustWor
 }
 
 func rustModuleDir(fromFile string, idx *fileIndex, workspace *rustWorkspaceIndex) string {
-	if location, ok := workspace.moduleLocations[filepath.Clean(fromFile)]; ok {
+	if location, ok := workspace.moduleLocations[keyPath(fromFile)]; ok {
 		return location.childBase
 	}
-	if workspace.ambiguousModules[filepath.Clean(fromFile)] {
+	if workspace.ambiguousModules[keyPath(fromFile)] {
 		return ""
 	}
 	if pkg, ok := workspace.packageForFile(fromFile); ok && pkg.authoritative {
@@ -742,7 +743,7 @@ func rustModuleDir(fromFile string, idx *fileIndex, workspace *rustWorkspaceInde
 		if !ok {
 			return ""
 		}
-		if target.rootFile == filepath.Clean(fromFile) {
+		if target.rootFile == keyPath(fromFile) {
 			return target.sourceDir
 		}
 	}
@@ -750,13 +751,13 @@ func rustModuleDir(fromFile string, idx *fileIndex, workspace *rustWorkspaceInde
 }
 
 func rustChildModuleDir(path string) string {
-	dir := filepath.Dir(path)
-	base := filepath.Base(path)
+	dir := pathpkg.Dir(path)
+	base := pathpkg.Base(path)
 	switch base {
 	case "lib.rs", "main.rs", "mod.rs":
 		return dir
 	default:
-		return filepath.Join(dir, strings.TrimSuffix(base, filepath.Ext(base)))
+		return pathpkg.Join(dir, strings.TrimSuffix(base, pathpkg.Ext(base)))
 	}
 }
 
@@ -775,7 +776,7 @@ func resolveRustPath(path, fromFile string, idx *fileIndex, workspace *rustWorks
 			parts = parts[1:]
 		} else {
 			for len(parts) > 0 && parts[0] == "super" {
-				base = filepath.Dir(base)
+				base = pathpkg.Dir(base)
 				parts = parts[1:]
 			}
 		}
@@ -794,13 +795,13 @@ func resolveRustPath(path, fromFile string, idx *fileIndex, workspace *rustWorks
 		rootFallback = true
 		parts = parts[1:]
 	case "self":
-		current = filepath.Clean(fromFile)
+		current = keyPath(fromFile)
 		if _, ok := workspace.moduleLocations[current]; !ok {
 			return ""
 		}
 		parts = parts[1:]
 	case "super":
-		current = filepath.Clean(fromFile)
+		current = keyPath(fromFile)
 		for len(parts) > 0 && parts[0] == "super" {
 			location, ok := workspace.moduleLocations[current]
 			if !ok || location.parent == "" {
@@ -883,14 +884,14 @@ func resolveRustPathParts(current string, parts []string, rootFallback bool, idx
 }
 
 func (index *rustWorkspaceIndex) hasLogicalLocation(path string) bool {
-	_, ok := index.moduleLocations[filepath.Clean(path)]
+	_, ok := index.moduleLocations[keyPath(path)]
 	return ok
 }
 
 func resolveRustPathFromDirectory(base string, parts []string, idx *fileIndex) string {
 	for i := len(parts); i > 0; i-- {
-		modulePath := filepath.Join(append([]string{base}, parts[:i]...)...)
-		for _, candidate := range []string{modulePath + ".rs", filepath.Join(modulePath, "mod.rs")} {
+		modulePath := pathpkg.Join(append([]string{base}, parts[:i]...)...)
+		for _, candidate := range []string{modulePath + ".rs", pathpkg.Join(modulePath, "mod.rs")} {
 			if idx.exact(candidate) == 1 {
 				return candidate
 			}
@@ -979,15 +980,15 @@ func rustTargetIndexed(target rustTarget, idx *fileIndex) bool {
 }
 
 func pathWithin(path, dir string) bool {
-	path, dir = filepath.Clean(path), filepath.Clean(dir)
+	path, dir = keyPath(path), keyPath(dir)
 	if dir == "." {
 		return true
 	}
-	return path == dir || strings.HasPrefix(path, dir+string(filepath.Separator))
+	return path == dir || strings.HasPrefix(path, dir+"/")
 }
 
 func (index *rustWorkspaceIndex) targetContainsFile(target rustTarget, path string, idx *fileIndex) bool {
-	path = filepath.Clean(path)
+	path = keyPath(path)
 	if location, ok := index.moduleLocations[path]; ok {
 		return location.target.rootFile == target.rootFile && location.target.kind == target.kind
 	}
@@ -1001,11 +1002,11 @@ func (index *rustWorkspaceIndex) targetContainsFile(target rustTarget, path stri
 	if err != nil || rel == "." {
 		return err == nil
 	}
-	parts := strings.Split(rel, string(filepath.Separator))
+	parts := strings.Split(filepath.ToSlash(rel), "/")
 	last := parts[len(parts)-1]
 	if last == "mod.rs" {
 		parts = parts[:len(parts)-1]
-	} else if filepath.Ext(last) == ".rs" {
+	} else if pathpkg.Ext(last) == ".rs" {
 		parts[len(parts)-1] = strings.TrimSuffix(last, ".rs")
 	} else {
 		return false
@@ -1019,9 +1020,9 @@ func (index *rustWorkspaceIndex) targetContainsFile(target rustTarget, path stri
 		if len(index.moduleDecls[parent][name]) == 0 {
 			return false
 		}
-		modulePath := filepath.Join(append([]string{target.sourceDir}, parts[:i+1]...)...)
+		modulePath := pathpkg.Join(append([]string{target.sourceDir}, parts[:i+1]...)...)
 		var next string
-		for _, candidate := range []string{modulePath + ".rs", filepath.Join(modulePath, "mod.rs")} {
+		for _, candidate := range []string{modulePath + ".rs", pathpkg.Join(modulePath, "mod.rs")} {
 			if idx.exact(candidate) == 1 {
 				if next != "" {
 					return false
@@ -1038,15 +1039,15 @@ func (index *rustWorkspaceIndex) targetContainsFile(target rustTarget, path stri
 }
 
 func pathDepth(path string) int {
-	path = filepath.Clean(path)
+	path = keyPath(path)
 	if path == "." {
 		return 0
 	}
-	return strings.Count(path, string(filepath.Separator)) + 1
+	return strings.Count(path, "/") + 1
 }
 
 func (index *rustWorkspaceIndex) packageForFile(path string) (rustPackage, bool) {
-	path = filepath.Clean(path)
+	path = keyPath(path)
 	if location, ok := index.moduleLocations[path]; ok {
 		pkg, ok := index.byRoot[location.packageRoot]
 		return pkg, ok
@@ -1061,7 +1062,7 @@ func (index *rustWorkspaceIndex) packageForFile(path string) (rustPackage, bool)
 			rootPackage = &candidate
 			continue
 		}
-		if path == pkg.root || strings.HasPrefix(path, pkg.root+string(filepath.Separator)) {
+		if path == pkg.root || strings.HasPrefix(path, pkg.root+"/") {
 			return pkg, true
 		}
 	}
