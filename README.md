@@ -173,9 +173,14 @@ codemap --json --deps . | jq .coverage
     { "name": "cargo-metadata", "status": "mixed",
       "detail": "2 of 5 Cargo manifests used fallback topology" }
   ],
-  "issues": []
+  "issues": [
+    { "code": "unresolved-import", "path": "src/app.ts",
+      "message": "import ./gone resolved to no file in the project" }
+  ]
 }
 ```
+
+`issues` lists each project-relative import that resolved to no file, one entry per reference. The key is omitted when there are none.
 
 - `status` is `complete`, `partial`, or `unavailable`.
 - Each source reports `authoritative`, `mixed`, `fallback`, `timeout`, `unavailable`, or `failed`.
@@ -433,7 +438,7 @@ codemap config show   # display current config
 }
 ```
 
-All fields are optional. `--only` and `--depth` override the config's values for one run; `--exclude` adds to the config's `exclude` list, so a config exclude keeps applying when you pass more patterns on the command line. When an MCP file search finds real matches hidden by `only`, codemap reports the paths and suggests which extensions to add — set `guidance.missing_extension_hints: false` to disable.
+All fields are optional. `--only` and `--depth` override the config's values for one run; `--exclude` adds to the config's `exclude` list, so a config exclude keeps applying when you pass more patterns on the command line. Exclude patterns follow `.gitignore` anchors: a bare name (`tool`) matches at any depth, `/tool` only the root entry, `tool/` only directories, and `/tool/` only the root directory, so a built binary at the root can be excluded without losing `cmd/tool/`. When an MCP file search finds real matches hidden by `only`, codemap reports the paths and suggests which extensions to add — set `guidance.missing_extension_hints: false` to disable.
 
 ## Skills
 

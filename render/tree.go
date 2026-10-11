@@ -193,16 +193,13 @@ func Tree(w io.Writer, project scanner.Project) {
 		innerWidth = len(extLine) + 4
 	}
 
-	// Title in top border line (like rich panel)
-	titleLine := fmt.Sprintf(" %s ", projectName)
-	padding := innerWidth - len(titleLine)
-	leftPad := padding / 2
-	rightPad := padding - leftPad
-	fmt.Fprintf(w, "╭%s%s%s╮\n", strings.Repeat("─", leftPad), titleLine, strings.Repeat("─", rightPad))
-
 	// Stats line - different for diff mode
 	var statsLine string
-	if isDiffMode {
+	if t := project.DiffTotals; isDiffMode && t != nil && t.Files > totalFiles {
+		// The panel holds a subset; the header must still state the whole diff.
+		statsLine = fmt.Sprintf("Changed: %d files | +%d -%d lines vs %s | %d shown, ranked by churn (--max-changed-files)",
+			t.Files, t.Added, t.Removed, project.DiffRef, totalFiles)
+	} else if isDiffMode {
 		if totalRemoved > 0 {
 			statsLine = fmt.Sprintf("Changed: %d files | +%d -%d lines vs %s", totalFiles, totalAdded, totalRemoved, project.DiffRef)
 		} else {
@@ -211,6 +208,16 @@ func Tree(w io.Writer, project scanner.Project) {
 	} else {
 		statsLine = fmt.Sprintf("Files: %d | Size: %s", totalFiles, formatSize(totalSize))
 	}
+	if len(statsLine)+4 > innerWidth {
+		innerWidth = len(statsLine) + 4
+	}
+
+	// Title in top border line (like rich panel)
+	titleLine := fmt.Sprintf(" %s ", projectName)
+	padding := innerWidth - len(titleLine)
+	leftPad := padding / 2
+	rightPad := padding - leftPad
+	fmt.Fprintf(w, "╭%s%s%s╮\n", strings.Repeat("─", leftPad), titleLine, strings.Repeat("─", rightPad))
 	fmt.Fprintf(w, "│ %-*s │\n", innerWidth-2, statsLine)
 
 	// Extensions line
@@ -377,20 +384,6 @@ func printTreeNode(w io.Writer, node *treeNode, prefix string, isLast bool, topL
 			availableWidth = 40
 		}
 
-		// Check if all files have the same extension (strip if so, like Python)
-		stripExt := ""
-		if len(fileNodes) > 1 {
-			extSet := make(map[string]bool)
-			for _, f := range fileNodes {
-				extSet[f.file.Ext] = true
-			}
-			if len(extSet) == 1 {
-				for ext := range extSet {
-					stripExt = ext
-				}
-			}
-		}
-
 		// Build file entries with colors
 		type fileEntry struct {
 			display string
@@ -400,14 +393,10 @@ func printTreeNode(w io.Writer, node *treeNode, prefix string, isLast bool, topL
 		var entries []fileEntry
 		for _, f := range fileNodes {
 			color := GetFileColor(f.file.Ext)
+			// Always the full file name. Stripping a shared extension made
+			// multi-file and single-file directories render differently, so
+			// a path could not be copied out of the tree (#154).
 			displayName := f.name
-			// Strip extension if all files have same extension
-			if stripExt != "" {
-				displayName = strings.TrimSuffix(displayName, stripExt)
-				if displayName == "" {
-					displayName = f.name // Keep original if stripping leaves empty
-				}
-			}
 
 			// Prefix: diff status indicator OR star for large files
 			prefix := ""

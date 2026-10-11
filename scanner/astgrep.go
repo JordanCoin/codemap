@@ -657,12 +657,15 @@ func extractImportPath(text string) string {
 		}
 	}
 
-	// Bash: source ./file or . ./file
+	// Bash: source ./file or . ./file. A variable or command substitution
+	// names no file, so it yields nothing rather than a literal "$VAR" entry
+	// in the import list (#154).
 	if strings.HasPrefix(text, "source ") || strings.HasPrefix(text, ". ") {
 		parts := strings.Fields(text)
-		if len(parts) >= 2 {
+		if len(parts) >= 2 && !strings.ContainsAny(parts[1], "$`") {
 			return parts[1]
 		}
+		return ""
 	}
 
 	// Find quoted strings (Go, TS/JS, Python, C/C++ with quotes)

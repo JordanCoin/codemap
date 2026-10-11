@@ -577,6 +577,7 @@ func TestMatchesPattern(t *testing.T) {
 	tests := []struct {
 		name    string
 		relPath string
+		isDir   bool
 		pattern string
 		want    bool
 	}{
@@ -591,6 +592,30 @@ func TestMatchesPattern(t *testing.T) {
 		{name: "exact directory name", relPath: "dist", pattern: "dist", want: true},
 		{name: "no vendor match", relPath: "src/main.go", pattern: "vendor", want: false},
 		{name: "no match", relPath: "src/main.go", pattern: "images", want: false},
+
+		// Issue #192: .gitignore anchors. Fixture is cmd/tool/main.go, lib.go
+		// and a root binary named tool, plus a root tool/ directory.
+		{name: "bare name matches nested segment", relPath: "cmd/tool/main.go", pattern: "tool", want: true},
+		{name: "bare name matches root-level dir contents", relPath: "tool/other.go", pattern: "tool", want: true},
+		{name: "bare name does not touch unrelated file", relPath: "lib.go", pattern: "tool", want: false},
+		{name: "bare name does not match a longer name", relPath: "cmd/toolbox/main.go", pattern: "tool", want: false},
+
+		{name: "anchored matches root-level dir contents", relPath: "tool/other.go", pattern: "/tool", want: true},
+		{name: "anchored matches root-level file", relPath: "tool", pattern: "/tool", want: true},
+		{name: "anchored matches root-level dir", relPath: "tool", isDir: true, pattern: "/tool", want: true},
+		{name: "anchored does not match nested segment", relPath: "cmd/tool/main.go", pattern: "/tool", want: false},
+		{name: "anchored does not match nested dir", relPath: "cmd/tool", isDir: true, pattern: "/tool", want: false},
+		{name: "anchored does not match a longer name", relPath: "toolbox/a.go", pattern: "/tool", want: false},
+
+		{name: "trailing slash matches nested dir contents", relPath: "cmd/tool/main.go", pattern: "tool/", want: true},
+		{name: "trailing slash matches nested dir", relPath: "cmd/tool", isDir: true, pattern: "tool/", want: true},
+		{name: "trailing slash matches root dir contents", relPath: "tool/other.go", pattern: "tool/", want: true},
+		{name: "trailing slash does not match a same-named file", relPath: "tool", pattern: "tool/", want: false},
+		{name: "trailing slash does not match a nested same-named file", relPath: "cmd/tool", pattern: "tool/", want: false},
+
+		{name: "both anchors match the root dir only", relPath: "tool/other.go", pattern: "/tool/", want: true},
+		{name: "both anchors skip the root file", relPath: "tool", pattern: "/tool/", want: false},
+		{name: "both anchors skip the nested dir", relPath: "cmd/tool/main.go", pattern: "/tool/", want: false},
 	}
 
 	for _, tt := range tests {
@@ -601,7 +626,7 @@ func TestMatchesPattern(t *testing.T) {
 				pattern = filepath.ToSlash(filepath.FromSlash(pattern))
 			}
 
-			got := matchesPattern(relPath, pattern)
+			got := matchesPatternPath(relPath, tt.isDir, pattern)
 			if got != tt.want {
 				t.Fatalf("matchesPattern(%q, %q): want %v, got %v", relPath, pattern, tt.want, got)
 			}

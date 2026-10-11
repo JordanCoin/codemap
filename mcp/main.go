@@ -556,7 +556,7 @@ func handleGetDependencies(ctx context.Context, req *mcp.CallToolRequest, input 
 		}
 		return errorResult("Dependency graph error: " + graphErr.Error()), nil, nil
 	}
-	coverage := scanner.CoverageFromSources(graph.Coverage.Sources)
+	coverage := graph.Coverage.Contract()
 	depsProject := scanner.NewDepsProjectWithCoverage(absRoot, outcome.Analyses, externalDeps, "", coverage)
 
 	var buf bytes.Buffer

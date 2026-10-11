@@ -61,6 +61,7 @@ type blastRadiusDiff struct {
 	Only              []string             `json:"only,omitempty"`
 	Exclude           []string             `json:"exclude,omitempty"`
 	ChangedFilesTotal int                  `json:"changed_files_total"`
+	DiffTotals        *scanner.DiffTotals  `json:"diff_totals,omitempty"`
 }
 
 type blastRadiusDeps struct {
@@ -451,6 +452,17 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 		return blastRadiusBundle{}, err
 	}
 	changedFiles := scanner.FilterToChangedWithInfo(allFiles, diffInfo)
+	// Rank by churn before any cap so the cut lands on the smallest edits.
+	// Scan order was path order, which on a 52-file refactor dropped the
+	// highest-churn file and the app entry point while keeping tiny files
+	// that sorted earlier (#149). Path breaks ties so output stays stable.
+	sort.SliceStable(changedFiles, func(i, j int) bool {
+		ci, cj := changedFiles[i].Added+changedFiles[i].Removed, changedFiles[j].Added+changedFiles[j].Removed
+		if ci != cj {
+			return ci > cj
+		}
+		return changedFiles[i].Path < changedFiles[j].Path
+	})
 	diffTotal := len(changedFiles)
 
 	changedSet := make(map[string]bool, diffTotal)
@@ -515,8 +527,11 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 
 		// Carry scan provenance into the deps project so a fail-closed scan
 		// never reads as an empty, complete dependency graph.
-		depsProject.Coverage = scanner.CoverageFromSources(fg.Coverage.Sources)
-		depsCapped = capBlastRadiusDepsProject(depsProject, limits.MaxChangedFiles)
+		depsProject.Coverage = fg.Coverage.Contract()
+		// Show the same files the diff panel shows. A prefix of scan order was
+		// a different subset from the churn-ranked diff, so the two panels
+		// described different changes.
+		depsCapped = capBlastRadiusDepsProject(filterDepsToFiles(depsProject, diffCapped.Files), limits.MaxChangedFiles)
 
 		// Analyze the FULL changed set; capping only limits what is displayed,
 		// it must not shrink blast-radius analysis or the summary stats.
@@ -560,6 +575,7 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 			Only:              diffCapped.Only,
 			Exclude:           diffCapped.Exclude,
 			ChangedFilesTotal: diffTotal,
+			DiffTotals:        diffCapped.DiffTotals,
 		},
 		Deps: blastRadiusDeps{
 			Root:              depsCapped.Root,
@@ -586,6 +602,14 @@ func capBlastRadiusProject(project scanner.Project, max int) scanner.Project {
 	if max >= len(project.Files) {
 		return project
 	}
+	// Keep the whole diff's counts so the rendered header states the total,
+	// not the subset it happens to show.
+	totals := &scanner.DiffTotals{Files: len(project.Files)}
+	for _, f := range project.Files {
+		totals.Added += f.Added
+		totals.Removed += f.Removed
+	}
+	project.DiffTotals = totals
 	project.Files = append([]scanner.FileInfo(nil), project.Files[:max]...)
 	// Impact is an independent, usage-sorted list keyed by basename; filter it to
 	// the files actually shown rather than slicing it by the changed-file cap,
@@ -615,6 +639,23 @@ func filterImpactToShownFiles(impact []scanner.ImpactInfo, files []scanner.FileI
 		}
 	}
 	return filtered
+}
+
+// filterDepsToFiles keeps the analyses for exactly the given changed files,
+// in that order, so the deps panel covers the files the diff panel shows.
+func filterDepsToFiles(project scanner.DepsProject, files []scanner.FileInfo) scanner.DepsProject {
+	byPath := make(map[string]scanner.FileAnalysis, len(project.Files))
+	for _, a := range project.Files {
+		byPath[filepath.ToSlash(a.Path)] = a
+	}
+	kept := make([]scanner.FileAnalysis, 0, len(files))
+	for _, f := range files {
+		if a, ok := byPath[filepath.ToSlash(f.Path)]; ok {
+			kept = append(kept, a)
+		}
+	}
+	project.Files = kept
+	return project
 }
 
 func capBlastRadiusDepsProject(project scanner.DepsProject, max int) scanner.DepsProject {
@@ -1074,7 +1115,11 @@ func renderBlastRadiusMarkdown(bundle blastRadiusBundle) string {
 	_, _ = fmt.Fprintf(&summary, "- Root: `%s`\n", bundle.Root)
 	_, _ = fmt.Fprintf(&summary, "- Base ref: `%s`\n\n", bundle.Ref)
 	summary.WriteString("## Summary\n\n")
-	_, _ = fmt.Fprintf(&summary, "- Changed files: %d shown of %d\n", bundle.Summary.ChangedFiles, bundle.Summary.ChangedFilesTotal)
+	if bundle.Summary.ChangedFiles < bundle.Summary.ChangedFilesTotal {
+		_, _ = fmt.Fprintf(&summary, "- Changed files: %d shown of %d (ranked by churn; raise --max-changed-files)\n", bundle.Summary.ChangedFiles, bundle.Summary.ChangedFilesTotal)
+	} else {
+		_, _ = fmt.Fprintf(&summary, "- Changed files: %d shown of %d\n", bundle.Summary.ChangedFiles, bundle.Summary.ChangedFilesTotal)
+	}
 	_, _ = fmt.Fprintf(&summary, "- Changed files with direct dependents: %d\n", bundle.Summary.FilesWithDependents)
 	_, _ = fmt.Fprintf(&summary, "- Affected files outside diff: %d shown of %d\n", bundle.Summary.ImpactedOutsideDiffShown, bundle.Summary.ImpactedOutsideDiffTotal)
 	_, _ = fmt.Fprintf(&summary, "- Dependency context outside diff: %d shown of %d\n", bundle.Summary.DependencyContextOutsideDiffShown, bundle.Summary.DependencyContextOutsideDiffTotal)

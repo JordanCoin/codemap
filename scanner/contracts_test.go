@@ -16,7 +16,7 @@ func TestNewDepsProjectReturnsVersionedCompleteCoverage(t *testing.T) {
 	if got, want := project.Coverage.Sources, []analysis.Source{{Name: "ast-grep", Status: analysis.SourceAuthoritative}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("coverage sources = %#v, want %#v", got, want)
 	}
-	if project.Coverage.Issues == nil || project.Files[0].Functions == nil || project.Files[0].Imports == nil || project.ExternalDeps["go"] == nil {
+	if project.Files[0].Functions == nil || project.Files[0].Imports == nil || project.ExternalDeps["go"] == nil {
 		t.Fatalf("dependency collections must be non-nil: %#v", project)
 	}
 }
