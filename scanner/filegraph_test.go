@@ -203,12 +203,12 @@ func TestBuildFileIndex(t *testing.T) {
 		{Path: "main.go"},
 		{Path: "exact.go"},
 		{Path: "exact.go.go"},
-		{Path: filepath.Join("pkg", "util", "helpers.go")},
-		{Path: filepath.Join("src", "foobar", "config.py")},
-		{Path: filepath.Join("src", "bar", "config.py")},
-		{Path: filepath.Join("src", "app", "core", "config.py")},
-		{Path: filepath.Join("ba", "café", "config.py")},
-		{Path: filepath.Join("az", "café", "config.py")},
+		{Path: "pkg/util/helpers.go"},
+		{Path: "src/foobar/config.py"},
+		{Path: "src/bar/config.py"},
+		{Path: "src/app/core/config.py"},
+		{Path: "ba/café/config.py"},
+		{Path: "az/café/config.py"},
 	}
 
 	idx := buildFileIndex(files, "example.com/project")
@@ -220,8 +220,8 @@ func TestBuildFileIndex(t *testing.T) {
 	}{
 		{
 			name: "exact lookup without extension",
-			got:  tryExactMatch(filepath.Join("pkg", "util", "helpers"), idx, "go"),
-			want: []string{filepath.Join("pkg", "util", "helpers.go")},
+			got:  tryExactMatch("pkg/util/helpers", idx, "go"),
+			want: []string{"pkg/util/helpers.go"},
 		},
 		{
 			name: "explicit extension wins before appended extensions",
@@ -230,25 +230,25 @@ func TestBuildFileIndex(t *testing.T) {
 		},
 		{
 			name: "suffix lookup for nested path",
-			got:  idx.suffixMatches(filepath.Join("app", "core", "config.py")),
-			want: []string{filepath.Join("src", "app", "core", "config.py")},
+			got:  idx.suffixMatches("app/core/config.py"),
+			want: []string{"src/app/core/config.py"},
 		},
 		{
 			name: "ambiguous Unicode suffix lookup",
-			got:  idx.suffixMatches(filepath.Join("café", "config.py")),
+			got:  idx.suffixMatches("café/config.py"),
 			want: []string{
-				filepath.Join("az", "café", "config.py"),
-				filepath.Join("ba", "café", "config.py"),
+				"az/café/config.py",
+				"ba/café/config.py",
 			},
 		},
 		{
 			name: "suffix lookup requires a directory boundary",
-			got:  idx.suffixMatches(filepath.Join("bar", "config.py")),
-			want: []string{filepath.Join("src", "bar", "config.py")},
+			got:  idx.suffixMatches("bar/config.py"),
+			want: []string{"src/bar/config.py"},
 		},
 		{
 			name: "exact path is not a nested suffix match",
-			got:  idx.suffixMatches(filepath.Join("src", "bar", "config.py")),
+			got:  idx.suffixMatches("src/bar/config.py"),
 			want: nil,
 		},
 		{
@@ -258,13 +258,13 @@ func TestBuildFileIndex(t *testing.T) {
 		},
 		{
 			name: "directory lookup",
-			got:  idx.byDir[filepath.Join("pkg", "util")],
-			want: []string{filepath.Join("pkg", "util", "helpers.go")},
+			got:  idx.byDir["pkg/util"],
+			want: []string{"pkg/util/helpers.go"},
 		},
 		{
 			name: "go package lookup",
 			got:  idx.goPkgs["example.com/project/pkg/util"],
-			want: []string{filepath.Join("pkg", "util", "helpers.go")},
+			want: []string{"pkg/util/helpers.go"},
 		},
 	}
 
@@ -284,8 +284,8 @@ func TestBuildFileIndex(t *testing.T) {
 
 func TestResolveRelative(t *testing.T) {
 	files := []FileInfo{
-		{Path: filepath.Join("pkg", "util", "helpers.go")},
-		{Path: filepath.Join("pkg", "models", "user.go")},
+		{Path: "pkg/util/helpers.go"},
+		{Path: "pkg/models/user.go"},
 	}
 	idx := buildFileIndex(files, "")
 
@@ -298,19 +298,19 @@ func TestResolveRelative(t *testing.T) {
 		{
 			name:     "same directory",
 			imp:      "./helpers",
-			fromDir:  filepath.Join("pkg", "util"),
-			expected: []string{filepath.Join("pkg", "util", "helpers.go")},
+			fromDir:  "pkg/util",
+			expected: []string{"pkg/util/helpers.go"},
 		},
 		{
 			name:     "parent directory",
 			imp:      "../models/user",
-			fromDir:  filepath.Join("pkg", "util"),
-			expected: []string{filepath.Join("pkg", "models", "user.go")},
+			fromDir:  "pkg/util",
+			expected: []string{"pkg/models/user.go"},
 		},
 		{
 			name:     "missing file",
 			imp:      "./missing",
-			fromDir:  filepath.Join("pkg", "util"),
+			fromDir:  "pkg/util",
 			expected: nil,
 		},
 	}
@@ -327,8 +327,8 @@ func TestResolveRelative(t *testing.T) {
 
 func TestTrySuffixMatch(t *testing.T) {
 	files := []FileInfo{
-		{Path: filepath.Join("src", "pkg", "__init__.py")},
-		{Path: filepath.Join("src", "auth", "service.ts")},
+		{Path: "src/pkg/__init__.py"},
+		{Path: "src/auth/service.ts"},
 	}
 	idx := buildFileIndex(files, "")
 
@@ -340,15 +340,15 @@ func TestTrySuffixMatch(t *testing.T) {
 	}{
 		{
 			name:       "python package init fallback",
-			normalized: filepath.Join("pkg"),
+			normalized: "pkg",
 			language:   "python",
-			expected:   []string{filepath.Join("src", "pkg", "__init__.py")},
+			expected:   []string{"src/pkg/__init__.py"},
 		},
 		{
 			name:       "direct suffix with extension",
-			normalized: filepath.Join("auth", "service"),
+			normalized: "auth/service",
 			language:   "typescript",
-			expected:   []string{filepath.Join("src", "auth", "service.ts")},
+			expected:   []string{"src/auth/service.ts"},
 		},
 		{
 			name:       "no match",
@@ -370,11 +370,11 @@ func TestTrySuffixMatch(t *testing.T) {
 
 func TestSuffixMatchesMatchesLinearScan(t *testing.T) {
 	paths := []string{
-		filepath.Join("src", "alpha", "config.go"),
-		filepath.Join("src", "alphabet", "config.go"),
-		filepath.Join("vendor", "alpha", "config.go"),
-		filepath.Join("alpha", "nested", "config.go"),
-		filepath.Join("src", "café", "config.go"),
+		"src/alpha/config.go",
+		"src/alphabet/config.go",
+		"vendor/alpha/config.go",
+		"alpha/nested/config.go",
+		"src/café/config.go",
 		"config.go",
 	}
 	files := make([]FileInfo, len(paths))
@@ -386,11 +386,11 @@ func TestSuffixMatchesMatchesLinearScan(t *testing.T) {
 	for _, suffix := range []string{
 		"",
 		"config.go",
-		filepath.Join("alpha", "config.go"),
-		filepath.Join("alphabet", "config.go"),
-		filepath.Join("nested", "config.go"),
-		filepath.Join("café", "config.go"),
-		filepath.Join("missing", "config.go"),
+		"alpha/config.go",
+		"alphabet/config.go",
+		"nested/config.go",
+		"café/config.go",
+		"missing/config.go",
 	} {
 		var want []string
 		for _, path := range paths {
@@ -407,11 +407,11 @@ func TestSuffixMatchesMatchesLinearScan(t *testing.T) {
 
 func TestFuzzyResolve(t *testing.T) {
 	files := []FileInfo{
-		{Path: filepath.Join("pkg", "util", "helpers.go")},
-		{Path: filepath.Join("pkg", "models", "user.go")},
-		{Path: filepath.Join("src", "modules", "auth", "login.ts")},
-		{Path: filepath.Join("src", "shared", "config.py")},
-		{Path: filepath.Join("src", "services", "__init__.py")},
+		{Path: "pkg/util/helpers.go"},
+		{Path: "pkg/models/user.go"},
+		{Path: "src/modules/auth/login.ts"},
+		{Path: "src/shared/config.py"},
+		{Path: "src/services/__init__.py"},
 	}
 	idx := buildFileIndex(files, "example.com/project")
 
@@ -430,47 +430,47 @@ func TestFuzzyResolve(t *testing.T) {
 		{
 			name:     "go package strategy",
 			imp:      "example.com/project/pkg/util",
-			fromFile: filepath.Join("pkg", "models", "user.go"),
+			fromFile: "pkg/models/user.go",
 			aliases:  nil,
 			baseURL:  "",
-			expected: []string{filepath.Join("pkg", "util", "helpers.go")},
+			expected: []string{"pkg/util/helpers.go"},
 		},
 		{
 			name:     "relative strategy",
 			imp:      "../util/helpers",
-			fromFile: filepath.Join("pkg", "models", "user.go"),
+			fromFile: "pkg/models/user.go",
 			aliases:  nil,
 			baseURL:  "",
-			expected: []string{filepath.Join("pkg", "util", "helpers.go")},
+			expected: []string{"pkg/util/helpers.go"},
 		},
 		{
 			name:     "path alias strategy",
 			imp:      "@modules/auth/login",
-			fromFile: filepath.Join("src", "app.ts"),
+			fromFile: "src/app.ts",
 			aliases:  pathAliases,
 			baseURL:  ".",
-			expected: []string{filepath.Join("src", "modules", "auth", "login.ts")},
+			expected: []string{"src/modules/auth/login.ts"},
 		},
 		{
 			name:     "normalized dotted exact strategy",
 			imp:      "src.shared.config",
-			fromFile: filepath.Join("src", "app.py"),
+			fromFile: "src/app.py",
 			aliases:  nil,
 			baseURL:  "",
-			expected: []string{filepath.Join("src", "shared", "config.py")},
+			expected: []string{"src/shared/config.py"},
 		},
 		{
 			name:     "suffix strategy with python init",
 			imp:      "services",
-			fromFile: filepath.Join("src", "shared", "config.py"),
+			fromFile: "src/shared/config.py",
 			aliases:  nil,
 			baseURL:  "",
-			expected: []string{filepath.Join("src", "services", "__init__.py")},
+			expected: []string{"src/services/__init__.py"},
 		},
 		{
 			name:     "no match",
 			imp:      "missing.pkg.path",
-			fromFile: filepath.Join("src", "shared", "config.py"),
+			fromFile: "src/shared/config.py",
 			aliases:  nil,
 			baseURL:  "",
 			expected: nil,
@@ -489,16 +489,16 @@ func TestFuzzyResolve(t *testing.T) {
 
 func TestFuzzyResolveGoImportsFailClosed(t *testing.T) {
 	module := "example.com/project"
-	onlyGo := filepath.Join("pkg", "only", "only.go")
+	onlyGo := "pkg/only/only.go"
 	files := []FileInfo{
 		{Path: "main.go"},
-		{Path: filepath.Join("cmd", "context.go")},
-		{Path: filepath.Join("mcp", "main.go")},
-		{Path: filepath.Join("foo", "main.go")},
+		{Path: "cmd/context.go"},
+		{Path: "mcp/main.go"},
+		{Path: "foo/main.go"},
 		{Path: onlyGo},
-		{Path: filepath.Join("pkg", "only", "only_test.go")},
-		{Path: filepath.Join("fixtures", "example.com", "project", "missing.go")},
-		{Path: filepath.Join("src", "shared", "config.py")},
+		{Path: "pkg/only/only_test.go"},
+		{Path: "fixtures/example.com/project/missing.go"},
+		{Path: "src/shared/config.py"},
 	}
 	idx := buildFileIndex(files, module)
 
@@ -547,13 +547,13 @@ func TestFuzzyResolveGoImportsFailClosed(t *testing.T) {
 		{
 			name: "relative import keeps existing resolution",
 			imp:  "../foo/main",
-			want: []string{filepath.Join("foo", "main.go")},
+			want: []string{"foo/main.go"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := fuzzyResolve(tt.imp, filepath.Join("cmd", "caller.go"), idx, tt.module, nil, "")
+			got := fuzzyResolve(tt.imp, "cmd/caller.go", idx, tt.module, nil, "")
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("fuzzyResolve(%q) = %v, want %v", tt.imp, got, tt.want)
 			}
@@ -578,7 +578,7 @@ func TestBuildFileGraphGoPackageTargets(t *testing.T) {
 		"pkg/multi/b.go",
 	}
 	for _, path := range paths {
-		fullPath := filepath.Join(root, filepath.FromSlash(path))
+		fullPath := filepath.Join(root, path)
 		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -601,8 +601,8 @@ func TestBuildFileGraphGoPackageTargets(t *testing.T) {
 		module + "/pkg/multi",
 	}
 	analyses := []FileAnalysis{
-		{Path: filepath.FromSlash("cmd/caller.go"), Language: "go", Imports: imports},
-		{Path: filepath.FromSlash("cmd/caller_test.go"), Language: "go", Imports: imports},
+		{Path: "cmd/caller.go", Language: "go", Imports: imports},
+		{Path: "cmd/caller_test.go", Language: "go", Imports: imports},
 	}
 
 	graph, err := BuildFileGraphFromAnalyses(context.Background(), root, analyses, ConfiguredFilters(root))
@@ -614,19 +614,18 @@ func TestBuildFileGraphGoPackageTargets(t *testing.T) {
 	// package, however many there are (#191); _test.go files and packages
 	// with only test files are never targets.
 	want := []string{
-		filepath.FromSlash("pkg/only/only.go"),
-		filepath.FromSlash("pkg/multi/a.go"),
-		filepath.FromSlash("pkg/multi/b.go"),
+		"pkg/only/only.go",
+		"pkg/multi/a.go",
+		"pkg/multi/b.go",
 	}
 	for _, caller := range []string{"cmd/caller.go", "cmd/caller_test.go"} {
-		caller = filepath.FromSlash(caller)
 		if got := graph.Imports[caller]; !reflect.DeepEqual(got, want) {
 			t.Errorf("imports[%q] = %v, want %v", caller, got, want)
 		}
 	}
 	if got := graph.Importers[want[0]]; !reflect.DeepEqual(got, []string{
-		filepath.FromSlash("cmd/caller.go"),
-		filepath.FromSlash("cmd/caller_test.go"),
+		"cmd/caller.go",
+		"cmd/caller_test.go",
 	}) {
 		t.Errorf("importers[%q] = %v", want[0], got)
 	}
@@ -701,7 +700,7 @@ func TestBuildFileGraphImportResolutionBoundaries(t *testing.T) {
 		"cmd/multi.go",
 	}
 	for _, path := range paths {
-		fullPath := filepath.Join(root, filepath.FromSlash(path))
+		fullPath := filepath.Join(root, path)
 		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -750,7 +749,7 @@ func TestBuildFileGraphImportResolutionBoundaries(t *testing.T) {
 
 	assertImporters := func(path string, want []string) {
 		t.Helper()
-		got := append([]string(nil), fg.Importers[filepath.FromSlash(path)]...)
+		got := append([]string(nil), fg.Importers[path]...)
 		sort.Strings(got)
 		sort.Strings(want)
 		if !reflect.DeepEqual(got, want) {
@@ -759,7 +758,7 @@ func TestBuildFileGraphImportResolutionBoundaries(t *testing.T) {
 	}
 	assertImports := func(path string, want []string) {
 		t.Helper()
-		got := append([]string(nil), fg.Imports[filepath.FromSlash(path)]...)
+		got := append([]string(nil), fg.Imports[path]...)
 		sort.Strings(got)
 		sort.Strings(want)
 		if !reflect.DeepEqual(got, want) {
@@ -792,7 +791,7 @@ func TestFilteredImportResolutionTargets(t *testing.T) {
 		"pkg/filteredpkg/target_test.go": "package target\n",
 	}
 	for path, content := range files {
-		fullPath := filepath.Join(root, filepath.FromSlash(path))
+		fullPath := filepath.Join(root, path)
 		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -802,8 +801,8 @@ func TestFilteredImportResolutionTargets(t *testing.T) {
 	}
 
 	filters := Filters{Exclude: []string{
-		filepath.FromSlash("blocked/target.ts"),
-		filepath.FromSlash("pkg/filteredpkg/target.go"),
+		"blocked/target.ts",
+		"pkg/filteredpkg/target.go",
 	}}
 	scanned, err := ScanFiles(context.Background(), root, NewGitIgnoreCache(root), filters.Only, filters.Exclude)
 	if err != nil {
@@ -811,7 +810,7 @@ func TestFilteredImportResolutionTargets(t *testing.T) {
 	}
 	retainedTestTarget := false
 	for _, file := range scanned {
-		if file.Path == filepath.FromSlash("pkg/filteredpkg/target_test.go") {
+		if file.Path == "pkg/filteredpkg/target_test.go" {
 			retainedTestTarget = true
 			break
 		}
@@ -820,16 +819,16 @@ func TestFilteredImportResolutionTargets(t *testing.T) {
 		t.Fatalf("fixture did not retain the _test.go-only Go package target; scanned = %#v", scanned)
 	}
 	analyses := []FileAnalysis{
-		{Path: filepath.FromSlash("src/app.ts"), Language: "typescript", Imports: []string{"@blocked/target"}},
-		{Path: filepath.FromSlash("cmd/caller.go"), Language: "go", Imports: []string{module + "/pkg/filteredpkg"}},
+		{Path: "src/app.ts", Language: "typescript", Imports: []string{"@blocked/target"}},
+		{Path: "cmd/caller.go", Language: "go", Imports: []string{module + "/pkg/filteredpkg"}},
 	}
 
 	assertFilteredTargets := func(t *testing.T, graph *FileGraph) {
 		t.Helper()
-		if got := graph.Imports[filepath.FromSlash("src/app.ts")]; len(got) != 0 {
+		if got := graph.Imports["src/app.ts"]; len(got) != 0 {
 			t.Errorf("filtered alias target resolved: %v", got)
 		}
-		if got := graph.Imports[filepath.FromSlash("cmd/caller.go")]; len(got) != 0 {
+		if got := graph.Imports["cmd/caller.go"]; len(got) != 0 {
 			t.Errorf("filtered Go package target resolved: %v", got)
 		}
 		if got := graph.Packages[module+"/pkg/filteredpkg"]; len(got) != 0 {
@@ -968,18 +967,18 @@ func TestFileGraphHubAndConnectedFiles(t *testing.T) {
 
 func TestTryDirMatch(t *testing.T) {
 	files := []FileInfo{
-		{Path: filepath.Join("MyApp", "Models", "User.cs")},
-		{Path: filepath.Join("MyApp", "Models", "Product.cs")},
-		{Path: filepath.Join("MyApp", "Services", "UserService.cs")},
+		{Path: "MyApp/Models/User.cs"},
+		{Path: "MyApp/Models/Product.cs"},
+		{Path: "MyApp/Services/UserService.cs"},
 	}
 	idx := buildFileIndex(files, "")
 
 	t.Run("matches directory with multiple files", func(t *testing.T) {
-		got := tryDirMatch(filepath.Join("MyApp", "Models"), idx, "csharp")
+		got := tryDirMatch("MyApp/Models", idx, "csharp")
 		sort.Strings(got)
 		want := []string{
-			filepath.Join("MyApp", "Models", "Product.cs"),
-			filepath.Join("MyApp", "Models", "User.cs"),
+			"MyApp/Models/Product.cs",
+			"MyApp/Models/User.cs",
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("tryDirMatch = %v, want %v", got, want)
@@ -987,8 +986,8 @@ func TestTryDirMatch(t *testing.T) {
 	})
 
 	t.Run("matches directory with single file", func(t *testing.T) {
-		got := tryDirMatch(filepath.Join("MyApp", "Services"), idx, "csharp")
-		want := []string{filepath.Join("MyApp", "Services", "UserService.cs")}
+		got := tryDirMatch("MyApp/Services", idx, "csharp")
+		want := []string{"MyApp/Services/UserService.cs"}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("tryDirMatch = %v, want %v", got, want)
 		}
@@ -997,15 +996,15 @@ func TestTryDirMatch(t *testing.T) {
 	t.Run("suffix match strips namespace prefix", func(t *testing.T) {
 		// Files are in Models/ but namespace is ProjectName/Models
 		files2 := []FileInfo{
-			{Path: filepath.Join("Models", "User.cs")},
-			{Path: filepath.Join("Models", "Product.cs")},
+			{Path: "Models/User.cs"},
+			{Path: "Models/Product.cs"},
 		}
 		idx2 := buildFileIndex(files2, "")
-		got := tryDirMatch(filepath.Join("ProjectName", "Models"), idx2, "csharp")
+		got := tryDirMatch("ProjectName/Models", idx2, "csharp")
 		sort.Strings(got)
 		want := []string{
-			filepath.Join("Models", "Product.cs"),
-			filepath.Join("Models", "User.cs"),
+			"Models/Product.cs",
+			"Models/User.cs",
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("tryDirMatch suffix = %v, want %v", got, want)
@@ -1013,7 +1012,7 @@ func TestTryDirMatch(t *testing.T) {
 	})
 
 	t.Run("no match for missing directory", func(t *testing.T) {
-		got := tryDirMatch(filepath.Join("MyApp", "Missing"), idx, "csharp")
+		got := tryDirMatch("MyApp/Missing", idx, "csharp")
 		if got != nil {
 			t.Errorf("expected nil, got %v", got)
 		}
@@ -1021,9 +1020,9 @@ func TestTryDirMatch(t *testing.T) {
 }
 
 func TestFuzzyResolveCsharpNamespace(t *testing.T) {
-	userCS := filepath.Join("MyApp", "Models", "User.cs")
-	productCS := filepath.Join("MyApp", "Models", "Product.cs")
-	serviceCS := filepath.Join("MyApp", "Services", "UserService.cs")
+	userCS := "MyApp/Models/User.cs"
+	productCS := "MyApp/Models/Product.cs"
+	serviceCS := "MyApp/Services/UserService.cs"
 
 	files := []FileInfo{
 		{Path: userCS},
@@ -1068,7 +1067,7 @@ func TestGitignoreOnlyRecoverable(t *testing.T) {
 	root := t.TempDir()
 	write := func(rel, content string) {
 		t.Helper()
-		full := filepath.Join(root, filepath.FromSlash(rel))
+		full := filepath.Join(root, rel)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -1082,7 +1081,7 @@ func TestGitignoreOnlyRecoverable(t *testing.T) {
 	write(".gitignore", "pkg/adapters/helper.js\nblocked/target.js\nnode_modules/\n")
 
 	cache := NewGitIgnoreCache(root)
-	scanned, err := ScanFiles(context.Background(), root, cache, nil, []string{filepath.FromSlash("blocked/target.js")})
+	scanned, err := ScanFiles(context.Background(), root, cache, nil, []string{"blocked/target.js"})
 	if err != nil {
 		t.Fatalf("ScanFiles() error: %v", err)
 	}
@@ -1094,12 +1093,12 @@ func TestGitignoreOnlyRecoverable(t *testing.T) {
 		}
 	}
 
-	idx, err := buildFileIndexContext(context.Background(), scanned, "", root, Filters{Exclude: []string{filepath.FromSlash("blocked/target.js")}})
+	idx, err := buildFileIndexContext(context.Background(), scanned, "", root, Filters{Exclude: []string{"blocked/target.js"}})
 	if err != nil {
 		t.Fatalf("buildFileIndexContext() error: %v", err)
 	}
 
-	if got := tryExactMatch("pkg/adapters/helper", idx, "javascript"); len(got) != 1 || got[0] != filepath.FromSlash("pkg/adapters/helper.js") {
+	if got := tryExactMatch("pkg/adapters/helper", idx, "javascript"); len(got) != 1 || got[0] != "pkg/adapters/helper.js" {
 		t.Errorf("gitignore-only exclusion should still resolve, got %v", got)
 	}
 	if got := tryExactMatch("blocked/target", idx, "javascript"); got != nil {
@@ -1132,7 +1131,7 @@ func TestGitignoredExactRelativeImportTargetStillResolves(t *testing.T) {
 		".gitignore": "adgen/src/services/reviewAdapters/helpers.js\n",
 	}
 	for path, content := range files {
-		full := filepath.Join(root, filepath.FromSlash(path))
+		full := filepath.Join(root, path)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -1142,7 +1141,7 @@ func TestGitignoredExactRelativeImportTargetStillResolves(t *testing.T) {
 	}
 	// Read-only, matching the reported fixture exactly; TestGitignoreOnlyRecoverable
 	// already isolates that permissions alone are not the trigger.
-	if err := os.Chmod(filepath.Join(root, filepath.FromSlash("adgen/src/services/reviewAdapters/helpers.js")), 0o444); err != nil {
+	if err := os.Chmod(filepath.Join(root, "adgen/src/services/reviewAdapters/helpers.js"), 0o444); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1151,8 +1150,8 @@ func TestGitignoredExactRelativeImportTargetStillResolves(t *testing.T) {
 		t.Fatalf("BuildFileGraph() error: %v", err)
 	}
 
-	target := filepath.FromSlash("adgen/src/services/reviewAdapters/helpers.js")
-	source := filepath.FromSlash("adgen/src/services/quoteRotationService.js")
+	target := "adgen/src/services/reviewAdapters/helpers.js"
+	source := "adgen/src/services/quoteRotationService.js"
 	got := graph.Importers[target]
 	if len(got) != 1 || got[0] != source {
 		t.Fatalf("importers of gitignored %s = %v, want exactly [%s]", target, got, source)

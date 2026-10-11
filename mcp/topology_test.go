@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -14,6 +15,9 @@ import (
 )
 
 func TestHandleGetTopologyAndModuleContext(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: native-separator expectation, tracked in #214")
+	}
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatal(err)

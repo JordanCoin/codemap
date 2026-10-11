@@ -3,6 +3,7 @@ package scanner
 import (
 	"context"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -40,7 +41,7 @@ func buildDartWorkspaceResolver(ctx context.Context, root string, files []FileIn
 			continue
 		}
 
-		packageRoot := filepath.Dir(file.Path)
+		packageRoot := path.Dir(file.Path)
 		if packageRoot == "." {
 			packageRoot = ""
 		}
@@ -89,7 +90,7 @@ func (r *dartWorkspaceResolver) resolve(imp, fromFile string, idx *fileIndex) []
 	if uri == "" || strings.Contains(uri, ":") || filepath.IsAbs(uri) {
 		return nil
 	}
-	fromDir := filepath.Dir(fromFile)
+	fromDir := path.Dir(fromFile)
 	if fromDir == "." {
 		fromDir = ""
 	}

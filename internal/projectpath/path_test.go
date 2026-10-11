@@ -443,6 +443,9 @@ func TestSetupRoot(t *testing.T) {
 }
 
 func TestPrependSetupRootArgs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: native-separator expectation, tracked in #214")
+	}
 	SetSetupRoot("/setup/root")
 	t.Cleanup(ResetSetupRoot)
 

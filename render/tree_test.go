@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"math/rand/v2"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -283,8 +282,8 @@ func TestTreeNodeStructure(t *testing.T) {
 
 func TestBuildTreeStructureCountsDuplicatePathOnce(t *testing.T) {
 	root := buildTreeStructure([]scanner.FileInfo{
-		{Path: filepath.Join("src", "main.go"), Size: 10},
-		{Path: filepath.Join("src", "main.go"), Size: 20},
+		{Path: "src/main.go", Size: 10},
+		{Path: "src/main.go", Size: 20},
 	})
 	count, size := getDirStats(root.children["src"])
 	if count != 1 || size != 20 {

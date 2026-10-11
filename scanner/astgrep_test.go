@@ -746,7 +746,7 @@ func TestScanDirectoryStillExcludesKnownNeverSourceDirs(t *testing.T) {
 
 	root := t.TempDir()
 	for _, dir := range []string{".git/hooks", "node_modules/pkg", "vendor/pkg"} {
-		full := filepath.Join(root, filepath.FromSlash(dir))
+		full := filepath.Join(root, dir)
 		if err := os.MkdirAll(full, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -827,7 +827,7 @@ func TestScanDirectoryRealAstGrepSkipsNestedWorktree(t *testing.T) {
 	}
 	root := nestedRepoFixture(t)
 	for _, name := range []string{"a.js", ".claude/worktrees/agent-x/a.js", "tools/sub-clone/a.js"} {
-		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(name)), []byte("const b = require('./b');\n"), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("const b = require('./b');\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}

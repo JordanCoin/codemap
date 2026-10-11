@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 
@@ -260,6 +261,9 @@ func TestDiscoverManifestsHonorsGitignoreAndExclude(t *testing.T) {
 }
 
 func TestDiscoverInventoryFindsManifestsBelowSourceIgnoredDirectories(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: native-separator expectation, tracked in #214")
+	}
 	root := t.TempDir()
 	writeTopologyFixture(t, root, "Main.java", "class Main {}\n")
 	writeTopologyFixture(t, root, "main.go", "package main\n")

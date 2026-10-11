@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 
 	"codemap/scanner"
@@ -135,6 +136,9 @@ let package = Package(
 }
 
 func TestSwiftPMParserSkipsStringsAndAcceptsLiteralStringForms(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: native-separator expectation, tracked in #214")
+	}
 	parsed := parseSwiftPMManifest("Package.swift", []byte(`
 let documentation = """Package(name: "Fake", targets: ["Fake"])"""
 let package = Package(

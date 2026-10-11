@@ -503,11 +503,11 @@ func TestResolvePathAliasNoMatch(t *testing.T) {
 }
 
 func TestDepsBuildFileIndex(t *testing.T) {
-	handlerPath := filepath.FromSlash("pkg/service/handler.go")
+	handlerPath := "pkg/service/handler.go"
 	files := []FileInfo{
 		{Path: "main.go"},
 		{Path: handlerPath},
-		{Path: filepath.FromSlash("src/modules/auth/index.ts")},
+		{Path: "src/modules/auth/index.ts"},
 	}
 
 	idx := buildFileIndex(files, "example.com/project")
@@ -520,7 +520,7 @@ func TestDepsBuildFileIndex(t *testing.T) {
 	if got := tryExactMatch(handlerNoExt, idx, "go"); len(got) != 1 || got[0] != handlerPath {
 		t.Fatalf("expected extensionless import to resolve handler.go, got %v", got)
 	}
-	handlerSuffix := filepath.Join("service", "handler.go")
+	handlerSuffix := "service/handler.go"
 	if got := idx.suffixMatches(handlerSuffix); len(got) != 1 || got[0] != handlerPath {
 		t.Fatalf("expected suffix match for service/handler.go, got %v", got)
 	}
@@ -553,9 +553,9 @@ func TestDepsNormalizeImport(t *testing.T) {
 }
 
 func TestDepsResolveRelative(t *testing.T) {
-	handlerPath := filepath.FromSlash("pkg/api/handler.go")
-	typesPath := filepath.FromSlash("pkg/common/types.go")
-	loggerPath := filepath.FromSlash("pkg/log/logger.go")
+	handlerPath := "pkg/api/handler.go"
+	typesPath := "pkg/common/types.go"
+	loggerPath := "pkg/log/logger.go"
 
 	files := []FileInfo{
 		{Path: handlerPath},
@@ -570,9 +570,9 @@ func TestDepsResolveRelative(t *testing.T) {
 		fromDir string
 		want    []string
 	}{
-		{name: "same directory file", imp: "./handler", fromDir: filepath.FromSlash("pkg/api"), want: []string{handlerPath}},
-		{name: "parent directory file", imp: "../common/types", fromDir: filepath.FromSlash("pkg/api"), want: []string{typesPath}},
-		{name: "two levels up", imp: "../../log/logger", fromDir: filepath.FromSlash("pkg/api/internal"), want: []string{loggerPath}},
+		{name: "same directory file", imp: "./handler", fromDir: "pkg/api", want: []string{handlerPath}},
+		{name: "parent directory file", imp: "../common/types", fromDir: "pkg/api", want: []string{typesPath}},
+		{name: "two levels up", imp: "../../log/logger", fromDir: "pkg/api/internal", want: []string{loggerPath}},
 		{name: "missing file", imp: "./missing", fromDir: "pkg/api", want: nil},
 	}
 
@@ -587,10 +587,10 @@ func TestDepsResolveRelative(t *testing.T) {
 }
 
 func TestDepsFuzzyResolve(t *testing.T) {
-	goHandler := filepath.FromSlash("pkg/service/handler.go")
-	tsLogin := filepath.FromSlash("src/modules/auth/login.ts")
-	tsHelper := filepath.FromSlash("src/shared/utils/helpers.ts")
-	pyConfig := filepath.FromSlash("app/core/config.py")
+	goHandler := "pkg/service/handler.go"
+	tsLogin := "src/modules/auth/login.ts"
+	tsHelper := "src/shared/utils/helpers.ts"
+	pyConfig := "app/core/config.py"
 
 	files := []FileInfo{
 		{Path: goHandler},
@@ -600,7 +600,7 @@ func TestDepsFuzzyResolve(t *testing.T) {
 	}
 	idx := buildFileIndex(files, "example.com/project")
 	aliases := map[string][]string{
-		"@modules/*": {filepath.FromSlash("src/modules/*")},
+		"@modules/*": {"src/modules/*"},
 	}
 
 	tests := []struct {
@@ -624,7 +624,7 @@ func TestDepsFuzzyResolve(t *testing.T) {
 		{
 			name:      "relative import",
 			imp:       "../service/handler",
-			fromFile:  filepath.FromSlash("pkg/api/router.go"),
+			fromFile:  "pkg/api/router.go",
 			goModule:  "example.com/project",
 			pathAlias: nil,
 			baseURL:   "",
@@ -633,7 +633,7 @@ func TestDepsFuzzyResolve(t *testing.T) {
 		{
 			name:      "alias import",
 			imp:       "@modules/auth/login",
-			fromFile:  filepath.FromSlash("src/app.ts"),
+			fromFile:  "src/app.ts",
 			goModule:  "example.com/project",
 			pathAlias: aliases,
 			baseURL:   ".",
@@ -642,7 +642,7 @@ func TestDepsFuzzyResolve(t *testing.T) {
 		{
 			name:      "bare typescript import remains external",
 			imp:       "src/shared/utils/helpers",
-			fromFile:  filepath.FromSlash("src/app.ts"),
+			fromFile:  "src/app.ts",
 			goModule:  "example.com/project",
 			pathAlias: nil,
 			baseURL:   "",
@@ -651,7 +651,7 @@ func TestDepsFuzzyResolve(t *testing.T) {
 		{
 			name:      "suffix import",
 			imp:       "core.config",
-			fromFile:  filepath.FromSlash("app/main.py"),
+			fromFile:  "app/main.py",
 			goModule:  "example.com/project",
 			pathAlias: nil,
 			baseURL:   "",

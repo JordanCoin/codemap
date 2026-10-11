@@ -36,7 +36,7 @@ func scanCUEFilesFromFiles(ctx context.Context, root string, files []FileInfo) (
 		if err := ctx.Err(); err != nil {
 			return ScanOutcome{}, err
 		}
-		path := filepath.Clean(file.Path)
+		path := keyPath(file.Path)
 		data, err := os.ReadFile(filepath.Join(root, path))
 		if err != nil {
 			continue

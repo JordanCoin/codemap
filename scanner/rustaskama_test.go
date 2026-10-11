@@ -125,13 +125,13 @@ func TestRustAskamaTemplateResolvesWithinCargoPackage(t *testing.T) {
 	if got := sortedImports(graph, "app/src/lib.rs"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Askama imports = %#v, want %#v", got, want)
 	}
-	if got := graph.Importers[filepath.FromSlash("templates/page.html")]; len(got) != 0 {
+	if got := graph.Importers["templates/page.html"]; len(got) != 0 {
 		t.Fatalf("workspace-root lookalike importers = %#v, want none", got)
 	}
-	if got := graph.Imports[filepath.FromSlash("app/scratch/unowned.rs")]; len(got) != 0 {
+	if got := graph.Imports["app/scratch/unowned.rs"]; len(got) != 0 {
 		t.Fatalf("unowned Rust source imports = %#v, want none", got)
 	}
-	if got := graph.Imports[filepath.FromSlash("configured/src/lib.rs")]; len(got) != 0 {
+	if got := graph.Imports["configured/src/lib.rs"]; len(got) != 0 {
 		t.Fatalf("configured template-directory imports = %#v, want none", got)
 	}
 }
@@ -166,13 +166,13 @@ func TestRustAskamaTemplateResolvesWithExtensionSibling(t *testing.T) {
 
 func TestRustAskamaTemplateRequiresAuthoritativeUnambiguousTarget(t *testing.T) {
 	idx := &fileIndex{byExact: map[string]uint32{
-		filepath.FromSlash("app/templates/page.html"): 2,
+		"app/templates/page.html": 2,
 	}}
 	workspace := &rustWorkspaceIndex{packages: []rustPackage{{root: "app", authoritative: true}}}
 	if got := resolveRustAskamaTemplate(t.TempDir(), "app/src/lib.rs", `"page.html"`, idx, workspace); got != "" {
 		t.Fatalf("ambiguous target = %q, want unresolved", got)
 	}
-	idx.byExact[filepath.FromSlash("app/templates/page.html")] = 1
+	idx.byExact["app/templates/page.html"] = 1
 	workspace.packages[0].authoritative = false
 	if got := resolveRustAskamaTemplate(t.TempDir(), "app/src/lib.rs", `"page.html"`, idx, workspace); got != "" {
 		t.Fatalf("fallback-owned target = %q, want unresolved", got)

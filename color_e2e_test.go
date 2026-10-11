@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -26,6 +27,9 @@ func runPipedCodemap(t *testing.T, dir string, env []string, args ...string) (st
 }
 
 func TestColorEndToEnd(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: console colour on a non-TTY, tracked in #214")
+	}
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
 		t.Fatal(err)

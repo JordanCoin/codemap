@@ -170,13 +170,13 @@ func TestRustBuildScriptInputsRequireCustomBuildTarget(t *testing.T) {
 	graph, err := buildFileGraphFromAnalysesWithCargoMetadata(
 		context.Background(),
 		root,
-		[]FileAnalysis{{Path: filepath.Join("src", "lib.rs"), Language: "rust", References: []ImportReference{{Path: "schema.proto", Kind: "rust-build-input"}}}},
+		[]FileAnalysis{{Path: "src/lib.rs", Language: "rust", References: []ImportReference{{Path: "schema.proto", Kind: "rust-build-input"}}}},
 		func(context.Context, string) ([]byte, error) { return metadata, nil },
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := graph.Imports[filepath.Join("src", "lib.rs")]; len(got) != 0 {
+	if got := graph.Imports["src/lib.rs"]; len(got) != 0 {
 		t.Fatalf("non-build target inputs = %#v, want none", got)
 	}
 }

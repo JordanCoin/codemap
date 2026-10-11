@@ -994,11 +994,13 @@ func isExternalJSSpecifier(specifier string) bool {
 func pathContains(root, file string) bool {
 	root = cleanRepoPath(root)
 	file = cleanRepoPath(file)
-	return root == "" || file == root || strings.HasPrefix(file, root+string(filepath.Separator))
+	return root == "" || file == root || strings.HasPrefix(file, root+"/")
 }
 
+// cleanRepoPath returns the repository-relative form of value as a graph key
+// (forward slashes on every OS, see keyPath); "" for the repository root.
 func cleanRepoPath(value string) string {
-	value = filepath.Clean(value)
+	value = keyPath(value)
 	if value == "." {
 		return ""
 	}

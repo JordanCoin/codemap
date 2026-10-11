@@ -34,13 +34,13 @@ func TestBuildFileGraphResolvesPackageWorkspaces(t *testing.T) {
 				workspaceAnalysis(tt.memberDir+"/src/consumer.ts", "#internal/util"),
 			)
 			assertWorkspaceImports(t, graph, "app/main.ts", []string{
-				filepath.FromSlash("app/local.ts"),
-				filepath.FromSlash(tt.memberDir + "/src/button.ts"),
-				filepath.FromSlash(tt.memberDir + "/src/features/card.ts"),
-				filepath.FromSlash(tt.memberDir + "/src/index.ts"),
+				"app/local.ts",
+				tt.memberDir + "/src/button.ts",
+				tt.memberDir + "/src/features/card.ts",
+				tt.memberDir + "/src/index.ts",
 			})
 			assertWorkspaceImports(t, graph, tt.memberDir+"/src/consumer.ts", []string{
-				filepath.FromSlash(tt.memberDir + "/src/internal/util.ts"),
+				tt.memberDir + "/src/internal/util.ts",
 			})
 		})
 	}
@@ -74,13 +74,13 @@ func TestBuildFileGraphResolvesDenoAndHybridWorkspaces(t *testing.T) {
 	)
 
 	assertWorkspaceImports(t, graph, "app/main.ts", []string{
-		filepath.FromSlash("lib/core/util.ts"),
-		filepath.FromSlash("lib/exact.ts"),
-		filepath.FromSlash("members/hybrid/src/index.ts"),
-		filepath.FromSlash("members/tool/mod.ts"),
+		"lib/core/util.ts",
+		"lib/exact.ts",
+		"members/hybrid/src/index.ts",
+		"members/tool/mod.ts",
 	})
 	assertWorkspaceImports(t, graph, "members/tool/consumer.ts", []string{
-		filepath.FromSlash("members/tool/local.ts"),
+		"members/tool/local.ts",
 	})
 }
 
@@ -90,7 +90,7 @@ func TestBuildFileGraphResolvesDenoObjectWorkspaceMembers(t *testing.T) {
 	writeWorkspaceFile(t, root, "members/tool/deno.json", `{"name":"@deno/tool","exports":"./mod.ts"}`)
 	writeWorkspaceFiles(t, root, "app.ts", "members/tool/mod.ts")
 	graph := buildWorkspaceGraph(t, root, workspaceAnalysis("app.ts", "@deno/tool"))
-	assertWorkspaceImports(t, graph, "app.ts", []string{filepath.FromSlash("members/tool/mod.ts")})
+	assertWorkspaceImports(t, graph, "app.ts", []string{"members/tool/mod.ts"})
 }
 
 func TestBuildFileGraphCombinesWorkspaceDeclarationsAtSameRoot(t *testing.T) {
@@ -102,8 +102,8 @@ func TestBuildFileGraphCombinesWorkspaceDeclarationsAtSameRoot(t *testing.T) {
 	writeWorkspaceFiles(t, root, "app.ts", "packages/web/index.ts", "tools/cli/index.ts")
 	graph := buildWorkspaceGraph(t, root, workspaceAnalysis("app.ts", "web", "tooling"))
 	assertWorkspaceImports(t, graph, "app.ts", []string{
-		filepath.FromSlash("packages/web/index.ts"),
-		filepath.FromSlash("tools/cli/index.ts"),
+		"packages/web/index.ts",
+		"tools/cli/index.ts",
 	})
 }
 
@@ -128,8 +128,8 @@ func TestBuildFileGraphResolvesRushWorkspaceProjects(t *testing.T) {
 		workspaceAnalysis("apps/app/main.ts", "@acme/lib", "@acme/unlisted"),
 		workspaceAnalysis("nested/app/main.ts", "@acme/lib"),
 	)
-	assertWorkspaceImports(t, graph, "apps/app/main.ts", []string{filepath.FromSlash("packages/lib/index.ts")})
-	assertWorkspaceImports(t, graph, "nested/app/main.ts", []string{filepath.FromSlash("nested/lib/index.ts")})
+	assertWorkspaceImports(t, graph, "apps/app/main.ts", []string{"packages/lib/index.ts"})
+	assertWorkspaceImports(t, graph, "nested/app/main.ts", []string{"nested/lib/index.ts"})
 }
 
 func TestNormalizeRushProjectFolderRejectsDisguisedUnsafePaths(t *testing.T) {
@@ -184,7 +184,7 @@ func TestJSWorkspaceResolverUsesExplicitFilters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertWorkspaceImports(t, graph, "app.ts", []string{filepath.FromSlash("packages/web/index.ts")})
+	assertWorkspaceImports(t, graph, "app.ts", []string{"packages/web/index.ts"})
 }
 
 func TestJSWorkspaceResolverOnlyWidensJavaScriptScans(t *testing.T) {
@@ -258,8 +258,8 @@ func TestBuildFileGraphResolvesWorkspaceEntriesWithoutExports(t *testing.T) {
 		workspaceAnalysis("app/main.ts", "@acme/plain", "@acme/plain/feature", "@acme/conflict"),
 	)
 	assertWorkspaceImports(t, graph, "app/main.ts", []string{
-		filepath.FromSlash("packages/plain/feature.ts"),
-		filepath.FromSlash("packages/plain/src/index.ts"),
+		"packages/plain/feature.ts",
+		"packages/plain/src/index.ts",
 	})
 }
 
@@ -301,7 +301,7 @@ func TestBuildFileGraphResolvesPnpmConditionalExportsToSources(t *testing.T) {
 		),
 	)
 	assertWorkspaceImports(t, graph, "app/main.ts", []string{
-		filepath.FromSlash("packages/foundation/core/src/context.ts"),
+		"packages/foundation/core/src/context.ts",
 	})
 }
 
@@ -321,7 +321,7 @@ func TestBuildFileGraphDoesNotLeakPackagesAcrossWorkspaceOwners(t *testing.T) {
 		workspaceAnalysis("one/app/main.ts", "@acme/local", "@acme/external"),
 	)
 	assertWorkspaceImports(t, graph, "one/app/main.ts", []string{
-		filepath.FromSlash("one/packages/local/src/index.ts"),
+		"one/packages/local/src/index.ts",
 	})
 }
 
@@ -336,8 +336,8 @@ func TestBuildFileGraphAppliesOrderedWorkspacePatterns(t *testing.T) {
 
 	graph := buildWorkspaceGraph(t, root, workspaceAnalysis("app/main.ts", "@acme/ui", "@acme/private", "@acme/restored"))
 	assertWorkspaceImports(t, graph, "app/main.ts", []string{
-		filepath.FromSlash("packages/restored/src/index.ts"),
-		filepath.FromSlash("packages/ui/src/index.ts"),
+		"packages/restored/src/index.ts",
+		"packages/ui/src/index.ts",
 	})
 }
 
@@ -438,7 +438,7 @@ func TestStripJSONC(t *testing.T) {
 
 func writeWorkspaceFile(t *testing.T, root, path, body string) {
 	t.Helper()
-	fullPath := filepath.Join(root, filepath.FromSlash(path))
+	fullPath := filepath.Join(root, path)
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -455,7 +455,7 @@ func writeWorkspaceFiles(t *testing.T, root string, paths ...string) {
 }
 
 func workspaceAnalysis(path string, imports ...string) FileAnalysis {
-	return FileAnalysis{Path: filepath.FromSlash(path), Language: "typescript", Imports: imports}
+	return FileAnalysis{Path: path, Language: "typescript", Imports: imports}
 }
 
 func buildWorkspaceGraph(t *testing.T, root string, analyses ...FileAnalysis) *FileGraph {
@@ -469,7 +469,7 @@ func buildWorkspaceGraph(t *testing.T, root string, analyses ...FileAnalysis) *F
 
 func assertWorkspaceImports(t *testing.T, graph *FileGraph, path string, want []string) {
 	t.Helper()
-	got := append([]string(nil), graph.Imports[filepath.FromSlash(path)]...)
+	got := append([]string(nil), graph.Imports[path]...)
 	sort.Strings(got)
 	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {
@@ -489,7 +489,7 @@ func TestBuildFileGraphResolvesConditionalPackageImports(t *testing.T) {
 	graph := buildWorkspaceGraph(t, root,
 		workspaceAnalysis("src/consumer.ts", "#env", "#noop"),
 	)
-	assertWorkspaceImports(t, graph, "src/consumer.ts", []string{filepath.FromSlash("src/env.ts")})
+	assertWorkspaceImports(t, graph, "src/consumer.ts", []string{"src/env.ts"})
 }
 
 // Regression for PR #105: a package whose tsconfig.json inherits rootDir/outDir
@@ -503,7 +503,7 @@ func TestBuildFileGraphResolvesExtendedTsconfigOutputDirs(t *testing.T) {
 	writeWorkspaceFiles(t, root, "app/main.ts", "packages/core/src/index.ts")
 
 	graph := buildWorkspaceGraph(t, root, workspaceAnalysis("app/main.ts", "@acme/ext"))
-	assertWorkspaceImports(t, graph, "app/main.ts", []string{filepath.FromSlash("packages/core/src/index.ts")})
+	assertWorkspaceImports(t, graph, "app/main.ts", []string{"packages/core/src/index.ts"})
 }
 
 func TestParsePackageImportsConditionalTargets(t *testing.T) {

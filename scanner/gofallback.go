@@ -7,6 +7,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -41,7 +42,7 @@ func buildGoFallbackOutcome(ctx context.Context, root string, files []FileInfo) 
 			return ScanOutcome{}, err
 		}
 
-		path := filepath.Clean(file.Path)
+		path := keyPath(file.Path)
 		parsed, err := parser.ParseFile(fset, filepath.Join(root, path), nil, parser.SkipObjectResolution)
 		if err != nil {
 			skipped++
@@ -95,16 +96,16 @@ func buildGoFallbackOutcome(ctx context.Context, root string, files []FileInfo) 
 // under one of the given nested-repo subtrees, matching what the ast-grep
 // primary would have skipped.
 func goFallbackFileExcluded(path string, nestedRepos []string) bool {
-	dir := filepath.Dir(path)
+	dir := pathpkg.Dir(keyPath(path))
 	if dir != "." {
-		for _, part := range strings.Split(dir, string(filepath.Separator)) {
+		for _, part := range strings.Split(dir, "/") {
 			if strings.HasPrefix(part, ".") {
 				return true
 			}
 		}
 	}
 	for _, repo := range nestedRepos {
-		if path == repo || strings.HasPrefix(path, repo+string(filepath.Separator)) {
+		if path == repo || strings.HasPrefix(path, repo+"/") {
 			return true
 		}
 	}

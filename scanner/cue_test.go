@@ -122,13 +122,13 @@ func TestScanCUEFilesReadsAllPackagesAndModule(t *testing.T) {
 func TestCueImportResolvesOnlyLocalModulePackage(t *testing.T) {
 	idx := buildFileIndex([]FileInfo{
 		{Path: "main.cue"},
-		{Path: filepath.Join("types", "types.cue")},
-		{Path: filepath.Join("other", "other.cue")},
+		{Path: "types/types.cue"},
+		{Path: "other/other.cue"},
 	}, "")
 	idx.cueModules = []cueModuleInfo{{path: "example.com/acme"}}
 	idx.cuePackages = map[string]string{"types/types.cue": "types"}
 
-	if got := fuzzyResolve("example.com/acme/types", "main.cue", idx, "", nil, ""); !reflect.DeepEqual(got, []string{filepath.Join("types", "types.cue")}) {
+	if got := fuzzyResolve("example.com/acme/types", "main.cue", idx, "", nil, ""); !reflect.DeepEqual(got, []string{"types/types.cue"}) {
 		t.Fatalf("local CUE import resolved to %v", got)
 	}
 	if got := fuzzyResolve("example.com/other/types", "main.cue", idx, "", nil, ""); len(got) != 0 {
@@ -194,7 +194,7 @@ func TestBuildFileGraphResolvesCUEPackageFromModule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{filepath.Join("types", "types.cue")}
+	want := []string{"types/types.cue"}
 	if got := graph.Imports["main.cue"]; !reflect.DeepEqual(got, want) {
 		t.Fatalf("CUE graph imports = %v, want %v", got, want)
 	}
@@ -202,7 +202,7 @@ func TestBuildFileGraphResolvesCUEPackageFromModule(t *testing.T) {
 
 func TestBuildFileGraphResolvesNestedCUEPackageFromModule(t *testing.T) {
 	root := t.TempDir()
-	moduleRoot := filepath.Join("deploy", "timoni", "modules", "hilfe")
+	moduleRoot := "deploy/timoni/modules/hilfe"
 	writeCueFile(t, root, filepath.Join(moduleRoot, "cue.mod", "module.cue"), "module: \"timoni.sh/hilfe\"\n")
 	writeCueFile(t, root, filepath.Join(moduleRoot, "timoni.cue"), "package app\n")
 	writeCueFile(t, root, filepath.Join(moduleRoot, "templates", "admin.cue"), "package templates\n")
@@ -223,7 +223,7 @@ func TestBuildFileGraphResolvesNestedCUEPackageFromModule(t *testing.T) {
 
 func writeCueFile(t *testing.T, root, name, content string) {
 	t.Helper()
-	path := filepath.Join(root, filepath.FromSlash(name))
+	path := filepath.Join(root, name)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}

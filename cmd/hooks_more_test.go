@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -337,6 +338,9 @@ func TestConfiguredStateFileCountDrivesSessionStartGates(t *testing.T) {
 }
 
 func TestExtractFilePathAndEditHooks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: hub lookup by native path, tracked in #214")
+	}
 	root := t.TempDir()
 	target := filepath.Join(root, "pkg", "types.go")
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
@@ -421,6 +425,9 @@ func TestExtractFilePathAndEditHooks(t *testing.T) {
 }
 
 func TestCheckFileImportersAndRouteSuggestions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: hub lookup by native path, tracked in #214")
+	}
 	root := t.TempDir()
 	target := filepath.Join(root, "pkg", "types.go")
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {

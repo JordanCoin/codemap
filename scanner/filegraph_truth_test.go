@@ -114,7 +114,7 @@ func TestIsTestFile(t *testing.T) {
 		{"src/app.ts", false},
 		{"tests/test_config.py", true},
 		{"pkg/attest.go", false},
-		{filepath.Join("watch", "events_test.go"), true},
+		{"watch/events_test.go", true},
 	}
 	for _, tt := range tests {
 		if got := IsTestFile(tt.path); got != tt.want {

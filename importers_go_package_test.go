@@ -13,7 +13,7 @@ import (
 // fixture: the count is labelled with its unit, and an empty answer says what
 // the graph does not model instead of a bare zero.
 func TestImportersCLIReportsGoPackageGranularity(t *testing.T) {
-	root, err := filepath.Abs(filepath.Join("testdata", "go-multi-file-package"))
+	root, err := filepath.Abs("testdata/go-multi-file-package")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestImportersCLIReportsGoPackageGranularity(t *testing.T) {
 
 // End to end through the binary, as the issue reproduced it.
 func TestImportersCommandListsMultiFilePackageImporter(t *testing.T) {
-	root, err := filepath.Abs(filepath.Join("testdata", "go-multi-file-package"))
+	root, err := filepath.Abs("testdata/go-multi-file-package")
 	if err != nil {
 		t.Fatal(err)
 	}

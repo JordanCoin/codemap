@@ -130,7 +130,7 @@ func TestRustEmbeddedFilesResolveConservatively(t *testing.T) {
 
 func TestResolveRustIncludeRequiresOneIndexedFile(t *testing.T) {
 	root := t.TempDir()
-	path := filepath.Join("src", "generated.rs")
+	path := "src/generated.rs"
 	idx := buildFileIndex([]FileInfo{{Path: path}, {Path: path}}, "")
 	if target := resolveRustInclude(root, "src/lib.rs", `"generated.rs"`, idx); target != "" {
 		t.Fatalf("multiply indexed include target = %q, want unresolved", target)

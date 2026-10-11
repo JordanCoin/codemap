@@ -314,7 +314,7 @@ func TestNestedGitignore(t *testing.T) {
 	if !foundPaths["main.go"] {
 		t.Error("Should include main.go")
 	}
-	if !foundPaths[filepath.Join("subproject", "app.go")] {
+	if !foundPaths["subproject/app.go"] {
 		t.Error("Should include subproject/app.go")
 	}
 
@@ -322,10 +322,10 @@ func TestNestedGitignore(t *testing.T) {
 	if foundPaths["debug.log"] {
 		t.Error("Should ignore debug.log (matched by root .gitignore)")
 	}
-	if foundPaths[filepath.Join("subproject", "cache.tmp")] {
+	if foundPaths["subproject/cache.tmp"] {
 		t.Error("Should ignore subproject/cache.tmp (matched by subproject .gitignore)")
 	}
-	if foundPaths[filepath.Join("subproject", "data.log")] {
+	if foundPaths["subproject/data.log"] {
 		t.Error("Should ignore subproject/data.log (matched by root .gitignore)")
 	}
 }
@@ -497,16 +497,16 @@ func TestNestedGitignoreUnignore(t *testing.T) {
 		foundPaths[f.Path] = true
 	}
 
-	if !foundPaths[filepath.Join("sub", "app.go")] {
+	if !foundPaths["sub/app.go"] {
 		t.Error("Should include sub/app.go")
 	}
-	if !foundPaths[filepath.Join("sub", "keep.log")] {
+	if !foundPaths["sub/keep.log"] {
 		t.Error("Should include sub/keep.log (un-ignored by !keep.log)")
 	}
 	if foundPaths["debug.log"] {
 		t.Error("Should ignore debug.log")
 	}
-	if foundPaths[filepath.Join("sub", "other.log")] {
+	if foundPaths["sub/other.log"] {
 		t.Error("Should ignore sub/other.log")
 	}
 	if len(files) != 4 {
@@ -558,12 +558,12 @@ func TestNestedGitignoreDirectoryIgnore(t *testing.T) {
 	if !foundPaths["root.go"] {
 		t.Error("Should include root.go")
 	}
-	if !foundPaths[filepath.Join("visible_dir", "sub", "file.go")] {
+	if !foundPaths["visible_dir/sub/file.go"] {
 		t.Error("Should include visible_dir/sub/file.go")
 	}
 
 	// Should NOT include anything from ignored_dir
-	if foundPaths[filepath.Join("ignored_dir", "deeply", "nested", "file.go")] {
+	if foundPaths["ignored_dir/deeply/nested/file.go"] {
 		t.Error("Should ignore ignored_dir/deeply/nested/file.go")
 	}
 
@@ -620,10 +620,10 @@ func TestMatchesPattern(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			relPath := filepath.ToSlash(filepath.FromSlash(tt.relPath))
+			relPath := filepath.ToSlash(tt.relPath)
 			pattern := tt.pattern
 			if strings.Contains(pattern, "/") {
-				pattern = filepath.ToSlash(filepath.FromSlash(pattern))
+				pattern = filepath.ToSlash(pattern)
 			}
 
 			got := matchesPatternPath(relPath, tt.isDir, pattern)
@@ -830,7 +830,7 @@ func TestScanConfiguredFilesExcludesCodemapState(t *testing.T) {
 		".codemap/state.json": "{}",
 		"pkg/util.go":         "package pkg\n",
 	} {
-		full := filepath.Join(root, filepath.FromSlash(path))
+		full := filepath.Join(root, path)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -919,9 +919,9 @@ func nestedRepoFixture(t *testing.T) string {
 	git(root, "add", ".")
 	git(root, "commit", "-q", "-m", "init")
 	// Linked worktree under a dotted directory, like .claude/worktrees/<agent>.
-	git(root, "worktree", "add", "-q", filepath.Join(".claude", "worktrees", "agent-x"), "HEAD")
+	git(root, "worktree", "add", "-q", ".claude/worktrees/agent-x", "HEAD")
 	// Nested plain clone, two levels down.
-	git(root, "clone", "-q", root, filepath.Join("tools", "sub-clone"))
+	git(root, "clone", "-q", root, "tools/sub-clone")
 	return root
 }
 
@@ -961,7 +961,7 @@ func TestNestedGitReposFindsWorktreesAtAnyDepth(t *testing.T) {
 	root := nestedRepoFixture(t)
 
 	got := NestedGitRepos(root)
-	want := []string{filepath.Join(".claude", "worktrees", "agent-x"), filepath.Join("tools", "sub-clone")}
+	want := []string{".claude/worktrees/agent-x", "tools/sub-clone"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("NestedGitRepos = %v, want %v", got, want)
 	}

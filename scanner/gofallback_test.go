@@ -39,10 +39,10 @@ func TestFeature(t *testing.T) {}
 		"notes.txt":     "not Go",
 	})
 	files := []FileInfo{
-		{Path: filepath.FromSlash("cmd/main_test.go")},
-		{Path: filepath.FromSlash("notes.txt")},
-		{Path: filepath.FromSlash("cmd/broken.go")},
-		{Path: filepath.FromSlash("cmd/main.go")},
+		{Path: "cmd/main_test.go"},
+		{Path: "notes.txt"},
+		{Path: "cmd/broken.go"},
+		{Path: "cmd/main.go"},
 	}
 
 	outcome, err := buildGoFallbackOutcome(context.Background(), root, files)
@@ -51,14 +51,14 @@ func TestFeature(t *testing.T) {}
 	}
 	want := []FileAnalysis{
 		{
-			Path:     filepath.FromSlash("cmd/main.go"),
+			Path:     "cmd/main.go",
 			Language: "go",
 			// `Run` is a method; ast-grep only reports function_declaration.
 			Functions: []string{"main"},
 			Imports:   []string{"example.com/lib", "example.com/side-effect"},
 		},
 		{
-			Path:      filepath.FromSlash("cmd/main_test.go"),
+			Path:      "cmd/main_test.go",
 			Language:  "go",
 			Functions: []string{"TestFeature"},
 			Imports:   []string{"testing"},
@@ -97,7 +97,7 @@ func TestScanForDepsOutcomeUsesGoFallbackWithoutAstGrep(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []FileAnalysis{
-		{Path: filepath.FromSlash("cmd/main.go"), Language: "go", Functions: []string{"main"}, Imports: []string{"example.com/lib"}},
+		{Path: "cmd/main.go", Language: "go", Functions: []string{"main"}, Imports: []string{"example.com/lib"}},
 		{Path: "docs.cue", Language: "cue", Package: "docs", Imports: []string{"example.com/acme/templates"}},
 	}
 	if !reflect.DeepEqual(outcome.Analyses, want) {

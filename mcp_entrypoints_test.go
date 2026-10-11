@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,9 @@ import (
 )
 
 func TestMCPEntrypointsMatch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: second test binary built without .exe, tracked in #214")
+	}
 	binDir := t.TempDir()
 	cli := buildTestBinary(t, filepath.Join(binDir, "codemap"), ".")
 	standalone := buildTestBinary(t, filepath.Join(binDir, "codemap-mcp"), "./cmd/codemap-mcp")

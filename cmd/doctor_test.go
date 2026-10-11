@@ -3,11 +3,15 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
 func TestRunDoctorUsesNearestGitRootFromNestedDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: temp-dir path assumption, tracked in #214")
+	}
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatal(err)

@@ -171,7 +171,7 @@ func TestBuildFileGraphFromOutcomeReusesFileInventory(t *testing.T) {
 		Sources:  []ScanSourceOutcome{{Name: "ast-grep", Status: ScanSourceAuthoritative}},
 		files: []FileInfo{
 			{Path: "app/main.py", Ext: ".py"},
-			{Path: filepath.FromSlash("src/pkg/util.py"), Ext: ".py"},
+			{Path: "src/pkg/util.py", Ext: ".py"},
 		},
 		hasFileInventory: true,
 	}
@@ -180,7 +180,7 @@ func TestBuildFileGraphFromOutcomeReusesFileInventory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.FromSlash("src/pkg/util.py")
+	want := "src/pkg/util.py"
 	if got := graph.Imports["app/main.py"]; !reflect.DeepEqual(got, []string{want}) {
 		t.Fatalf("imports = %v, want [%s]", got, want)
 	}

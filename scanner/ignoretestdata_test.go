@@ -15,7 +15,7 @@ func TestScanSkipsTestdataDirectories(t *testing.T) {
 	root := t.TempDir()
 	write := func(rel, body string) {
 		t.Helper()
-		path := filepath.Join(root, filepath.FromSlash(rel))
+		path := filepath.Join(root, rel)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}

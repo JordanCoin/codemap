@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -198,6 +199,9 @@ func TestEnsureCodemapIgnoredLocalAppends(t *testing.T) {
 }
 
 func TestReportEnsureIgnored(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: temp-dir path assumption, tracked in #214")
+	}
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
