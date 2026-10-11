@@ -442,6 +442,7 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 		if relPath == "" {
 			relPath = m.File
 		}
+		relPath = filepath.ToSlash(relPath)
 
 		if fileMap[relPath] == nil {
 			lang := detectLangFromRuleID(m.RuleID)

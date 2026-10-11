@@ -516,7 +516,7 @@ func resolveRustInclude(root, declaringFile, literal string, idx *fileIndex) str
 	if target == "" {
 		return ""
 	}
-	if idx.byExact[target] != 1 {
+	if idx.exact(target) != 1 {
 		return ""
 	}
 	return target
@@ -527,7 +527,7 @@ func resolveRustEmbeddedFile(root, declaringFile, literal string, idx *fileIndex
 	if target == "" {
 		return ""
 	}
-	if idx.byExact[target] != 1 {
+	if idx.exact(target) != 1 {
 		return ""
 	}
 	return target
@@ -654,7 +654,7 @@ func resolveRustAskamaTemplate(root, fromFile, literal string, idx *fileIndex, w
 		return ""
 	}
 	// Duplicate inventory entries make ownership ambiguous.
-	if idx.byExact[target] != 1 {
+	if idx.exact(target) != 1 {
 		return ""
 	}
 	return target
@@ -723,7 +723,7 @@ func resolveRustModule(name, fromFile string, idx *fileIndex, workspace *rustWor
 		filepath.Join(dir, name+".rs"),
 		filepath.Join(dir, name, "mod.rs"),
 	} {
-		if idx.byExact[candidate] == 1 {
+		if idx.exact(candidate) == 1 {
 			return candidate
 		}
 	}
@@ -891,7 +891,7 @@ func resolveRustPathFromDirectory(base string, parts []string, idx *fileIndex) s
 	for i := len(parts); i > 0; i-- {
 		modulePath := filepath.Join(append([]string{base}, parts[:i]...)...)
 		for _, candidate := range []string{modulePath + ".rs", filepath.Join(modulePath, "mod.rs")} {
-			if idx.byExact[candidate] == 1 {
+			if idx.exact(candidate) == 1 {
 				return candidate
 			}
 		}
@@ -975,7 +975,7 @@ func (index *rustWorkspaceIndex) targetForFile(path string, idx *fileIndex) (rus
 }
 
 func rustTargetIndexed(target rustTarget, idx *fileIndex) bool {
-	return idx.byExact[target.rootFile] == 1
+	return idx.exact(target.rootFile) == 1
 }
 
 func pathWithin(path, dir string) bool {
@@ -1022,7 +1022,7 @@ func (index *rustWorkspaceIndex) targetContainsFile(target rustTarget, path stri
 		modulePath := filepath.Join(append([]string{target.sourceDir}, parts[:i+1]...)...)
 		var next string
 		for _, candidate := range []string{modulePath + ".rs", filepath.Join(modulePath, "mod.rs")} {
-			if idx.byExact[candidate] == 1 {
+			if idx.exact(candidate) == 1 {
 				if next != "" {
 					return false
 				}

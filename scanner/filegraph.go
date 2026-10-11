@@ -333,11 +333,12 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 		}
 
 		if len(resolvedImports) > 0 {
-			fg.Imports[a.Path] = dedupe(resolvedImports)
+			key := keyPath(a.Path)
+			fg.Imports[key] = dedupe(slashPaths(resolvedImports))
 
 			// Build reverse map
-			for _, imported := range fg.Imports[a.Path] {
-				fg.Importers[imported] = append(fg.Importers[imported], a.Path)
+			for _, imported := range fg.Imports[key] {
+				fg.Importers[imported] = append(fg.Importers[imported], key)
 			}
 		}
 	}
@@ -401,7 +402,7 @@ func addSwiftTypeReferenceEdges(absRoot string, analyses []FileAnalysis, fg *Fil
 			if len(name) < 3 {
 				continue
 			}
-			declaredBy[name] = append(declaredBy[name], a.Path)
+			declaredBy[name] = append(declaredBy[name], keyPath(a.Path))
 		}
 	}
 	if len(declaredBy) == 0 {
@@ -417,9 +418,10 @@ func addSwiftTypeReferenceEdges(absRoot string, analyses []FileAnalysis, fg *Fil
 		}
 		seen := make(map[string]bool)
 		var targets []string
+		from := keyPath(a.Path)
 		for _, ident := range swiftIdentifier.FindAll(swiftImportLine.ReplaceAll(data, nil), -1) {
 			for _, target := range declaredBy[string(ident)] {
-				if target == a.Path || seen[target] || slices.Contains(fg.Imports[a.Path], target) {
+				if target == from || seen[target] || slices.Contains(fg.Imports[from], target) {
 					continue
 				}
 				seen[target] = true
@@ -430,9 +432,9 @@ func addSwiftTypeReferenceEdges(absRoot string, analyses []FileAnalysis, fg *Fil
 			continue
 		}
 		sort.Strings(targets)
-		fg.Imports[a.Path] = append(fg.Imports[a.Path], targets...)
+		fg.Imports[from] = append(fg.Imports[from], targets...)
 		for _, target := range targets {
-			fg.Importers[target] = append(fg.Importers[target], a.Path)
+			fg.Importers[target] = append(fg.Importers[target], from)
 		}
 	}
 	return true
@@ -460,11 +462,12 @@ func (fg *FileGraph) sortEdges() {
 
 func applyPrecomputedFileEdges(fg *FileGraph, edges []fileEdge) {
 	for _, edge := range edges {
-		if edge.from == "" || edge.to == "" || edge.from == edge.to {
+		from, to := keyPath(edge.from), keyPath(edge.to)
+		if from == "" || to == "" || from == to {
 			continue
 		}
-		fg.Imports[edge.from] = dedupe(append(fg.Imports[edge.from], edge.to))
-		fg.Importers[edge.to] = dedupe(append(fg.Importers[edge.to], edge.from))
+		fg.Imports[from] = dedupe(append(fg.Imports[from], to))
+		fg.Importers[to] = dedupe(append(fg.Importers[to], from))
 	}
 }
 
@@ -519,8 +522,8 @@ func buildFileIndexContext(ctx context.Context, files []FileInfo, goModule strin
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		path := f.Path
-		dir := filepath.Dir(path)
+		path := keyPath(f.Path)
+		dir := filepath.ToSlash(filepath.Dir(path))
 		if dir == "." {
 			dir = ""
 		}
@@ -559,6 +562,19 @@ func buildFileIndexContext(ctx context.Context, files []FileInfo, goModule strin
 	return idx, nil
 }
 
+// exact reports how many indexed files have this path, whatever separator
+// the probe was built with.
+func (idx *fileIndex) exact(p string) uint32 {
+	return idx.byExact[keyPath(p)]
+}
+
+// dir returns the files directly inside the directory, whatever separator
+// the probe was built with.
+func (idx *fileIndex) dir(p string) ([]string, bool) {
+	files, ok := idx.byDir[keyPath(p)]
+	return files, ok
+}
+
 func comparePathsReversed(left, right string) int {
 	limit := min(len(left), len(right))
 	for i := 0; i < limit; i++ {
@@ -584,7 +600,7 @@ func comparePathSuffix(path, suffix string) int {
 	limit := min(len(path), prefixLen)
 	for i := 0; i < limit; i++ {
 		left := path[len(path)-1-i]
-		right := byte(filepath.Separator)
+		right := byte('/')
 		if i < len(suffix) {
 			right = suffix[len(suffix)-1-i]
 		}
@@ -605,10 +621,11 @@ func comparePathSuffix(path, suffix string) int {
 }
 
 func hasPathSuffix(path, suffix string) bool {
-	return len(path) > len(suffix) && path[len(path)-len(suffix)-1] == byte(filepath.Separator) && strings.HasSuffix(path, suffix)
+	return len(path) > len(suffix) && path[len(path)-len(suffix)-1] == '/' && strings.HasSuffix(path, suffix)
 }
 
 func (idx *fileIndex) suffixMatches(suffix string) []string {
+	suffix = keyPath(suffix)
 	if suffix == "" {
 		return nil
 	}
@@ -678,7 +695,7 @@ func fuzzyResolveWithWorkspace(
 		}
 		packagePath := strings.TrimPrefix(strings.TrimPrefix(imp, module.path), "/")
 		packagePath = filepath.Join(module.root, filepath.FromSlash(packagePath))
-		files := idx.byDir[packagePath]
+		files, _ := idx.dir(packagePath)
 		return resolveCUEPackage(files, idx.cuePackages, selector)
 	}
 
@@ -797,16 +814,16 @@ func normalizeImport(imp string) string {
 	// #include "b.h" and require_once 'b.php' became b/h and b/php, so every
 	// same-directory C, C++ and PHP include resolved to nothing.
 	if strings.Contains(imp, ".") && !strings.Contains(imp, "/") && !strings.HasPrefix(imp, ".") && extToLang[strings.ToLower(filepath.Ext(imp))] == "" {
-		imp = strings.ReplaceAll(imp, ".", string(filepath.Separator))
+		imp = strings.ReplaceAll(imp, ".", "/")
 	}
 
 	// Rust :: to slashes: crate::foo::bar -> foo/bar
 	if strings.HasPrefix(imp, "crate::") {
 		imp = strings.TrimPrefix(imp, "crate::")
-		imp = strings.ReplaceAll(imp, "::", string(filepath.Separator))
+		imp = strings.ReplaceAll(imp, "::", "/")
 	}
 	if strings.HasPrefix(imp, "super::") {
-		imp = strings.ReplaceAll(imp, "::", string(filepath.Separator))
+		imp = strings.ReplaceAll(imp, "::", "/")
 	}
 
 	return imp
@@ -892,7 +909,8 @@ func resolveRelative(imp, fromDir string, idx *fileIndex, sourceLanguage string)
 // tryExactMatch looks for exact path matches with common extensions.
 // Extension list derived from the canonical scanner registry.
 func tryExactMatch(path string, idx *fileIndex, sourceLanguage string) []string {
-	if idx.byExact[path] == 1 && languagesCompatible(sourceLanguage, DetectLanguage(path)) {
+	path = keyPath(path)
+	if idx.exact(path) == 1 && languagesCompatible(sourceLanguage, DetectLanguage(path)) {
 		return []string{path}
 	}
 	// Under ESM and NodeNext, TypeScript requires the specifier to name the
@@ -900,13 +918,13 @@ func tryExactMatch(path string, idx *fileIndex, sourceLanguage string) []string 
 	// only on-disk counterpart is helper.ts. The specifier already carries an
 	// extension, so appending one below never matches and the edge was lost.
 	for _, candidate := range typescriptSourceCandidates(path, sourceLanguage) {
-		if idx.byExact[candidate] == 1 && languagesCompatible(sourceLanguage, DetectLanguage(candidate)) {
+		if idx.exact(candidate) == 1 && languagesCompatible(sourceLanguage, DetectLanguage(candidate)) {
 			return []string{candidate}
 		}
 	}
 	for _, ext := range resolverExtensions[:len(resolverExtensions)-1] {
 		candidate := path + ext
-		if idx.byExact[candidate] == 1 && languagesCompatible(sourceLanguage, DetectLanguage(candidate)) {
+		if idx.exact(candidate) == 1 && languagesCompatible(sourceLanguage, DetectLanguage(candidate)) {
 			return []string{candidate}
 		}
 	}
@@ -922,17 +940,17 @@ func tryExactMatch(path string, idx *fileIndex, sourceLanguage string) []string 
 	// set, so this on-disk check recovers exactly that edge without
 	// widening the fuzzy/suffix resolution strategies to gitignored files.
 	if idx.absRoot != "" {
-		if idx.byExact[path] == 0 && languagesCompatible(sourceLanguage, DetectLanguage(path)) && idx.gitignoreOnlyRecoverable(path) {
+		if idx.exact(path) == 0 && languagesCompatible(sourceLanguage, DetectLanguage(path)) && idx.gitignoreOnlyRecoverable(path) {
 			return []string{path}
 		}
 		for _, candidate := range typescriptSourceCandidates(path, sourceLanguage) {
-			if idx.byExact[candidate] == 0 && languagesCompatible(sourceLanguage, DetectLanguage(candidate)) && idx.gitignoreOnlyRecoverable(candidate) {
+			if idx.exact(candidate) == 0 && languagesCompatible(sourceLanguage, DetectLanguage(candidate)) && idx.gitignoreOnlyRecoverable(candidate) {
 				return []string{candidate}
 			}
 		}
 		for _, ext := range resolverExtensions[:len(resolverExtensions)-1] {
 			candidate := path + ext
-			if idx.byExact[candidate] == 0 && languagesCompatible(sourceLanguage, DetectLanguage(candidate)) && idx.gitignoreOnlyRecoverable(candidate) {
+			if idx.exact(candidate) == 0 && languagesCompatible(sourceLanguage, DetectLanguage(candidate)) && idx.gitignoreOnlyRecoverable(candidate) {
 				return []string{candidate}
 			}
 		}
@@ -1034,7 +1052,7 @@ func trySuffixMatch(normalized string, idx *fileIndex, sourceLanguage string) []
 // (e.g. "MyApp/Models" tries "MyApp/Models" first, then "Models").
 func tryDirMatch(path string, idx *fileIndex, sourceLanguage string) []string {
 	// Try exact match first
-	if files, ok := idx.byDir[path]; ok {
+	if files, ok := idx.dir(path); ok {
 		if compatible := compatibleFiles(sourceLanguage, files); len(compatible) > 0 {
 			return compatible
 		}
@@ -1042,7 +1060,7 @@ func tryDirMatch(path string, idx *fileIndex, sourceLanguage string) []string {
 	// Normalize path separators for cross-platform compatibility
 	nativePath := filepath.FromSlash(path)
 	if nativePath != path {
-		if files, ok := idx.byDir[nativePath]; ok {
+		if files, ok := idx.dir(nativePath); ok {
 			if compatible := compatibleFiles(sourceLanguage, files); len(compatible) > 0 {
 				return compatible
 			}
@@ -1053,7 +1071,7 @@ func tryDirMatch(path string, idx *fileIndex, sourceLanguage string) []string {
 	parts := strings.Split(filepath.ToSlash(path), "/")
 	for i := 1; i < len(parts); i++ {
 		suffix := filepath.Join(parts[i:]...)
-		if files, ok := idx.byDir[suffix]; ok {
+		if files, ok := idx.dir(suffix); ok {
 			if compatible := compatibleFiles(sourceLanguage, files); len(compatible) > 0 {
 				return compatible
 			}

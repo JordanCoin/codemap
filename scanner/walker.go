@@ -393,7 +393,7 @@ func ScanFiles(ctx context.Context, root string, cache *GitIgnoreCache, only []s
 		}
 
 		files = append(files, FileInfo{
-			Path: relPath,
+			Path: filepath.ToSlash(relPath),
 			Size: info.Size(),
 			Ext:  ext,
 		})

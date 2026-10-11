@@ -89,15 +89,16 @@ func TestStructuredImporterPreservesCLIReportFields(t *testing.T) {
 	}
 }
 
-func TestNormalizeImporterFileUsesNativeGraphKeys(t *testing.T) {
+func TestNormalizeImporterFileUsesSlashGraphKeys(t *testing.T) {
 	root := filepath.Join(string(filepath.Separator)+"repo", "project")
-	want := filepath.Join("pkg", "types", "types.go")
+	want := "pkg/types/types.go"
 	for _, input := range []string{
 		"pkg/types/types.go",
+		filepath.Join("pkg", "types", "types.go"),
 		filepath.Join(root, "pkg", "types", "types.go"),
 	} {
 		if got := normalizeImporterFile(root, input); got != want {
-			t.Fatalf("normalizeImporterFile(%q) = %q, want native key %q", input, got, want)
+			t.Fatalf("normalizeImporterFile(%q) = %q, want slash key %q", input, got, want)
 		}
 	}
 }
