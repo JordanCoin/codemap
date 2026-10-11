@@ -182,6 +182,8 @@ func TestNormalizeImport(t *testing.T) {
 		{name: "removes quotes", input: "\"pkg/util\"", expected: "pkg/util"},
 		{name: "python dots to slashes", input: "app.core.config", expected: filepath.Join("app", "core", "config")},
 		{name: "relative dotted import unchanged", input: "../app.core", expected: "../app.core"},
+		{name: "c header keeps its extension", input: "\"b.h\"", expected: "b.h"},
+		{name: "php require keeps its extension", input: "'b.php'", expected: "b.php"},
 		{name: "crate import converted", input: "crate::feature::parser", expected: filepath.Join("feature", "parser")},
 		{name: "super import converted", input: "super::module::item", expected: filepath.Join("super", "module", "item")},
 	}
