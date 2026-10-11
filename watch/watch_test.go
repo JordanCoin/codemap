@@ -63,17 +63,26 @@ func writeEventFor(daemon *Daemon, path string) (Event, bool) {
 	return Event{}, false
 }
 
-// waitForWriteEvent polls until a WRITE event for path exists or the deadline
-// passes. It reports whether one arrived; callers decide what a miss means.
-func waitForWriteEvent(daemon *Daemon, path string, timeout time.Duration) (Event, bool) {
+// waitForWriteEvent polls until the most recent WRITE event for path
+// satisfies done, or the deadline passes. It reports whether that happened;
+// callers decide what a miss means.
+//
+// Waiting for "any WRITE" is not enough: os.WriteFile opens with O_TRUNC, and
+// on Linux inotify reports the truncation as its own WRITE before the content
+// lands. The daemon processes that first event immediately (0 lines, negative
+// delta) and defers the real one through the debouncer, so a test that grabbed
+// the first WRITE saw "Expected 5 lines, got 0" on ubuntu and passed on macOS,
+// where kqueue coalesces the two (#135).
+func waitForWriteEvent(daemon *Daemon, path string, timeout time.Duration, done func(Event) bool) (Event, bool) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if event, ok := writeEventFor(daemon, path); ok {
+		if event, ok := writeEventFor(daemon, path); ok && done(event) {
 			return event, true
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	return writeEventFor(daemon, path)
+	event, ok := writeEventFor(daemon, path)
+	return event, ok && done(event)
 }
 
 // TestEventDetection tests that file changes are detected
@@ -108,12 +117,13 @@ func TestEventDetection(t *testing.T) {
 	}
 
 	// Poll for the WRITE event instead of sleeping a fixed interval (#135).
-	event, ok := waitForWriteEvent(daemon, "test.go", 5*time.Second)
+	wantLines := strings.Count(newContent, "\n")
+	event, ok := waitForWriteEvent(daemon, "test.go", 5*time.Second, func(e Event) bool { return e.Lines == wantLines })
 	if !ok {
 		if len(daemon.GetEvents(10)) == 0 {
 			t.Skip("fsnotify may not work reliably in temp directories on this platform")
 		}
-		t.Fatal("Expected WRITE event for test.go")
+		t.Fatalf("Expected WRITE event for test.go with %d lines, got %+v", wantLines, daemon.GetEvents(10))
 	}
 	if event.Delta <= 0 {
 		t.Errorf("Expected positive line delta, got %d", event.Delta)
@@ -153,12 +163,12 @@ func TestLineDelta(t *testing.T) {
 	}
 
 	// Poll for the WRITE event instead of sleeping a fixed interval (#135).
-	event, ok := waitForWriteEvent(daemon, "counter.go", 5*time.Second)
+	event, ok := waitForWriteEvent(daemon, "counter.go", 5*time.Second, func(e Event) bool { return e.Lines == 5 })
 	if !ok {
 		if len(daemon.GetEvents(10)) == 0 {
 			t.Skip("fsnotify may not work reliably in temp directories on this platform")
 		}
-		t.Fatal("No WRITE event found for counter.go")
+		t.Fatalf("No WRITE event with 5 lines for counter.go, got %+v", daemon.GetEvents(10))
 	}
 	if event.Delta != 2 {
 		t.Errorf("Expected delta of +2, got %d", event.Delta)
