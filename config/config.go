@@ -17,6 +17,7 @@ type ProjectConfig struct {
 	Only     []string       `json:"only,omitempty"`
 	Exclude  []string       `json:"exclude,omitempty"`
 	Depth    int            `json:"depth,omitempty"`
+	MaxFiles int            `json:"max_files,omitempty"` // scan bound; 0 = default, negative = unbounded
 	Mode     string         `json:"mode,omitempty"`
 	Budgets  HookBudgets    `json:"budgets,omitempty"`
 	Routing  RoutingConfig  `json:"routing,omitempty"`

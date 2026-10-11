@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"codemap/limits"
 )
 
 var errCargoFallbackUnavailable = errors.New("cargo dependency fallback unavailable")
@@ -72,6 +74,28 @@ func scanForGraphOutcomeWithFilters(ctx context.Context, root string, filters Fi
 		return ScanOutcome{}, false, err
 	}
 	root = absRoot
+
+	// ast-grep walks the tree itself and its full JSON output is held in
+	// memory, so the only place to bound a dependency scan is before it
+	// starts. Every graph build routes through here (ScanForDeps and
+	// BuildFileGraph both). Count first, a stat walk that keeps one entry,
+	// and refuse the scan above the bound with the reason on the coverage
+	// line; --importers, blast-radius, find, hooks and MCP all read it.
+	if bound := limits.ScanFileBound(filters.MaxFiles); bound > 0 {
+		// A walk error (missing root, permission) is the scanner's to report
+		// with its own precedence; only a cancelled context stops here.
+		_, total, countErr := ScanFilesBounded(ctx, root, NewGitIgnoreCache(root), Filters{Only: filters.Only, Exclude: filters.Exclude, MaxFiles: 1})
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ScanOutcome{}, false, ctxErr
+		}
+		if countErr == nil && total > bound {
+			return ScanOutcome{Sources: []ScanSourceOutcome{{
+				Name:   scanBoundSource,
+				Status: ScanSourceUnavailable,
+				Detail: ScanBoundNote(0, total, bound),
+			}}}, true, nil
+		}
+	}
 
 	outcome, err := scan(root)
 	degraded := false

@@ -3,10 +3,8 @@ package codemapmcp
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"codemap/internal/projectpath"
 	"codemap/limits"
@@ -145,8 +143,9 @@ func handleGetModuleContext(ctx context.Context, req *mcp.CallToolRequest, input
 }
 
 func topologyProjectRoot(path string) (string, error) {
-	if strings.HasPrefix(path, "~/") {
-		path = filepath.Join(os.Getenv("HOME"), path[2:])
+	path, err := expandHome(path)
+	if err != nil {
+		return "", err
 	}
 	selection, err := projectpath.Select(path)
 	if err != nil {

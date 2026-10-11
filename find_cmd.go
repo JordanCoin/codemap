@@ -73,7 +73,7 @@ func runFindSubcommand(args []string, launchDir string) int {
 
 	cmd.EnsureProjectConfig(absRoot)
 	cfg := config.Load(absRoot)
-	report, err := find.Run(context.Background(), absRoot, scanner.Filters{Only: cfg.Only, Exclude: cfg.Exclude}, query, *limit)
+	report, err := find.Run(context.Background(), absRoot, scanner.Filters{Only: cfg.Only, Exclude: cfg.Exclude, MaxFiles: cfg.MaxFiles}, query, *limit)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error scanning project: %v\n", err)
 		return 1
