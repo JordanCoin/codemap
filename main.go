@@ -689,11 +689,11 @@ func runDepsMode(absRoot, root string, jsonMode bool, diffRef string, changedFil
 	// Derive coverage from the graph's provenance when one was built; otherwise
 	// fall back to the scan outcome's sources (nil graph = empty stdin manifest
 	// or best-effort graph failure).
-	coverageSources := outcome.Sources
+	coverage := scanner.CoverageFromSources(outcome.Sources)
 	if graph != nil {
-		coverageSources = graph.Coverage.Sources
+		coverage = graph.Coverage.Contract()
 	}
-	depsProject := scanner.NewDepsProjectWithCoverageAndFilters(absRoot, outcome.Analyses, externalDeps, diffRef, scanner.CoverageFromSources(coverageSources), filters)
+	depsProject := scanner.NewDepsProjectWithCoverageAndFilters(absRoot, outcome.Analyses, externalDeps, diffRef, coverage, filters)
 
 	// Render or output JSON
 	if jsonMode {

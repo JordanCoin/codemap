@@ -351,51 +351,69 @@ type doctorScope struct {
 // rather than the effective configuration. When every scope fails, the failure
 // reported is chosen by the rule described below rather than by scope order.
 func checkScopedFile(label string, scopes []doctorScope, validate func(string) error, failures *int) {
-	// When every scope fails, prefer reporting one that exists but is wired up
-	// wrong over one whose file is simply absent: the former is the user's
-	// actual problem, the latter is the normal state of an unused scope.
-	var misconfigured, absent *doctorScope
-	var misconfiguredErr, absentErr error
-	remember := func(scope *doctorScope, err error) {
-		if errors.Is(err, os.ErrNotExist) {
-			if absent == nil {
-				absent, absentErr = scope, err
-			}
-			return
-		}
-		if misconfigured == nil {
-			misconfigured, misconfiguredErr = scope, err
-		}
-	}
+	// Agents load the first scope that DEFINES an entry, valid or not, so the
+	// effective scope is the first one whose error is not errScopeUndefined.
+	// Reporting the first scope that validates instead let a broken local
+	// entry shadow a healthy user one while doctor said OK (#109). When every
+	// scope is undefined, prefer naming one whose file exists over one whose
+	// file is simply absent: the former is the user's actual problem.
+	var effective, absent *doctorScope
+	var effectiveErr, absentErr error
 
 	for index := range scopes {
 		scope := scopes[index]
+		var err error
 		if scope.err != nil {
-			remember(&scopes[index], fmt.Errorf("could not resolve path (%w)", scope.err))
+			err = fmt.Errorf("could not resolve path (%w)", scope.err)
+		} else {
+			validateScope := validate
+			if scope.validate != nil {
+				validateScope = scope.validate
+			}
+			err = validateScope(scope.path)
+		}
+		if err == nil {
+			if effective != nil {
+				(*failures)++
+				fmt.Printf("MISS %s: %s (%s scope: %v); shadows healthy %s (%s scope)\n",
+					label, effective.path, effective.name, effectiveErr, scope.path, scope.name)
+				return
+			}
+			fmt.Printf("OK   %s: %s (%s scope)\n", label, scope.path, scope.name)
+			return
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			if absent == nil {
+				absent, absentErr = &scopes[index], err
+			}
 			continue
 		}
-		validateScope := validate
-		if scope.validate != nil {
-			validateScope = scope.validate
-		}
-		if err := validateScope(scope.path); err != nil {
-			remember(&scopes[index], err)
+		if errors.Is(err, errScopeUndefined) {
+			if effective == nil && absent == nil {
+				absent, absentErr = &scopes[index], err
+			}
 			continue
 		}
-		fmt.Printf("OK   %s: %s (%s scope)\n", label, scope.path, scope.name)
-		return
+		if effective == nil {
+			effective, effectiveErr = &scopes[index], err
+		}
 	}
 
 	(*failures)++
 	switch {
-	case misconfigured != nil:
-		fmt.Printf("MISS %s: %s (%v)\n", label, misconfigured.path, misconfiguredErr)
+	case effective != nil:
+		fmt.Printf("MISS %s: %s (%v)\n", label, effective.path, effectiveErr)
 	case absent != nil:
 		fmt.Printf("MISS %s: %s (%v)\n", label, absent.path, absentErr)
 	default:
 		fmt.Printf("MISS %s: no configuration scope available\n", label)
 	}
 }
+
+// errScopeUndefined marks a scope whose file exists but defines no codemap
+// entry at all. Such a scope is skipped by the agent, so doctor falls through
+// to the next one; any other error means the scope is loaded and broken.
+var errScopeUndefined = errors.New("scope defines no codemap entry")
 
 // claudeMCPScopes returns the three places Claude Code loads MCP servers from,
 // in the order it resolves them: the committed project .mcp.json, the local
@@ -448,7 +466,7 @@ func validateHooks(path string, specs []claudeHookSpec) error {
 	}
 	raw, ok := root["hooks"]
 	if !ok {
-		return fmt.Errorf("missing hooks object")
+		return fmt.Errorf("missing hooks object: %w", errScopeUndefined)
 	}
 	encoded, err := json.Marshal(raw)
 	if err != nil {
@@ -460,7 +478,7 @@ func validateHooks(path string, specs []claudeHookSpec) error {
 	}
 	for _, spec := range specs {
 		if !hookSpecSatisfied(hooks[spec.Event], spec) {
-			return fmt.Errorf("missing %s hook %q", spec.Event, spec.Command)
+			return fmt.Errorf("missing %s hook %q: %w", spec.Event, spec.Command, errScopeUndefined)
 		}
 	}
 	return nil
@@ -570,7 +588,7 @@ func validateClaudeMCP(path string) error {
 	}
 	server, ok := servers["codemap"]
 	if !ok {
-		return fmt.Errorf("missing codemap MCP server; repair with `codemap setup --agent claude`")
+		return fmt.Errorf("missing codemap MCP server; repair with `codemap setup --agent claude`: %w", errScopeUndefined)
 	}
 	return validateDoctorMCPServer(server, "claude")
 }
@@ -591,7 +609,7 @@ func validateClaudeLocalMCP(projectRoot string) func(string) error {
 		}
 		projects, ok := payload["projects"].(map[string]any)
 		if !ok {
-			return fmt.Errorf("no project-scoped MCP servers registered")
+			return fmt.Errorf("no project-scoped MCP servers registered: %w", errScopeUndefined)
 		}
 		project, ok := projects[projectRoot].(map[string]any)
 		if !ok {
@@ -606,15 +624,15 @@ func validateClaudeLocalMCP(projectRoot string) func(string) error {
 			}
 		}
 		if !ok {
-			return fmt.Errorf("no MCP servers registered for %s", projectRoot)
+			return fmt.Errorf("no MCP servers registered for %s: %w", projectRoot, errScopeUndefined)
 		}
 		servers, ok := project["mcpServers"].(map[string]any)
 		if !ok {
-			return fmt.Errorf("no MCP servers registered for %s", projectRoot)
+			return fmt.Errorf("no MCP servers registered for %s: %w", projectRoot, errScopeUndefined)
 		}
 		server, ok := servers["codemap"]
 		if !ok {
-			return fmt.Errorf("missing codemap MCP server; repair with `codemap setup --agent claude`")
+			return fmt.Errorf("missing codemap MCP server; repair with `codemap setup --agent claude`: %w", errScopeUndefined)
 		}
 		return validateDoctorMCPServer(server, "claude")
 	}
@@ -631,11 +649,11 @@ func validateCodexMCP(path string) error {
 	}
 	servers, ok := payload["mcp_servers"].(map[string]any)
 	if !ok {
-		return fmt.Errorf("missing mcp_servers table")
+		return fmt.Errorf("missing mcp_servers table: %w", errScopeUndefined)
 	}
 	server, ok := servers["codemap"]
 	if !ok {
-		return fmt.Errorf("missing codemap MCP server; repair with `codemap setup --agent codex`")
+		return fmt.Errorf("missing codemap MCP server; repair with `codemap setup --agent codex`: %w", errScopeUndefined)
 	}
 	return validateDoctorMCPServer(server, "codex")
 }

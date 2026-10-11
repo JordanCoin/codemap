@@ -527,7 +527,7 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 
 		// Carry scan provenance into the deps project so a fail-closed scan
 		// never reads as an empty, complete dependency graph.
-		depsProject.Coverage = scanner.CoverageFromSources(fg.Coverage.Sources)
+		depsProject.Coverage = fg.Coverage.Contract()
 		// Show the same files the diff panel shows. A prefix of scan order was
 		// a different subset from the churn-ranked diff, so the two panels
 		// described different changes.
