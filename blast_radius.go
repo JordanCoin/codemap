@@ -445,7 +445,7 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 
 	cmd.EnsureProjectConfig(absRoot)
 	cfg := config.Load(absRoot)
-	filters := scanner.Filters{Only: cfg.Only, Exclude: cfg.Exclude}
+	filters := scanner.Filters{Only: cfg.Only, Exclude: cfg.Exclude, MaxFiles: cfg.MaxFiles}
 	gitCache := scanner.NewGitIgnoreCache(absRoot)
 	allFiles, err := scanner.ScanFiles(context.Background(), absRoot, gitCache, filters.Only, filters.Exclude)
 	if err != nil {
@@ -1419,6 +1419,14 @@ func renderImportersReportCLI(w io.Writer, report scanner.ImportersReport) {
 			// confident answer instead of a blind spot.
 			fmt.Fprintf(w, "%s: not indexed (under a hidden or excluded folder, or the path doesn't exist).\n", report.File)
 			fmt.Fprintln(w, "   codemap never scanned this file, so this is not a confirmed zero-importers result.")
+			renderCoverage(w, report.CoverageStatus, report.CoverageNotes)
+			return
+		}
+		if report.CoverageStatus == string(analysis.CoverageUnavailable) {
+			// No dependency scan ran (above the file bound, ast-grep missing),
+			// so there is no answer, and "No files import" would be a
+			// confident zero with nothing behind it (#186, #138).
+			fmt.Fprintf(w, "Importers of %s: unknown, no dependency scan ran.\n", report.File)
 			renderCoverage(w, report.CoverageStatus, report.CoverageNotes)
 			return
 		}

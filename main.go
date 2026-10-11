@@ -237,6 +237,7 @@ func main() {
 	diffMode := flag.Bool("diff", false, "Only show files changed vs main (or use --ref to specify branch)")
 	diffRef := flag.String("ref", "main", "Branch/ref to compare against (use with --diff)")
 	depthLimit := flag.Int("depth", 0, "Limit tree depth (0 = unlimited)")
+	maxFiles := flag.Int("max-files", 0, "Scan bound: files kept and the largest repo a dependency scan runs on (0 = config max_files or 50000, -1 = unbounded)")
 	onlyExts := flag.String("only", "", "Only show files with these extensions (comma-separated, e.g., 'swift,go')")
 	excludePatterns := flag.String("exclude", "", "Exclude files matching patterns (comma-separated, e.g., '.xcassets,Fonts')")
 	jsonMode := flag.Bool("json", false, "Output JSON (for Python renderer compatibility)")
@@ -422,7 +423,10 @@ func main() {
 	if *depthLimit == 0 && projCfg.Depth > 0 {
 		*depthLimit = projCfg.Depth
 	}
-	filters := scanner.Filters{Only: only, Exclude: exclude}
+	if *maxFiles == 0 {
+		*maxFiles = projCfg.MaxFiles
+	}
+	filters := scanner.Filters{Only: only, Exclude: exclude, MaxFiles: *maxFiles}
 
 	if *debugMode {
 		fmt.Fprintf(os.Stderr, "[debug] Root path: %s\n", root)
@@ -500,11 +504,15 @@ func main() {
 		mode = "skyline"
 	}
 
-	// Scan files
-	files, err := scanner.ScanFiles(context.Background(), root, gitCache, only, exclude)
+	// Scan files, keeping at most the bound and counting the rest (#186).
+	files, totalFiles, err := scanner.ScanFilesBounded(context.Background(), root, gitCache, filters)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error walking tree: %v\n", err)
 		os.Exit(1)
+	}
+	var scanBound *scanner.ScanBound
+	if totalFiles > len(files) {
+		scanBound = &scanner.ScanBound{Scanned: len(files), Total: totalFiles, Limit: limits.ScanFileBound(*maxFiles)}
 	}
 
 	// Filter to changed files if --diff specified (with diff info annotations)
@@ -532,6 +540,7 @@ func main() {
 		Depth:     *depthLimit,
 		Only:      only,
 		Exclude:   exclude,
+		ScanBound: scanBound,
 	}
 
 	// Render or output JSON
@@ -541,6 +550,9 @@ func main() {
 		render.Skyline(os.Stdout, project, *animateMode)
 	} else {
 		render.Tree(os.Stdout, project)
+	}
+	if !*jsonMode && scanBound != nil {
+		fmt.Printf("  Coverage: partial — %s\n", scanBound.Note())
 	}
 }
 
