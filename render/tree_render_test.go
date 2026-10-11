@@ -40,8 +40,8 @@ func TestTreeRendersDiffModeRemoteAndImpact(t *testing.T) {
 		"Top Extensions:",
 		"↳ https://github.com/acme/demo",
 		"src/app/",
-		"(new) new (+5)",
-		"✎ main (+8 -2)",
+		"(new) new.go (+5)",
+		"✎ main.go (+8 -2)",
 		"⚠ src/app/main.go is used by 1 other file",
 	}
 	for _, check := range checks {
@@ -91,9 +91,9 @@ func TestPrintTreeNodeMarksLargeAndChangedFiles(t *testing.T) {
 	out := stripTreeANSI(buf.String())
 
 	checks := []string{
-		"⭐️ big",
-		"✎ edit (+3 -1)",
-		"(new) new (+5)",
+		"⭐️ big.go",
+		"✎ edit.go (+3 -1)",
+		"(new) new.go (+5)",
 	}
 	for _, check := range checks {
 		if !strings.Contains(out, check) {
@@ -103,5 +103,28 @@ func TestPrintTreeNodeMarksLargeAndChangedFiles(t *testing.T) {
 
 	if strings.Contains(out, time.Now().Format(time.RFC3339)) {
 		t.Fatal("tree output should not contain timestamps")
+	}
+}
+
+// Multi-file directories dropped a shared extension while single-file
+// directories kept it, so the same tree showed "DetailView" and
+// "SomeManager.swift" and a reader could not copy a path out of it.
+func TestTreeKeepsExtensionsRegardlessOfSiblingCount(t *testing.T) {
+	project := scanner.Project{
+		Name: "demo",
+		Root: t.TempDir(),
+		Files: []scanner.FileInfo{
+			{Path: "Features/DetailView.swift", Ext: ".swift", Size: 10},
+			{Path: "Features/DetailViewModel.swift", Ext: ".swift", Size: 10},
+			{Path: "Integrations/SomeManager.swift", Ext: ".swift", Size: 10},
+		},
+	}
+	var buf bytes.Buffer
+	Tree(&buf, project)
+	out := stripTreeANSI(buf.String())
+	for _, name := range []string{"DetailView.swift", "DetailViewModel.swift", "SomeManager.swift"} {
+		if !strings.Contains(out, name) {
+			t.Fatalf("expected %q in tree output, got:\n%s", name, out)
+		}
 	}
 }
