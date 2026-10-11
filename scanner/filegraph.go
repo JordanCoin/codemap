@@ -302,6 +302,7 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 	}
 
 	// Resolve imports to files using universal fuzzy matching
+	unresolved := newUnresolvedImportTally(idx)
 	for _, a := range analyses {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -311,6 +312,7 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 		if a.Language == "rust" {
 			resolvedImports = resolveRustReferences(absRoot, a, idx, rustWorkspace)
 		} else {
+			sourceLanguage := DetectLanguage(a.Path)
 			for _, imp := range a.Imports {
 				if err := ctx.Err(); err != nil {
 					return nil, err
@@ -318,6 +320,7 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 				resolved := fuzzyResolveWithWorkspace(
 					imp, a.Path, idx, fg.Module, fg.PathAliases, fg.BaseURL, jsResolver, dartResolver,
 				)
+				unresolved.record(sourceLanguage, a.Path, imp, fg.PathAliases, len(resolved) > 0)
 				// A Go import names a package, and a package is every non-test
 				// .go file in its directory, so one import fans out to one edge
 				// per file. Dropping the multi-file case (as this once did, to
@@ -348,6 +351,9 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 	// and is reported mixed; the rest stay unavailable. Recording it here is
 	// what keeps --importers and blast-radius honest too: both read this
 	// graph's provenance.
+	for _, source := range unresolved.sources() {
+		fg.Coverage.AddSource(source)
+	}
 	resolved := map[string]bool{}
 	if addSwiftTypeReferenceEdges(absRoot, analyses, fg) {
 		resolved[symbolLevelImportLanguages["swift"]] = true
