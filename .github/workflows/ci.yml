@@ -15,6 +15,11 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         go-version: ['1.24', '1.25', '1.26']
+        include:
+          # One Windows test job: before #139 Windows only built, never ran
+          # tests, so a whole platform's correctness was asserted by a build.
+          - os: windows-latest
+            go-version: '1.26'
 
     steps:
       - uses: actions/checkout@v4
@@ -30,6 +35,8 @@ jobs:
             pip install ast-grep-cli
           elif [ "$RUNNER_OS" = "macOS" ]; then
             brew install ast-grep
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            pip install ast-grep-cli
           fi
         shell: bash
 

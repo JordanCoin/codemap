@@ -262,7 +262,7 @@ func TestFileContextUsesNativeKeysAndKeepsProjectRootsRequestLocal(t *testing.T)
 
 func TestFindFileResolvesHomeAndKeepsConfigRootsRequestLocal(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHome(t, home)
 	alpha := filepath.Join(home, "alpha")
 	beta := filepath.Join(home, "beta")
 	writeFindProject(t, alpha, `{"only":["go"]}`)
@@ -471,7 +471,7 @@ func TestValidateProjectPathRejectsInaccessiblePath(t *testing.T) {
 		t.Fatalf("unexpected rejection: %q", resultText(t, result))
 	}
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHome(t, home)
 	if err := os.MkdirAll(filepath.Join(home, "proj"), 0o755); err != nil {
 		t.Fatal(err)
 	}
