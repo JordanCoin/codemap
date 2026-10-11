@@ -791,8 +791,11 @@ func normalizeImport(imp string) string {
 	// Remove quotes
 	imp = strings.Trim(imp, "\"'`")
 
-	// Python dots to slashes: app.core.config -> app/core/config
-	if strings.Contains(imp, ".") && !strings.Contains(imp, "/") && !strings.HasPrefix(imp, ".") {
+	// Python dots to slashes: app.core.config -> app/core/config. A dot that
+	// introduces a source extension is a file name, not a module path:
+	// #include "b.h" and require_once 'b.php' became b/h and b/php, so every
+	// same-directory C, C++ and PHP include resolved to nothing.
+	if strings.Contains(imp, ".") && !strings.Contains(imp, "/") && !strings.HasPrefix(imp, ".") && extToLang[strings.ToLower(filepath.Ext(imp))] == "" {
 		imp = strings.ReplaceAll(imp, ".", string(filepath.Separator))
 	}
 
