@@ -12,10 +12,29 @@ import (
 
 	"codemap/config"
 	"codemap/internal/gitexclude"
+	"codemap/internal/projectpath"
 	"codemap/scanner"
 )
 
 var errConfigExists = errors.New("config already exists")
+
+// sharedConfigPrimary reports the primary checkout whose .codemap/ this root
+// reads when root is a linked git worktree. Config is deliberately shared
+// across worktrees (one policy per repository), but a command run inside the
+// worktree must say so and must never write into the other checkout (#152).
+func sharedConfigPrimary(root string) (string, bool) {
+	selection, err := projectpath.Select(root)
+	if err != nil || selection.Source != projectpath.SourceLinkedWorktree {
+		return "", false
+	}
+	return selection.SetupRoot, true
+}
+
+func printSharedConfigNote(root string) {
+	if primary, ok := sharedConfigPrimary(root); ok {
+		fmt.Printf("  (shared from primary checkout %s; %s is a linked worktree of it)\n", primary, root)
+	}
+}
 
 type configInitResult struct {
 	Path         string
@@ -182,6 +201,9 @@ func initProjectConfig(root string) (configInitResult, error) {
 	} else if err != nil && !os.IsNotExist(err) {
 		return result, err
 	}
+	if primary, ok := sharedConfigPrimary(root); ok {
+		return result, fmt.Errorf("%s is a linked worktree; its config lives in the primary checkout, run `codemap config init` in %s", root, primary)
+	}
 
 	gitCache := scanner.NewGitIgnoreCache(root)
 	files, err := scanner.ScanFiles(context.Background(), root, gitCache, nil, nil)
@@ -259,6 +281,10 @@ func configShow(root string) {
 	switch assessment.State {
 	case config.SetupStateMissing:
 		fmt.Println("No config file found.")
+		if primary, ok := sharedConfigPrimary(root); ok {
+			fmt.Printf("Run 'codemap config init' in the primary checkout %s to create %s\n", primary, cfgPath)
+			return
+		}
 		fmt.Printf("Run 'codemap config init' to create %s\n", cfgPath)
 		return
 	case config.SetupStateEmpty:
@@ -278,6 +304,7 @@ func configShow(root string) {
 
 	cfg := config.Load(root)
 	fmt.Printf("Config: %s\n", cfgPath)
+	printSharedConfigNote(root)
 	fmt.Println()
 	if len(cfg.Only) > 0 {
 		fmt.Printf("  only:    %s\n", strings.Join(cfg.Only, ", "))
