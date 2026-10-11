@@ -354,6 +354,7 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 	for _, source := range unresolved.sources() {
 		fg.Coverage.AddSource(source)
 	}
+	fg.Coverage.Issues = append(fg.Coverage.Issues, unresolved.issues...)
 	resolved := map[string]bool{}
 	if addSwiftTypeReferenceEdges(absRoot, analyses, fg) {
 		resolved[symbolLevelImportLanguages["swift"]] = true

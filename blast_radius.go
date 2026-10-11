@@ -515,7 +515,7 @@ func buildBlastRadiusBundle(absRoot, ref string, limits blastRadiusLimits) (blas
 
 		// Carry scan provenance into the deps project so a fail-closed scan
 		// never reads as an empty, complete dependency graph.
-		depsProject.Coverage = scanner.CoverageFromSources(fg.Coverage.Sources)
+		depsProject.Coverage = fg.Coverage.Contract()
 		depsCapped = capBlastRadiusDepsProject(depsProject, limits.MaxChangedFiles)
 
 		// Analyze the FULL changed set; capping only limits what is displayed,
