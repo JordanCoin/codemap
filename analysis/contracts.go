@@ -44,7 +44,10 @@ type Issue struct {
 type Coverage struct {
 	Status  CoverageStatus `json:"status"`
 	Sources []Source       `json:"sources"`
-	Issues  []Issue        `json:"issues"`
+	// Issues lists references the scanner tried and failed to resolve. It is
+	// omitted when empty: an empty list reads as "nothing was dropped", which
+	// is a finding this field cannot make (#137).
+	Issues []Issue `json:"issues,omitempty"`
 }
 
 func NormalizeCoverage(coverage Coverage) Coverage {
@@ -52,9 +55,6 @@ func NormalizeCoverage(coverage Coverage) Coverage {
 	coverage.Issues = slices.Clone(coverage.Issues)
 	if coverage.Sources == nil {
 		coverage.Sources = []Source{}
-	}
-	if coverage.Issues == nil {
-		coverage.Issues = []Issue{}
 	}
 	sort.Slice(coverage.Sources, func(i, j int) bool {
 		left, right := coverage.Sources[i], coverage.Sources[j]

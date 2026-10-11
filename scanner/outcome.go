@@ -41,6 +41,16 @@ type GraphCoverage struct {
 	Status  analysis.CoverageStatus `json:"status,omitempty"`
 	Notes   []string                `json:"notes,omitempty"`
 	Sources []analysis.Source       `json:"sources,omitempty"`
+	Issues  []analysis.Issue        `json:"issues,omitempty"`
+}
+
+// Contract converts graph provenance into the published coverage contract,
+// carrying the per-reference issues that CoverageFromSources (sources only)
+// cannot know about.
+func (c GraphCoverage) Contract() analysis.Coverage {
+	coverage := CoverageFromSources(c.Sources)
+	coverage.Issues = slices.Clone(c.Issues)
+	return analysis.NormalizeCoverage(coverage)
 }
 
 // AddSource records one scanner outcome and marks degraded results partial.
@@ -96,7 +106,7 @@ func hasUsableSource(sources []analysis.Source) bool {
 // A failed-only scan is unavailable; a usable fallback is partial; only an
 // all-authoritative set is complete.
 func CoverageFromSources(sources []analysis.Source) analysis.Coverage {
-	coverage := analysis.Coverage{Sources: append([]analysis.Source(nil), sources...), Issues: []analysis.Issue{}}
+	coverage := analysis.Coverage{Sources: append([]analysis.Source(nil), sources...)}
 	if len(sources) == 0 {
 		coverage.Status = analysis.CoverageUnavailable
 		return analysis.NormalizeCoverage(coverage)
