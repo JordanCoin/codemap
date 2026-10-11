@@ -433,7 +433,7 @@ codemap config show   # display current config
 }
 ```
 
-All fields are optional. `--only` and `--depth` override the config's values for one run; `--exclude` adds to the config's `exclude` list, so a config exclude keeps applying when you pass more patterns on the command line. When an MCP file search finds real matches hidden by `only`, codemap reports the paths and suggests which extensions to add — set `guidance.missing_extension_hints: false` to disable.
+All fields are optional. `--only` and `--depth` override the config's values for one run; `--exclude` adds to the config's `exclude` list, so a config exclude keeps applying when you pass more patterns on the command line. Exclude patterns follow `.gitignore` anchors: a bare name (`tool`) matches at any depth, `/tool` only the root entry, `tool/` only directories, and `/tool/` only the root directory, so a built binary at the root can be excluded without losing `cmd/tool/`. When an MCP file search finds real matches hidden by `only`, codemap reports the paths and suggests which extensions to add — set `guidance.missing_extension_hints: false` to disable.
 
 ## Skills
 
