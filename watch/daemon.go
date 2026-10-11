@@ -60,6 +60,9 @@ type Daemon struct {
 	// and results through the channels above.
 	dependencyBusy    bool
 	dependencyPending bool
+	// batch is non-nil only while handleBurst is flushing a checkout storm;
+	// handleEvent then records per-file work on it instead of doing it.
+	batch *burstBatch
 }
 
 type dependencyGraphSnapshot struct {
@@ -390,7 +393,7 @@ func (d *Daemon) refreshConfiguredFiles(resetIgnoreCache bool) error {
 		d.gitCache = gitCache
 	}
 	cfg := d.loadConfig()
-	files, err := scanner.ScanConfiguredFilesWithFilters(context.Background(), d.root, gitCache, scanner.Filters{Only: cfg.Only, Exclude: cfg.Exclude})
+	files, err := scanner.ScanConfiguredFilesWithFilters(context.Background(), d.root, gitCache, scanner.Filters{Only: cfg.Only, Exclude: cfg.Exclude, MaxFiles: cfg.MaxFiles})
 	if err != nil {
 		return err
 	}
@@ -491,7 +494,7 @@ func (d *Daemon) startDependencyWorker() {
 				return
 			case snapshot := <-d.dependencyRequests:
 				started := time.Now()
-				filters := scanner.Filters{Only: snapshot.config.Only, Exclude: snapshot.config.Exclude}
+				filters := scanner.Filters{Only: snapshot.config.Only, Exclude: snapshot.config.Exclude, MaxFiles: snapshot.config.MaxFiles}
 				graph, err := buildDependencyGraph(ctx, d.root, filters, buildFileGraph)
 				result := dependencyGraphResult{snapshot: snapshot, graph: graph, err: err, started: started}
 				select {

@@ -42,7 +42,7 @@ func resolveRustBuildScriptInput(fromFile, input string, idx *fileIndex, workspa
 		return ""
 	}
 	// Duplicate inventory entries make ownership ambiguous.
-	if idx.byExact[candidate] != 1 {
+	if idx.exact(candidate) != 1 {
 		return ""
 	}
 	return candidate

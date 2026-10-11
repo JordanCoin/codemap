@@ -251,6 +251,7 @@ subdirectory; relative setup paths resolve from the project root.
 | `--depth, -d <n>` | Limit tree depth (0 = unlimited) |
 | `--only <exts>` | Only include files with these extensions |
 | `--exclude <patterns>` | Exclude files matching patterns |
+| `--max-files <n>` | Scan bound: files kept by the tree, and the largest repo a dependency scan runs on (default 100000, or config `max_files`; `-1` = unbounded). Above it the output says `bounded: scanned N of M files` instead of presenting a prefix as the repo |
 | `--diff` | Show files changed vs main branch |
 | `--ref <branch>` | Branch to compare against (with `--diff`) |
 | `--deps` | Dependency flow mode |
@@ -408,6 +409,7 @@ codemap config show   # display current config
   "only": ["rs", "sh", "sql", "toml", "yml"],
   "exclude": ["docs/reference", "docs/research"],
   "depth": 4,
+  "max_files": 100000,
   "mode": "auto",
   "guidance": {
     "missing_extension_hints": true,

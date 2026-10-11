@@ -235,7 +235,7 @@ func runCollideSubcommand(args []string, launchDir string) int {
 
 	cmd.EnsureProjectConfig(resolvedRoot)
 	cfg := config.Load(resolvedRoot)
-	filters := scanner.Filters{Only: cfg.Only, Exclude: cfg.Exclude}
+	filters := scanner.Filters{Only: cfg.Only, Exclude: cfg.Exclude, MaxFiles: cfg.MaxFiles}
 	// The scan outcome is kept rather than discarded: a package-resolved
 	// language needs the raw import strings, which the file graph does not
 	// preserve. BuildFileGraphFromOutcome reuses this same scan, so keeping it

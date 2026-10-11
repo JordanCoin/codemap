@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -21,6 +22,9 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	codemapTestBinaryPath = filepath.Join(tmpDir, "codemap_test_binary")
+	if runtime.GOOS == "windows" {
+		codemapTestBinaryPath += ".exe"
+	}
 
 	// Build the binary for integration tests
 	cmd := exec.Command("go", "build", "-o", codemapTestBinaryPath, ".")

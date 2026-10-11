@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"codemap/analysis"
 	"codemap/config"
 	"codemap/find"
 	"codemap/handoff"
@@ -399,9 +400,27 @@ func mustSchemaFor[T any]() *jsonschema.Schema {
 	return schema
 }
 
+// expandHome resolves a leading "~" against the user's home directory.
+// os.UserHomeDir reads USERPROFILE on Windows, where HOME is normally unset;
+// joining os.Getenv("HOME") there produced a relative path that filepath.Abs
+// resolved against the server's cwd, so "~/proj" could silently analyse the
+// wrong project. When no home is known the caller gets an error naming the
+// path instead of a guess.
+func expandHome(path string) (string, error) {
+	if path != "~" && !strings.HasPrefix(path, "~/") && !strings.HasPrefix(path, `~\`) {
+		return path, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("cannot expand %q: %w", path, err)
+	}
+	return filepath.Join(home, strings.TrimLeft(path[1:], `/\`)), nil
+}
+
 func validateProjectPath(path string) (string, *mcp.CallToolResult) {
-	if strings.HasPrefix(path, "~/") {
-		path = filepath.Join(os.Getenv("HOME"), path[2:])
+	path, err := expandHome(path)
+	if err != nil {
+		return "", errorResult("Invalid path: " + err.Error())
 	}
 	absPath, err := filepath.Abs(path)
 	if err != nil {
@@ -642,7 +661,7 @@ type EmptyInput struct{}
 
 func handleStatus(ctx context.Context, req *mcp.CallToolRequest, input EmptyInput) (*mcp.CallToolResult, any, error) {
 	cwd, _ := os.Getwd()
-	home := os.Getenv("HOME")
+	home, _ := os.UserHomeDir()
 
 	// Check active watchers
 	watchersMu.RLock()
@@ -693,14 +712,7 @@ func handleListProjects(ctx context.Context, req *mcp.CallToolRequest, input Lis
 	if cancelled := cancellationResult(ctx, "Project discovery"); cancelled != nil {
 		return cancelled, nil, nil
 	}
-	// Expand ~ to home directory
-	path := input.Path
-	if strings.HasPrefix(path, "~/") {
-		home := os.Getenv("HOME")
-		path = filepath.Join(home, path[2:])
-	}
-
-	absPath, invalid := validateProjectPath(path)
+	absPath, invalid := validateProjectPath(input.Path)
 	if invalid != nil {
 		return invalid, nil, nil
 	}
@@ -940,6 +952,10 @@ func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input Imp
 			structured.NotIndexedReason = why.Reason
 			return textResult(notIndexedText(file, why, fg)), structured, nil
 		}
+		if fg.Coverage.EffectiveStatus() == analysis.CoverageUnavailable {
+			// No scan ran (file bound, ast-grep missing): unknown, not zero.
+			empty = fmt.Sprintf("Importers of '%s': unknown, no dependency scan ran", file)
+		}
 		return textResult(empty + mcpCoverageText(fg)), structured, nil
 	}
 
@@ -982,7 +998,8 @@ func normalizeImporterFile(root, file string) string {
 			file = relative
 		}
 	}
-	return filepath.Clean(file)
+	// Graph keys are forward-slashed on every OS (scanner.keyPath).
+	return filepath.ToSlash(filepath.Clean(file))
 }
 
 // notIndexedText is the MCP answer for a file the graph cannot vouch for. It

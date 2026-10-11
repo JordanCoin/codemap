@@ -415,7 +415,7 @@ func resolveManifestTarget(root, target string, idx *fileIndex, sourceLanguage s
 	if !ok {
 		return nil
 	}
-	if idx.byExact[localPath] == 1 && languagesCompatible(sourceLanguage, DetectLanguage(localPath)) {
+	if idx.exact(localPath) == 1 && languagesCompatible(sourceLanguage, DetectLanguage(localPath)) {
 		return []string{localPath}
 	}
 	return nil

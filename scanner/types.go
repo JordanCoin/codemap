@@ -35,6 +35,24 @@ type Project struct {
 	// DiffTotals describes the whole diff when Files holds only a shown
 	// subset, so a renderer never presents the subset's counts as the total.
 	DiffTotals *DiffTotals `json:"diff_totals,omitempty"`
+	// ScanBound is set when the walk kept fewer files than matched, so Files
+	// is a prefix of the repository, not the repository (#186).
+	ScanBound *ScanBound `json:"scan_bound,omitempty"`
+}
+
+// ScanBound records a walk that stopped keeping files at Limit.
+type ScanBound struct {
+	Scanned int `json:"scanned"`
+	Total   int `json:"total"`
+	Limit   int `json:"limit"`
+}
+
+// Note renders the bound as the coverage line every mode prints.
+func (b *ScanBound) Note() string {
+	if b == nil {
+		return ""
+	}
+	return ScanBoundNote(b.Scanned, b.Total, b.Limit)
 }
 
 // DiffTotals are the counts over every changed file, shown or not.
@@ -371,6 +389,32 @@ var LangDisplay = map[string]string{
 }
 
 // dedupe removes duplicate strings from a slice
+// keyPath is the one spelling of a project-relative path that the file
+// graph, the file index, and every resolver agree on: cleaned and
+// forward-slashed. filepath.Clean, Join and Dir emit the native separator,
+// so on Windows a key built by one of them never matched an import written
+// with "/" and every file reported no importers. Normalise at the boundary,
+// on both the stored key and the probe, and the rest of the code can keep
+// using filepath for filesystem access.
+func keyPath(p string) string {
+	if p == "" {
+		return ""
+	}
+	return filepath.ToSlash(filepath.Clean(p))
+}
+
+// slashPaths returns keyPath applied to every element.
+func slashPaths(items []string) []string {
+	if len(items) == 0 {
+		return items
+	}
+	out := make([]string, len(items))
+	for i, item := range items {
+		out[i] = keyPath(item)
+	}
+	return out
+}
+
 func dedupe(items []string) []string {
 	seen := make(map[string]bool)
 	result := make([]string, 0, len(items))

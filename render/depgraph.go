@@ -63,7 +63,13 @@ func Depgraph(ctx context.Context, w io.Writer, project scanner.DepsProject) {
 	projectName := filepath.Base(project.Root)
 
 	if len(files) == 0 {
-		fmt.Fprintln(w, "  No source files found.")
+		if refusedByScanBound(project.Coverage) {
+			// The repo is above the file bound, so nothing was scanned and
+			// "no source files" is not what happened (#186).
+			fmt.Fprintln(w, "  Dependency scan not run: repository is above the file bound.")
+		} else {
+			fmt.Fprintln(w, "  No source files found.")
+		}
 		renderCoverageLine(w, project.Coverage)
 		return
 	}
@@ -459,6 +465,20 @@ func pathDir(path string) string {
 
 // renderCoverageLine surfaces degraded scan coverage in text output so a
 // fail-closed or partial scan never reads as a complete, empty graph.
+// refusedByScanBound reports whether coverage is unavailable because the
+// scanner refused to run above the file bound (its note starts "bounded: ").
+func refusedByScanBound(coverage analysis.Coverage) bool {
+	if coverage.Status != analysis.CoverageUnavailable {
+		return false
+	}
+	for _, source := range coverage.Sources {
+		if source.Name == "scan-bound" {
+			return true
+		}
+	}
+	return false
+}
+
 func renderCoverageLine(w io.Writer, coverage analysis.Coverage) {
 	if coverage.Status == "" || coverage.Status == analysis.CoverageComplete {
 		return

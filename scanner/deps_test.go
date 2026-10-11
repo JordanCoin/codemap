@@ -536,9 +536,9 @@ func TestDepsNormalizeImport(t *testing.T) {
 		want string
 	}{
 		{name: "trims quotes", imp: "\"pkg/util\"", want: "pkg/util"},
-		{name: "python dotted path", imp: "app.core.config", want: filepath.Join("app", "core", "config")},
-		{name: "crate path", imp: "crate::net::http", want: filepath.Join("net", "http")},
-		{name: "super path", imp: "super::service::api", want: filepath.Join("super", "service", "api")},
+		{name: "python dotted path", imp: "app.core.config", want: "app/core/config"},
+		{name: "crate path", imp: "crate::net::http", want: "net/http"},
+		{name: "super path", imp: "super::service::api", want: "super/service/api"},
 		{name: "already slash path", imp: "src/util", want: "src/util"},
 	}
 
