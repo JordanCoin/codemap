@@ -541,6 +541,12 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 				fileMap[relPath].Imports = append(fileMap[relPath].Imports, names...)
 				continue
 			}
+			// "import pkg.mod as alias" captures the alias inside $PATH, so
+			// the resolver looked for "pkg.mod as alias" and found nothing:
+			// every aliased Python import was a missing edge.
+			if fileMap[relPath].Language == "python" {
+				mod, _, _ = strings.Cut(mod, " as ")
+			}
 			if mod != "" {
 				fileMap[relPath].Imports = append(fileMap[relPath].Imports, mod)
 			}

@@ -27,6 +27,7 @@ type jsPackageWorkspace struct {
 type jsWorkspacePackage struct {
 	root         string
 	name         string
+	dependencies map[string]bool // every package.json dependency field, by name
 	exports      jsSpecifierMap
 	hasExports   bool
 	entryTargets []string
@@ -377,6 +378,24 @@ func (r *jsWorkspaceResolver) nearestPackageScope(fromFile string) *jsPackageSco
 	return nil
 }
 
+// declaresDependency reports whether the package.json nearest to fromFile
+// lists the package a bare specifier names ("@scope/name/sub" -> "@scope/name").
+func (r *jsWorkspaceResolver) declaresDependency(fromFile, imp string) bool {
+	if r == nil {
+		return false
+	}
+	scope := r.nearestPackageScope(fromFile)
+	if scope == nil || scope.pkg == nil {
+		return false
+	}
+	parts := strings.SplitN(imp, "/", 3)
+	name := parts[0]
+	if strings.HasPrefix(imp, "@") && len(parts) > 1 {
+		name = parts[0] + "/" + parts[1]
+	}
+	return scope.pkg.dependencies[name]
+}
+
 func (r *jsWorkspaceResolver) nearestDenoScope(fromFile string) *jsImportScope {
 	for i := range r.denoScopes {
 		if pathContains(r.denoScopes[i].root, fromFile) {
@@ -505,7 +524,14 @@ func (m jsSpecifierMap) resolve(specifier string) (jsSpecifierTarget, bool) {
 
 func parsePackageManifest(root string, doc map[string]any) *jsWorkspaceManifest {
 	name, _ := doc["name"].(string)
-	pkg := &jsWorkspacePackage{root: root, name: name}
+	pkg := &jsWorkspacePackage{root: root, name: name, dependencies: map[string]bool{}}
+	for _, field := range []string{"dependencies", "devDependencies", "peerDependencies", "optionalDependencies"} {
+		if deps, ok := doc[field].(map[string]any); ok {
+			for dep := range deps {
+				pkg.dependencies[dep] = true
+			}
+		}
+	}
 	pkg.exports, pkg.hasExports = parseExports(doc)
 	pkg.entryTargets = unambiguousEntryTargets(doc)
 	return &jsWorkspaceManifest{

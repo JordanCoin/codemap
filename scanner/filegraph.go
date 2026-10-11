@@ -320,7 +320,11 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 				resolved := fuzzyResolveWithWorkspace(
 					imp, a.Path, idx, fg.Module, fg.PathAliases, fg.BaseURL, jsResolver, dartResolver,
 				)
-				unresolved.record(sourceLanguage, a.Path, imp, fg.PathAliases, len(resolved) > 0)
+				// A package the nearest package.json declares is external even
+				// when a tsconfig alias would also match it.
+				if !jsResolver.declaresDependency(a.Path, strings.Trim(imp, "\"'`")) {
+					unresolved.record(sourceLanguage, a.Path, imp, fg.PathAliases, len(resolved) > 0)
+				}
 				// A Go import names a package, and a package is every non-test
 				// .go file in its directory, so one import fans out to one edge
 				// per file. Dropping the multi-file case (as this once did, to
