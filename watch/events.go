@@ -292,19 +292,14 @@ func (d *Daemon) eventLoop() {
 		}
 	}()
 
-	// Burst state: arrivals is the recent source-event timestamps used to
-	// detect a storm; queue holds the storm's events, last op per path, in
-	// first-seen order, until the burst settles or hits its ceiling.
-	var (
-		arrivals   []time.Time
-		queue      []fsnotify.Event
-		queued     map[string]int
-		burstStart time.Time
-		burstTimer = time.NewTimer(time.Hour)
-		burstC     <-chan time.Time
-	)
+	// A checkout storm is detected and queued by burstDetector, which takes
+	// the clock from this loop so tests can drive it deterministically. The
+	// loop owns only the timer that fires the flush.
+	var burst burstDetector
+	burstTimer := time.NewTimer(time.Hour)
 	burstTimer.Stop()
 	defer burstTimer.Stop()
+	var burstC <-chan time.Time
 	armBurst := func(delay time.Duration) {
 		if !burstTimer.Stop() {
 			select {
@@ -315,44 +310,13 @@ func (d *Daemon) eventLoop() {
 		burstTimer.Reset(delay)
 		burstC = burstTimer.C
 	}
-	enqueue := func(event fsnotify.Event, now time.Time) {
-		if queued == nil {
-			queued = make(map[string]int)
-			burstStart = now
-		}
-		if i, ok := queued[event.Name]; ok {
-			queue[i] = event
-		} else {
-			queued[event.Name] = len(queue)
-			queue = append(queue, event)
-		}
-		if remaining := burstCeiling - now.Sub(burstStart); remaining < burstSettle {
-			armBurst(max(remaining, 0))
-		} else {
-			armBurst(burstSettle)
-		}
-	}
 	flushBurst := func() {
 		burstC = nil
-		events := queue
-		queue, queued = nil, nil
-		arrivals = arrivals[:0]
-		d.handleBurst(events)
-	}
-	inBurst := func(now time.Time) bool {
-		if queued != nil {
-			return true
-		}
-		cut := 0
-		for cut < len(arrivals) && now.Sub(arrivals[cut]) > burstDetectWindow {
-			cut++
-		}
-		arrivals = append(arrivals[cut:], now)
-		return len(arrivals) > burstThreshold
+		d.handleBurst(burst.take())
 	}
 	defer func() {
-		if len(queue) > 0 {
-			d.handleBurst(queue)
+		if burst.pending() {
+			d.handleBurst(burst.take())
 		}
 	}()
 
@@ -432,9 +396,9 @@ func (d *Daemon) eventLoop() {
 				continue
 			}
 
-			if inBurst(now) {
+			if burst.observe(now) {
 				debouncer.cancelPending(event.Name)
-				enqueue(event, now)
+				armBurst(burst.enqueue(event, now))
 				continue
 			}
 
