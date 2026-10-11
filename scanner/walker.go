@@ -442,7 +442,15 @@ func ScanForDeps(ctx context.Context, root string, filters Filters) (ScanOutcome
 	if err != nil {
 		return outcome, err
 	}
-	return appendCUEOutcome(ctx, root, filters, outcome)
+	outcome, err = appendCUEOutcome(ctx, root, filters, outcome)
+	if err != nil {
+		return outcome, err
+	}
+	// ast-grep emits matches in worker-completion order. blast-radius caps the
+	// deps section to the first N analyses, so without a fixed order the same
+	// diff counted a different set of files on every run (#153).
+	sort.Slice(outcome.Analyses, func(i, j int) bool { return outcome.Analyses[i].Path < outcome.Analyses[j].Path })
+	return outcome, nil
 }
 
 func appendCUEOutcome(ctx context.Context, root string, filters Filters, outcome ScanOutcome) (ScanOutcome, error) {
