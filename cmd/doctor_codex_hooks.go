@@ -9,6 +9,7 @@ import (
 	"io"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
 	"codemap/internal/buildinfo"
@@ -21,6 +22,7 @@ type codexHookError struct {
 
 type codexHookMetadata struct {
 	Command     string `json:"command"`
+	EventName   string `json:"eventName"`
 	Enabled     bool   `json:"enabled"`
 	HandlerType string `json:"handlerType"`
 	TrustStatus string `json:"trustStatus"`
@@ -53,7 +55,9 @@ func validateCodexHookTrust(root string) error {
 		}
 		owned := -1
 		for i, spec := range recommendedCodexHooks {
-			if _, ok := migrateOwnedHookCommand(hook.Command, spec.Command); ok {
+			// Event must match too: the same command under Stop is the
+			// per-turn install from before #225, and setup must repair it.
+			if _, ok := migrateOwnedHookCommand(hook.Command, spec.Command); ok && strings.EqualFold(hook.EventName, spec.Event) {
 				owned = i
 				break
 			}

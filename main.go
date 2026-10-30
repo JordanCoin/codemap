@@ -114,6 +114,9 @@ func main() {
 				root = arg
 			}
 		}
+		// The flag names the agent; inherited CLAUDE_CODE/CODEX from a parent
+		// session must not relabel it (#226).
+		_ = os.Setenv("CODEMAP_HOOK_AGENT", hookAgent)
 		if hookIntegration != "" {
 			valid := (hookIntegration == "claude-setup" && hookAgent == "claude") ||
 				(hookIntegration == "codex-setup" && hookAgent == "codex")
@@ -1185,14 +1188,34 @@ func runDaemon(root string) (runErr error) {
 		}
 		readyPublished = true
 	}
-	// Wait for stop signal (SIGTERM or state file removal)
+	// Wait for a stop signal, or for the root to disappear (#227): a removed
+	// worktree never sends SessionEnd, so the daemon must notice on its own.
 	sigChan := make(chan os.Signal, 1)
 	notifySignals(sigChan, syscall.SIGTERM, syscall.SIGINT)
-	<-sigChan
+	waitForDaemonExit(root, sigChan, daemonRootPollInterval)
 
 	daemon.Stop()
 	_ = watch.RemoveProcessPID(root, os.Getpid())
 	return nil
+}
+
+const daemonRootPollInterval = 30 * time.Second
+
+// waitForDaemonExit returns when a signal arrives or the project root no
+// longer exists. A transient stat error is not a removal.
+func waitForDaemonExit(root string, sig <-chan os.Signal, poll time.Duration) {
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-sig:
+			return
+		case <-ticker.C:
+			if _, err := os.Stat(root); os.IsNotExist(err) {
+				return
+			}
+		}
+	}
 }
 
 func publishWatchReadiness(path string, readinessErr error) error {

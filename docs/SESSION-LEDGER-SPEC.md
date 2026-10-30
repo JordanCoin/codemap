@@ -37,7 +37,7 @@ What exists today [C-3]:
 - Hook commands run under `DefaultHookTimeout = 8s` (`cmd/hooks.go:38`)
   [C-26].
 - `codemap setup` wires Claude `SessionStart`, `PreCompact`, `SessionEnd`
-  and Codex `SessionStart`, `PreCompact`, `Stop` (`cmd/setup.go:106-123`)
+  and Codex `SessionStart`, `PreCompact`, `SessionEnd` (`cmd/setup.go:106-125`)
   [C-24].
 
 The gap is narrower than v0 said: session-attributed evidence about

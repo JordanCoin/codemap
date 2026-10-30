@@ -118,3 +118,18 @@ func TestClaudePostEditKeepsPlainOutput(t *testing.T) {
 		t.Fatalf("Claude-mode pathless post-edit printed %q, want nothing", stdout)
 	}
 }
+
+// TestDetectAgentIDPrefersExplicitHookAgent is #226: the --agent flag the
+// hook entrypoint records beats CLAUDE_CODE/CODEX inherited from a parent.
+func TestDetectAgentIDPrefersExplicitHookAgent(t *testing.T) {
+	t.Setenv("CLAUDE_CODE", "1")
+	t.Setenv("CODEX", "1")
+	t.Setenv("CODEMAP_HOOK_AGENT", "codex")
+	if got := detectAgentID(); got != "codex" {
+		t.Fatalf("detectAgentID() = %q, want codex", got)
+	}
+	t.Setenv("CODEMAP_HOOK_AGENT", "claude")
+	if got := detectAgentID(); got != "claude-code" {
+		t.Fatalf("detectAgentID() = %q, want claude-code", got)
+	}
+}

@@ -1719,6 +1719,14 @@ func writeSessionHandoffContext(ctx context.Context, root string, state *watch.S
 
 // detectAgentID returns the current AI agent based on environment signals.
 func detectAgentID() string {
+	// The hook entrypoint records the agent named on its command line; it
+	// wins over environment inherited from whichever agent launched this one.
+	switch os.Getenv("CODEMAP_HOOK_AGENT") {
+	case "claude":
+		return "claude-code"
+	case "codex":
+		return "codex"
+	}
 	// Claude Code sets CLAUDE_CODE=1
 	if os.Getenv("CLAUDE_CODE") == "1" || os.Getenv("CLAUDE_CODE_ENTRYPOINT") != "" {
 		return "claude-code"
