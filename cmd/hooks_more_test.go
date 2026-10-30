@@ -554,7 +554,10 @@ func TestHookPromptSubmitShowsContextAndProgress(t *testing.T) {
 	})
 }
 
-func TestHookPromptSubmitInjectsConfigSetupSkillWhenConfigMissing(t *testing.T) {
+// #224: a prompt in a directory that is not a git repo (for example $HOME)
+// must not inject the config-setup skill or the blocking setup line; there is
+// no project to configure.
+func TestHookPromptSubmitStaysQuietAboutConfigOutsideGitRepo(t *testing.T) {
 	root := t.TempDir()
 
 	withStdinInput(t, mustJSONInput(t, map[string]string{
@@ -565,18 +568,33 @@ func TestHookPromptSubmitInjectsConfigSetupSkillWhenConfigMissing(t *testing.T) 
 		if hookErr != nil {
 			t.Fatalf("hookPromptSubmit() error: %v", hookErr)
 		}
-		if !strings.Contains(out, `"name":"config-setup"`) {
-			t.Fatalf("expected config-setup skill marker, got:\n%s", out)
+		for _, banned := range []string{`"name":"config-setup"`, "Codemap setup is not finished"} {
+			if strings.Contains(out, banned) {
+				t.Fatalf("non-git root must not nag about config-setup (%q), got:\n%s", banned, out)
+			}
 		}
-		if !strings.Contains(out, "Skills matched: config-setup") {
-			t.Fatalf("expected config-setup skill hint, got:\n%s", out)
+		if _, err := os.Stat(filepath.Join(root, ".codemap")); !os.IsNotExist(err) {
+			t.Fatalf("hook must not create .codemap/ outside a git repo (stat err=%v)", err)
 		}
 	})
 }
 
 func TestShowConfigSetupHint(t *testing.T) {
-	t.Run("missing config emits setup hint", func(t *testing.T) {
+	t.Run("missing config outside a git repo stays quiet", func(t *testing.T) {
+		// #224: $HOME is not a project; nagging there tells the agent to
+		// write .codemap/config.json into the home directory.
 		out := captureOutput(func() { showConfigSetupHint(t.TempDir()) })
+		if strings.TrimSpace(out) != "" {
+			t.Fatalf("expected no setup hint outside a git repo, got:\n%s", out)
+		}
+	})
+
+	t.Run("missing config emits setup hint", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		out := captureOutput(func() { showConfigSetupHint(root) })
 		if !strings.Contains(out, "codemap:config") {
 			t.Fatalf("expected config marker, got:\n%s", out)
 		}
@@ -985,7 +1003,9 @@ func TestDaemonCommandHelpersAndMultiRepoShellout(t *testing.T) {
 	t.Run("multi repo start emits setup hints for child repos needing config", func(t *testing.T) {
 		root := t.TempDir()
 		for _, repo := range []string{"svc-a", "svc-b"} {
-			repoPath := filepath.Join(root, repo)
+			// Child repos are git checkouts (findChildRepos requires .git);
+			// the hint stays quiet for non-repos since #224.
+			repoPath := filepath.Join(root, repo, ".git")
 			if err := os.MkdirAll(repoPath, 0o755); err != nil {
 				t.Fatal(err)
 			}

@@ -357,8 +357,8 @@ func checkScopedFile(label string, scopes []doctorScope, validate func(string) e
 	// entry shadow a healthy user one while doctor said OK (#109). When every
 	// scope is undefined, prefer naming one whose file exists over one whose
 	// file is simply absent: the former is the user's actual problem.
-	var effective, absent *doctorScope
-	var effectiveErr, absentErr error
+	var effective, undefined, absent *doctorScope
+	var effectiveErr, undefinedErr, absentErr error
 
 	for index := range scopes {
 		scope := scopes[index]
@@ -389,8 +389,8 @@ func checkScopedFile(label string, scopes []doctorScope, validate func(string) e
 			continue
 		}
 		if errors.Is(err, errScopeUndefined) {
-			if effective == nil && absent == nil {
-				absent, absentErr = &scopes[index], err
+			if undefined == nil {
+				undefined, undefinedErr = &scopes[index], err
 			}
 			continue
 		}
@@ -400,11 +400,16 @@ func checkScopedFile(label string, scopes []doctorScope, validate func(string) e
 	}
 
 	(*failures)++
+	// An existing file that lacks the entry is the user's actual problem; an
+	// absent file in an earlier scope only hides it (reported a user-scope
+	// "missing SessionEnd hook" as a project-scope "no such file").
 	switch {
 	case effective != nil:
-		fmt.Printf("MISS %s: %s (%v)\n", label, effective.path, effectiveErr)
+		fmt.Printf("MISS %s: %s (%s scope: %v)\n", label, effective.path, effective.name, effectiveErr)
+	case undefined != nil:
+		fmt.Printf("MISS %s: %s (%s scope: %v)\n", label, undefined.path, undefined.name, undefinedErr)
 	case absent != nil:
-		fmt.Printf("MISS %s: %s (%v)\n", label, absent.path, absentErr)
+		fmt.Printf("MISS %s: %s (%s scope: %v)\n", label, absent.path, absent.name, absentErr)
 	default:
 		fmt.Printf("MISS %s: no configuration scope available\n", label)
 	}
@@ -675,22 +680,34 @@ func validateCodexPluginMCP(path string) error {
 	if !ok {
 		return fmt.Errorf("missing codemap MCP server; repair with `codemap plugin install`")
 	}
-	return validateDoctorMCPServer(server, "codex")
+	// The plugin manifest is owned by `codemap plugin install`, whatever
+	// shape its entry is in (an older bundle shipped a bash wrapper); setup
+	// never touches this file, so that hint would send the user nowhere.
+	return validateDoctorMCPServerRepair(server, "codex", doctorRepairCommand("codex", "codex-plugin"))
 }
 
 func validateDoctorMCPServer(raw any, agent string) error {
+	return validateDoctorMCPServerRepair(raw, agent, "")
+}
+
+// validateDoctorMCPServerRepair validates a codemap MCP entry; repair names the
+// command that owns the file, or "" to derive it from the entry's integration.
+func validateDoctorMCPServerRepair(raw any, agent, repair string) error {
 	launch, err := parseDoctorManagedLaunch(raw, agent)
+	if repair == "" {
+		repair = doctorRepairCommand(agent, launch.integration)
+	}
 	if err != nil {
-		return fmt.Errorf("%w; repair with `%s`", err, doctorRepairCommand(agent, launch.integration))
+		return fmt.Errorf("%w; repair with `%s`", err, repair)
 	}
 	if _, err := validateDoctorExecutable(launch.command, runtime.GOOS); err != nil {
-		return fmt.Errorf("%w; repair with `%s`", err, doctorRepairCommand(agent, launch.integration))
+		return fmt.Errorf("%w; repair with `%s`", err, repair)
 	}
 	if err := doctorVersionProbe(launch); err != nil {
-		return fmt.Errorf("version probe failed for %q: %w; repair with `%s`", launch.command, err, doctorRepairCommand(agent, launch.integration))
+		return fmt.Errorf("version probe failed for %q: %w; repair with `%s`", launch.command, err, repair)
 	}
 	if err := doctorMCPProbe(launch); err != nil {
-		return fmt.Errorf("MCP initialize probe failed for %q: %w; repair with `%s`", launch.command, err, doctorRepairCommand(agent, launch.integration))
+		return fmt.Errorf("MCP initialize probe failed for %q: %w; repair with `%s`", launch.command, err, repair)
 	}
 	return nil
 }

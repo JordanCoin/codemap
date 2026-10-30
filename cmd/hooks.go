@@ -1171,9 +1171,26 @@ func shellQuoteIfNeeded(value string) string {
 	return value
 }
 
-func injectConfigSetupSkill(root string, idx *skills.SkillIndex, matches []skills.MatchResult) []skills.MatchResult {
+// setupNeedsAttention is config.AssessSetup gated for #224: a directory with
+// no .git and no config (such as $HOME) is not a project, so there is nothing
+// to set up and the hooks stay quiet instead of telling the agent to write
+// .codemap/config.json there on every prompt.
+func setupNeedsAttention(root string) (config.SetupAssessment, bool) {
 	assessment := config.AssessSetup(root)
 	if !assessment.NeedsAttention() {
+		return assessment, false
+	}
+	if assessment.State == config.SetupStateMissing {
+		if _, err := os.Stat(filepath.Join(root, ".git")); err != nil {
+			return assessment, false
+		}
+	}
+	return assessment, true
+}
+
+func injectConfigSetupSkill(root string, idx *skills.SkillIndex, matches []skills.MatchResult) []skills.MatchResult {
+	assessment, needs := setupNeedsAttention(root)
+	if !needs {
 		return matches
 	}
 
@@ -1205,8 +1222,8 @@ func injectConfigSetupSkill(root string, idx *skills.SkillIndex, matches []skill
 }
 
 func showConfigSetupHint(root string) {
-	assessment := config.AssessSetup(root)
-	if !assessment.NeedsAttention() {
+	assessment, needs := setupNeedsAttention(root)
+	if !needs {
 		return
 	}
 
