@@ -1,8 +1,10 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"codemap/scanner"
 )
@@ -112,5 +114,30 @@ func TestSubcommandHelpReturnsSuccess(t *testing.T) {
 				t.Errorf("%v omitted usage:\n%s%s", args, stdout, stderr)
 			}
 		}
+	}
+}
+
+// TestWaitForDaemonExitReturnsWhenRootRemoved is #227: a daemon whose root
+// (typically an agent worktree) is deleted must exit without a signal.
+func TestWaitForDaemonExitReturnsWhenRootRemoved(t *testing.T) {
+	root := t.TempDir()
+	done := make(chan struct{})
+	go func() {
+		waitForDaemonExit(root, make(chan os.Signal), 5*time.Millisecond)
+		close(done)
+	}()
+	time.Sleep(20 * time.Millisecond)
+	select {
+	case <-done:
+		t.Fatal("waitForDaemonExit returned while the root still existed")
+	default:
+	}
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("waitForDaemonExit did not notice the removed root")
 	}
 }

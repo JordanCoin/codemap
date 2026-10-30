@@ -231,7 +231,7 @@ func TestEnsureCodexHooksReconcilesMixedLegacyAndCanonicalConfig(t *testing.T) {
 					map[string]any{"type": "command", "command": "screenshot --capture"},
 				}},
 			},
-			"SessionEnd": []any{hookTestEntry("", "codemap hook session-stop")},
+			"SessionEnd": []any{hookTestEntry("", "codemap hook session-stop"), hookTestEntry("", specs[5].Command)},
 			"Stop":       []any{hookTestEntry("", specs[5].Command)},
 		},
 	}
@@ -241,8 +241,8 @@ func TestEnsureCodexHooksReconcilesMixedLegacyAndCanonicalConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ensureCodexHooksWithExecutable: %v", err)
 	}
-	if result.AddedHooks != 0 || result.RemovedHooks != 6 || !result.WroteFile {
-		t.Fatalf("result = %+v, want AddedHooks=0 RemovedHooks=6 WroteFile=true", result)
+	if result.AddedHooks != 0 || result.RemovedHooks != 7 || !result.WroteFile {
+		t.Fatalf("result = %+v, want AddedHooks=0 RemovedHooks=7 WroteFile=true", result)
 	}
 	settings := readSettingsFile(t, settingsPath)
 	precisionSettings, err := decodeJSONObject(mustReadFile(t, settingsPath))
@@ -253,11 +253,11 @@ func TestEnsureCodexHooksReconcilesMixedLegacyAndCanonicalConfig(t *testing.T) {
 		t.Fatalf("unknown precision changed: %#v", precisionSettings["unknown"])
 	}
 	assertCodexCanonicalHooks(t, readHooksMap(t, settings), specs)
-	if entries := readHooksMap(t, settings)["SessionEnd"]; len(entries) != 0 {
+	if entries := readHooksMap(t, settings)["Stop"]; len(entries) != 0 {
 		for _, entry := range entries {
 			for _, hook := range entry.Hooks {
 				if strings.Contains(hook.Command, "codemap") {
-					t.Fatalf("legacy SessionEnd Codemap hook remains: %q", hook.Command)
+					t.Fatalf("per-turn Stop Codemap hook remains (#225): %q", hook.Command)
 				}
 			}
 		}
@@ -298,8 +298,8 @@ func TestEnsureCodexHooksMigratesLegacyOnlyConfig(t *testing.T) {
 	}
 	settings := readSettingsFile(t, settingsPath)
 	assertCodexCanonicalHooks(t, readHooksMap(t, settings), specs)
-	if len(readHooksMap(t, settings)["SessionEnd"]) != 0 {
-		t.Fatal("legacy SessionEnd event was not removed")
+	if len(readHooksMap(t, settings)["SessionEnd"]) != 1 {
+		t.Fatal("legacy SessionEnd command was not replaced by the canonical one")
 	}
 	second, err := ensureCodexHooksWithExecutable(settingsPath, false, executable)
 	if err != nil {

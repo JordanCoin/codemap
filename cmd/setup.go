@@ -120,7 +120,9 @@ func generatedCodexHooks(executable string) []claudeHookSpec {
 		{Event: "PostToolUse", Matcher: "apply_patch|Edit|Write", Command: command + " hook post-edit --agent=codex --integration=codex-setup"},
 		{Event: "UserPromptSubmit", Command: command + " hook prompt-submit --agent=codex --integration=codex-setup"},
 		{Event: "PreCompact", Command: command + " hook pre-compact --agent=codex --integration=codex-setup"},
-		{Event: "Stop", Command: command + " hook session-stop --agent=codex --integration=codex-setup"},
+		// SessionEnd, not Stop: Codex fires Stop after every turn, and the
+		// session-stop handler releases the lease and stops the daemon (#225).
+		{Event: "SessionEnd", Command: command + " hook session-stop --agent=codex --integration=codex-setup"},
 	}
 }
 
