@@ -277,6 +277,7 @@ func TestValidateCodexHookTrust(t *testing.T) {
 		for _, spec := range recommendedCodexHooks {
 			entry.Hooks = append(entry.Hooks, codexHookMetadata{
 				Command:     spec.Command,
+				EventName:   strings.ToLower(spec.Event[:1]) + spec.Event[1:],
 				Enabled:     true,
 				HandlerType: "command",
 				TrustStatus: "trusted",
@@ -291,6 +292,17 @@ func TestValidateCodexHookTrust(t *testing.T) {
 		wantErr string
 	}{
 		{name: "all trusted", mutate: func(*codexHooksListEntry) {}, wantErr: ""},
+		{
+			name: "session-stop still on the per-turn Stop event",
+			mutate: func(entry *codexHooksListEntry) {
+				for i := range entry.Hooks {
+					if entry.Hooks[i].EventName == "sessionEnd" {
+						entry.Hooks[i].EventName = "stop"
+					}
+				}
+			},
+			wantErr: "missing",
+		},
 		{
 			name:    "disabled hook",
 			mutate:  func(entry *codexHooksListEntry) { entry.Hooks[0].Enabled = false },

@@ -1066,7 +1066,7 @@ func migrateOwnedHookCommand(existing, target string) (string, bool) {
 	if existing == "codemap"+legacySuffix {
 		return target, true
 	}
-	if existing == target {
+	if existing == target || existing == "codemap"+suffix || existing == "codemap.exe"+suffix {
 		return target, true
 	}
 	if strings.HasSuffix(existing, legacySuffix) {
