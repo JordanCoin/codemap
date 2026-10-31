@@ -95,6 +95,8 @@ func TestHelpListsAllSubcommands(t *testing.T) {
 		"codemap watch", "codemap hook", "codemap config", "codemap setup",
 		"codemap doctor", "codemap mcp", "codemap skill", "codemap plugin",
 		"codemap context", "codemap serve", "codemap handoff", "codemap blast-radius",
+		// #151: the daemon side effect of session-start is stated, not hidden.
+		"session-start starts 'codemap watch daemon <root>'", "'codemap watch stop' ends it",
 	} {
 		if !strings.Contains(out, sub) {
 			t.Fatalf("--help does not mention %q:\n%s", sub, out)

@@ -92,6 +92,7 @@ func main() {
 		if len(os.Args) < 3 {
 			fmt.Fprintln(os.Stderr, "Usage: codemap hook <hookname>")
 			fmt.Fprintln(os.Stderr, "Available hooks: session-start, pre-edit, post-edit, prompt-submit, pre-compact, session-stop")
+			fmt.Fprintln(os.Stderr, "session-start also starts 'codemap watch daemon <root>' when none is running and writes runtime state under the project's .codemap/ directory. 'codemap watch stop' ends it.")
 			os.Exit(1)
 		}
 		hookName := os.Args[2]
@@ -310,12 +311,14 @@ func main() {
 		fmt.Println("Note: Flags must come before the path/URL.")
 		fmt.Println()
 		fmt.Println("Hooks (for Claude Code and Codex integration):")
-		fmt.Println("  codemap hook session-start      # Show project context")
+		fmt.Println("  codemap hook session-start      # Show project context (starts the watch daemon)")
 		fmt.Println("  codemap hook pre-edit           # Check before editing (stdin)")
 		fmt.Println("  codemap hook post-edit          # Check after editing (stdin)")
 		fmt.Println("  codemap hook prompt-submit      # Parse user prompt (stdin)")
 		fmt.Println("  codemap hook pre-compact        # Save state before compact")
 		fmt.Println("  codemap hook session-stop       # Session summary")
+		fmt.Println("  session-start starts 'codemap watch daemon <root>' when none is running and writes")
+		fmt.Println("  runtime state under the project's .codemap/ directory. 'codemap watch stop' ends it.")
 		fmt.Println("  codemap handoff [path]          # Build handoff artifact for agent switching")
 		fmt.Println("  codemap blast-radius [path]     # Compact bounded blast-radius bundle")
 		fmt.Println("  codemap collide                 # Rank open PRs by shared-file merge-order hazard")
