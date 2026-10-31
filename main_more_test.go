@@ -337,22 +337,52 @@ func TestRunDaemonPublishesInitializationFailure(t *testing.T) {
 	}
 }
 
-func TestRunDaemonPublishesTransitionReleaseFailure(t *testing.T) {
+func TestRunDaemonPublishesClaimFailure(t *testing.T) {
 	root := t.TempDir()
 	readyPath := filepath.Join(t.TempDir(), "ready.json")
 	t.Setenv(watchReadinessEnv, readyPath)
-	previousRelease := releaseWatchTransition
-	releaseWatchTransition = func(*watch.Transition) error { return errors.New("release rejected") }
-	t.Cleanup(func() { releaseWatchTransition = previousRelease })
-	withMainRuntimeStubs(t, func(string, bool) (watchProcess, error) {
-		return &fakeWatchProcess{}, nil
-	}, nil, nil, nil, nil, nil, nil)
+	previousClaim := claimWatchDaemonPID
+	claimWatchDaemonPID = func(string, int) (bool, error) { return false, errors.New("claim rejected") }
+	t.Cleanup(func() { claimWatchDaemonPID = previousClaim })
+	fake := &fakeWatchProcess{}
+	withMainRuntimeStubs(t, func(string, bool) (watchProcess, error) { return fake, nil }, nil, nil, nil, nil, nil, nil)
 
-	if err := runDaemon(root); err == nil || !strings.Contains(err.Error(), "release rejected") {
-		t.Fatalf("runDaemon() error = %v, want transition release failure", err)
+	if err := runDaemon(root); err == nil || !strings.Contains(err.Error(), "claim rejected") {
+		t.Fatalf("runDaemon() error = %v, want claim failure", err)
 	}
-	if err := waitWatchReadiness(readyPath, time.Second); err == nil || !strings.Contains(err.Error(), "release rejected") {
-		t.Fatalf("waitWatchReadiness() error = %v, want published release failure", err)
+	if err := waitWatchReadiness(readyPath, time.Second); err == nil || !strings.Contains(err.Error(), "claim rejected") {
+		t.Fatalf("waitWatchReadiness() error = %v, want published claim failure", err)
+	}
+	if fake.started {
+		t.Fatal("daemon started the watcher without owning the pid file")
+	}
+}
+
+// A daemon that loses the claim exits 0 and silently (#155 defect 1); the
+// spawning `watch start` still learns why through the readiness file.
+func TestRunDaemonExitsQuietlyWhenAnotherDaemonOwnsRoot(t *testing.T) {
+	root := t.TempDir()
+	readyPath := filepath.Join(t.TempDir(), "ready.json")
+	t.Setenv(watchReadinessEnv, readyPath)
+	previousClaim := claimWatchDaemonPID
+	claimWatchDaemonPID = func(string, int) (bool, error) { return false, nil }
+	t.Cleanup(func() { claimWatchDaemonPID = previousClaim })
+	fake := &fakeWatchProcess{}
+	withMainRuntimeStubs(t, func(string, bool) (watchProcess, error) { return fake, nil }, nil, nil, nil, nil, nil, nil)
+
+	stdout, stderr := captureMainStreams(t, func() {
+		if err := runDaemon(root); err != nil {
+			t.Errorf("runDaemon() = %v, want nil for a lost claim", err)
+		}
+	})
+	if stdout != "" || stderr != "" {
+		t.Fatalf("lost claim must be silent, got stdout %q stderr %q", stdout, stderr)
+	}
+	if fake.started {
+		t.Fatal("loser started a second watcher")
+	}
+	if err := waitWatchReadiness(readyPath, time.Second); err == nil || !strings.Contains(err.Error(), "already running") {
+		t.Fatalf("waitWatchReadiness() error = %v, want already-running readiness failure", err)
 	}
 }
 

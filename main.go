@@ -38,7 +38,7 @@ var (
 	}
 	watchIsRunning         = watch.IsRunning
 	stopWatchDaemon        = watch.Stop
-	writeWatchPID          = watch.WritePID
+	claimWatchDaemonPID    = watch.ClaimDaemonPID
 	executablePath         = os.Executable
 	execCommand            = exec.Command
 	notifySignals          = signal.Notify
@@ -52,6 +52,8 @@ const (
 	watchReadinessEnv     = "CODEMAP_WATCH_READINESS_FILE"
 	watchReadinessTimeout = 30 * time.Second
 )
+
+var errDaemonAlreadyRunning = errors.New("another watch daemon is already running")
 
 type watchReadiness struct {
 	Error string `json:"error,omitempty"`
@@ -1139,51 +1141,28 @@ func runDaemon(root string) (runErr error) {
 			_ = publishWatchReadiness(readyPath, runErr)
 		}
 	}()
-	var transition *watch.Transition
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		var err error
-		transition, err = acquireWatchTransition(root)
-		if err == nil {
-			break
-		}
-		if !errors.Is(err, watch.ErrTransitionLocked) || time.Now().After(deadline) {
-			return fmt.Errorf("claiming daemon transition: %w", err)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	defer func() {
-		if transition != nil {
-			_ = releaseWatchTransition(transition)
-		}
-	}()
-	active, err := watch.ResolveActiveRuntime(root)
+	claimed, err := claimWatchDaemonPID(root, os.Getpid())
 	if err != nil {
-		return fmt.Errorf("resolving daemon runtime: %w", err)
+		return fmt.Errorf("claiming daemon: %w", err)
 	}
-	if active.PID > 0 && active.PID != os.Getpid() {
-		return errors.New("another watch daemon is already running")
+	if !claimed {
+		// Another daemon owns this root (#155 defect 1): exit 0 without output.
+		// A spawning `watch start` still learns why through the readiness file.
+		if readyPath != "" {
+			readyPublished = true
+			_ = publishWatchReadiness(readyPath, errDaemonAlreadyRunning)
+		}
+		return nil
 	}
 	daemon, err := newWatchProcess(root, false)
 	if err != nil {
+		_ = watch.RemoveProcessPID(root, os.Getpid())
 		return err
 	}
-
 	if err := daemon.Start(); err != nil {
+		_ = watch.RemoveProcessPID(root, os.Getpid())
 		return fmt.Errorf("starting watch: %w", err)
 	}
-
-	// Write PID file
-	if err := writeWatchPID(root); err != nil {
-		daemon.Stop()
-		return fmt.Errorf("publishing daemon PID: %w", err)
-	}
-	if err := releaseWatchTransition(transition); err != nil {
-		daemon.Stop()
-		_ = watch.RemoveProcessPID(root, os.Getpid())
-		return fmt.Errorf("releasing daemon transition: %w", err)
-	}
-	transition = nil
 	if readyPath != "" {
 		if err := publishWatchReadiness(readyPath, nil); err != nil {
 			daemon.Stop()
