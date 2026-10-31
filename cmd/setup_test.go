@@ -38,7 +38,7 @@ func TestGeneratedIntegrationsPreserveSetupRoot(t *testing.T) {
 	if !stringSlicesEqual(gotArgs, wantArgs) {
 		t.Fatalf("managedMCPArgs() = %#v, want %#v", gotArgs, wantArgs)
 	}
-	server := map[string]any{"command": "/tmp/codemap", "args": gotArgs}
+	server := map[string]any{"command": filepath.Join(projectRoot, "codemap"), "args": gotArgs}
 	if !isOwnedCodemapMCPServer(server, "codex-setup") {
 		t.Fatal("setup-root MCP command should remain managed")
 	}

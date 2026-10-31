@@ -20,6 +20,7 @@ func TestClaudeSettingsPath(t *testing.T) {
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	global, err := claudeSettingsPath(root, true)
 	if err != nil {
 		t.Fatalf("global claudeSettingsPath error: %v", err)
@@ -149,7 +150,7 @@ func TestRunSetupAddsOnlyLocalCodemapIgnore(t *testing.T) {
 	out := captureOutput(func() {
 		RunSetup([]string{"--agent", "codex", "--no-config", "--no-mcp", root}, ".")
 	})
-	if !strings.Contains(out, "Added .codemap/ to .git/info/exclude") {
+	if !strings.Contains(out, "Added .codemap/ to "+filepath.Join(".git", "info", "exclude")) {
 		t.Fatalf("expected local-ignore notice, got:\n%s", out)
 	}
 	exclude, err := infoExcludePath(root)

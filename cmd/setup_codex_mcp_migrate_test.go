@@ -19,13 +19,14 @@ func TestEnsureCodexMCPRepairsLegacyEntry(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "config.toml")
 	const other = "[mcp_servers.pencil]\ncommand = \"/Applications/Pen.app/mcp\"\nargs = [ \"--app\", \"desktop\", \"--agent\", \"codexCLI\" ]\n"
-	legacy := "model = \"gpt-5\"\n\n[mcp_servers.codemap]\ncommand = \"/old/bin/codemap\"\nargs = [ \"mcp\", \"--configured-version\", \"4.3.0\", \"--integration\", \"codex-setup\" ]\n\n" + other
+	oldExe, newExe := filepath.Join(root, "old", "codemap"), filepath.Join(root, "new", "codemap")
+	legacy := "model = \"gpt-5\"\n\n[mcp_servers.codemap]\ncommand = " + tomlString(oldExe) + "\nargs = [ \"mcp\", \"--configured-version\", \"4.3.0\", \"--integration\", \"codex-setup\" ]\n\n" + other
 	if err := os.WriteFile(path, []byte(legacy), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	projectRoot := filepath.Join(root, "repo")
-	changed, err := ensureCodexMCPWithExecutable(path, "/new/bin/codemap", projectRoot)
+	changed, err := ensureCodexMCPWithExecutable(path, newExe, projectRoot)
 	if err != nil {
 		t.Fatalf("ensureCodexMCPWithExecutable() error: %v", err)
 	}
@@ -44,17 +45,17 @@ func TestEnsureCodexMCPRepairsLegacyEntry(t *testing.T) {
 	if !strings.Contains(got, "model = \"gpt-5\"") {
 		t.Fatalf("unrelated top-level keys must survive, got:\n%s", got)
 	}
-	for _, want := range []string{`command = "/new/bin/codemap"`, `"--project-root"`, `"--configured-version", "` + buildinfo.Current() + `"`} {
+	for _, want := range []string{"command = " + tomlString(newExe), `"--project-root"`, `"--configured-version", "` + buildinfo.Current() + `"`} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("rewritten entry lacks %s, got:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, `"4.3.0"`) || strings.Contains(got, "/old/bin/codemap") {
+	if strings.Contains(got, `"4.3.0"`) || strings.Contains(got, tomlString(oldExe)) {
 		t.Fatalf("stale version or executable survived, got:\n%s", got)
 	}
 
 	// Doctor recognizes the result as managed, and a second run is a no-op.
-	if changed, err := ensureCodexMCPWithExecutable(path, "/new/bin/codemap", projectRoot); err != nil || changed {
+	if changed, err := ensureCodexMCPWithExecutable(path, newExe, projectRoot); err != nil || changed {
 		t.Fatalf("second run should be a no-op, changed=%v err=%v", changed, err)
 	}
 	var payload map[string]any
