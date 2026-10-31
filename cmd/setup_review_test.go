@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -176,6 +177,9 @@ func TestTomlCommentIndex(t *testing.T) {
 func TestMigrateOwnedHookCommand(t *testing.T) {
 	specs := generatedCodexHooks("/abs/path/codemap")
 	target := specs[1].Command // pre-edit
+	absolute := func(name string) string {
+		return quoteHookExecutable(filepath.Join(t.TempDir(), name), runtime.GOOS)
+	}
 
 	tests := []struct {
 		name     string
@@ -184,8 +188,9 @@ func TestMigrateOwnedHookCommand(t *testing.T) {
 	}{
 		{name: "exact target", existing: target, want: true},
 		{name: "legacy bare codemap", existing: "codemap hook pre-edit --agent=codex", want: true},
-		{name: "legacy absolute path", existing: "'/somewhere/else/codemap' hook pre-edit --agent=codex", want: true},
-		{name: "absolute path with integration suffix", existing: "'/other/install/codemap-next' hook pre-edit --agent=codex --integration=codex-setup", want: true},
+		{name: "legacy absolute path", existing: absolute("codemap") + " hook pre-edit --agent=codex", want: true},
+		{name: "absolute path with integration suffix", existing: absolute("codemap-next") + " hook pre-edit --agent=codex --integration=codex-setup", want: true},
+		{name: "windows legacy absolute path", existing: `"C:\Program Files\codemap\codemap.exe" hook pre-edit --agent=codex`, want: true},
 		{name: "foreign command", existing: "rm -rf / hook pre-edit", want: false},
 		{name: "unrelated hook", existing: "codemap hook session-start --agent=codex", want: false},
 	}
@@ -421,6 +426,9 @@ func TestRunDoctorReportsUnconfiguredProject(t *testing.T) {
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.desktopBundle != "" && tt.goos == "darwin" && runtime.GOOS == "windows" {
+				t.Skip("windows: simulated macOS desktop needs an exec bit NTFS cannot store, tracked in #214")
+			}
 			root := t.TempDir()
 			home := t.TempDir()
 			t.Setenv("HOME", home)
@@ -473,7 +481,7 @@ func TestRunDoctorReportsUnconfiguredProject(t *testing.T) {
 				t.Fatalf("RunDoctor exit code = %d, want 1 for unconfigured project\n%s", code, out)
 			}
 			for _, want := range tt.want {
-				if !strings.Contains(out, want) {
+				if !strings.Contains(out, filepath.FromSlash(want)) {
 					t.Fatalf("expected %q in doctor output:\n%s", want, out)
 				}
 			}

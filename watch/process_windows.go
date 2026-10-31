@@ -8,7 +8,12 @@ import (
 	"os/exec"
 	"strings"
 	"syscall"
+	"time"
 )
+
+// transitionLockWait allows for each holder of the lock paying a PowerShell
+// cold start in processCommandLine; it stays under the 30s watch readiness wait.
+const transitionLockWait = 20 * time.Second
 
 // processCommandLine returns the full command line of the given PID via CIM
 // (the Windows analog of `ps`; wmic is deprecated/removed on newer Windows).
