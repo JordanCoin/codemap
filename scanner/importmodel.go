@@ -107,9 +107,10 @@ func symbolLevelSources(counts map[string]int, resolved map[string]bool) []analy
 			status, note = analysis.SourceMixed, swiftTypeReferenceNote
 		}
 		sources = append(sources, analysis.Source{
-			Name:   "symbol-imports/" + strings.ToLower(display),
-			Status: status,
-			Detail: fmt.Sprintf("%s (%d files): %s", display, counts[display], note),
+			Name:      "symbol-imports/" + strings.ToLower(display),
+			Status:    status,
+			Detail:    fmt.Sprintf("%s (%d files): %s", display, counts[display], note),
+			Languages: languagesForDisplay(display),
 		})
 	}
 	return sources

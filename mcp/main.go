@@ -952,11 +952,11 @@ func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input Imp
 			structured.NotIndexedReason = why.Reason
 			return textResult(notIndexedText(file, why, fg)), structured, nil
 		}
-		if fg.Coverage.EffectiveStatus() == analysis.CoverageUnavailable {
+		if fg.Coverage.ForFile(file).EffectiveStatus() == analysis.CoverageUnavailable {
 			// No scan ran (file bound, ast-grep missing): unknown, not zero.
 			empty = fmt.Sprintf("Importers of '%s': unknown, no dependency scan ran", file)
 		}
-		return textResult(empty + mcpCoverageText(fg)), structured, nil
+		return textResult(empty + mcpCoverageText(fg.Coverage.ForFile(file))), structured, nil
 	}
 
 	isHub := scanner.CountHubImporters(importers) >= scanner.HubThreshold
@@ -965,7 +965,7 @@ func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input Imp
 		hubNote = " ⚠️ HUB FILE"
 	}
 
-	return textResult(fmt.Sprintf("%d files import '%s'%s:%s\n%s%s", len(importers), file, granularity, hubNote, strings.Join(importers, "\n"), mcpCoverageText(fg))), structured, nil
+	return textResult(fmt.Sprintf("%d files import '%s'%s:%s\n%s%s", len(importers), file, granularity, hubNote, strings.Join(importers, "\n"), mcpCoverageText(fg.Coverage.ForFile(file)))), structured, nil
 }
 
 func handleFind(ctx context.Context, req *mcp.CallToolRequest, input FindQueryInput) (*mcp.CallToolResult, any, error) {
@@ -1008,17 +1008,20 @@ func normalizeImporterFile(root, file string) string {
 // file is a harmless leaf (#140).
 func notIndexedText(file string, why scanner.UnindexedExplanation, fg *scanner.FileGraph) string {
 	return fmt.Sprintf("not indexed: %s is not in the scanned file set (%s)\nImports and importers: unknown, not 0 (codemap never scanned this file).\nNext: %s.%s",
-		file, why.Reason, why.Next, mcpCoverageText(fg))
+		file, why.Reason, why.Next, mcpCoverageText(fg.Coverage.ForFile(file)))
 }
 
-func mcpCoverageText(fg *scanner.FileGraph) string {
-	if fg == nil || fg.Coverage.Status == "" {
+// mcpCoverageText renders a coverage footer. Per-file handlers pass
+// fg.Coverage.ForFile(file) so the caveats concern that file's language;
+// project-wide handlers pass fg.Coverage (#111).
+func mcpCoverageText(coverage scanner.GraphCoverage) string {
+	if coverage.Status == "" {
 		return ""
 	}
-	if len(fg.Coverage.Notes) == 0 {
-		return "\n\nCoverage: " + string(fg.Coverage.Status)
+	if len(coverage.Notes) == 0 {
+		return "\n\nCoverage: " + string(coverage.Status)
 	}
-	return "\n\nCoverage: " + string(fg.Coverage.Status) + " — " + strings.Join(fg.Coverage.Notes, "; ")
+	return "\n\nCoverage: " + string(coverage.Status) + " — " + strings.Join(coverage.Notes, "; ")
 }
 
 func handleGetHandoff(ctx context.Context, req *mcp.CallToolRequest, input HandoffInput) (*mcp.CallToolResult, any, error) {
@@ -1414,7 +1417,7 @@ func handleGetHubs(ctx context.Context, req *mcp.CallToolRequest, input PathInpu
 
 	hubs := fg.HubFiles()
 	if len(hubs) == 0 {
-		return textResult("No hub files found (no files with 3+ importers)." + mcpCoverageText(fg)), nil, nil
+		return textResult("No hub files found (no files with 3+ importers)." + mcpCoverageText(fg.Coverage)), nil, nil
 	}
 
 	// Sort by importer count
@@ -1443,7 +1446,7 @@ func handleGetHubs(ctx context.Context, req *mcp.CallToolRequest, input PathInpu
 		}
 	}
 
-	return textResult(sb.String() + mcpCoverageText(fg)), nil, nil
+	return textResult(sb.String() + mcpCoverageText(fg.Coverage)), nil, nil
 }
 
 func handleGetFileContext(ctx context.Context, req *mcp.CallToolRequest, input ImportersInput) (*mcp.CallToolResult, any, error) {
@@ -1515,7 +1518,7 @@ func handleGetFileContext(ctx context.Context, req *mcp.CallToolRequest, input I
 
 	// Connected files summary
 	sb.WriteString(fmt.Sprintf("CONNECTED: %d files in dependency graph\n", len(connected)))
-	sb.WriteString(mcpCoverageText(fg))
+	sb.WriteString(mcpCoverageText(fg.Coverage.ForFile(file)))
 
 	return textResult(sb.String()), nil, nil
 }

@@ -169,9 +169,11 @@ codemap --json --deps . | jq .coverage
 {
   "status": "partial",
   "sources": [
-    { "name": "ast-grep", "status": "authoritative" },
+    { "name": "ast-grep", "status": "authoritative",
+      "languages": ["bash", "c", "cpp", "csharp", "dart", "elixir", "go", "java", "javascript", "kotlin", "lua", "php", "python", "ruby", "rust", "scala", "solidity", "swift", "typescript"] },
     { "name": "cargo-metadata", "status": "mixed",
-      "detail": "2 of 5 Cargo manifests used fallback topology" }
+      "detail": "2 of 5 Cargo manifests used fallback topology",
+      "languages": ["rust"] }
   ],
   "issues": [
     { "code": "unresolved-import", "path": "src/app.ts",
@@ -184,6 +186,7 @@ codemap --json --deps . | jq .coverage
 
 - `status` is `complete`, `partial`, or `unavailable`.
 - Each source reports `authoritative`, `mixed`, `fallback`, `timeout`, `unavailable`, or `failed`.
+- `languages` names the languages a source can affect. Per-file answers (`--importers`, `get_importers`, `get_file_context`, the importer sections of `blast-radius`) keep only the sources tagged with the file's language, plus untagged sources, which apply everywhere. A Go file in a Go+Rust repo reads `complete` with no Rust caveat; `--deps` keeps the scan-level rollup.
 - A timed-out or failed scan returns an **empty result with provenance**, not a silent empty graph and not a hard error — so an agent can tell "nothing imports this" apart from "I couldn't tell".
 
 The JSON payload is versioned (`schema_version: codemap.analysis/v1`) so consumers can depend on its shape.

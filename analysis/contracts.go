@@ -30,6 +30,10 @@ type Source struct {
 	Name   string       `json:"name"`
 	Status SourceStatus `json:"status"`
 	Detail string       `json:"detail,omitempty"`
+	// Languages names the scanner languages whose edges this source can
+	// affect. Per-file answers keep only the sources tagged with the file's
+	// language; an untagged source applies to every file (#111).
+	Languages []string `json:"languages,omitempty"`
 }
 
 type Issue struct {
@@ -55,6 +59,9 @@ func NormalizeCoverage(coverage Coverage) Coverage {
 	coverage.Issues = slices.Clone(coverage.Issues)
 	if coverage.Sources == nil {
 		coverage.Sources = []Source{}
+	}
+	for index := range coverage.Sources {
+		coverage.Sources[index].Languages = slices.Clone(coverage.Sources[index].Languages)
 	}
 	sort.Slice(coverage.Sources, func(i, j int) bool {
 		left, right := coverage.Sources[i], coverage.Sources[j]

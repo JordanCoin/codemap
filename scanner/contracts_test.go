@@ -13,7 +13,7 @@ func TestNewDepsProjectReturnsVersionedCompleteCoverage(t *testing.T) {
 	if project.SchemaVersion != analysis.SchemaVersion || project.Coverage.Status != analysis.CoverageComplete {
 		t.Fatalf("versioned coverage = %#v", project)
 	}
-	if got, want := project.Coverage.Sources, []analysis.Source{{Name: "ast-grep", Status: analysis.SourceAuthoritative}}; !reflect.DeepEqual(got, want) {
+	if got, want := project.Coverage.Sources, []analysis.Source{{Name: "ast-grep", Status: analysis.SourceAuthoritative, Languages: astGrepLanguages}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("coverage sources = %#v, want %#v", got, want)
 	}
 	if project.Files[0].Functions == nil || project.Files[0].Imports == nil || project.ExternalDeps["go"] == nil {
@@ -91,8 +91,8 @@ func TestNewDepsProjectRustCoverageFromPathAndInventory(t *testing.T) {
 func TestNewDepsProjectRustCaveatOwnedByRustCargoSource(t *testing.T) {
 	project := newDepsProject("/repo", []FileAnalysis{{Path: "crate/src/lib.rs"}}, nil, "")
 	if got, want := project.Coverage.Sources, []analysis.Source{
-		{Name: "ast-grep", Status: analysis.SourceAuthoritative},
-		{Name: "rust-cargo", Status: analysis.SourceMixed, Detail: rustCoverageNote},
+		{Name: "ast-grep", Status: analysis.SourceAuthoritative, Languages: astGrepLanguages},
+		{Name: "rust-cargo", Status: analysis.SourceMixed, Detail: rustCoverageNote, Languages: []string{"rust"}},
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("coverage sources = %#v, want %#v", got, want)
 	}

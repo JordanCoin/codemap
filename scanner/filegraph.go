@@ -282,7 +282,7 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 			return nil, err
 		}
 		if CoverageFromSources(fg.Coverage.Sources).Status != analysis.CoverageUnavailable {
-			fg.Coverage.AddSource(ScanSourceOutcome{Name: "rust-cargo", Status: ScanSourceMixed, Detail: rustCoverageNote})
+			fg.Coverage.AddSource(ScanSourceOutcome{Name: "rust-cargo", Status: ScanSourceMixed, Detail: rustCoverageNote, Languages: []string{"rust"}})
 		}
 	}
 	var jsResolver *jsWorkspaceResolver

@@ -218,7 +218,7 @@ func buildRustWorkspaceIndexWithTimeout(ctx context.Context, root string, analys
 }
 
 func cargoMetadataOutcome(handled, total int) ScanSourceOutcome {
-	outcome := ScanSourceOutcome{Name: "cargo-metadata", Status: ScanSourceAuthoritative}
+	outcome := ScanSourceOutcome{Name: "cargo-metadata", Status: ScanSourceAuthoritative, Languages: []string{"rust"}}
 	fallbacks := total - handled
 	if fallbacks <= 0 {
 		return outcome

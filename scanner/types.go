@@ -104,7 +104,7 @@ type DepsProject struct {
 func newDepsProject(root string, files []FileAnalysis, externalDeps map[string][]string, diffRef string, inventory ...[]FileInfo) DepsProject {
 	coverage := analysis.Coverage{
 		Status:  analysis.CoverageComplete,
-		Sources: []analysis.Source{{Name: "ast-grep", Status: analysis.SourceAuthoritative}},
+		Sources: []analysis.Source{{Name: "ast-grep", Status: analysis.SourceAuthoritative, Languages: astGrepLanguages}},
 	}
 	addRustCaveat := func() {
 		if coverage.Status == analysis.CoveragePartial {
@@ -112,7 +112,7 @@ func newDepsProject(root string, files []FileAnalysis, externalDeps map[string][
 		}
 		coverage.Status = analysis.CoveragePartial
 		coverage.Sources = append(coverage.Sources, analysis.Source{
-			Name: "rust-cargo", Status: analysis.SourceMixed, Detail: rustCoverageNote,
+			Name: "rust-cargo", Status: analysis.SourceMixed, Detail: rustCoverageNote, Languages: []string{"rust"},
 		})
 	}
 	for _, file := range files {
@@ -264,6 +264,35 @@ var extToLang = map[string]string{
 	".exs":   "elixir",
 	".sol":   "solidity",
 	".cue":   "cue",
+}
+
+// astGrepLanguages are the languages the embedded sg-rules cover: every
+// scanner language except CUE, which has its own lexical scanner (cue.go).
+// Coverage sources produced by ast-grep carry this list so a CUE query does
+// not inherit an ast-grep caveat (#111).
+var astGrepLanguages = func() []string {
+	seen := map[string]bool{"cue": true}
+	var languages []string
+	for _, language := range extToLang {
+		if !seen[language] {
+			seen[language] = true
+			languages = append(languages, language)
+		}
+	}
+	sort.Strings(languages)
+	return languages
+}()
+
+// languagesForDisplay inverts LangDisplay for coverage sources keyed by a
+// display name; an unknown display leaves the source untagged (applies to
+// every file).
+func languagesForDisplay(display string) []string {
+	for language, name := range LangDisplay {
+		if name == display {
+			return []string{language}
+		}
+	}
+	return nil
 }
 
 // DetectLanguage returns the language name for a file path

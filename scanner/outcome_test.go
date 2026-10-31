@@ -360,3 +360,31 @@ func TestGraphCoverageAddSourceDedupesSharedDetail(t *testing.T) {
 		t.Fatalf("notes = %#v, want deduped %#v", coverage.Notes, wantNotes)
 	}
 }
+
+// #111: a per-file answer carries only the caveats that can touch that file's
+// edges. The Rust caveat is tagged rust, so a Go file reads complete without
+// it, a Rust file keeps it, an untagged source (scan bound) reaches both, and
+// a file in no known language keeps the scan-level rollup.
+func TestGraphCoverageForFileScopesSourcesToLanguage(t *testing.T) {
+	var coverage GraphCoverage
+	coverage.AddSource(ScanSourceOutcome{Name: "ast-grep", Status: ScanSourceAuthoritative, Languages: astGrepLanguages})
+	coverage.AddSource(ScanSourceOutcome{Name: "rust-cargo", Status: ScanSourceMixed, Detail: rustCoverageNote, Languages: []string{"rust"}})
+	coverage.Issues = []analysis.Issue{{Code: "unresolved-import", Path: "src/lib.rs", Message: "mod gone"}}
+
+	goFile := coverage.ForFile("cmd/main.go")
+	if goFile.EffectiveStatus() != analysis.CoverageComplete || len(goFile.Notes) != 0 || len(goFile.Issues) != 0 {
+		t.Fatalf("Go file coverage = %+v, want complete with no Rust caveat", goFile)
+	}
+	rustFile := coverage.ForFile("src/lib.rs")
+	if rustFile.EffectiveStatus() != analysis.CoveragePartial || !reflect.DeepEqual(rustFile.Notes, []string{rustCoverageNote}) || len(rustFile.Issues) != 1 {
+		t.Fatalf("Rust file coverage = %+v, want partial with the Rust caveat", rustFile)
+	}
+	if unknown := coverage.ForFile("README.md"); !reflect.DeepEqual(unknown, coverage) {
+		t.Fatalf("unknown-language coverage = %+v, want the scan-level rollup", unknown)
+	}
+
+	coverage.AddSource(ScanSourceOutcome{Name: scanBoundSource, Status: ScanSourceUnavailable, Detail: "scan bounded"})
+	if got := coverage.ForFile("cmd/main.go"); got.EffectiveStatus() != analysis.CoveragePartial || !reflect.DeepEqual(got.Notes, []string{"scan bounded"}) {
+		t.Fatalf("untagged source must reach every file, got %+v", got)
+	}
+}
