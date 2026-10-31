@@ -512,7 +512,7 @@ func TestDepsBuildFileIndex(t *testing.T) {
 
 	idx := buildFileIndex(files, "example.com/project")
 
-	handlerDir := filepath.Dir(handlerPath)
+	handlerDir := "pkg/service"
 	if got := idx.byDir[handlerDir]; len(got) != 1 || got[0] != handlerPath {
 		t.Fatalf("expected %q in byDir, got %v", handlerPath, got)
 	}

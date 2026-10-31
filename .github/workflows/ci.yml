@@ -54,7 +54,10 @@ jobs:
         run: go vet ./...
 
       - name: Run tests
+        # bash on every OS: pwsh splits -coverprofile=coverage.out and hands
+        # go test a package named ".out" (windows run 41192567280).
         run: go test -v -race -coverprofile=coverage.out ./...
+        shell: bash
 
       - name: Enforce coverage floor
         if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23'

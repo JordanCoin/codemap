@@ -271,9 +271,9 @@ func TestConfiguredFileCountTracksLiveFilterChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForWatchCondition(t, 2*time.Second, func() bool { return !configured("second.sql") })
-	if err := os.Remove(filepath.Join(root, ".gitignore")); err != nil {
-		t.Fatal(err)
-	}
+	// The daemon may still be reading the .gitignore it just reacted to, and
+	// an open reader blocks removal on Windows, so retry.
+	waitForWatchCondition(t, 2*time.Second, func() bool { return os.Remove(filepath.Join(root, ".gitignore")) == nil })
 	waitForWatchCondition(t, 2*time.Second, func() bool { return configured("second.sql") })
 }
 
