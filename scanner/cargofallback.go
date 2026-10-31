@@ -199,7 +199,9 @@ func buildCargoFallbackOutcome(ctx context.Context, root string, files []FileInf
 
 	allowed := make(map[string]bool, len(files))
 	for _, file := range files {
-		allowed[filepath.Clean(file.Path)] = true
+		// Graph key (forward slashes): target.rootFile below is a keyPath too,
+		// and filepath.Clean would turn the slash paths native on Windows.
+		allowed[keyPath(file.Path)] = true
 	}
 	packages := make(map[string]cargoFallbackPackage)
 	handledManifests := make(map[string]bool)

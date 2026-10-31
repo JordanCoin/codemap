@@ -724,7 +724,7 @@ func TestValidLocalTargetAndManifestLocalPath(t *testing.T) {
 	}
 
 	root := t.TempDir()
-	if got, ok := manifestLocalPath(root, "./src/x.js"); !ok || got != filepath.Join(root, "src", "x.js") {
+	if got, ok := manifestLocalPath(root, "./src/x.js"); !ok || got != keyPath(filepath.Join(root, "src", "x.js")) {
 		t.Fatalf("manifestLocalPath inside root = (%q, %v), want joined path", got, ok)
 	}
 	for _, target := range []string{"../escape.js", "./src/../../escape.js", "https://deno.land/std/", "/abs"} {

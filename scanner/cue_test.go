@@ -208,15 +208,15 @@ func TestBuildFileGraphResolvesNestedCUEPackageFromModule(t *testing.T) {
 	writeCueFile(t, root, filepath.Join(moduleRoot, "templates", "admin.cue"), "package templates\n")
 
 	graph, err := BuildFileGraphFromAnalyses(context.Background(), root, []FileAnalysis{{
-		Path:     filepath.Join(moduleRoot, "timoni.cue"),
+		Path:     moduleRoot + "/timoni.cue",
 		Language: "cue",
 		Imports:  []string{"timoni.sh/hilfe/templates"},
 	}}, Filters{Only: []string{"cue"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{filepath.Join(moduleRoot, "templates", "admin.cue")}
-	if got := graph.Imports[filepath.Join(moduleRoot, "timoni.cue")]; !reflect.DeepEqual(got, want) {
+	want := []string{moduleRoot + "/templates/admin.cue"}
+	if got := graph.Imports[moduleRoot+"/timoni.cue"]; !reflect.DeepEqual(got, want) {
 		t.Fatalf("nested CUE graph imports = %v, want %v", got, want)
 	}
 }
