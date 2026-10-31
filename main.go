@@ -799,7 +799,7 @@ func runWatchMode(root string, verbose bool) {
 	}
 
 	fmt.Printf("Watching: %s\n", root)
-	fmt.Printf("Files tracked: %d\n", daemon.FileCount())
+	fmt.Printf("Files tracked: %d (every file under the root, before config filters)\n", daemon.FileCount())
 	fmt.Println("Event log: .codemap/events.log")
 	fmt.Println()
 	fmt.Println("Press Ctrl+C to stop")
@@ -818,7 +818,7 @@ func runWatchMode(root string, verbose bool) {
 	events := daemon.GetEvents(0)
 	fmt.Println()
 	fmt.Println("Session summary:")
-	fmt.Printf("  Files tracked: %d\n", daemon.FileCount())
+	fmt.Printf("  Files tracked: %d (every file under the root, before config filters)\n", daemon.FileCount())
 	fmt.Printf("  Events logged: %d\n", len(events))
 }
 
@@ -976,7 +976,9 @@ func runWatchSubcommand(subCmd, root string) error {
 				if writeFailure != nil {
 					fmt.Printf("  Files and Hubs below are from the last successful write (%s), not live\n", state.UpdatedAt.Local().Format("15:04:05"))
 				}
-				fmt.Printf("  Files: %d\n", state.FileCount)
+				// The tree, --deps and --skyline each count a different scope;
+				// say which one this is (#154).
+				fmt.Printf("  Files: %d (every watched file, before config filters)\n", state.FileCount)
 				fmt.Printf("  Hubs: %d\n", len(state.Hubs))
 				fmt.Printf("  Updated: %s\n", state.UpdatedAt.Format("15:04:05"))
 			} else {

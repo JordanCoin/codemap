@@ -100,7 +100,7 @@ func TestDepgraphRendersExternalDepsAndSummarySection(t *testing.T) {
 		"Dart: flutter, riverpod",
 		"Src",
 		"+1 standalone files",
-		"1 files",
+		"1 source files in the import graph",
 		"1 functions",
 		"0 deps",
 	}
@@ -258,7 +258,7 @@ func TestDepgraphHonorsCancellation(t *testing.T) {
 	if strings.Contains(output, "a ───▶ b") {
 		t.Fatalf("canceled Depgraph must not render graph edges, got:\n%s", output)
 	}
-	if !strings.Contains(output, "2 files") || !strings.Contains(output, "2 functions") {
+	if !strings.Contains(output, "2 source files in the import graph") || !strings.Contains(output, "2 functions") {
 		t.Fatalf("canceled Depgraph must still render the file summary, got:\n%s", output)
 	}
 }
@@ -368,7 +368,7 @@ func TestDepgraphRendersGoPackageImportsAtPackageGranularity(t *testing.T) {
 		"  main ───▶ multi/ (2 files), single/single\n",
 		"  run ───▶ multi/ (2 files)\n",
 		"HUBS: multi/ (2←, 2 files)\n",
-		"5 files · 5 functions · 3 deps\n",
+		"5 source files in the import graph · 5 functions · 3 deps\n",
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("deps text missing %q:\n%s", want, output)
