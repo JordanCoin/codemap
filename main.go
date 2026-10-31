@@ -78,6 +78,13 @@ func main() {
 		if len(os.Args) >= 3 {
 			subCmd = os.Args[2]
 		}
+		if len(os.Args) >= 4 && os.Args[3] == "--all" {
+			if err := runWatchAll(subCmd); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
 		root, _ := os.Getwd()
 		if len(os.Args) >= 4 {
 			root = os.Args[3]
@@ -339,6 +346,7 @@ func main() {
 		fmt.Println()
 		fmt.Println("More subcommands:")
 		fmt.Println("  codemap watch status|start|stop # Manage the background watch daemon")
+		fmt.Println("  codemap watch status|stop --all # List or stop every watch daemon this user started")
 		fmt.Println("  codemap skill list|show <name>  # List or show bundled agent skills")
 		fmt.Println("  codemap context                 # Print machine-readable project context JSON")
 		fmt.Println("  codemap serve                   # Serve project intelligence over HTTP")
@@ -994,6 +1002,38 @@ func runWatchSubcommand(subCmd, root string) error {
 
 	default:
 		return fmt.Errorf("unknown watch command %q (usage: codemap watch [start|stop|status])", subCmd)
+	}
+	return nil
+}
+
+// runWatchAll lists or stops every registered daemon this user started
+// (#155 defect 2, #151 item 3).
+func runWatchAll(subCmd string) error {
+	daemons := watch.ListDaemons()
+	switch subCmd {
+	case "status", "stop":
+	default:
+		return fmt.Errorf("--all applies to watch status|stop, not %q", subCmd)
+	}
+	if len(daemons) == 0 {
+		fmt.Println("No watch daemons running")
+		return nil
+	}
+	failed := 0
+	for _, d := range daemons {
+		if subCmd == "status" {
+			fmt.Printf("pid %d  up %s  %s\n", d.PID, time.Since(d.Started).Round(time.Second), d.Root)
+			continue
+		}
+		if err := watch.StopDaemon(d); err != nil {
+			failed++
+			fmt.Printf("pid %d  %s: %v\n", d.PID, d.Root, err)
+			continue
+		}
+		fmt.Printf("pid %d  stopped  %s\n", d.PID, d.Root)
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d watch daemon(s) not stopped", failed)
 	}
 	return nil
 }

@@ -32,6 +32,11 @@ func TestMain(m *testing.M) {
 		_ = os.RemoveAll(tmpDir)
 		os.Exit(1)
 	}
+	// Keep daemon registrations made by tests (and by the built binary they
+	// run) out of the user's ~/.codemap/daemons.
+	if os.Getenv("CODEMAP_DAEMON_REGISTRY") == "" {
+		os.Setenv("CODEMAP_DAEMON_REGISTRY", filepath.Join(tmpDir, "daemons"))
+	}
 	code := m.Run()
 	_ = os.RemoveAll(tmpDir)
 	os.Exit(code)

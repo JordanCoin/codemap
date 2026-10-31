@@ -132,7 +132,11 @@ func WriteProcessPID(root string, pid int) error {
 		return err
 	}
 	pidFile := filepath.Join(runtimeDir, "watch.pid")
-	return runtimefile.WriteAtomic(pidFile, []byte(fmt.Sprintf("%d", pid)), 0o644)
+	if err := runtimefile.WriteAtomic(pidFile, []byte(fmt.Sprintf("%d", pid)), 0o644); err != nil {
+		return err
+	}
+	registerDaemon(root, pid)
+	return nil
 }
 
 // ClaimDaemonPID publishes pid as the project's only watch daemon. The check
@@ -189,6 +193,9 @@ func RemovePID(root string) {
 		return
 	}
 	pidFile := filepath.Join(runtimeDir, "watch.pid")
+	if pid, err := readPIDAt(runtimeDir); err == nil {
+		unregisterDaemon(pid)
+	}
 	os.Remove(pidFile)
 }
 
@@ -398,7 +405,11 @@ func removePIDIfMatches(dir string, pid int) error {
 	if err != nil || current != pid {
 		return fmt.Errorf("watch PID changed during transition")
 	}
-	return os.Remove(filepath.Join(dir, "watch.pid"))
+	if err := os.Remove(filepath.Join(dir, "watch.pid")); err != nil {
+		return err
+	}
+	unregisterDaemon(pid)
+	return nil
 }
 
 // RemoveProcessPID removes only the caller's still-current PID publication.
