@@ -112,9 +112,10 @@ func (t *unresolvedImportTally) sources() []ScanSourceOutcome {
 			continue
 		}
 		out = append(out, ScanSourceOutcome{
-			Name:   strings.ToLower(display) + "-unresolved-imports",
-			Status: ScanSourceMixed,
-			Detail: fmt.Sprintf("%s: %d of %d project-relative imports did not resolve to a file; those edges are missing (%s)", display, missing, t.seen[display], strings.Join(t.examples[display], ", ")),
+			Name:      strings.ToLower(display) + "-unresolved-imports",
+			Status:    ScanSourceMixed,
+			Detail:    fmt.Sprintf("%s: %d of %d project-relative imports did not resolve to a file; those edges are missing (%s)", display, missing, t.seen[display], strings.Join(t.examples[display], ", ")),
+			Languages: languagesForDisplay(display),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })

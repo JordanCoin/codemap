@@ -857,6 +857,22 @@ func TestRunDepsModeJSONAndMainDispatchesDepsAndImporters(t *testing.T) {
 	if len(importersReport.HubImports) != 1 || importersReport.HubImports[0] != "pkg/types/types.go" {
 		t.Fatalf("expected hub import summary in JSON, got %+v", importersReport.HubImports)
 	}
+
+	// #111: the per-file answer is scoped to the file's language. The fixture
+	// has a Rust file, so --deps above is partial, but nothing Rust can
+	// produce an edge into main.go: it reads complete with no Rust caveat,
+	// while the Rust file keeps it.
+	if importersReport.CoverageStatus != string(analysis.CoverageComplete) || len(importersReport.CoverageNotes) != 0 {
+		t.Fatalf("Go importers coverage = %q %v, want complete with no notes", importersReport.CoverageStatus, importersReport.CoverageNotes)
+	}
+	stdout = runMainWithArgs(t, []string{"codemap", "--json", "--importers", "lib.rs", root})
+	var rustReport scanner.ImportersReport
+	if err := json.Unmarshal([]byte(stdout), &rustReport); err != nil {
+		t.Fatalf("expected importers JSON output for lib.rs, got error %v with body:\n%s", err, stdout)
+	}
+	if rustReport.CoverageStatus != string(analysis.CoveragePartial) || !strings.Contains(strings.Join(rustReport.CoverageNotes, " "), "Rust") {
+		t.Fatalf("Rust importers coverage = %q %v, want partial with the Rust caveat", rustReport.CoverageStatus, rustReport.CoverageNotes)
+	}
 }
 
 // TestBinaryDependencyModesMergeCLIFiltersWithConfig locks in the two

@@ -323,7 +323,7 @@ func (s *AstGrepScanner) ScanDirectory(parent context.Context, root string) (Sca
 	// duplicate the same caveat on two sources.
 	return ScanOutcome{
 		Analyses: analyses,
-		Sources:  []analysis.Source{{Name: "ast-grep", Status: analysis.SourceAuthoritative}},
+		Sources:  []analysis.Source{{Name: "ast-grep", Status: analysis.SourceAuthoritative, Languages: astGrepLanguages}},
 	}, nil
 }
 

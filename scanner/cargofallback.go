@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -133,6 +134,10 @@ func scanForGraphOutcomeWithFilters(ctx context.Context, root string, filters Fi
 	recovered := false
 	if goFallback, fallbackErr := buildGoFallbackOutcome(ctx, root, files); fallbackErr == nil {
 		mergeFallbackOutcome(&fallback, goFallback)
+		// The Go parser replaces ast-grep for Go files, so the ast-grep
+		// caveat no longer concerns a Go query; go-parser's own detail
+		// reports whatever it skipped.
+		fallback.Sources[0].Languages = slices.DeleteFunc(slices.Clone(fallback.Sources[0].Languages), func(language string) bool { return language == "go" })
 		recovered = true
 	} else if ctx.Err() != nil {
 		return ScanOutcome{}, false, ctx.Err()
@@ -279,7 +284,8 @@ func buildCargoFallbackOutcome(ctx context.Context, root string, files []FileInf
 			Status: ScanSourceFallback,
 			// Recovered edges only reach the file graph, so don't claim them
 			// in the `--deps` payload.
-			Detail: fmt.Sprintf("Cargo metadata fallback used for %d of %d manifests", handled, len(manifests)),
+			Detail:    fmt.Sprintf("Cargo metadata fallback used for %d of %d manifests", handled, len(manifests)),
+			Languages: []string{"rust"},
 		}},
 		precomputedEdges: edges,
 	}, nil

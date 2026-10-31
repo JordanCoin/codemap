@@ -90,6 +90,42 @@ func (c *GraphCoverage) AddSource(outcome ScanSourceOutcome) {
 	}
 }
 
+// ForFile narrows coverage to what can affect one file's edges: the sources
+// tagged with the file's language plus untagged sources, which apply to every
+// file. Status and notes are rebuilt from the kept sources, so a Go file in a
+// Go+Rust repo reads complete without the Rust caveat while --deps keeps the
+// scan-level rollup (#111). A file in no known language, or one no tagged
+// source matched, gets the rollup unchanged rather than a claim.
+//
+// ponytail: scope is the file's own language. Importers of a file share its
+// ecosystem, so a cross-language edge (TS importing JSON) lands on the
+// unknown-language path above and keeps the rollup.
+func (c GraphCoverage) ForFile(file string) GraphCoverage {
+	language := DetectLanguage(file)
+	if language == "" {
+		return c
+	}
+	var kept []analysis.Source
+	for _, source := range c.Sources {
+		if len(source.Languages) == 0 || slices.Contains(source.Languages, language) {
+			kept = append(kept, source)
+		}
+	}
+	if len(kept) == 0 || len(kept) == len(c.Sources) {
+		return c
+	}
+	var scoped GraphCoverage
+	for _, source := range kept {
+		scoped.AddSource(source)
+	}
+	for _, issue := range c.Issues {
+		if DetectLanguage(issue.Path) == language {
+			scoped.Issues = append(scoped.Issues, issue)
+		}
+	}
+	return scoped
+}
+
 // hasUsableSource reports whether any recorded source extracted dependency
 // references (authoritative, fallback, or mixed).
 func hasUsableSource(sources []analysis.Source) bool {
@@ -142,10 +178,11 @@ type IncompleteScanError struct {
 }
 
 func newIncompleteScanError(source string, status ScanSourceStatus, detail string, err error) error {
-	return &IncompleteScanError{
-		Outcome: analysis.Source{Name: source, Status: status, Detail: detail},
-		Err:     err,
+	outcome := analysis.Source{Name: source, Status: status, Detail: detail}
+	if source == "ast-grep" {
+		outcome.Languages = astGrepLanguages
 	}
+	return &IncompleteScanError{Outcome: outcome, Err: err}
 }
 
 func (e *IncompleteScanError) Error() string {

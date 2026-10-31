@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"codemap/analysis"
 	"codemap/handoff"
 	"codemap/scanner"
 
@@ -250,6 +251,22 @@ func TestNewImportersOutputSpellsOutCompleteCoverage(t *testing.T) {
 	out = newImportersOutput("/repo", "pkg/user.go", graph)
 	if out.CoverageStatus != "partial" {
 		t.Fatalf("coverage_status = %q, want %q when the graph reports partial", out.CoverageStatus, "partial")
+	}
+}
+
+// #111: the MCP importers answer scopes coverage to the queried file's
+// language, so a Go file in a Go+Rust graph is complete and a Rust file keeps
+// the Rust caveat.
+func TestNewImportersOutputScopesCoverageToFileLanguage(t *testing.T) {
+	graph := &scanner.FileGraph{Importers: map[string][]string{}, Imports: map[string][]string{}}
+	graph.Coverage.AddSource(analysis.Source{Name: "ast-grep", Status: analysis.SourceAuthoritative, Languages: []string{"go", "rust"}})
+	graph.Coverage.AddSource(analysis.Source{Name: "rust-cargo", Status: analysis.SourceMixed, Detail: "Rust caveat", Languages: []string{"rust"}})
+
+	if out := newImportersOutput("/repo", "main.go", graph); out.CoverageStatus != "complete" || len(out.CoverageNotes) != 0 {
+		t.Fatalf("Go file: coverage_status=%q notes=%v, want complete with no notes", out.CoverageStatus, out.CoverageNotes)
+	}
+	if out := newImportersOutput("/repo", "src/lib.rs", graph); out.CoverageStatus != "partial" || !slices.Equal(out.CoverageNotes, []string{"Rust caveat"}) {
+		t.Fatalf("Rust file: coverage_status=%q notes=%v, want partial with the Rust caveat", out.CoverageStatus, out.CoverageNotes)
 	}
 }
 

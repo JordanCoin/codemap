@@ -55,9 +55,10 @@ func scanCUEFilesFromFiles(ctx context.Context, root string, files []FileInfo) (
 	return ScanOutcome{
 		Analyses: analyses,
 		Sources: []analysis.Source{{
-			Name:   "cue-imports",
-			Status: analysis.SourceAuthoritative,
-			Detail: "CUE package evaluation and external module loading are not graph edges",
+			Name:      "cue-imports",
+			Status:    analysis.SourceAuthoritative,
+			Detail:    "CUE package evaluation and external module loading are not graph edges",
+			Languages: []string{"cue"},
 		}},
 	}, nil
 }

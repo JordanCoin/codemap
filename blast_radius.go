@@ -1540,12 +1540,13 @@ func buildImportersReportFromGraph(root, file string, fg *scanner.FileGraph) (sc
 	// NotIndexed distinguishes "codemap scanned this file and it genuinely
 	// has zero importers" from "codemap never looked at this file at all"
 	// (e.g. it lives under a hidden or excluded directory, or the path
-	// doesn't exist). CoverageStatus/CoverageNotes below still describe the
-	// *scan as a whole* (complete/partial/unavailable) and are left as-is:
-	// an authoritative, complete scan can still miss one particular file
-	// simply because that file was outside its scanned set, which is
-	// exactly the gap NotIndexed exists to surface without redefining what
-	// "complete" means for the project overall.
+	// doesn't exist). CoverageStatus/CoverageNotes below are scoped to this
+	// file's language (#111): a Go file in a Go+Rust repo reads complete
+	// without the Rust caveat, because no Rust resolver produces edges into
+	// a Go file. The scan-level rollup stays on --deps. A complete scan can
+	// still miss this one file by leaving it outside the scanned set, which
+	// is exactly the gap NotIndexed exists to surface.
+	coverage := fg.Coverage.ForFile(file)
 	report := scanner.ImportersReport{
 		Root:           root,
 		Mode:           "importers",
@@ -1555,8 +1556,8 @@ func buildImportersReportFromGraph(root, file string, fg *scanner.FileGraph) (sc
 		ImporterCount:  len(importers),
 		IsHub:          fg.IsHub(file),
 		NotIndexed:     !fg.Indexed(file),
-		CoverageStatus: string(fg.Coverage.EffectiveStatus()),
-		CoverageNotes:  append([]string(nil), fg.Coverage.Notes...),
+		CoverageStatus: string(coverage.EffectiveStatus()),
+		CoverageNotes:  append([]string(nil), coverage.Notes...),
 	}
 
 	if pkg, pkgFiles, ok := fg.GoPackage(file); ok {
