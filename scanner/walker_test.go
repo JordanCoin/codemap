@@ -19,6 +19,7 @@ func TestIgnoredDirs(t *testing.T) {
 	expectedIgnored := []string{
 		".git", "node_modules", "vendor", "__pycache__",
 		".venv", "dist", "target", ".gradle", ".dart_tool",
+		".codemap", ".docmap",
 	}
 
 	for _, dir := range expectedIgnored {
@@ -83,12 +84,15 @@ func TestScanFiles(t *testing.T) {
 func TestScanFilesIgnoresDirs(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Create files including one in an ignored directory
-	if err := os.MkdirAll(filepath.Join(tmpDir, "node_modules"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "node_modules", "package.json"), []byte("{}"), 0644); err != nil {
-		t.Fatal(err)
+	// Create files including ones in ignored directories: a dependency dir
+	// and the codemap/docmap state dirs (#196), which no gitignore hides here.
+	for _, rel := range []string{"node_modules/package.json", ".codemap/x.json", ".docmap/sub/y.md"} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(tmpDir, rel)), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, rel), []byte("{}"), 0644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main"), 0644); err != nil {
 		t.Fatal(err)

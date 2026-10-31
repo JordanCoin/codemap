@@ -360,6 +360,23 @@ func TestCapBlastRadiusImportersReportCarriesCoverage(t *testing.T) {
 func TestBlastRadiusOmitsEmptyImporterSections(t *testing.T) {
 	requireBlastRadiusTools(t)
 	root := makeBlastRadiusHubRepo(t)
+	// Non-code files in the changed set (#154 part 4): with no `only` filter
+	// they are part of the diff, and nothing imports a note or a config.
+	if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".codemap", "config.json"), []byte(`{"only":[],"exclude":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"docs/note.md": "# note\n", "config.yml": "a: 1\n"} {
+		full := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	md, stderr, err := runCodemapWithInput("", "blast-radius", "--ref", "HEAD", root)
 	if err != nil {
@@ -367,6 +384,14 @@ func TestBlastRadiusOmitsEmptyImporterSections(t *testing.T) {
 	}
 	if strings.Contains(md, "### `aaa/aaa.go`") {
 		t.Fatalf("emitted importer section for a file with no importers:\n%s", md)
+	}
+	for _, name := range []string{"docs/note.md", "config.yml"} {
+		if !strings.Contains(md, filepath.Base(name)) {
+			t.Fatalf("changed %s missing from the diff panel:\n%s", name, md)
+		}
+		if strings.Contains(md, "### `"+name+"`") || strings.Contains(md, "[importers] "+name) {
+			t.Fatalf("spent importer budget on %s, which has no importers:\n%s", name, md)
+		}
 	}
 	// No empty code blocks (``` immediately followed by ```).
 	if strings.Contains(md, "```text\n\n```") {

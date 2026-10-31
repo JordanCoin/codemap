@@ -136,6 +136,16 @@ func aggregateSkylineFiles(files []scanner.FileInfo) ([]extAgg, int, int64) {
 	return result, count, size
 }
 
+// skylineFileLabel names what the skyline count covers. aggregateSkylineFiles
+// falls back to every file when none has a code extension, so the label
+// follows the data rather than claiming code files that are not there (#154).
+func skylineFileLabel(sorted []extAgg) string {
+	if len(sorted) > 0 && (codeExtensions[strings.ToLower(sorted[0].ext)] || codeFilenames[sorted[0].ext]) {
+		return "code files"
+	}
+	return "files (no code files found)"
+}
+
 func sortExtensionAggregates(aggregates []extAgg) {
 	sort.Slice(aggregates, func(i, j int) bool {
 		if aggregates[i].size != aggregates[j].size {
@@ -410,7 +420,8 @@ func renderStatic(w io.Writer, arranged []building, width, leftMargin, sceneLeft
 	title := fmt.Sprintf("─── %s ───", projectName)
 	fmt.Fprintf(w, "%s%s%s\n", BoldWhite, CenterString(title, width), Reset)
 
-	stats := fmt.Sprintf("%d languages · %d files · %s", len(sorted), codeFileCount, formatSize(codeSize))
+	// Name the scope: the tree counts every file, --deps the import graph (#154).
+	stats := fmt.Sprintf("%d languages · %d %s · %s", len(sorted), codeFileCount, skylineFileLabel(sorted), formatSize(codeSize))
 	fmt.Fprintf(w, "%s%s%s\n", Cyan, CenterString(stats, width), Reset)
 	fmt.Fprintln(w)
 }

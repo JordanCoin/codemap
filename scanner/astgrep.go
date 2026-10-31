@@ -281,11 +281,10 @@ func (s *AstGrepScanner) Available() bool {
 // config, cache) and is excluded the same way the plain file walker strips
 // it from its inventory (see ScanConfiguredFilesWithFilters).
 func hiddenScanExcludes() []string {
-	names := make([]string, 0, len(IgnoredDirs)+1)
+	names := make([]string, 0, len(IgnoredDirs))
 	for name := range IgnoredDirs {
 		names = append(names, name)
 	}
-	names = append(names, ".codemap")
 	sort.Strings(names)
 	return names
 }
@@ -664,15 +663,20 @@ func extractImportPath(text string) string {
 		}
 	}
 
-	// Bash: source ./file or . ./file. A variable or command substitution
-	// names no file, so it yields nothing rather than a literal "$VAR" entry
-	// in the import list (#154).
+	// Bash: source ./file or . ./file. Only a literal relative path can name
+	// a project file: a variable, a command substitution or an absolute path
+	// yields nothing rather than a "$VAR" or "/etc/profile" entry in the
+	// import list, and quotes come off so "./lib.sh" resolves (#154).
 	if strings.HasPrefix(text, "source ") || strings.HasPrefix(text, ". ") {
 		parts := strings.Fields(text)
-		if len(parts) >= 2 && !strings.ContainsAny(parts[1], "$`") {
-			return parts[1]
+		if len(parts) < 2 {
+			return ""
 		}
-		return ""
+		target := strings.Trim(parts[1], `"'`)
+		if strings.ContainsAny(target, "$`") || strings.HasPrefix(target, "/") {
+			return ""
+		}
+		return target
 	}
 
 	// Find quoted strings (Go, TS/JS, Python, C/C++ with quotes)

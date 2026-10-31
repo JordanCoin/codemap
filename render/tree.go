@@ -206,7 +206,10 @@ func Tree(w io.Writer, project scanner.Project) {
 			statsLine = fmt.Sprintf("Changed: %d files | +%d lines vs %s", totalFiles, totalAdded, project.DiffRef)
 		}
 	} else {
-		statsLine = fmt.Sprintf("Files: %d | Size: %s", totalFiles, formatSize(totalSize))
+		// Say what the number covers: --deps counts source files in the import
+		// graph, --skyline code files, watch status every watched file, and
+		// nothing told the reader these are different scopes (#154).
+		statsLine = fmt.Sprintf("Files: %d (all types, after ignore rules and filters) | Size: %s", totalFiles, formatSize(totalSize))
 	}
 	if len(statsLine)+4 > innerWidth {
 		innerWidth = len(statsLine) + 4

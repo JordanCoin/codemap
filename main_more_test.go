@@ -1309,6 +1309,43 @@ func TestMainWatchCloneAndDiffModes(t *testing.T) {
 	})
 }
 
+// --diff --ref compares a branch or PR, so untracked files (a reviewer's
+// scratch) stay out unless --include-untracked asks for them. Plain --diff
+// keeps them: agents run it before committing new files (#154 part 6).
+func TestDiffRefExcludesUntrackedUnlessAsked(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root := makeMainGitRepo(t, "main")
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n\nfunc changed() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "scratch.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	paths := func(args ...string) map[string]bool {
+		stdout := runMainWithArgs(t, append(append([]string{"codemap", "--json", "--diff"}, args...), root))
+		var project scanner.Project
+		if err := json.Unmarshal([]byte(stdout), &project); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, stdout)
+		}
+		got := map[string]bool{}
+		for _, f := range project.Files {
+			got[f.Path] = true
+		}
+		return got
+	}
+	if got := paths("--ref", "HEAD"); len(got) != 1 || !got["main.go"] {
+		t.Fatalf("--diff --ref HEAD must list only tracked changes, got %v", got)
+	}
+	if got := paths("--ref", "HEAD", "--include-untracked"); len(got) != 2 || !got["scratch.go"] {
+		t.Fatalf("--include-untracked must restore untracked files, got %v", got)
+	}
+	if got := paths(); len(got) != 2 || !got["scratch.go"] {
+		t.Fatalf("plain --diff must keep untracked files, got %v", got)
+	}
+}
+
 func TestRunDepsModeRenderedOutputAndMainTreeModes(t *testing.T) {
 	if !scanner.NewAstGrepAnalyzer().Available() {
 		t.Skip("ast-grep not available")

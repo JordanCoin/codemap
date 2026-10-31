@@ -374,7 +374,7 @@ func Depgraph(ctx context.Context, w io.Writer, project scanner.DepsProject) {
 	for _, targets := range internalDeps {
 		internalCount += len(depgraphTargetNames(targets))
 	}
-	fmt.Fprintf(w, "%d files · %d functions · %d deps\n", len(files), totalFuncs, internalCount)
+	fmt.Fprintf(w, "%d source files in the import graph · %d functions · %d deps\n", len(files), totalFuncs, internalCount)
 	renderCoverageLine(w, project.Coverage)
 	fmt.Fprintln(w)
 }

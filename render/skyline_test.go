@@ -205,7 +205,7 @@ func TestSkylineRenderStaticIncludesTitleAndStats(t *testing.T) {
 	renderStatic(&buf, arranged, 40, 10, 8, 24, 16, len(codeFiles), codeFiles[0].Size, "Demo", sorted)
 
 	out := buf.String()
-	checks := []string{"─── Demo ───", "1 languages", "1 files", "300.0B"}
+	checks := []string{"─── Demo ───", "1 languages", "1 code files", "300.0B"}
 	for _, check := range checks {
 		if !strings.Contains(out, check) {
 			t.Fatalf("expected output to contain %q, got:\n%s", check, out)

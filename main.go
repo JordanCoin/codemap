@@ -239,6 +239,7 @@ func main() {
 	depsMode := flag.Bool("deps", false, "Enable dependency graph mode (function/import analysis)")
 	diffMode := flag.Bool("diff", false, "Only show files changed vs main (or use --ref to specify branch)")
 	diffRef := flag.String("ref", "main", "Branch/ref to compare against (use with --diff)")
+	includeUntracked := flag.Bool("include-untracked", false, "With --diff --ref: also list untracked files (left out by default when a ref is given)")
 	depthLimit := flag.Int("depth", 0, "Limit tree depth (0 = unlimited)")
 	maxFiles := flag.Int("max-files", 0, "Scan bound: files kept and the largest repo a dependency scan runs on (0 = config max_files or 50000, -1 = unbounded)")
 	onlyExts := flag.String("only", "", "Only show files with these extensions (comma-separated, e.g., 'swift,go')")
@@ -257,6 +258,12 @@ func main() {
 	// Short flag aliases
 	flag.IntVar(depthLimit, "d", 0, "Limit tree depth (shorthand)")
 	flag.Parse()
+	refExplicit := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "ref" {
+			refExplicit = true
+		}
+	})
 
 	if *helpMode {
 		fmt.Println("codemap - Generate a brain map of your codebase for LLM context")
@@ -274,6 +281,7 @@ func main() {
 		fmt.Println("  --deps              Dependency flow map (functions & imports)")
 		fmt.Println("  --diff              Only show files changed vs main")
 		fmt.Println("  --ref <branch>      Branch to compare against (default: main)")
+		fmt.Println("  --include-untracked With --diff --ref: also list untracked files")
 		fmt.Println("  --depth, -d <n>     Limit tree depth (0 = unlimited)")
 		fmt.Println("  --only <exts>       Only show files with these extensions (e.g., 'swift,go')")
 		fmt.Println("  --exclude <patterns> Exclude paths matching patterns (e.g., '.xcassets,Fonts')")
@@ -485,6 +493,12 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error getting git diff: %v\n", err)
 			fmt.Fprintf(os.Stderr, "Make sure '%s' is a valid branch/ref\n", *diffRef)
 			os.Exit(1)
+		}
+		// An explicit ref is a branch or PR comparison, where untracked files
+		// are the reviewer's scratch, not the change (#154 part 6). Plain
+		// --diff keeps them: agents run it before committing new files.
+		if refExplicit && !*includeUntracked {
+			diffInfo.DropUntracked()
 		}
 		if len(diffInfo.Changed) == 0 {
 			fmt.Printf("No files changed vs %s\n", *diffRef)
@@ -799,7 +813,7 @@ func runWatchMode(root string, verbose bool) {
 	}
 
 	fmt.Printf("Watching: %s\n", root)
-	fmt.Printf("Files tracked: %d\n", daemon.FileCount())
+	fmt.Printf("Files tracked: %d (every file under the root, before config filters)\n", daemon.FileCount())
 	fmt.Println("Event log: .codemap/events.log")
 	fmt.Println()
 	fmt.Println("Press Ctrl+C to stop")
@@ -818,7 +832,7 @@ func runWatchMode(root string, verbose bool) {
 	events := daemon.GetEvents(0)
 	fmt.Println()
 	fmt.Println("Session summary:")
-	fmt.Printf("  Files tracked: %d\n", daemon.FileCount())
+	fmt.Printf("  Files tracked: %d (every file under the root, before config filters)\n", daemon.FileCount())
 	fmt.Printf("  Events logged: %d\n", len(events))
 }
 
@@ -976,7 +990,9 @@ func runWatchSubcommand(subCmd, root string) error {
 				if writeFailure != nil {
 					fmt.Printf("  Files and Hubs below are from the last successful write (%s), not live\n", state.UpdatedAt.Local().Format("15:04:05"))
 				}
-				fmt.Printf("  Files: %d\n", state.FileCount)
+				// The tree, --deps and --skyline each count a different scope;
+				// say which one this is (#154).
+				fmt.Printf("  Files: %d (every watched file, before config filters)\n", state.FileCount)
 				fmt.Printf("  Hubs: %d\n", len(state.Hubs))
 				fmt.Printf("  Updated: %s\n", state.UpdatedAt.Format("15:04:05"))
 			} else {
