@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"codemap/skills"
 )
 
 func TestInstallCodemapPluginCreatesBundleAndMarketplace(t *testing.T) {
@@ -64,6 +66,19 @@ func TestInstallCodemapPluginCreatesBundleAndMarketplace(t *testing.T) {
 	source := entry["source"].(map[string]any)
 	if source["path"] != "./.codex/plugins/codemap" {
 		t.Fatalf("marketplace source path = %#v, want ./.codex/plugins/codemap", source["path"])
+	}
+
+	// #113: every builtin ships natively as codemap:<name>, not only the two
+	// hand-copied ones.
+	builtins, err := skills.Builtins()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range builtins {
+		path := filepath.Join(home, ".codex", "plugins", "codemap", "skills", s.Meta.Name, "SKILL.md")
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("installed plugin lacks builtin skill %s: %v", s.Meta.Name, err)
+		}
 	}
 }
 

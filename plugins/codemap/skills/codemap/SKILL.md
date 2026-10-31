@@ -5,7 +5,7 @@ description: Analyze codebase structure, dependencies, changes, cross-agent hand
 
 # Codemap
 
-Codemap gives you instant architectural context about any codebase. It classifies your intent, detects risk, matches relevant skills, and tracks your working set — all automatically via hooks.
+Codemap gives you instant architectural context about any codebase. It classifies your intent, detects risk, matches relevant skills, and tracks your working set, all automatically via hooks.
 
 Codemap should also keep its own per-project config healthy. On first use in a repo, or when output is obviously noisy, tune `.codemap/config.json` before doing deeper analysis so future calls stay code-first instead of asset-first.
 
@@ -23,6 +23,7 @@ codemap handoff --json .        # Machine-readable handoff payload
 codemap skill list              # Show available skills with descriptions
 codemap skill show <name>       # Get full skill instructions
 codemap skill init              # Create custom skill template
+codemap skill export <dir>      # Write every builtin as <dir>/<name>/SKILL.md for a host
 codemap config show             # Show current project config
 codemap context                 # Universal JSON context envelope
 codemap context --for "prompt"  # With pre-classified intent + matched skills
@@ -67,7 +68,7 @@ Signals that config needs setup or tuning:
 - Summarizing work done on a branch
 
 ### ALWAYS run `codemap --importers <file>` when:
-- About to edit a file — check if it's a hub
+- About to edit a file: check if it's a hub
 - Need to know the blast radius of a change
 - Deciding whether to refactor or leave alone
 
@@ -99,7 +100,7 @@ The prompt-submit hook fires on every message and provides:
 ```
 <!-- codemap:intent {"category":"refactor","risk":"high",...} -->
 <!-- codemap:skills [{"name":"hub-safety","score":5},...] -->
-Skills matched: hub-safety, refactor — run `codemap skill show <name>` for guidance
+Skills matched: hub-safety, refactor - run `codemap skill show <name>` for guidance
 ```
 
 - **Intent categories**: refactor, bugfix, feature, explore, test, docs

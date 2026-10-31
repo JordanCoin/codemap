@@ -18,7 +18,7 @@ codemap handoff --delta .         # Recent work only (changed files, risk, event
 
 ## What's in a handoff
 
-- **Prefix** (stable): configured project file count, hub summaries — changes rarely
+- **Prefix** (stable): configured project file count, hub summaries, changes rarely
 - **Delta** (dynamic): changed files, risk files, recent edit events, next steps
 - **Hashes**: deterministic hashes for cache validation across agents
 
@@ -37,7 +37,7 @@ The prefix file count and size-based handoff budgets honor the active
 
 - Switching from Claude to Codex (or vice versa)
 - Starting a new Claude session on the same branch
-- Context window getting full — compact and resume
+- Context window getting full: compact and resume
 - Passing work to a teammate's AI session
 
 ## Artifacts written

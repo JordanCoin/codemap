@@ -13,6 +13,17 @@ import (
 
 // RunSkill handles the "codemap skill" subcommand.
 func RunSkill(args []string, root string) {
+	// export needs no project: it renders only the embedded builtins.
+	if len(args) >= 2 && args[0] == "export" {
+		n, err := skills.ExportHostSkills(args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error exporting skills: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Wrote %d skills to %s\n", n, args[1])
+		return
+	}
+
 	resolvedRoot, _, err := ResolveNearestGitRoot(root)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error resolving path: %v\n", err)
@@ -37,12 +48,13 @@ func RunSkill(args []string, root string) {
 	case "init":
 		runSkillInit(root)
 	default:
-		fmt.Println("Usage: codemap skill <list|show|init>")
+		fmt.Println("Usage: codemap skill <list|show|init|export>")
 		fmt.Println()
 		fmt.Println("Commands:")
 		fmt.Println("  list          Show all available skills with descriptions")
 		fmt.Println("  show <name>   Print full skill content")
 		fmt.Println("  init          Create a SKILL.md template in .codemap/skills/")
+		fmt.Println("  export <dir>  Write every builtin skill as <dir>/<name>/SKILL.md for a host")
 	}
 }
 

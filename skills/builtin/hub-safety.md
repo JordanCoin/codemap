@@ -13,7 +13,7 @@ Hub files are imported by 3+ other files. Changes here ripple across the codebas
 ## Before editing a hub file
 
 1. Run `codemap --importers <file>` to see all dependents
-2. Understand the public API surface — which functions/types are used externally
+2. Understand the public API surface: which functions/types are used externally
 3. Check if tests exist for dependents, not just the hub itself
 
 ## While editing
