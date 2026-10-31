@@ -426,6 +426,9 @@ func TestRunDoctorReportsUnconfiguredProject(t *testing.T) {
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.desktopBundle != "" && tt.goos == "darwin" && runtime.GOOS == "windows" {
+				t.Skip("windows: simulated macOS desktop needs an exec bit NTFS cannot store, tracked in #214")
+			}
 			root := t.TempDir()
 			home := t.TempDir()
 			t.Setenv("HOME", home)
