@@ -1833,7 +1833,24 @@ func hookSessionIDFromStdinContext(ctx context.Context) (string, error) {
 			defer os.Stdin.SetReadDeadline(time.Time{})
 		}
 	}
-	input, err := io.ReadAll(os.Stdin)
+	// Pipes refuse read deadlines on Windows, so the read runs aside and the
+	// context bounds it; a reader left blocked there ends with the process.
+	type stdinResult struct {
+		input []byte
+		err   error
+	}
+	results := make(chan stdinResult, 1)
+	go func() {
+		input, err := io.ReadAll(os.Stdin)
+		results <- stdinResult{input, err}
+	}()
+	var input []byte
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case result := <-results:
+		input, err = result.input, result.err
+	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return "", ctxErr
 	}

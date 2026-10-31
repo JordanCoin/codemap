@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -415,6 +416,9 @@ func TestSkylineMinMax(t *testing.T) {
 }
 
 func TestSkylineAnimatePathCallsRenderAnimatedForStdout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: bubbletea Run does not return on a non-console stdin, tracked in #214")
+	}
 	project := scanner.Project{
 		Root: t.TempDir(),
 		Name: "Demo",
