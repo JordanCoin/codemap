@@ -1840,8 +1840,9 @@ func hookSessionIDFromStdinContext(ctx context.Context) (string, error) {
 		err   error
 	}
 	results := make(chan stdinResult, 1)
+	stdin := os.Stdin // captured: a late reader must not race a caller swapping os.Stdin
 	go func() {
-		input, err := io.ReadAll(os.Stdin)
+		input, err := io.ReadAll(stdin)
 		results <- stdinResult{input, err}
 	}()
 	var input []byte
