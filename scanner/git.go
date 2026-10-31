@@ -95,6 +95,16 @@ func GitDiffInfo(ctx context.Context, root, ref string) (*DiffInfo, error) {
 	return info, nil
 }
 
+// DropUntracked removes untracked files from the change set. A branch or PR
+// comparison must not attribute a reviewer's scratch files to the change
+// under review (#154).
+func (d *DiffInfo) DropUntracked() {
+	for path := range d.Untracked {
+		delete(d.Changed, path)
+	}
+	d.Untracked = make(map[string]bool)
+}
+
 // isNumstatCount reports whether s is a numstat count: all digits or "-".
 func isNumstatCount(s string) bool {
 	if s == "-" {

@@ -239,6 +239,7 @@ func main() {
 	depsMode := flag.Bool("deps", false, "Enable dependency graph mode (function/import analysis)")
 	diffMode := flag.Bool("diff", false, "Only show files changed vs main (or use --ref to specify branch)")
 	diffRef := flag.String("ref", "main", "Branch/ref to compare against (use with --diff)")
+	includeUntracked := flag.Bool("include-untracked", false, "With --diff --ref: also list untracked files (left out by default when a ref is given)")
 	depthLimit := flag.Int("depth", 0, "Limit tree depth (0 = unlimited)")
 	maxFiles := flag.Int("max-files", 0, "Scan bound: files kept and the largest repo a dependency scan runs on (0 = config max_files or 50000, -1 = unbounded)")
 	onlyExts := flag.String("only", "", "Only show files with these extensions (comma-separated, e.g., 'swift,go')")
@@ -257,6 +258,12 @@ func main() {
 	// Short flag aliases
 	flag.IntVar(depthLimit, "d", 0, "Limit tree depth (shorthand)")
 	flag.Parse()
+	refExplicit := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "ref" {
+			refExplicit = true
+		}
+	})
 
 	if *helpMode {
 		fmt.Println("codemap - Generate a brain map of your codebase for LLM context")
@@ -274,6 +281,7 @@ func main() {
 		fmt.Println("  --deps              Dependency flow map (functions & imports)")
 		fmt.Println("  --diff              Only show files changed vs main")
 		fmt.Println("  --ref <branch>      Branch to compare against (default: main)")
+		fmt.Println("  --include-untracked With --diff --ref: also list untracked files")
 		fmt.Println("  --depth, -d <n>     Limit tree depth (0 = unlimited)")
 		fmt.Println("  --only <exts>       Only show files with these extensions (e.g., 'swift,go')")
 		fmt.Println("  --exclude <patterns> Exclude paths matching patterns (e.g., '.xcassets,Fonts')")
@@ -485,6 +493,12 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error getting git diff: %v\n", err)
 			fmt.Fprintf(os.Stderr, "Make sure '%s' is a valid branch/ref\n", *diffRef)
 			os.Exit(1)
+		}
+		// An explicit ref is a branch or PR comparison, where untracked files
+		// are the reviewer's scratch, not the change (#154 part 6). Plain
+		// --diff keeps them: agents run it before committing new files.
+		if refExplicit && !*includeUntracked {
+			diffInfo.DropUntracked()
 		}
 		if len(diffInfo.Changed) == 0 {
 			fmt.Printf("No files changed vs %s\n", *diffRef)
