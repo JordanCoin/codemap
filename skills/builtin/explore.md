@@ -10,20 +10,20 @@ languages: ["go", "typescript", "python", "java", "rust", "ruby", "swift"]
 
 ## Start with the big picture
 
-1. `codemap .` — project tree with file counts and top extensions
-2. `codemap --deps .` — dependency flow showing how packages connect
-3. Hub files — these are the most important files to understand first
+1. `codemap .`: project tree with file counts and top extensions
+2. `codemap --deps .`: dependency flow showing how packages connect
+3. Hub files: these are the most important files to understand first
 
 ## Trace a feature
 
 1. Find the entry point (CLI command, API route, event handler)
-2. `codemap --importers <entry-file>` — who calls this?
-3. `codemap --deps .` — follow the import chain
-4. Read hub files in the chain first — they define the shared types/interfaces
+2. `codemap --importers <entry-file>`: who calls this?
+3. `codemap --deps .`: follow the import chain
+4. Read hub files in the chain first: they define the shared types/interfaces
 
 ## Understand a subsystem
 
-1. Check `.codemap/config.json` for routing subsystems — they define logical boundaries
+1. Check `.codemap/config.json` for routing subsystems: they define logical boundaries
 2. Each subsystem has paths, keywords, and associated docs
 3. Read the subsystem's docs first, then trace the code
 

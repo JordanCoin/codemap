@@ -25,11 +25,12 @@ func TestRunSkill_PrintsUsageForUnknownOrMissingSubcommand(t *testing.T) {
 			})
 
 			checks := []string{
-				"Usage: codemap skill <list|show|init>",
+				"Usage: codemap skill <list|show|init|export>",
 				"Commands:",
 				"list",
 				"show <name>",
 				"init",
+				"export <dir>",
 			}
 			for _, check := range checks {
 				if !strings.Contains(out, check) {

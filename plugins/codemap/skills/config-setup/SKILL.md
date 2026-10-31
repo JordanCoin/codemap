@@ -5,6 +5,17 @@ description: Set up or tune .codemap/config.json so Codemap focuses on code-rele
 
 # Codemap Config Setup
 
+## When this skill is matched at score 100, do this BEFORE the user's task, then continue the task
+
+A score of 100 means a hook found the config missing, empty, malformed, or boilerplate. Fix it first; it takes under a minute and every later Codemap answer depends on it.
+
+1. Run `codemap config show` to see the current state. If it says missing, run `codemap config init` (most commands now do this for you).
+2. Write or tune `.codemap/config.json` using the workflow below: keep source extensions in `only`, add `exclude` for real noise, set `depth` if the tree is wide.
+3. Rerun `codemap .` and confirm the tree is dominated by source, not assets.
+4. Verify one known cross-file dependency still resolves with `codemap --importers <file>`.
+
+Then return to the user's task. Do not skip this because the task looks small.
+
 ## Goal
 
 Write or improve `.codemap/config.json` so future Codemap calls stay focused on the code that matters for this repo.
@@ -19,6 +30,8 @@ Write or improve `.codemap/config.json` so future Codemap calls stay focused on 
 ## Workflow
 
 1. Inspect the repo quickly before writing config
+   - Read the root and applicable nested `AGENTS.md` files before deciding ownership or scope
+   - Read language workspace manifests such as `Cargo.toml`; preserve every declared workspace member
    - Run `codemap .`
    - If needed, run `codemap --deps .`
    - Note the stack markers (`Cargo.toml`, `Package.swift`, `*.xcodeproj`, `go.mod`, `package.json`, `pyproject.toml`, etc.)
@@ -37,6 +50,7 @@ Write or improve `.codemap/config.json` so future Codemap calls stay focused on 
 
 4. Prefer stack-aware defaults
    - Rust: focus `src`, `tests`, `benches`, `examples`; de-prioritize corpora, sample PDFs, training data, large generated artifacts
+   - For Cargo workspaces, keep all workspace members' `src`, `tests`, `benches`, and `examples` trees unless repository evidence explicitly excludes one
    - iOS/Swift: focus app/framework source, tests, package/project manifests; de-prioritize `.xcassets`, screenshots, snapshots, vendor/build outputs
    - TS/JS: focus `src`, `apps`, `packages`, `tests`; de-prioritize `dist`, `coverage`, Storybook assets, large fixture payloads
    - Python: focus package roots, tests, tool config; de-prioritize notebooks, data dumps, models, fixtures when they overwhelm code
@@ -50,3 +64,42 @@ Write or improve `.codemap/config.json` so future Codemap calls stay focused on 
    - Rerun `codemap .`
    - If the repo still looks noisy, refine `exclude` and possibly `depth`
    - Only rerun `codemap --deps .` after tree output looks reasonable
+   - Verify at least one known cross-layer dependency remains discoverable after tuning
+
+## Heuristics
+
+- Exclude giant non-code directories before narrowing source extensions further
+- Prefer directory exclusions over extension-only exclusions when the directory is clearly not core to the codebase
+- Do not exclude tests just because they are large
+- Do not exclude docs that are part of routing or subsystem understanding
+- Keep the first config conservative; optimize further only if the output remains noisy
+
+## Example outcomes
+
+### Rust library with large fixture data
+
+```json
+{
+  "only": ["rs", "toml", "md"],
+  "exclude": ["training-data", "test-pdfs", "*.pdf"],
+  "depth": 4
+}
+```
+
+### iOS app with asset bloat
+
+```json
+{
+  "only": ["swift", "m", "mm", "h", "plist", "md"],
+  "exclude": [".xcassets", "Snapshots", "Screenshots", "DerivedData"],
+  "depth": 4
+}
+```
+
+## Output expectations
+
+After tuning config, briefly report:
+
+1. Why the old config was missing or too noisy
+2. What exclusions or depth choices you added
+3. Whether future Codemap runs should now be materially cleaner

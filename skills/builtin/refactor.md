@@ -11,7 +11,7 @@ languages: ["go", "typescript", "python", "java", "rust", "ruby"]
 ## Before refactoring
 
 1. Run `codemap --deps .` to understand the dependency graph
-2. Identify hub files in the refactoring scope — they need extra care
+2. Identify hub files in the refactoring scope: they need extra care
 3. Run `codemap --diff` to see what's already changed on this branch
 
 ## Refactoring checklist
