@@ -281,11 +281,10 @@ func (s *AstGrepScanner) Available() bool {
 // config, cache) and is excluded the same way the plain file walker strips
 // it from its inventory (see ScanConfiguredFilesWithFilters).
 func hiddenScanExcludes() []string {
-	names := make([]string, 0, len(IgnoredDirs)+1)
+	names := make([]string, 0, len(IgnoredDirs))
 	for name := range IgnoredDirs {
 		names = append(names, name)
 	}
-	names = append(names, ".codemap")
 	sort.Strings(names)
 	return names
 }

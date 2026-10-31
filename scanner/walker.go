@@ -121,6 +121,11 @@ var IgnoredDirs = map[string]bool{
 	".git":         true,
 	"node_modules": true,
 	"vendor":       true,
+	// codemap's and docmap's own state and caches are never project source
+	// (#196, #184). Hiding them only through a gitignore rule left them in
+	// the tree of any repo whose rule was never written.
+	".codemap": true,
+	".docmap":  true,
 	// Go's own toolchain ignores testdata, and fixture repositories inside it
 	// are not the project's source: scanning them inflates file counts and
 	// lets a fixture's language change the project's reported coverage.
@@ -481,13 +486,7 @@ func ScanConfiguredFilesWithFilters(ctx context.Context, root string, cache *Git
 	if err != nil {
 		return nil, err
 	}
-	configured := files[:0]
-	for _, file := range files {
-		if path := filepath.ToSlash(file.Path); path != ".codemap" && !strings.HasPrefix(path, ".codemap/") {
-			configured = append(configured, file)
-		}
-	}
-	return configured, nil
+	return files, nil
 }
 
 func filterAnalysesContext(ctx context.Context, analyses []FileAnalysis, filters Filters) ([]FileAnalysis, error) {
