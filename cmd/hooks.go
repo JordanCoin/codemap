@@ -905,6 +905,7 @@ func hookPromptSubmit(root string) error {
 	if !ok || prompt == "" {
 		return nil
 	}
+	touchSessionLease(root, sessionIDFromHookInput(input))
 
 	EnsureProjectConfig(root)
 	projCfg := config.Load(root)
@@ -1894,6 +1895,56 @@ func finishSessionDaemonContext(ctx context.Context, root, sessionID string) err
 	return ctx.Err()
 }
 
+func sessionLeaseName(sessionID string) string {
+	return fmt.Sprintf("%x.json", sha256.Sum256([]byte(detectAgentID()+"\x00"+sessionID)))
+}
+
+// touchSessionLease refreshes a lease's mtime so an active session keeps its
+// daemon past sessionLeaseTTL; leases are otherwise written only at session
+// start and stop, which is what DaemonShouldExit reads.
+func touchSessionLease(root, sessionID string) {
+	if strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	codemapDir, err := projectpath.CheckedRuntimeCodemapDir(root)
+	if err != nil {
+		return
+	}
+	now := time.Now()
+	_ = os.Chtimes(filepath.Join(codemapDir, "sessions", sessionLeaseName(sessionID)), now, now)
+}
+
+// DaemonShouldExit is the watch daemon's own liveness check (#155; the orphan
+// class behind #227). It exits when its root is gone, when watch.pid names a
+// different live daemon (this one was superseded), or when every session
+// lease is older than sessionLeaseTTL. Zero leases means no hook manages this
+// daemon (a manual `codemap watch`), so it is left alone.
+func DaemonShouldExit(root string, now time.Time) bool {
+	if _, err := os.Stat(root); os.IsNotExist(err) {
+		return true
+	}
+	if pid, err := watch.ReadPID(root); err == nil && pid > 0 && pid != os.Getpid() {
+		return true
+	}
+	codemapDir, err := projectpath.CheckedRuntimeCodemapDir(root)
+	if err != nil {
+		return false
+	}
+	entries, err := os.ReadDir(filepath.Join(codemapDir, "sessions"))
+	if err != nil || len(entries) == 0 {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if info, err := entry.Info(); err == nil && now.Sub(info.ModTime()) <= sessionLeaseTTL {
+			return false
+		}
+	}
+	return true
+}
+
 func updateSessionLease(root, sessionID string, active bool, now time.Time, action func(int)) error {
 	return updateSessionLeaseContext(context.Background(), root, sessionID, active, now, action)
 }
@@ -1943,8 +1994,7 @@ func updateSessionLeaseContext(ctx context.Context, root, sessionID string, acti
 		}
 	}
 
-	leaseName := fmt.Sprintf("%x.json", sha256.Sum256([]byte(detectAgentID()+"\x00"+sessionID)))
-	leasePath := filepath.Join(leaseDir, leaseName)
+	leasePath := filepath.Join(leaseDir, sessionLeaseName(sessionID))
 	if active {
 		if err := ctx.Err(); err != nil {
 			return err

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"codemap/cmd"
 	"codemap/scanner"
 )
 
@@ -123,7 +124,7 @@ func TestWaitForDaemonExitReturnsWhenRootRemoved(t *testing.T) {
 	root := t.TempDir()
 	done := make(chan struct{})
 	go func() {
-		waitForDaemonExit(root, make(chan os.Signal), 5*time.Millisecond)
+		waitForDaemonExit(make(chan os.Signal), 5*time.Millisecond, func() bool { return cmd.DaemonShouldExit(root, time.Now()) })
 		close(done)
 	}()
 	time.Sleep(20 * time.Millisecond)

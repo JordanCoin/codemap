@@ -1188,11 +1188,12 @@ func runDaemon(root string) (runErr error) {
 		}
 		readyPublished = true
 	}
-	// Wait for a stop signal, or for the root to disappear (#227): a removed
-	// worktree never sends SessionEnd, so the daemon must notice on its own.
+	// Wait for a stop signal, or for the daemon to become an orphan (#227,
+	// #155): a removed worktree or a session that never sent SessionEnd
+	// leaves nobody to stop it, so it must notice on its own.
 	sigChan := make(chan os.Signal, 1)
 	notifySignals(sigChan, syscall.SIGTERM, syscall.SIGINT)
-	waitForDaemonExit(root, sigChan, daemonRootPollInterval)
+	waitForDaemonExit(sigChan, daemonRootPollInterval, func() bool { return cmd.DaemonShouldExit(root, time.Now()) })
 
 	daemon.Stop()
 	_ = watch.RemoveProcessPID(root, os.Getpid())
@@ -1201,9 +1202,9 @@ func runDaemon(root string) (runErr error) {
 
 const daemonRootPollInterval = 30 * time.Second
 
-// waitForDaemonExit returns when a signal arrives or the project root no
-// longer exists. A transient stat error is not a removal.
-func waitForDaemonExit(root string, sig <-chan os.Signal, poll time.Duration) {
+// waitForDaemonExit returns when a signal arrives or shouldExit reports true
+// on a poll tick.
+func waitForDaemonExit(sig <-chan os.Signal, poll time.Duration, shouldExit func() bool) {
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
 	for {
@@ -1211,7 +1212,7 @@ func waitForDaemonExit(root string, sig <-chan os.Signal, poll time.Duration) {
 		case <-sig:
 			return
 		case <-ticker.C:
-			if _, err := os.Stat(root); os.IsNotExist(err) {
+			if shouldExit() {
 				return
 			}
 		}
