@@ -1,13 +1,17 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"codemap/cmd"
 	"codemap/scanner"
+	"codemap/watch"
 )
 
 func TestRenderImportersReportExplainsEmptyResult(t *testing.T) {
@@ -95,6 +99,8 @@ func TestHelpListsAllSubcommands(t *testing.T) {
 		"codemap watch", "codemap hook", "codemap config", "codemap setup",
 		"codemap doctor", "codemap mcp", "codemap skill", "codemap plugin",
 		"codemap context", "codemap serve", "codemap handoff", "codemap blast-radius",
+		// #151: the daemon side effect of session-start is stated, not hidden.
+		"session-start starts 'codemap watch daemon <root>'", "'codemap watch stop' ends it",
 	} {
 		if !strings.Contains(out, sub) {
 			t.Fatalf("--help does not mention %q:\n%s", sub, out)
@@ -140,5 +146,49 @@ func TestWaitForDaemonExitReturnsWhenRootRemoved(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("waitForDaemonExit did not notice the removed root")
+	}
+}
+
+// TestWatchStatusAndStopAllCoverRegisteredDaemons is #155 defect 2 and #151
+// item 3: every published daemon is listed and stoppable from any directory.
+func TestWatchStatusAndStopAllCoverRegisteredDaemons(t *testing.T) {
+	t.Setenv("CODEMAP_DAEMON_REGISTRY", t.TempDir())
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	process := exec.Command(os.Args[0], "-test.run=TestMainWatchHelperProcess", "--", "watch", "daemon", root)
+	process.Env = append(os.Environ(), "CODEMAP_MAIN_WATCH_HELPER=1")
+	if err := process.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := make(chan struct{})
+	go func() { _ = process.Wait(); close(waited) }()
+	t.Cleanup(func() { _ = process.Process.Kill(); <-waited })
+	if err := watch.WriteProcessPID(root, process.Process.Pid); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runCodemap("watch", "status", "--all")
+	if err != nil {
+		t.Fatalf("watch status --all: %v\n%s", err, out)
+	}
+	if want := fmt.Sprintf("pid %d", process.Process.Pid); !strings.Contains(out, want) || !strings.Contains(out, root) {
+		t.Fatalf("status --all omitted the registered daemon (want %q and %q):\n%s", want, root, out)
+	}
+
+	out, err = runCodemap("watch", "stop", "--all")
+	if err != nil {
+		t.Fatalf("watch stop --all: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "stopped") {
+		t.Fatalf("stop --all did not report the stop:\n%s", out)
+	}
+	<-waited
+	if out, err = runCodemap("watch", "status", "--all"); err != nil || !strings.Contains(out, "No watch daemons running") {
+		t.Fatalf("status --all after stop --all = %v:\n%s", err, out)
 	}
 }

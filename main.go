@@ -38,7 +38,7 @@ var (
 	}
 	watchIsRunning         = watch.IsRunning
 	stopWatchDaemon        = watch.Stop
-	writeWatchPID          = watch.WritePID
+	claimWatchDaemonPID    = watch.ClaimDaemonPID
 	executablePath         = os.Executable
 	execCommand            = exec.Command
 	notifySignals          = signal.Notify
@@ -52,6 +52,8 @@ const (
 	watchReadinessEnv     = "CODEMAP_WATCH_READINESS_FILE"
 	watchReadinessTimeout = 30 * time.Second
 )
+
+var errDaemonAlreadyRunning = errors.New("another watch daemon is already running")
 
 type watchReadiness struct {
 	Error string `json:"error,omitempty"`
@@ -76,6 +78,13 @@ func main() {
 		if len(os.Args) >= 3 {
 			subCmd = os.Args[2]
 		}
+		if len(os.Args) >= 4 && os.Args[3] == "--all" {
+			if err := runWatchAll(subCmd); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
 		root, _ := os.Getwd()
 		if len(os.Args) >= 4 {
 			root = os.Args[3]
@@ -92,6 +101,7 @@ func main() {
 		if len(os.Args) < 3 {
 			fmt.Fprintln(os.Stderr, "Usage: codemap hook <hookname>")
 			fmt.Fprintln(os.Stderr, "Available hooks: session-start, pre-edit, post-edit, prompt-submit, pre-compact, session-stop")
+			fmt.Fprintln(os.Stderr, "session-start also starts 'codemap watch daemon <root>' when none is running and writes runtime state under the project's .codemap/ directory. 'codemap watch stop' ends it.")
 			os.Exit(1)
 		}
 		hookName := os.Args[2]
@@ -318,12 +328,14 @@ func main() {
 		fmt.Println("Note: Flags must come before the path/URL.")
 		fmt.Println()
 		fmt.Println("Hooks (for Claude Code and Codex integration):")
-		fmt.Println("  codemap hook session-start      # Show project context")
+		fmt.Println("  codemap hook session-start      # Show project context (starts the watch daemon)")
 		fmt.Println("  codemap hook pre-edit           # Check before editing (stdin)")
 		fmt.Println("  codemap hook post-edit          # Check after editing (stdin)")
 		fmt.Println("  codemap hook prompt-submit      # Parse user prompt (stdin)")
 		fmt.Println("  codemap hook pre-compact        # Save state before compact")
 		fmt.Println("  codemap hook session-stop       # Session summary")
+		fmt.Println("  session-start starts 'codemap watch daemon <root>' when none is running and writes")
+		fmt.Println("  runtime state under the project's .codemap/ directory. 'codemap watch stop' ends it.")
 		fmt.Println("  codemap handoff [path]          # Build handoff artifact for agent switching")
 		fmt.Println("  codemap blast-radius [path]     # Compact bounded blast-radius bundle")
 		fmt.Println("  codemap collide                 # Rank open PRs by shared-file merge-order hazard")
@@ -342,6 +354,7 @@ func main() {
 		fmt.Println()
 		fmt.Println("More subcommands:")
 		fmt.Println("  codemap watch status|start|stop # Manage the background watch daemon")
+		fmt.Println("  codemap watch status|stop --all # List or stop every watch daemon this user started")
 		fmt.Println("  codemap skill list|show <name>  # List or show bundled agent skills")
 		fmt.Println("  codemap context                 # Print machine-readable project context JSON")
 		fmt.Println("  codemap serve                   # Serve project intelligence over HTTP")
@@ -1009,6 +1022,38 @@ func runWatchSubcommand(subCmd, root string) error {
 	return nil
 }
 
+// runWatchAll lists or stops every registered daemon this user started
+// (#155 defect 2, #151 item 3).
+func runWatchAll(subCmd string) error {
+	daemons := watch.ListDaemons()
+	switch subCmd {
+	case "status", "stop":
+	default:
+		return fmt.Errorf("--all applies to watch status|stop, not %q", subCmd)
+	}
+	if len(daemons) == 0 {
+		fmt.Println("No watch daemons running")
+		return nil
+	}
+	failed := 0
+	for _, d := range daemons {
+		if subCmd == "status" {
+			fmt.Printf("pid %d  up %s  %s\n", d.PID, time.Since(d.Started).Round(time.Second), d.Root)
+			continue
+		}
+		if err := watch.StopDaemon(d); err != nil {
+			failed++
+			fmt.Printf("pid %d  %s: %v\n", d.PID, d.Root, err)
+			continue
+		}
+		fmt.Printf("pid %d  stopped  %s\n", d.PID, d.Root)
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d watch daemon(s) not stopped", failed)
+	}
+	return nil
+}
+
 func runHandoffSubcommand(args []string) {
 	fs := flag.NewFlagSet("handoff", flag.ExitOnError)
 	since := fs.String("since", "6h", "Look back window for recent events (Go duration, e.g. 2h, 30m)")
@@ -1152,51 +1197,28 @@ func runDaemon(root string) (runErr error) {
 			_ = publishWatchReadiness(readyPath, runErr)
 		}
 	}()
-	var transition *watch.Transition
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		var err error
-		transition, err = acquireWatchTransition(root)
-		if err == nil {
-			break
-		}
-		if !errors.Is(err, watch.ErrTransitionLocked) || time.Now().After(deadline) {
-			return fmt.Errorf("claiming daemon transition: %w", err)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	defer func() {
-		if transition != nil {
-			_ = releaseWatchTransition(transition)
-		}
-	}()
-	active, err := watch.ResolveActiveRuntime(root)
+	claimed, err := claimWatchDaemonPID(root, os.Getpid())
 	if err != nil {
-		return fmt.Errorf("resolving daemon runtime: %w", err)
+		return fmt.Errorf("claiming daemon: %w", err)
 	}
-	if active.PID > 0 && active.PID != os.Getpid() {
-		return errors.New("another watch daemon is already running")
+	if !claimed {
+		// Another daemon owns this root (#155 defect 1): exit 0 without output.
+		// A spawning `watch start` still learns why through the readiness file.
+		if readyPath != "" {
+			readyPublished = true
+			_ = publishWatchReadiness(readyPath, errDaemonAlreadyRunning)
+		}
+		return nil
 	}
 	daemon, err := newWatchProcess(root, false)
 	if err != nil {
+		_ = watch.RemoveProcessPID(root, os.Getpid())
 		return err
 	}
-
 	if err := daemon.Start(); err != nil {
+		_ = watch.RemoveProcessPID(root, os.Getpid())
 		return fmt.Errorf("starting watch: %w", err)
 	}
-
-	// Write PID file
-	if err := writeWatchPID(root); err != nil {
-		daemon.Stop()
-		return fmt.Errorf("publishing daemon PID: %w", err)
-	}
-	if err := releaseWatchTransition(transition); err != nil {
-		daemon.Stop()
-		_ = watch.RemoveProcessPID(root, os.Getpid())
-		return fmt.Errorf("releasing daemon transition: %w", err)
-	}
-	transition = nil
 	if readyPath != "" {
 		if err := publishWatchReadiness(readyPath, nil); err != nil {
 			daemon.Stop()

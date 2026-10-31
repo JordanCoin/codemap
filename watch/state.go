@@ -132,7 +132,49 @@ func WriteProcessPID(root string, pid int) error {
 		return err
 	}
 	pidFile := filepath.Join(runtimeDir, "watch.pid")
-	return runtimefile.WriteAtomic(pidFile, []byte(fmt.Sprintf("%d", pid)), 0o644)
+	if err := runtimefile.WriteAtomic(pidFile, []byte(fmt.Sprintf("%d", pid)), 0o644); err != nil {
+		return err
+	}
+	registerDaemon(root, pid)
+	return nil
+}
+
+// ClaimDaemonPID publishes pid as the project's only watch daemon. The check
+// and the write happen under the transition lock, so concurrent claimants
+// serialize and exactly one finds no live owned daemon (#155 defect 1). It
+// returns false when another live daemon already owns the project; a pid file
+// naming a dead process is moved aside and reclaimed.
+func ClaimDaemonPID(root string, pid int) (claimed bool, err error) {
+	transition, err := acquireTransitionWithin(root, 2*time.Second)
+	if err != nil {
+		return false, err
+	}
+	released := false
+	defer func() {
+		if !released {
+			_ = transition.Release()
+		}
+	}()
+	active, err := ResolveActiveRuntime(root)
+	if err != nil {
+		return false, err
+	}
+	if active.PID > 0 && active.PID != pid {
+		return false, nil
+	}
+	if err := PreserveStalePIDEvidence(active); err != nil {
+		return false, err
+	}
+	if err := WriteProcessPID(root, pid); err != nil {
+		return false, err
+	}
+	released = true
+	if err := transition.Release(); err != nil {
+		// Lock ownership changed under us, so exclusivity is in doubt: withdraw.
+		_ = RemoveProcessPID(root, pid)
+		return false, err
+	}
+	return true, nil
 }
 
 // ReadPID reads the daemon PID from the project's runtime namespace.
@@ -151,6 +193,9 @@ func RemovePID(root string) {
 		return
 	}
 	pidFile := filepath.Join(runtimeDir, "watch.pid")
+	if pid, err := readPIDAt(runtimeDir); err == nil {
+		unregisterDaemon(pid)
+	}
 	os.Remove(pidFile)
 }
 
@@ -360,7 +405,11 @@ func removePIDIfMatches(dir string, pid int) error {
 	if err != nil || current != pid {
 		return fmt.Errorf("watch PID changed during transition")
 	}
-	return os.Remove(filepath.Join(dir, "watch.pid"))
+	if err := os.Remove(filepath.Join(dir, "watch.pid")); err != nil {
+		return err
+	}
+	unregisterDaemon(pid)
+	return nil
 }
 
 // RemoveProcessPID removes only the caller's still-current PID publication.
