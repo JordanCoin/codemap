@@ -706,6 +706,10 @@ func fuzzyResolveWithWorkspace(
 	// Normalize the import path
 	normalized := normalizeImport(imp)
 
+	if sourceLanguage == "lua" {
+		return resolveLuaModule(normalized, idx)
+	}
+
 	// Strategy 2: Relative path resolution (./foo, ../bar)
 	if strings.HasPrefix(imp, ".") {
 		// Python spells relative imports as a run of dots that counts package
@@ -749,6 +753,22 @@ func fuzzyResolveWithWorkspace(
 	}
 
 	return nil
+}
+
+// resolveLuaModule searches the conventional package.path roots first, so
+// lua/app/init.lua wins over a same-named plugin/app.lua. A bare name found only
+// deeper ("cjson" -> kong/tools/cjson.lua) is an external library, and a module
+// never names a directory, so the suffix and directory fan-outs stay off for it.
+func resolveLuaModule(module string, idx *fileIndex) []string {
+	for _, root := range []string{"lua/", "src/", "lib/", ""} {
+		if files := tryExactMatch(root+module, idx, "lua"); len(files) > 0 {
+			return files
+		}
+	}
+	if !strings.Contains(module, "/") {
+		return nil
+	}
+	return trySuffixMatch(module, idx, "lua")
 }
 
 func nearestCUEModule(fromFile string, modules []cueModuleInfo) (cueModuleInfo, bool) {

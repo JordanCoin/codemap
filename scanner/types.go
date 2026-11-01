@@ -356,7 +356,7 @@ func buildResolverExtensions() []string {
 		return exts[i] < exts[j]
 	})
 	// Index-file patterns for module resolution
-	exts = append(exts, "/index.js", "/index.ts", "/index.tsx", "/__init__.py", "/mod.rs")
+	exts = append(exts, "/index.js", "/index.ts", "/index.tsx", "/__init__.py", "/mod.rs", "/init.lua")
 	// Empty string last — bare path match as final fallback
 	exts = append(exts, "")
 	return exts
