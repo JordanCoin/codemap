@@ -95,7 +95,7 @@ func missingEdgeSources(absRoot string, files []FileInfo, phpUnresolvedUse strin
 		sources = append(sources, ScanSourceOutcome{
 			Name:      "bash-dynamic-source",
 			Status:    ScanSourceMixed,
-			Detail:    "Bash: source, . or load with a dynamic argument is not resolved (" + evidence + "): search the file name before treating 0 importers as unused",
+			Detail:    "Bash: source, . or load with a dynamic argument resolves only when its literal remainder names one shell file (" + evidence + "): search the file name before treating 0 importers as unused",
 			Languages: []string{"bash"},
 		})
 	}
@@ -103,7 +103,7 @@ func missingEdgeSources(absRoot string, files []FileInfo, phpUnresolvedUse strin
 }
 
 // bashDynamicSourceEvidence reads the source text rather than the extracted
-// imports: extraction drops these arguments, and load is not extracted at all.
+// imports, so a form with no literal remainder still counts.
 func bashDynamicSourceEvidence(absRoot string, shellFiles []string) string {
 	first, total := "", 0
 	for _, path := range shellFiles {
