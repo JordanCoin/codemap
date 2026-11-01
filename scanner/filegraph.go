@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -313,12 +314,17 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 			resolvedImports = resolveRustReferences(absRoot, a, idx, rustWorkspace)
 		} else {
 			sourceLanguage := DetectLanguage(a.Path)
+			angleIncludes := angleOnlyIncludes(a.References)
 			for _, imp := range a.Imports {
 				if err := ctx.Err(); err != nil {
 					return nil, err
 				}
+				spelled := imp
+				if angleIncludes[imp] {
+					spelled = "<" + imp + ">"
+				}
 				resolved := fuzzyResolveWithWorkspace(
-					imp, a.Path, idx, fg.Module, fg.PathAliases, fg.BaseURL, jsResolver, dartResolver,
+					spelled, a.Path, idx, fg.Module, fg.PathAliases, fg.BaseURL, jsResolver, dartResolver,
 				)
 				// A package the nearest package.json declares is external even
 				// when a tsconfig alias would also match it.
@@ -336,9 +342,10 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 			}
 		}
 
+		key := keyPath(a.Path)
+		resolvedImports = slices.DeleteFunc(slashPaths(resolvedImports), func(target string) bool { return target == key })
 		if len(resolvedImports) > 0 {
-			key := keyPath(a.Path)
-			fg.Imports[key] = dedupe(slashPaths(resolvedImports))
+			fg.Imports[key] = dedupe(resolvedImports)
 
 			// Build reverse map
 			for _, imported := range fg.Imports[key] {
@@ -394,8 +401,8 @@ var swiftImportLine = regexp.MustCompile(`(?m)^\s*(?:@testable\s+)?import\s+[^\n
 // type was declared at all, which is what decides the coverage status.
 //
 // ponytail: name match, not symbol resolution. Two files declaring the same
-// type name both become targets; a mention inside a comment or string counts.
-// Upgrade path is a SourceKit or swift-syntax pass if precision matters.
+// type name both become targets. Upgrade path is a SourceKit or swift-syntax
+// pass if precision matters.
 func addSwiftTypeReferenceEdges(absRoot string, analyses []FileAnalysis, fg *FileGraph) bool {
 	declaredBy := make(map[string][]string)
 	for _, a := range analyses {
@@ -423,7 +430,7 @@ func addSwiftTypeReferenceEdges(absRoot string, analyses []FileAnalysis, fg *Fil
 		seen := make(map[string]bool)
 		var targets []string
 		from := keyPath(a.Path)
-		for _, ident := range swiftIdentifier.FindAll(swiftImportLine.ReplaceAll(data, nil), -1) {
+		for _, ident := range swiftIdentifier.FindAll(swiftImportLine.ReplaceAll(blankSwiftLiterals(data), nil), -1) {
 			for _, target := range declaredBy[string(ident)] {
 				if target == from || seen[target] || slices.Contains(fg.Imports[from], target) {
 					continue
@@ -442,6 +449,108 @@ func addSwiftTypeReferenceEdges(absRoot string, analyses []FileAnalysis, fg *Fil
 		}
 	}
 	return true
+}
+
+// blankSwiftLiterals returns src with comments and string literals spaced out,
+// keeping the code inside \(...) interpolations, which does reference types.
+func blankSwiftLiterals(src []byte) []byte {
+	out := slices.Clone(src)
+	blankSwiftCode(out, 0, false)
+	return out
+}
+
+func blankSwiftRange(b []byte, from, to int) {
+	for i := from; i < to; i++ {
+		if b[i] != '\n' {
+			b[i] = ' '
+		}
+	}
+}
+
+// blankSwiftCode walks code from i. Inside an interpolation it stops after the
+// closing parenthesis and returns the index it reached.
+func blankSwiftCode(b []byte, i int, interpolation bool) int {
+	depth := 0
+	for i < len(b) {
+		rest := b[i:]
+		switch {
+		case bytes.HasPrefix(rest, []byte("//")):
+			end := bytes.IndexByte(rest, '\n')
+			if end < 0 {
+				end = len(rest)
+			}
+			blankSwiftRange(b, i, i+end)
+			i += end
+		case bytes.HasPrefix(rest, []byte("/*")):
+			end, nested := i+2, 1
+			for end < len(b) && nested > 0 {
+				if bytes.HasPrefix(b[end:], []byte("/*")) {
+					nested++
+					end += 2
+				} else if bytes.HasPrefix(b[end:], []byte("*/")) {
+					nested--
+					end += 2
+				} else {
+					end++
+				}
+			}
+			blankSwiftRange(b, i, end)
+			i = end
+		case len(bytes.TrimLeft(rest, "#")) > 0 && bytes.TrimLeft(rest, "#")[0] == '"':
+			i = blankSwiftString(b, i)
+		case interpolation && b[i] == '(':
+			depth++
+			i++
+		case interpolation && b[i] == ')':
+			if depth == 0 {
+				return i + 1
+			}
+			depth--
+			i++
+		default:
+			i++
+		}
+	}
+	return i
+}
+
+// blankSwiftString blanks the literal opening at i and returns the index after
+// it. An unterminated single-line literal ends at its newline, so a stray quote
+// cannot swallow the rest of the file.
+func blankSwiftString(b []byte, i int) int {
+	hashes := len(b[i:]) - len(bytes.TrimLeft(b[i:], "#"))
+	pounds := strings.Repeat("#", hashes)
+	multiline := bytes.HasPrefix(b[i+hashes:], []byte(`"""`))
+	closer, escape := []byte(`"`+pounds), []byte(`\`+pounds)
+	start := i + hashes + 1
+	if multiline {
+		closer = []byte(`"""` + pounds)
+		start = i + hashes + 3
+	}
+	segment, j := i, start
+	for j < len(b) {
+		switch {
+		case bytes.HasPrefix(b[j:], closer):
+			blankSwiftRange(b, segment, j+len(closer))
+			return j + len(closer)
+		case !multiline && b[j] == '\n':
+			blankSwiftRange(b, segment, j)
+			return j
+		case bytes.HasPrefix(b[j:], escape):
+			after := j + len(escape)
+			if after < len(b) && b[after] == '(' {
+				blankSwiftRange(b, segment, after+1)
+				j = blankSwiftCode(b, after+1, true)
+				segment = j
+			} else {
+				j = after + 1
+			}
+		default:
+			j++
+		}
+	}
+	blankSwiftRange(b, segment, len(b))
+	return len(b)
 }
 
 // sortEdges orders the reverse edge lists. Importers are appended while
@@ -701,6 +810,10 @@ func fuzzyResolveWithWorkspace(
 		packagePath = filepath.Join(module.root, filepath.FromSlash(packagePath))
 		files, _ := idx.dir(packagePath)
 		return resolveCUEPackage(files, idx.cuePackages, selector)
+	}
+
+	if sourceLanguage == "c" || sourceLanguage == "cpp" {
+		return resolveCInclude(imp, fromDir, idx, sourceLanguage)
 	}
 
 	if sourceLanguage == "bash" && strings.ContainsAny(imp, "$`") {
@@ -1028,9 +1141,17 @@ func (idx *fileIndex) gitignoreOnlyRecoverable(relPath string) bool {
 
 // isRegularFile reports whether root-relative path exists on disk under
 // absRoot as a regular (not directory, not symlink-to-directory) file.
+//
+// Stat alone is not enough: on a case-insensitive filesystem "FreeRTOS.h" stats
+// as the freertos.h beside it, so the listing has to hold the exact name.
 func isRegularFile(absRoot, relPath string) bool {
-	info, err := os.Stat(filepath.Join(absRoot, filepath.FromSlash(relPath)))
-	return err == nil && info.Mode().IsRegular()
+	path := filepath.Join(absRoot, filepath.FromSlash(relPath))
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	return err == nil && slices.ContainsFunc(entries, func(entry os.DirEntry) bool { return entry.Name() == filepath.Base(path) })
 }
 
 // typescriptEmitExtensions maps an emitted JavaScript extension to the
@@ -1070,7 +1191,7 @@ func trySuffixMatch(normalized string, idx *fileIndex, sourceLanguage string) []
 	for _, ext := range resolverExtensions {
 		candidate := normalized + ext
 		if files := idx.suffixMatches(candidate); len(files) > 0 {
-			files = compatibleFiles(sourceLanguage, files)
+			files = importableFiles(compatibleFiles(sourceLanguage, files), candidate, idx, sourceLanguage)
 			if len(files) == 0 {
 				continue
 			}
@@ -1086,10 +1207,24 @@ func trySuffixMatch(normalized string, idx *fileIndex, sourceLanguage string) []
 	// Also try __init__.py for Python packages
 	initCandidate := filepath.Join(normalized, "__init__.py")
 	if files := idx.suffixMatches(initCandidate); len(files) > 0 {
-		return compatibleFiles(sourceLanguage, files)
+		return importableFiles(compatibleFiles(sourceLanguage, files), initCandidate, idx, sourceLanguage)
 	}
 
 	return nil
+}
+
+// importableFiles drops Python suffix matches whose implied import root is
+// itself a package. A directory holding __init__.py is not on sys.path, so
+// "import pathlib" cannot mean src/_pytest/pathlib.py: that module is
+// _pytest.pathlib, and the import is the standard library's.
+func importableFiles(files []string, suffix string, idx *fileIndex, sourceLanguage string) []string {
+	if sourceLanguage != "python" {
+		return files
+	}
+	suffix = keyPath(suffix)
+	return slices.DeleteFunc(files, func(file string) bool {
+		return idx.exact(strings.TrimSuffix(file, suffix)+"__init__.py") > 0
+	})
 }
 
 // tryDirMatch returns all files whose parent directory matches the given path.
