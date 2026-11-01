@@ -102,3 +102,17 @@ func TestCIncludeOfDifferentlyCasedNameIsNotTheIncluder(t *testing.T) {
 	assertImports(t, graph, "include/freertos.h")
 	assertImports(t, graph, "src/a.c")
 }
+
+func TestFileNeverImportsItself(t *testing.T) {
+	graph := falseEdgeGraph(t, map[string]string{
+		"pkg/__init__.py": "from pkg import helper\nimport pkg\n",
+		"pkg/helper.py":   "x = 1\n",
+		"a.h":             "#include \"a.h\"\n",
+		"lua/mod.lua":     "local m = require(\"mod\")\n",
+	})
+	assertImports(t, graph, "a.h")
+	assertImports(t, graph, "lua/mod.lua")
+	if slices.Contains(graph.Imports["pkg/__init__.py"], "pkg/__init__.py") {
+		t.Fatalf("self edge: %v", graph.Imports["pkg/__init__.py"])
+	}
+}

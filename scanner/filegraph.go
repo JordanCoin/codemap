@@ -341,9 +341,10 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 			}
 		}
 
+		key := keyPath(a.Path)
+		resolvedImports = slices.DeleteFunc(slashPaths(resolvedImports), func(target string) bool { return target == key })
 		if len(resolvedImports) > 0 {
-			key := keyPath(a.Path)
-			fg.Imports[key] = dedupe(slashPaths(resolvedImports))
+			fg.Imports[key] = dedupe(resolvedImports)
 
 			// Build reverse map
 			for _, imported := range fg.Imports[key] {
