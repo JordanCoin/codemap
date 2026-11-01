@@ -129,3 +129,32 @@ func TestRubyWithoutAutoloadEvidenceStaysComplete(t *testing.T) {
 		"zeitwerk in a comment":     {"a.rb": "# Zeitwerk::Loader is not used here\nX = 1\n"},
 	})
 }
+
+func TestBashDynamicSourceDowngradesCoverage(t *testing.T) {
+	runEvidenceCases(t, map[string]evidenceCase{
+		"variable prefix": {map[string]string{
+			"a.sh": "#!/bin/bash\n\nsource \"${DIR}/lib/b.sh\"\n",
+		}, "a.sh", "first at a.sh:3, 1 in total"},
+		"dot after a test": {map[string]string{
+			"a.sh": "[ -f \"$f\" ] && . \"$f\"\n. $g\n",
+		}, "a.sh", "first at a.sh:1, 2 in total"},
+		"process substitution": {map[string]string{
+			"a.sh": "source <(cmd)\n",
+		}, "a.sh", "first at a.sh:1, 1 in total"},
+		"bats load": {map[string]string{
+			"lib.bash":   "x=1\n",
+			"t/a.bats":   "load \"$BATS_TEST_DIRNAME/helper\"\n",
+			"t/plain.sh": "x=1\n",
+		}, "lib.bash", "first at t/a.bats:1, 1 in total"},
+	})
+}
+
+func TestBashWithoutDynamicSourceStaysComplete(t *testing.T) {
+	runPlainCases(t, "a.sh", map[string]map[string]string{
+		"literal source": {"a.sh": "source ./b.sh\nsource \"./c.sh\"\n", "b.sh": "x=1\n", "c.sh": "x=1\n"},
+		"literal load":   {"a.sh": "x=1\n", "t.bats": "load 'helper'\n"},
+		"single quoted":  {"a.sh": "source '$literal'\n"},
+		"commented":      {"a.sh": "# source \"$x\"\nx=1\n"},
+		"not a source":   {"a.sh": "echo $x\n./run \"$x\"\nreload \"$x\"\n"},
+	})
+}

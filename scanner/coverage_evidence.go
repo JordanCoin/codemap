@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,6 +16,9 @@ var (
 	// A development dependency tests against Rails; it does not load this gem.
 	rubyGemspecAutoloader = regexp.MustCompile(`(?m)^\s*\w+\.add_(?:runtime_)?dependency\s*\(?\s*['"](rails|railties|zeitwerk)['"]`)
 	rubyZeitwerkLoader    = regexp.MustCompile(`(?m)^[^#\n]*\bZeitwerk::Loader\b`)
+	// ponytail: line shape, not a shell parse. A matching line in a heredoc
+	// counts; the cost is a partial label, never a false complete.
+	bashDynamicSource = regexp.MustCompile("^\\s*(?:.*[;&|]\\s*|.*\\b(?:then|do|else)\\s+)?(?:source|\\.|load)\\s+(?:\"[^\"\\s]*[$`]|[^\\s'\"]*[$`]|<\\()")
 )
 
 // missingEdgeSources names languages whose repo shows they reach other files by
@@ -52,7 +56,44 @@ func missingEdgeSources(absRoot string, files []FileInfo, phpUnresolvedUse strin
 			})
 		}
 	}
+	// .bats has no language mapping, but it is where bats load lives.
+	shell := byLanguage["bash"]
+	for _, path := range byLanguage[""] {
+		if strings.HasSuffix(path, ".bats") {
+			shell = append(shell, path)
+		}
+	}
+	sort.Strings(shell)
+	if evidence := bashDynamicSourceEvidence(absRoot, shell); evidence != "" {
+		sources = append(sources, ScanSourceOutcome{
+			Name:      "bash-dynamic-source",
+			Status:    ScanSourceMixed,
+			Detail:    "Bash: source, . or load with a dynamic argument is not resolved (" + evidence + "): search the file name before treating 0 importers as unused",
+			Languages: []string{"bash"},
+		})
+	}
 	return sources
+}
+
+// bashDynamicSourceEvidence reads the source text rather than the extracted
+// imports: extraction drops these arguments, and load is not extracted at all.
+func bashDynamicSourceEvidence(absRoot string, shellFiles []string) string {
+	first, total := "", 0
+	for _, path := range shellFiles {
+		for index, line := range strings.Split(string(readProjectFile(absRoot, path)), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "#") || !bashDynamicSource.MatchString(line) {
+				continue
+			}
+			if first == "" {
+				first = fmt.Sprintf("%s:%d", path, index+1)
+			}
+			total++
+		}
+	}
+	if total == 0 {
+		return ""
+	}
+	return fmt.Sprintf("first at %s, %d in total", first, total)
 }
 
 func rubyAutoloadEvidence(absRoot string, rubyFiles []string) string {
