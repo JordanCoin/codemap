@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -130,4 +131,53 @@ func TestLuaModuleResolvesThroughPackagePathBeforeSuffix(t *testing.T) {
 	assertImports(t, graph, "plugin/telescope.lua", "lua/telescope/init.lua")
 	assertImports(t, graph, "lua/telescope/init.lua", "lua/telescope/utils.lua", "lua/telescope/actions/init.lua")
 	assertImports(t, graph, "app/main.lua", "src/nested/mod.lua")
+}
+
+func TestSwiftReferencesInCommentsAndStringsAreNotEdges(t *testing.T) {
+	graph := falseEdgeGraph(t, map[string]string{
+		"Sources/Decl.swift": "struct CommentOnly {}\nstruct BlockOnly {}\nstruct StringOnly {}\nstruct RawOnly {}\nstruct TripleOnly {}\nstruct Interpolated {}\nstruct RawInterp {}\nstruct Plain {}\nstruct AfterStray {}\n",
+		"Sources/Only.swift": strings.Join([]string{
+			"func only() {}",
+			"// CommentOnly",
+			"/* BlockOnly /* nested */ BlockOnly */",
+			`let a = "StringOnly"`,
+			`let b = #"RawOnly \(RawOnly) "quoted" "#`,
+			`let c = """`,
+			`  TripleOnly "still inside"`,
+			`  """`,
+		}, "\n") + "\n",
+		"Sources/Real.swift": strings.Join([]string{
+			"func real() {}",
+			`let d = "x \(Interpolated.make("StringOnly")) y"`,
+			`let e = #"x \#(RawInterp.y) y"#`,
+			`let url = "http://example.com" // CommentOnly`,
+			`let p = Plain()`,
+			`let stray = "unterminated`,
+			`let q = AfterStray()`,
+		}, "\n") + "\n",
+	})
+	assertImports(t, graph, "Sources/Only.swift")
+	assertImports(t, graph, "Sources/Real.swift", "Sources/Decl.swift")
+}
+
+func TestBlankSwiftLiteralsKeepsOnlyCode(t *testing.T) {
+	cases := map[string]struct{ keep, drop string }{
+		`/* a /* b */ c */ Keep`:             {"Keep", "a b c"},
+		`"\(Keep("Gone")) Gone2"`:            {"Keep", "Gone Gone2"},
+		`#"\(Gone) \#(Keep) "Gone2" "# Keep`: {"Keep", "Gone Gone2"},
+		"\"\"\"\nGone \\(Keep)\n\"\"\" Keep": {"Keep", "Gone"},
+		"\"Gone\nKeep":                       {"Keep", "Gone"},
+		`#if DEBUG // Gone`:                  {"DEBUG", "Gone"},
+	}
+	for src, c := range cases {
+		out := string(blankSwiftLiterals([]byte(src)))
+		if len(out) != len(src) || !strings.Contains(out, c.keep) {
+			t.Errorf("blank(%q) = %q, want %q kept and length preserved", src, out, c.keep)
+		}
+		for _, gone := range strings.Fields(c.drop) {
+			if strings.Contains(out, gone) {
+				t.Errorf("blank(%q) = %q, still holds %q", src, out, gone)
+			}
+		}
+	}
 }

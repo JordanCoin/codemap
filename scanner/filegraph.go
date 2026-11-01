@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -400,8 +401,8 @@ var swiftImportLine = regexp.MustCompile(`(?m)^\s*(?:@testable\s+)?import\s+[^\n
 // type was declared at all, which is what decides the coverage status.
 //
 // ponytail: name match, not symbol resolution. Two files declaring the same
-// type name both become targets; a mention inside a comment or string counts.
-// Upgrade path is a SourceKit or swift-syntax pass if precision matters.
+// type name both become targets. Upgrade path is a SourceKit or swift-syntax
+// pass if precision matters.
 func addSwiftTypeReferenceEdges(absRoot string, analyses []FileAnalysis, fg *FileGraph) bool {
 	declaredBy := make(map[string][]string)
 	for _, a := range analyses {
@@ -429,7 +430,7 @@ func addSwiftTypeReferenceEdges(absRoot string, analyses []FileAnalysis, fg *Fil
 		seen := make(map[string]bool)
 		var targets []string
 		from := keyPath(a.Path)
-		for _, ident := range swiftIdentifier.FindAll(swiftImportLine.ReplaceAll(data, nil), -1) {
+		for _, ident := range swiftIdentifier.FindAll(swiftImportLine.ReplaceAll(blankSwiftLiterals(data), nil), -1) {
 			for _, target := range declaredBy[string(ident)] {
 				if target == from || seen[target] || slices.Contains(fg.Imports[from], target) {
 					continue
@@ -448,6 +449,108 @@ func addSwiftTypeReferenceEdges(absRoot string, analyses []FileAnalysis, fg *Fil
 		}
 	}
 	return true
+}
+
+// blankSwiftLiterals returns src with comments and string literals spaced out,
+// keeping the code inside \(...) interpolations, which does reference types.
+func blankSwiftLiterals(src []byte) []byte {
+	out := slices.Clone(src)
+	blankSwiftCode(out, 0, false)
+	return out
+}
+
+func blankSwiftRange(b []byte, from, to int) {
+	for i := from; i < to; i++ {
+		if b[i] != '\n' {
+			b[i] = ' '
+		}
+	}
+}
+
+// blankSwiftCode walks code from i. Inside an interpolation it stops after the
+// closing parenthesis and returns the index it reached.
+func blankSwiftCode(b []byte, i int, interpolation bool) int {
+	depth := 0
+	for i < len(b) {
+		rest := b[i:]
+		switch {
+		case bytes.HasPrefix(rest, []byte("//")):
+			end := bytes.IndexByte(rest, '\n')
+			if end < 0 {
+				end = len(rest)
+			}
+			blankSwiftRange(b, i, i+end)
+			i += end
+		case bytes.HasPrefix(rest, []byte("/*")):
+			end, nested := i+2, 1
+			for end < len(b) && nested > 0 {
+				if bytes.HasPrefix(b[end:], []byte("/*")) {
+					nested++
+					end += 2
+				} else if bytes.HasPrefix(b[end:], []byte("*/")) {
+					nested--
+					end += 2
+				} else {
+					end++
+				}
+			}
+			blankSwiftRange(b, i, end)
+			i = end
+		case len(bytes.TrimLeft(rest, "#")) > 0 && bytes.TrimLeft(rest, "#")[0] == '"':
+			i = blankSwiftString(b, i)
+		case interpolation && b[i] == '(':
+			depth++
+			i++
+		case interpolation && b[i] == ')':
+			if depth == 0 {
+				return i + 1
+			}
+			depth--
+			i++
+		default:
+			i++
+		}
+	}
+	return i
+}
+
+// blankSwiftString blanks the literal opening at i and returns the index after
+// it. An unterminated single-line literal ends at its newline, so a stray quote
+// cannot swallow the rest of the file.
+func blankSwiftString(b []byte, i int) int {
+	hashes := len(b[i:]) - len(bytes.TrimLeft(b[i:], "#"))
+	pounds := strings.Repeat("#", hashes)
+	multiline := bytes.HasPrefix(b[i+hashes:], []byte(`"""`))
+	closer, escape := []byte(`"`+pounds), []byte(`\`+pounds)
+	start := i + hashes + 1
+	if multiline {
+		closer = []byte(`"""` + pounds)
+		start = i + hashes + 3
+	}
+	segment, j := i, start
+	for j < len(b) {
+		switch {
+		case bytes.HasPrefix(b[j:], closer):
+			blankSwiftRange(b, segment, j+len(closer))
+			return j + len(closer)
+		case !multiline && b[j] == '\n':
+			blankSwiftRange(b, segment, j)
+			return j
+		case bytes.HasPrefix(b[j:], escape):
+			after := j + len(escape)
+			if after < len(b) && b[after] == '(' {
+				blankSwiftRange(b, segment, after+1)
+				j = blankSwiftCode(b, after+1, true)
+				segment = j
+			} else {
+				j = after + 1
+			}
+		default:
+			j++
+		}
+	}
+	blankSwiftRange(b, segment, len(b))
+	return len(b)
 }
 
 // sortEdges orders the reverse edge lists. Importers are appended while
