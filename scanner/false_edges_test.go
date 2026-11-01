@@ -133,6 +133,27 @@ func TestLuaModuleResolvesThroughPackagePathBeforeSuffix(t *testing.T) {
 	assertImports(t, graph, "app/main.lua", "src/nested/mod.lua")
 }
 
+func TestPythonSuffixMatchRequiresARealImportRoot(t *testing.T) {
+	graph := falseEdgeGraph(t, map[string]string{
+		"src/_pytest/__init__.py":   "",
+		"src/_pytest/pathlib.py":    "from pathlib import Path\nimport warnings\n",
+		"src/_pytest/warnings.py":   "import warnings\n",
+		"src/_pytest/nodes.py":      "from _pytest.pathlib import x\nfrom _pytest import warnings\n",
+		"scripts/release.py":        "from pathlib import Path\nimport helper\n",
+		"scripts/helper.py":         "",
+		"examples/shop/__init__.py": "",
+		"examples/shop/models.py":   "",
+		"examples/run.py":           "from shop.models import Item\n",
+	})
+	assertImports(t, graph, "src/_pytest/pathlib.py")
+	assertImports(t, graph, "src/_pytest/warnings.py")
+	if got := graph.Imports["src/_pytest/nodes.py"]; !slices.Contains(got, "src/_pytest/pathlib.py") || !slices.Contains(got, "src/_pytest/__init__.py") {
+		t.Fatalf("nodes.py imports = %v, want the real package edges", got)
+	}
+	assertImports(t, graph, "scripts/release.py", "scripts/helper.py")
+	assertImports(t, graph, "examples/run.py", "examples/shop/models.py")
+}
+
 func TestSwiftReferencesInCommentsAndStringsAreNotEdges(t *testing.T) {
 	graph := falseEdgeGraph(t, map[string]string{
 		"Sources/Decl.swift": "struct CommentOnly {}\nstruct BlockOnly {}\nstruct StringOnly {}\nstruct RawOnly {}\nstruct TripleOnly {}\nstruct Interpolated {}\nstruct RawInterp {}\nstruct Plain {}\nstruct AfterStray {}\n",

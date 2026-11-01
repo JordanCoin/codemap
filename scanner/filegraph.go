@@ -1158,7 +1158,7 @@ func trySuffixMatch(normalized string, idx *fileIndex, sourceLanguage string) []
 	for _, ext := range resolverExtensions {
 		candidate := normalized + ext
 		if files := idx.suffixMatches(candidate); len(files) > 0 {
-			files = compatibleFiles(sourceLanguage, files)
+			files = importableFiles(compatibleFiles(sourceLanguage, files), candidate, idx, sourceLanguage)
 			if len(files) == 0 {
 				continue
 			}
@@ -1174,10 +1174,24 @@ func trySuffixMatch(normalized string, idx *fileIndex, sourceLanguage string) []
 	// Also try __init__.py for Python packages
 	initCandidate := filepath.Join(normalized, "__init__.py")
 	if files := idx.suffixMatches(initCandidate); len(files) > 0 {
-		return compatibleFiles(sourceLanguage, files)
+		return importableFiles(compatibleFiles(sourceLanguage, files), initCandidate, idx, sourceLanguage)
 	}
 
 	return nil
+}
+
+// importableFiles drops Python suffix matches whose implied import root is
+// itself a package. A directory holding __init__.py is not on sys.path, so
+// "import pathlib" cannot mean src/_pytest/pathlib.py: that module is
+// _pytest.pathlib, and the import is the standard library's.
+func importableFiles(files []string, suffix string, idx *fileIndex, sourceLanguage string) []string {
+	if sourceLanguage != "python" {
+		return files
+	}
+	suffix = keyPath(suffix)
+	return slices.DeleteFunc(files, func(file string) bool {
+		return idx.exact(strings.TrimSuffix(file, suffix)+"__init__.py") > 0
+	})
 }
 
 // tryDirMatch returns all files whose parent directory matches the given path.
