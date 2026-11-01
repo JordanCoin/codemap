@@ -68,3 +68,50 @@ func TestRubyAutoloadForms(t *testing.T) {
 	})
 	assertEdges(t, g, "lib/app.rb", []string{"lib/app/cache.rb", "lib/app/store.rb"})
 }
+
+func TestBashLoadResolvesRelativeToFile(t *testing.T) {
+	g := buildFixtureGraph(t, map[string]string{
+		"test/a.bats":         "load 'helper'\nload sub/util\nload \"$BATS_TEST_DIRNAME/dyn\"\nload onlysh\n",
+		"test/helper.bash":    "x=1\n",
+		"test/helper.sh":      "x=1\n",
+		"helper.bash":         "x=1\n",
+		"test/sub/util.bash":  "x=1\n",
+		"test/dyn.bash":       "x=1\n",
+		"test/onlysh.sh":      "x=1\n",
+		"scripts/run.sh":      "load ../test/helper.bash\n",
+		"scripts/unrelate.sh": "load missing\n",
+	})
+	assertEdges(t, g, "test/a.bats", []string{"test/helper.bash", "test/sub/util.bash", "test/dyn.bash"})
+	assertEdges(t, g, "scripts/run.sh", []string{"test/helper.bash"})
+	assertEdges(t, g, "scripts/unrelate.sh", nil)
+}
+
+func TestBashDynamicPrefixNeedsUniqueMatch(t *testing.T) {
+	g := buildFixtureGraph(t, map[string]string{
+		"bin/run.sh": "source \"${DIR}/lib/d.sh\"\n" +
+			"source \"$(dirname \"${BASH_SOURCE[0]}\")/../lib/e.sh\"\n" +
+			". \"$ROOT/$LIBDIR/core/f.bash\"\n" +
+			"source \"$(cd \"$(dirname \"$0\")\" && pwd)/g.sh\"\n" +
+			"source `dirname $0`/h.sh\n" +
+			"source \"${DIR}/lib/twice.sh\"\n" +
+			"source \"$HOME/lib/home.sh\"\n" +
+			"source \"$DIR/lib/$NAME.sh\"\n" +
+			"source \"$FILE\"\n",
+		"lib/d.sh":        "x=1\n",
+		"lib/e.sh":        "x=1\n",
+		"lib/core/f.bash": "x=1\n",
+		"bin/g.sh":        "x=1\n",
+		"bin/h.sh":        "x=1\n",
+		"a/lib/twice.sh":  "x=1\n",
+		"b/lib/twice.sh":  "x=1\n",
+		"lib/home.sh":     "x=1\n",
+	})
+	assertEdges(t, g, "bin/run.sh", []string{"lib/d.sh", "lib/e.sh", "lib/core/f.bash", "bin/g.sh", "bin/h.sh"})
+}
+
+func TestBashWordSegmentsKeepSubstitutionsWhole(t *testing.T) {
+	want := []string{"${BASH_SOURCE[0]%/*}", "$(cd /a/b)", "lib", "x y.sh"}
+	if got := bashWordSegments(` "${BASH_SOURCE[0]%/*}/$(cd /a/b)/lib/x y.sh" extra`); !slices.Equal(got, want) {
+		t.Fatalf("segments = %q, want %q", got, want)
+	}
+}

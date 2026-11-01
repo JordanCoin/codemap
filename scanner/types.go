@@ -253,6 +253,7 @@ var extToLang = map[string]string{
 	".dart":  "dart",
 	".sh":    "bash",
 	".bash":  "bash",
+	".bats":  "bash",
 	".kt":    "kotlin",
 	".kts":   "kotlin",
 	".cs":    "csharp",

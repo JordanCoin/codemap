@@ -4,6 +4,7 @@ rule:
   any:
     - pattern: source $FILE
     - pattern: . $FILE
+    - pattern: load $FILE
 ---
 id: bash-functions
 language: bash
