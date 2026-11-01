@@ -100,3 +100,32 @@ func TestPHPWithoutAutoloadEvidenceStaysComplete(t *testing.T) {
 		t.Fatalf("rollup = %s, want complete (notes = %v)", got, graph.Coverage.Notes)
 	}
 }
+
+func TestRubyAutoloadEvidenceDowngradesCoverage(t *testing.T) {
+	runEvidenceCases(t, map[string]evidenceCase{
+		"gemfile names rails": {map[string]string{
+			"Gemfile": "source 'https://rubygems.org'\ngem 'rails', '~> 7.0'\n",
+			"a.rb":    "X = 1\n",
+		}, "a.rb", "Gemfile names rails"},
+		"gemspec names zeitwerk": {map[string]string{
+			"a.gemspec": "Gem::Specification.new do |s|\n  s.add_dependency \"zeitwerk\"\nend\n",
+			"a.rb":      "X = 1\n",
+		}, "a.rb", "a.gemspec names zeitwerk"},
+		"config application": {map[string]string{
+			"config/application.rb": "module App; end\n",
+			"app/a.rb":              "X = 1\n",
+		}, "app/a.rb", "config/application.rb is present"},
+		"zeitwerk loader call": {map[string]string{
+			"lib/a.rb": "require 'zeitwerk'\nloader = Zeitwerk::Loader.for_gem\nloader.setup\n",
+		}, "lib/a.rb", "lib/a.rb calls Zeitwerk::Loader"},
+	})
+}
+
+func TestRubyWithoutAutoloadEvidenceStaysComplete(t *testing.T) {
+	runPlainCases(t, "a.rb", map[string]map[string]string{
+		"require_relative only":     {"a.rb": "require_relative 'b'\n", "b.rb": "X = 1\n"},
+		"gemfile without rails":     {"Gemfile": "gem 'rake'\n# gem 'rails'\n", "a.rb": "X = 1\n"},
+		"rails as a dev dependency": {"a.gemspec": "Gem::Specification.new do |s|\n  s.add_development_dependency 'rails'\nend\n", "a.rb": "X = 1\n"},
+		"zeitwerk in a comment":     {"a.rb": "# Zeitwerk::Loader is not used here\nX = 1\n"},
+	})
+}

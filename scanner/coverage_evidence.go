@@ -6,9 +6,16 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 )
 
-var phpNamespaceStatement = regexp.MustCompile(`(?m)^\s*(?:<\?php\s+)?namespace\s+[A-Za-z_\\]`)
+var (
+	phpNamespaceStatement = regexp.MustCompile(`(?m)^\s*(?:<\?php\s+)?namespace\s+[A-Za-z_\\]`)
+	rubyGemfileAutoloader = regexp.MustCompile(`(?m)^\s*gem\s*\(?\s*['"](rails|railties|zeitwerk)['"]`)
+	// A development dependency tests against Rails; it does not load this gem.
+	rubyGemspecAutoloader = regexp.MustCompile(`(?m)^\s*\w+\.add_(?:runtime_)?dependency\s*\(?\s*['"](rails|railties|zeitwerk)['"]`)
+	rubyZeitwerkLoader    = regexp.MustCompile(`(?m)^[^#\n]*\bZeitwerk::Loader\b`)
+)
 
 // missingEdgeSources names languages whose repo shows they reach other files by
 // a route the import graph does not follow. Each source is tagged with its
@@ -35,7 +42,47 @@ func missingEdgeSources(absRoot string, files []FileInfo, phpUnresolvedUse strin
 			})
 		}
 	}
+	if ruby := byLanguage["ruby"]; len(ruby) > 0 {
+		if evidence := rubyAutoloadEvidence(absRoot, ruby); evidence != "" {
+			sources = append(sources, ScanSourceOutcome{
+				Name:      "ruby-autoload",
+				Status:    ScanSourceMixed,
+				Detail:    "Ruby: autoloaded constant references are not resolved (" + evidence + "): search the constant name before treating 0 importers as unused",
+				Languages: []string{"ruby"},
+			})
+		}
+	}
 	return sources
+}
+
+func rubyAutoloadEvidence(absRoot string, rubyFiles []string) string {
+	entries, _ := os.ReadDir(absRoot)
+	for _, entry := range entries {
+		name := entry.Name()
+		var pattern *regexp.Regexp
+		switch {
+		case name == "Gemfile":
+			pattern = rubyGemfileAutoloader
+		case strings.HasSuffix(name, ".gemspec"):
+			pattern = rubyGemspecAutoloader
+		default:
+			continue
+		}
+		if match := pattern.FindSubmatch(readProjectFile(absRoot, name)); match != nil {
+			return name + " names " + string(match[1])
+		}
+	}
+	for _, path := range rubyFiles {
+		if path == "config/application.rb" || strings.HasSuffix(path, "/config/application.rb") {
+			return path + " is present"
+		}
+	}
+	for _, path := range rubyFiles {
+		if rubyZeitwerkLoader.Match(readProjectFile(absRoot, path)) {
+			return path + " calls Zeitwerk::Loader"
+		}
+	}
+	return ""
 }
 
 func phpAutoloadEvidence(absRoot string, phpFiles []string, unresolvedUse string) string {
