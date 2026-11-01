@@ -116,3 +116,18 @@ func TestFileNeverImportsItself(t *testing.T) {
 		t.Fatalf("self edge: %v", graph.Imports["pkg/__init__.py"])
 	}
 }
+
+func TestLuaModuleResolvesThroughPackagePathBeforeSuffix(t *testing.T) {
+	graph := falseEdgeGraph(t, map[string]string{
+		"plugin/telescope.lua":            "local t = require(\"telescope\")\n",
+		"lua/telescope/init.lua":          "local u = require(\"telescope.utils\")\nlocal g = require(\"telescope.actions\")\n",
+		"lua/telescope/utils.lua":         "return {}\n",
+		"lua/telescope/actions/init.lua":  "return {}\n",
+		"lua/telescope/actions/other.lua": "return {}\n",
+		"app/main.lua":                    "local s = require(\"src.nested.mod\")\nlocal r = require(\"nested.mod\")\n",
+		"src/nested/mod.lua":              "return {}\n",
+	})
+	assertImports(t, graph, "plugin/telescope.lua", "lua/telescope/init.lua")
+	assertImports(t, graph, "lua/telescope/init.lua", "lua/telescope/utils.lua", "lua/telescope/actions/init.lua")
+	assertImports(t, graph, "app/main.lua", "src/nested/mod.lua")
+}

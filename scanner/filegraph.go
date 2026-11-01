@@ -742,6 +742,16 @@ func fuzzyResolveWithWorkspace(
 		return nil
 	}
 
+	// Lua's package.path tries ?.lua then ?/init.lua, and Neovim roots it at
+	// lua/, which has to beat a suffix match on plugin/telescope.lua.
+	if sourceLanguage == "lua" {
+		for _, candidate := range []string{normalized, normalized + "/init", "lua/" + normalized, "lua/" + normalized + "/init"} {
+			if files := tryExactMatch(candidate, idx, sourceLanguage); len(files) > 0 {
+				return files
+			}
+		}
+	}
+
 	// Strategy 4: Exact match (with common extensions)
 	if files := tryExactMatch(normalized, idx, sourceLanguage); len(files) > 0 {
 		return files
