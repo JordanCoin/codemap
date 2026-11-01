@@ -34,3 +34,13 @@ func TestReExportsAreEdges(t *testing.T) {
 	assertImports(t, imports, "src/barrel.js", "src/lib/js-named.js", "src/lib/js-star.js")
 	assertImports(t, imports, "src/re.jsx", "src/lib/jsx-star.js")
 }
+
+// Non-literal arguments have to add nothing, and a string inside a comment
+// must not stand in for the path.
+func TestDynamicImportLiteralsAreEdges(t *testing.T) {
+	imports := jsFixtureImports(t, "js-reexports")
+	assertImports(t, imports, "src/lazy.ts",
+		"src/lib/dyn-single.ts", "src/lib/dyn-double.ts", "src/lib/dyn-tick.ts", "src/lib/dyn-hinted.ts", "src/lib/dyn-opts.ts")
+	assertImports(t, imports, "src/lazy.jsx", "src/lib/js-dyn.js")
+	assertImports(t, imports, "src/view.tsx", "src/lib/tsx-named.ts", "src/lib/tsx-dyn.ts")
+}

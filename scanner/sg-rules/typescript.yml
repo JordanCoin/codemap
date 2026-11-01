@@ -17,6 +17,31 @@ rule:
             has:
               kind: string_fragment
               pattern: $PATH
+    # Only a literal first argument names a file: import('./a/' + b) has to
+    # add nothing, not an edge to ./a/. Comments do not count as the first
+    # argument, so webpack's /* webpackChunkName */ hints still match.
+    - all:
+        - kind: call_expression
+        - has:
+            field: function
+            kind: import
+        - has:
+            field: arguments
+            has:
+              nthChild:
+                position: 1
+                ofRule:
+                  not:
+                    kind: comment
+              any:
+                - kind: string
+                  has:
+                    kind: string_fragment
+                    pattern: $PATH
+                - kind: template_string
+                  not:
+                    has:
+                      kind: template_substitution
 ---
 id: ts-functions
 language: typescript
