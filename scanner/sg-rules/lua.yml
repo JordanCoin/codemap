@@ -6,6 +6,12 @@ rule:
       pattern: require($$$)
     - kind: function_call
       pattern: dofile($$$)
+    - kind: function_call
+      pattern: require $ARG
+      regex: ^require\s*["']
+    - kind: function_call
+      pattern: dofile $ARG
+      regex: ^dofile\s*["']
 ---
 id: lua-functions
 language: lua

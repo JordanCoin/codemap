@@ -86,7 +86,8 @@ func TestExtractImportPathQuoteStyles(t *testing.T) {
 		{"computed require yields nothing", `require(base + '/x')`, "/x"},
 		{"bash source literal", `source ./lib.sh`, "./lib.sh"},
 		{"bash source variable yields nothing", `source "$SOME_VAR"`, ""},
-		{"bash source substitution yields nothing", "source `dirname $0`/lib.sh", ""},
+		{"bash source substitution keeps its literal remainder", "source `dirname $0`/lib.sh", "`dirname $0`/lib.sh"},
+		{"bash source lone substitution yields nothing", "source `dirname $0`", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := extractImportPath(tc.text); got != tc.want {

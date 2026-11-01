@@ -666,20 +666,11 @@ func extractImportPath(text string) string {
 		}
 	}
 
-	// Bash: source ./file or . ./file. Only a literal relative path can name
-	// a project file: a variable, a command substitution or an absolute path
-	// yields nothing rather than a "$VAR" or "/etc/profile" entry in the
-	// import list, and quotes come off so "./lib.sh" resolves (#154).
-	if strings.HasPrefix(text, "source ") || strings.HasPrefix(text, ". ") {
-		parts := strings.Fields(text)
-		if len(parts) < 2 {
-			return ""
-		}
-		target := strings.Trim(parts[1], `"'`)
-		if strings.ContainsAny(target, "$`") || strings.HasPrefix(target, "/") {
-			return ""
-		}
-		return target
+	// Bash: source ./file, . ./file, or bats load name.
+	if command, _, _ := strings.Cut(text, " "); command == "source" || command == "." {
+		return bashImportTarget(strings.TrimPrefix(text, command))
+	} else if command == "load" {
+		return bashLoadTarget(bashImportTarget(strings.TrimPrefix(text, command)))
 	}
 
 	// Find quoted strings (Go, TS/JS, Python, C/C++ with quotes)
@@ -749,12 +740,131 @@ func extractImportPath(text string) string {
 	return ""
 }
 
+// bashImportTarget returns the argument of a source line when it can name a
+// project file: a literal relative path, or a dynamic prefix ("${DIR}/lib/a.sh")
+// that the resolver can reduce to a literal remainder. Anything else yields
+// nothing rather than a "$VAR" or "/etc/profile" entry in the import list (#154).
+func bashImportTarget(args string) string {
+	segments := bashWordSegments(args)
+	word := strings.Join(segments, "/")
+	if strings.ContainsAny(word, "$`") {
+		if bashDynamicRemainder(word) == "" {
+			return ""
+		}
+		return word
+	}
+	if word == "" || word[0] == '/' || word[0] == '~' || word[0] == '<' {
+		return ""
+	}
+	return word
+}
+
+// bashLoadTarget applies bats' load rule: relative to the file, name.bash and
+// then name. Only name.bash or a name with a source extension can be indexed.
+func bashLoadTarget(word string) string {
+	if word == "" {
+		return ""
+	}
+	if extToLang[strings.ToLower(filepath.Ext(word))] == "" {
+		word += ".bash"
+	}
+	if strings.ContainsAny(word, "$`") || strings.HasPrefix(word, ".") {
+		return word
+	}
+	return "./" + word
+}
+
+// bashDynamicRemainder strips the leading variable or command-substitution
+// segments from word and returns the literal path after them, or "" when
+// nothing literal remains, a later segment is dynamic, or the prefix is $HOME,
+// which points outside the project.
+func bashDynamicRemainder(word string) string {
+	segments := bashWordSegments(word)
+	if len(segments) == 0 {
+		return ""
+	}
+	switch segments[0] {
+	case "$HOME", "${HOME}", "~":
+		return ""
+	}
+	dynamic := 0
+	for dynamic < len(segments) && strings.ContainsAny(segments[dynamic], "$`") {
+		dynamic++
+	}
+	if dynamic == 0 {
+		return ""
+	}
+	rest := segments[dynamic:]
+	for len(rest) > 0 && (rest[0] == "." || rest[0] == "..") {
+		rest = rest[1:]
+	}
+	if strings.ContainsAny(strings.Join(rest, "/"), "$`") {
+		return ""
+	}
+	return strings.Join(rest, "/")
+}
+
+// bashWordSegments reads the first shell word of s, drops its quotes and splits
+// it on the slashes that are not inside ${...}, $(...) or backticks.
+func bashWordSegments(s string) []string {
+	s = strings.TrimSpace(s)
+	var segments []string
+	var current strings.Builder
+	var quote byte
+	depth := 0
+	backtick := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '`':
+			backtick = !backtick
+		case backtick:
+		case depth > 0:
+			if c == '(' || c == '{' {
+				depth++
+			} else if c == ')' || c == '}' {
+				depth--
+			}
+		case c == '$' && i+1 < len(s) && (s[i+1] == '(' || s[i+1] == '{'):
+			depth = 1
+			current.WriteByte(c)
+			current.WriteByte(s[i+1])
+			i++
+			continue
+		case quote != 0:
+			if c == quote {
+				quote = 0
+				continue
+			}
+			if c == '/' {
+				segments = append(segments, current.String())
+				current.Reset()
+				continue
+			}
+		case c == '"' || c == '\'':
+			quote = c
+			continue
+		case c == ' ' || c == '\t' || c == '\n' || c == ';':
+			return append(segments, current.String())
+		case c == '/':
+			segments = append(segments, current.String())
+			current.Reset()
+			continue
+		}
+		current.WriteByte(c)
+	}
+	if current.Len() == 0 && len(segments) == 0 {
+		return nil
+	}
+	return append(segments, current.String())
+}
+
 // typeDeclarationName picks the declared name out of a Swift type declaration.
 // tree-sitter-swift files class, struct, enum, actor and extension under one
 // node kind; an extension declares nothing new, so it yields no name. The
 // keyword must be the first token after modifiers so that a nested "class
 // func" or "class var" inside the body is never read as a declaration.
-var typeDeclarationName = regexp.MustCompile(`^(?:(?:public|private|internal|fileprivate|open|final|indirect|@[A-Za-z_]+(?:\([^)]*\))?)\s+)*(class|struct|enum|actor|protocol)\s+([A-Za-z_][A-Za-z0-9_]*)`)
+var typeDeclarationName = regexp.MustCompile(`^(?:(?:public|package|private|internal|fileprivate|open|final|indirect|nonisolated|@[A-Za-z_]+(?:\([^)]*\))?)\s+)*(class|struct|enum|actor|protocol)\s+([A-Za-z_][A-Za-z0-9_]*)`)
 
 func extractTypeName(text string) string {
 	m := typeDeclarationName.FindStringSubmatch(strings.TrimSpace(text))

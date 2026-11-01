@@ -15,7 +15,7 @@ func TestExtractImportPathBashSourceForms(t *testing.T) {
 		`source "$SOME_VAR"`:     "",
 		"source $HOME/x.sh":      "",
 		"source /etc/profile":    "",
-		"source $(dirname $0)/a": "",
+		"source $(dirname $0)/a": "$(dirname $0)/a",
 		"source":                 "",
 	}
 	for text, want := range cases {
