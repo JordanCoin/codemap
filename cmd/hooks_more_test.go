@@ -944,7 +944,7 @@ func TestDaemonCommandHelpersAndMultiRepoShellout(t *testing.T) {
 
 		startDaemon("/project")
 		stopDaemon("/project")
-		want := []string{"--setup-root", "/setup/repo", "watch", "start", "/project"}
+		want := []string{"--setup-root", filepath.FromSlash("/setup/repo"), "watch", "start", "/project"}
 		if len(calls) != 2 || strings.Join(calls[0], "|") != strings.Join(want, "|") {
 			t.Fatalf("start daemon args = %v, want %v", calls, want)
 		}

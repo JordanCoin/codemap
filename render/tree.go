@@ -3,7 +3,6 @@ package render
 import (
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -93,9 +92,9 @@ func buildTreeStructure(files []scanner.FileInfo) *treeNode {
 	for i := range files {
 		f := &files[i]
 		current := root
-		remaining := f.Path
+		remaining := filepath.ToSlash(f.Path)
 		for {
-			separator := strings.IndexByte(remaining, os.PathSeparator)
+			separator := strings.IndexByte(remaining, '/')
 			if separator < 0 {
 				// File
 				current.children[remaining] = &treeNode{

@@ -129,7 +129,7 @@ func TestHubInfoIsHub(t *testing.T) {
 // TestRunHookRouting tests that RunHook routes to correct handlers
 func TestRunHookRouting(t *testing.T) {
 	// Test unknown hook returns error
-	err := RunHook("unknown-hook", "/tmp")
+	err := RunHook("unknown-hook", t.TempDir())
 	if err == nil {
 		t.Error("expected error for unknown hook")
 	}

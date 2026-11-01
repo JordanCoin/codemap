@@ -145,7 +145,7 @@ func WriteProcessPID(root string, pid int) error {
 // returns false when another live daemon already owns the project; a pid file
 // naming a dead process is moved aside and reclaimed.
 func ClaimDaemonPID(root string, pid int) (claimed bool, err error) {
-	transition, err := acquireTransitionWithin(root, 2*time.Second)
+	transition, err := acquireTransitionWithin(root, transitionLockWait)
 	if err != nil {
 		return false, err
 	}
@@ -360,7 +360,7 @@ func IsRunning(root string) bool {
 
 // Stop requests shutdown of the daemon process and removes its PID file.
 func Stop(root string) error {
-	transition, err := acquireTransitionWithin(root, 2*time.Second)
+	transition, err := acquireTransitionWithin(root, transitionLockWait)
 	if err != nil {
 		return err
 	}

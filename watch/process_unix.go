@@ -8,7 +8,10 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
+
+const transitionLockWait = 2 * time.Second
 
 func processCommandLine(pid int) (string, error) {
 	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()

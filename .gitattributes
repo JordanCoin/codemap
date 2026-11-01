@@ -1,0 +1,4 @@
+# Generated host skills are compared byte for byte with their builtin source, so
+# core.autocrlf on a Windows checkout must not rewrite either side.
+skills/builtin/*.md text eol=lf
+**/SKILL.md text eol=lf
