@@ -708,8 +708,16 @@ func fuzzyResolveWithWorkspace(
 		return resolveCUEPackage(files, idx.cuePackages, selector)
 	}
 
+	if sourceLanguage == "bash" && strings.ContainsAny(imp, "$`") {
+		return resolveBashDynamic(imp, idx)
+	}
+
 	// Normalize the import path
 	normalized := normalizeImport(imp)
+
+	if sourceLanguage == "lua" {
+		return resolveLuaModule(normalized, idx)
+	}
 
 	// Strategy 2: Relative path resolution (./foo, ../bar)
 	if strings.HasPrefix(imp, ".") {
@@ -754,6 +762,41 @@ func fuzzyResolveWithWorkspace(
 	}
 
 	return nil
+}
+
+// resolveLuaModule searches the conventional package.path roots first, so
+// lua/app/init.lua wins over a same-named plugin/app.lua. A bare name found only
+// deeper ("cjson" -> kong/tools/cjson.lua) is an external library, and a module
+// never names a directory, so the suffix and directory fan-outs stay off for it.
+func resolveLuaModule(module string, idx *fileIndex) []string {
+	for _, root := range []string{"lua/", "src/", "lib/", ""} {
+		if files := tryExactMatch(root+module, idx, "lua"); len(files) > 0 {
+			return files
+		}
+	}
+	if !strings.Contains(module, "/") {
+		return nil
+	}
+	return trySuffixMatch(module, idx, "lua")
+}
+
+// resolveBashDynamic links "${DIR}/lib/a.sh" only when its literal remainder
+// names exactly one indexed shell file; the prefix's value is unknown, so a
+// second candidate makes the target a guess.
+func resolveBashDynamic(imp string, idx *fileIndex) []string {
+	remainder := bashDynamicRemainder(imp)
+	if remainder == "" {
+		return nil
+	}
+	matches := idx.suffixMatches(remainder)
+	if idx.exact(remainder) == 1 {
+		matches = append(matches, keyPath(remainder))
+	}
+	matches = compatibleFiles("bash", matches)
+	if len(matches) != 1 {
+		return nil
+	}
+	return matches
 }
 
 func nearestCUEModule(fromFile string, modules []cueModuleInfo) (cueModuleInfo, bool) {
