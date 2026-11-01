@@ -952,11 +952,11 @@ func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input Imp
 			structured.NotIndexedReason = why.Reason
 			return textResult(notIndexedText(file, why, fg)), structured, nil
 		}
-		if fg.Coverage.ForFile(file).EffectiveStatus() == analysis.CoverageUnavailable {
+		if fg.FileCoverage(file).EffectiveStatus() == analysis.CoverageUnavailable {
 			// No scan ran (file bound, ast-grep missing): unknown, not zero.
 			empty = fmt.Sprintf("Importers of '%s': unknown, no dependency scan ran", file)
 		}
-		return textResult(empty + mcpCoverageText(fg.Coverage.ForFile(file))), structured, nil
+		return textResult(empty + mcpCoverageText(fg.FileCoverage(file))), structured, nil
 	}
 
 	isHub := scanner.CountHubImporters(importers) >= scanner.HubThreshold
@@ -965,7 +965,7 @@ func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input Imp
 		hubNote = " ⚠️ HUB FILE"
 	}
 
-	return textResult(fmt.Sprintf("%d files import '%s'%s:%s\n%s%s", len(importers), file, granularity, hubNote, strings.Join(importers, "\n"), mcpCoverageText(fg.Coverage.ForFile(file)))), structured, nil
+	return textResult(fmt.Sprintf("%d files import '%s'%s:%s\n%s%s", len(importers), file, granularity, hubNote, strings.Join(importers, "\n"), mcpCoverageText(fg.FileCoverage(file)))), structured, nil
 }
 
 func handleFind(ctx context.Context, req *mcp.CallToolRequest, input FindQueryInput) (*mcp.CallToolResult, any, error) {
@@ -1008,11 +1008,11 @@ func normalizeImporterFile(root, file string) string {
 // file is a harmless leaf (#140).
 func notIndexedText(file string, why scanner.UnindexedExplanation, fg *scanner.FileGraph) string {
 	return fmt.Sprintf("not indexed: %s is not in the scanned file set (%s)\nImports and importers: unknown, not 0 (codemap never scanned this file).\nNext: %s.%s",
-		file, why.Reason, why.Next, mcpCoverageText(fg.Coverage.ForFile(file)))
+		file, why.Reason, why.Next, mcpCoverageText(fg.FileCoverage(file)))
 }
 
 // mcpCoverageText renders a coverage footer. Per-file handlers pass
-// fg.Coverage.ForFile(file) so the caveats concern that file's language;
+// fg.FileCoverage(file) so the caveats concern that file's language;
 // project-wide handlers pass fg.Coverage (#111).
 func mcpCoverageText(coverage scanner.GraphCoverage) string {
 	if coverage.Status == "" {
@@ -1518,7 +1518,7 @@ func handleGetFileContext(ctx context.Context, req *mcp.CallToolRequest, input I
 
 	// Connected files summary
 	sb.WriteString(fmt.Sprintf("CONNECTED: %d files in dependency graph\n", len(connected)))
-	sb.WriteString(mcpCoverageText(fg.Coverage.ForFile(file)))
+	sb.WriteString(mcpCoverageText(fg.FileCoverage(file)))
 
 	return textResult(sb.String()), nil, nil
 }
