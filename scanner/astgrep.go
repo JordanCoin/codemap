@@ -548,6 +548,9 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 			}
 			if mod != "" {
 				fileMap[relPath].Imports = append(fileMap[relPath].Imports, mod)
+				if language := fileMap[relPath].Language; language == "c" || language == "cpp" {
+					fileMap[relPath].References = append(fileMap[relPath].References, ImportReference{Path: mod, Kind: cIncludeKind(m.Text)})
+				}
 			}
 		} else if strings.HasSuffix(m.RuleID, "-types") {
 			if name := extractTypeName(m.Text); name != "" {

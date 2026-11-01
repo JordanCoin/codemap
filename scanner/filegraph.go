@@ -313,12 +313,17 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 			resolvedImports = resolveRustReferences(absRoot, a, idx, rustWorkspace)
 		} else {
 			sourceLanguage := DetectLanguage(a.Path)
+			angleIncludes := angleOnlyIncludes(a.References)
 			for _, imp := range a.Imports {
 				if err := ctx.Err(); err != nil {
 					return nil, err
 				}
+				spelled := imp
+				if angleIncludes[imp] {
+					spelled = "<" + imp + ">"
+				}
 				resolved := fuzzyResolveWithWorkspace(
-					imp, a.Path, idx, fg.Module, fg.PathAliases, fg.BaseURL, jsResolver, dartResolver,
+					spelled, a.Path, idx, fg.Module, fg.PathAliases, fg.BaseURL, jsResolver, dartResolver,
 				)
 				// A package the nearest package.json declares is external even
 				// when a tsconfig alias would also match it.
@@ -703,6 +708,10 @@ func fuzzyResolveWithWorkspace(
 		return resolveCUEPackage(files, idx.cuePackages, selector)
 	}
 
+	if sourceLanguage == "c" || sourceLanguage == "cpp" {
+		return resolveCInclude(imp, fromDir, idx, sourceLanguage)
+	}
+
 	// Normalize the import path
 	normalized := normalizeImport(imp)
 
@@ -985,9 +994,17 @@ func (idx *fileIndex) gitignoreOnlyRecoverable(relPath string) bool {
 
 // isRegularFile reports whether root-relative path exists on disk under
 // absRoot as a regular (not directory, not symlink-to-directory) file.
+//
+// Stat alone is not enough: on a case-insensitive filesystem "FreeRTOS.h" stats
+// as the freertos.h beside it, so the listing has to hold the exact name.
 func isRegularFile(absRoot, relPath string) bool {
-	info, err := os.Stat(filepath.Join(absRoot, filepath.FromSlash(relPath)))
-	return err == nil && info.Mode().IsRegular()
+	path := filepath.Join(absRoot, filepath.FromSlash(relPath))
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	return err == nil && slices.ContainsFunc(entries, func(entry os.DirEntry) bool { return entry.Name() == filepath.Base(path) })
 }
 
 // typescriptEmitExtensions maps an emitted JavaScript extension to the
