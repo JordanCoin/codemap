@@ -122,3 +122,17 @@ func TestCUEHeaderSkipsLeadingAttributes(t *testing.T) {
 		t.Fatalf("pkg = %q imports = %v", pkg, imports)
 	}
 }
+
+func TestSwiftTypeNameAcceptsPackageModifier(t *testing.T) {
+	for text, want := range map[string]string{
+		"package final class Lock {}":      "Lock",
+		"package struct Box {}":            "Box",
+		"nonisolated struct Plain {}":      "Plain",
+		"@usableFromInline package enum E": "E",
+		"public class func make() {}":      "",
+	} {
+		if got := extractTypeName(text); got != want {
+			t.Errorf("extractTypeName(%q) = %q, want %q", text, got, want)
+		}
+	}
+}

@@ -861,7 +861,7 @@ func bashWordSegments(s string) []string {
 // node kind; an extension declares nothing new, so it yields no name. The
 // keyword must be the first token after modifiers so that a nested "class
 // func" or "class var" inside the body is never read as a declaration.
-var typeDeclarationName = regexp.MustCompile(`^(?:(?:public|private|internal|fileprivate|open|final|indirect|@[A-Za-z_]+(?:\([^)]*\))?)\s+)*(class|struct|enum|actor|protocol)\s+([A-Za-z_][A-Za-z0-9_]*)`)
+var typeDeclarationName = regexp.MustCompile(`^(?:(?:public|package|private|internal|fileprivate|open|final|indirect|nonisolated|@[A-Za-z_]+(?:\([^)]*\))?)\s+)*(class|struct|enum|actor|protocol)\s+([A-Za-z_][A-Za-z0-9_]*)`)
 
 func extractTypeName(text string) string {
 	m := typeDeclarationName.FindStringSubmatch(strings.TrimSpace(text))
