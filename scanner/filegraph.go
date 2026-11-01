@@ -1039,30 +1039,12 @@ func resolvePythonRelative(imp, fromDir string, idx *fileIndex) []string {
 
 // resolveRelative handles ./foo and ../bar style imports
 func resolveRelative(imp, fromDir string, idx *fileIndex, sourceLanguage string) []string {
-	// Count parent directory levels
-	levels := 0
-	rest := imp
-	for strings.HasPrefix(rest, "../") {
-		levels++
-		rest = strings.TrimPrefix(rest, "../")
+	candidate := keyPath(filepath.Join(fromDir, imp))
+	// A path above the scan root names nothing we indexed. Probing it would
+	// either miss or, through the on-disk recovery below, leave the project.
+	if candidate == ".." || strings.HasPrefix(candidate, "../") {
+		return nil
 	}
-	rest = strings.TrimPrefix(rest, "./")
-
-	// Navigate up from fromDir
-	targetDir := fromDir
-	for i := 0; i < levels; i++ {
-		targetDir = filepath.Dir(targetDir)
-		if targetDir == "." {
-			targetDir = ""
-		}
-	}
-
-	// Build candidate path
-	candidate := rest
-	if targetDir != "" {
-		candidate = filepath.Join(targetDir, rest)
-	}
-
 	return tryExactMatch(candidate, idx, sourceLanguage)
 }
 
@@ -1070,6 +1052,11 @@ func resolveRelative(imp, fromDir string, idx *fileIndex, sourceLanguage string)
 // Extension list derived from the canonical scanner registry.
 func tryExactMatch(path string, idx *fileIndex, sourceLanguage string) []string {
 	path = keyPath(path)
+	// The project root as a directory import. Appending "/index.js" to an
+	// empty path would build the absolute "/index.js", a key no file has.
+	if path == "" {
+		path = "."
+	}
 	if idx.exact(path) == 1 && languagesCompatible(sourceLanguage, DetectLanguage(path)) {
 		return []string{path}
 	}
