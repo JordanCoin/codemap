@@ -115,3 +115,10 @@ func TestBashWordSegmentsKeepSubstitutionsWhole(t *testing.T) {
 		t.Fatalf("segments = %q, want %q", got, want)
 	}
 }
+
+func TestCUEHeaderSkipsLeadingAttributes(t *testing.T) {
+	pkg, imports := cueHeader([]byte("// c\n@experiment(aliasv2)\n@if(foo(bar))\npackage ci\n\n@extern(x)\nimport (\n\t\"m/a\"\n)\nimport \"m/b\"\nx: 1\n"))
+	if pkg != "ci" || !slices.Equal(imports, []string{"m/a", "m/b"}) {
+		t.Fatalf("pkg = %q imports = %v", pkg, imports)
+	}
+}
