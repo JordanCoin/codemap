@@ -6,8 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
+
+	"codemap/analysis"
 )
 
 var (
@@ -20,6 +23,30 @@ var (
 	// counts; the cost is a partial label, never a false complete.
 	bashDynamicSource = regexp.MustCompile("^\\s*(?:.*[;&|]\\s*|.*\\b(?:then|do|else)\\s+)?(?:source|\\.|load)\\s+(?:\"[^\"\\s]*[$`]|[^\\s'\"]*[$`]|<\\()")
 )
+
+// FileCoverage is ForFile plus what the graph knows about the file itself: a file
+// outside the scanned set, or one with no language mapping, cannot read complete
+// however complete the scan of everything else was. A graph with no inventory
+// (KnownFiles nil) or no scan behind it says nothing more about the file.
+func (fg *FileGraph) FileCoverage(file string) GraphCoverage {
+	coverage := fg.Coverage.ForFile(file)
+	if fg.KnownFiles == nil || coverage.EffectiveStatus() == analysis.CoverageUnavailable {
+		return coverage
+	}
+	var detail string
+	switch {
+	case !fg.KnownFiles[file]:
+		detail = file + " is not in the scanned file set (ignored, excluded by only/exclude in .codemap/config.json, or missing): its imports and importers are unknown, not 0"
+	case DetectLanguage(file) == "":
+		detail = file + " has no language mapping: its own imports are not extracted, and its importers are only scanned files that name it by path"
+	default:
+		return coverage
+	}
+	coverage.Sources = slices.Clone(coverage.Sources)
+	coverage.Notes = slices.Clone(coverage.Notes)
+	coverage.AddSource(ScanSourceOutcome{Name: "file-scope", Status: ScanSourceMixed, Detail: detail})
+	return coverage
+}
 
 // missingEdgeSources names languages whose repo shows they reach other files by
 // a route the import graph does not follow. Each source is tagged with its

@@ -158,3 +158,51 @@ func TestBashWithoutDynamicSourceStaysComplete(t *testing.T) {
 		"not a source":   {"a.sh": "echo $x\n./run \"$x\"\nreload \"$x\"\n"},
 	})
 }
+
+func TestFileCoverageOutsideTheGraphIsNotComplete(t *testing.T) {
+	graph := evidenceGraph(t, goFixture, map[string]string{
+		"lib/x.inc":         "#include \"a.h\"\n",
+		"node_modules/a.js": "x\n",
+	})
+	cases := map[string]struct {
+		want     analysis.CoverageStatus
+		fragment string
+	}{
+		"main.go":           {analysis.CoverageComplete, ""},
+		"lib/x.inc":         {analysis.CoveragePartial, "lib/x.inc has no language mapping"},
+		"node_modules/a.js": {analysis.CoveragePartial, "node_modules/a.js is not in the scanned file set"},
+		"gone.go":           {analysis.CoveragePartial, "gone.go is not in the scanned file set"},
+	}
+	for file, tc := range cases {
+		coverage := graph.FileCoverage(file)
+		if got := coverage.EffectiveStatus(); got != tc.want {
+			t.Errorf("%s coverage = %s, want %s (notes = %v)", file, got, tc.want, coverage.Notes)
+		}
+		if tc.fragment != "" && !strings.Contains(strings.Join(coverage.Notes, "\n"), tc.fragment) {
+			t.Errorf("%s notes = %v, want one containing %q", file, coverage.Notes, tc.fragment)
+		}
+	}
+	// A per-file note must not leak into the rollup or the next file's answer.
+	if got := graph.Coverage.EffectiveStatus(); got != analysis.CoverageComplete {
+		t.Errorf("rollup = %s, want complete (notes = %v)", got, graph.Coverage.Notes)
+	}
+}
+
+func TestFileCoverageExcludedByOnlyFilterIsNotComplete(t *testing.T) {
+	dir := t.TempDir()
+	for name, body := range map[string]string{"go.mod": "module mod\n", "main.go": "package main\n", "a.py": "x = 1\n"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	graph, err := BuildFileGraph(context.Background(), dir, Filters{Only: []string{"go"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := graph.FileCoverage("a.py").EffectiveStatus(); got != analysis.CoveragePartial {
+		t.Errorf("a.py coverage = %s, want partial", got)
+	}
+	if got := graph.FileCoverage("main.go").EffectiveStatus(); got != analysis.CoverageComplete {
+		t.Errorf("main.go coverage = %s, want complete", got)
+	}
+}

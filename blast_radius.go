@@ -1546,7 +1546,7 @@ func buildImportersReportFromGraph(root, file string, fg *scanner.FileGraph) (sc
 	// a Go file. The scan-level rollup stays on --deps. A complete scan can
 	// still miss this one file by leaving it outside the scanned set, which
 	// is exactly the gap NotIndexed exists to surface.
-	coverage := fg.Coverage.ForFile(file)
+	coverage := fg.FileCoverage(file)
 	report := scanner.ImportersReport{
 		Root:           root,
 		Mode:           "importers",

@@ -97,7 +97,7 @@ func newImportersOutput(root, file string, graph *scanner.FileGraph) ImportersOu
 	if len(importers) == 0 {
 		kind = "empty"
 	}
-	coverage := graph.Coverage.ForFile(file)
+	coverage := graph.FileCoverage(file)
 	return ImportersOutput{
 		Kind: kind, Root: root, Mode: "importers", File: file,
 		Importers: boundedImporters, Imports: boundedImports, HubImports: boundedHubs,
