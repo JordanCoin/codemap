@@ -75,6 +75,10 @@ func cueHeader(data []byte) (string, []string) {
 	var pkg string
 	var imports []string
 	for token := s.Scan(); token != textscanner.EOF; {
+		if token == '@' {
+			token = skipCUEAttribute(s)
+			continue
+		}
 		if token != textscanner.Ident {
 			break
 		}
@@ -91,6 +95,29 @@ func cueHeader(data []byte) (string, []string) {
 		}
 	}
 	return pkg, dedupe(imports)
+}
+
+// skipCUEAttribute consumes "@name(...)" with the '@' already read and returns
+// the token after it. CUE allows attributes before the package clause.
+func skipCUEAttribute(s *textscanner.Scanner) rune {
+	if s.Scan() != textscanner.Ident {
+		return textscanner.EOF
+	}
+	token := s.Scan()
+	if token != '(' {
+		return token
+	}
+	for depth := 1; depth > 0; {
+		switch s.Scan() {
+		case '(':
+			depth++
+		case ')':
+			depth--
+		case textscanner.EOF:
+			return textscanner.EOF
+		}
+	}
+	return s.Scan()
 }
 
 func skipCUEHeaderLine(s *textscanner.Scanner) rune {

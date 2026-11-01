@@ -6,6 +6,10 @@ rule:
       pattern: require $$$
     - kind: call
       pattern: require_relative $$$
+    - kind: call
+      pattern: autoload $$$
+    - kind: call
+      pattern: autoload($$$)
 ---
 id: ruby-functions
 language: ruby
