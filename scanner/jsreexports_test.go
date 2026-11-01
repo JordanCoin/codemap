@@ -44,3 +44,13 @@ func TestDynamicImportLiteralsAreEdges(t *testing.T) {
 	assertImports(t, imports, "src/lazy.jsx", "src/lib/js-dyn.js")
 	assertImports(t, imports, "src/view.tsx", "src/lib/tsx-named.ts", "src/lib/tsx-dyn.ts")
 }
+
+func TestRepoRootDirectoryImportResolvesToIndex(t *testing.T) {
+	imports := jsFixtureImports(t, "js-root-import")
+	for _, file := range []string{"lib/deep/slash.js", "lib/deep/noslash.js", "lib/oneup.js", "lib/oneup-noslash.js", "dotslash.js", "dot.js"} {
+		assertImports(t, imports, file, "index.js")
+	}
+	// Above the scan root is not the root.
+	assertImports(t, imports, "above.js")
+	assertImports(t, imports, "above-noslash.js")
+}
