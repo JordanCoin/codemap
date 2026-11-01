@@ -26,6 +26,8 @@ type unresolvedImportTally struct {
 	missing  map[string]int      // display language -> those that resolved to nothing
 	examples map[string][]string // display language -> up to three "file -> specifier"
 	issues   []analysis.Issue    // every miss, one issue each, for the contract
+
+	phpUnresolvedUse string // smallest "file -> name" PHP use that resolved to nothing
 }
 
 func newUnresolvedImportTally(idx *fileIndex) *unresolvedImportTally {
@@ -51,6 +53,13 @@ func newUnresolvedImportTally(idx *fileIndex) *unresolvedImportTally {
 
 func (t *unresolvedImportTally) record(language, from, imp string, aliases map[string][]string, resolved bool) {
 	imp = strings.Trim(imp, "\"'`")
+	// A PHP use names a class, so it has no path separator or extension; a
+	// require or include target has at least one.
+	if language == "php" && !resolved && !strings.ContainsAny(imp, "/.") {
+		if use := strings.ReplaceAll(from, "\\", "/") + " -> " + imp; t.phpUnresolvedUse == "" || use < t.phpUnresolvedUse {
+			t.phpUnresolvedUse = use
+		}
+	}
 	if !t.projectLooking(language, imp, aliases) {
 		return
 	}

@@ -360,6 +360,11 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 		fg.Coverage.AddSource(source)
 	}
 	fg.Coverage.Issues = append(fg.Coverage.Issues, unresolved.issues...)
+	if CoverageFromSources(fg.Coverage.Sources).Status != analysis.CoverageUnavailable {
+		for _, source := range missingEdgeSources(absRoot, files, unresolved.phpUnresolvedUse) {
+			fg.Coverage.AddSource(source)
+		}
+	}
 	resolved := map[string]bool{}
 	if addSwiftTypeReferenceEdges(absRoot, analyses, fg) {
 		resolved[symbolLevelImportLanguages["swift"]] = true
