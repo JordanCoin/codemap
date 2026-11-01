@@ -58,3 +58,13 @@ func TestLuaRequireForms(t *testing.T) {
 	// External libraries must not land on a same-named file or directory.
 	assertEdges(t, g, "lua/app/ext.lua", nil)
 }
+
+func TestRubyAutoloadForms(t *testing.T) {
+	g := buildFixtureGraph(t, map[string]string{
+		"lib/app.rb":       "module App\n  autoload :Cache, \"app/cache\"\n  autoload(:Store, 'app/store')\n  autoload :Bare\nend\n",
+		"lib/app/cache.rb": "module App; class Cache; end; end\n",
+		"lib/app/store.rb": "module App; class Store; end; end\n",
+		"lib/app/bare.rb":  "module App; class Bare; end; end\n",
+	})
+	assertEdges(t, g, "lib/app.rb", []string{"lib/app/cache.rb", "lib/app/store.rb"})
+}
