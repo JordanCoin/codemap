@@ -31,6 +31,7 @@ type jsWorkspacePackage struct {
 	exports      jsSpecifierMap
 	hasExports   bool
 	entryTargets []string
+	main         string // package.json main, as a local target; "" when absent or invalid
 	sourceRoot   string
 	outDir       string
 }
@@ -369,6 +370,21 @@ func (r *jsWorkspaceResolver) resolve(imp, fromFile string, idx *fileIndex, sour
 	return candidates[0].resolve(subpath, idx, sourceLanguage)
 }
 
+// rootPackageMain resolves a directory import of the scan root through
+// package.json main, which Node tries ahead of index.js. Empty means fall back to
+// index, as Node does when main names nothing.
+func (r *jsWorkspaceResolver) rootPackageMain(idx *fileIndex, sourceLanguage string) []string {
+	if r == nil {
+		return nil
+	}
+	for i := range r.packageScopes {
+		if pkg := r.packageScopes[i].pkg; r.packageScopes[i].root == "" && pkg != nil && pkg.main != "" {
+			return pkg.resolveInferredTarget(pkg.main, idx, sourceLanguage)
+		}
+	}
+	return nil
+}
+
 func (r *jsWorkspaceResolver) nearestPackageScope(fromFile string) *jsPackageScope {
 	for i := range r.packageScopes {
 		if pathContains(r.packageScopes[i].root, fromFile) {
@@ -534,6 +550,9 @@ func parsePackageManifest(root string, doc map[string]any) *jsWorkspaceManifest 
 	}
 	pkg.exports, pkg.hasExports = parseExports(doc)
 	pkg.entryTargets = unambiguousEntryTargets(doc)
+	if main := unambiguousEntryTargets(map[string]any{"main": doc["main"]}); len(main) == 1 {
+		pkg.main = main[0]
+	}
 	return &jsWorkspaceManifest{
 		root:       root,
 		pkg:        pkg,

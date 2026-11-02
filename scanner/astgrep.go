@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -546,6 +547,12 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 			if fileMap[relPath].Language == "python" {
 				mod, _, _ = strings.Cut(mod, " as ")
 			}
+			if mod != "" && fileMap[relPath].Language == "bash" {
+				if kind := bashDeferredKind(relPath, m.Text, mod); kind != "" {
+					fileMap[relPath].References = append(fileMap[relPath].References, ImportReference{Path: mod, Kind: kind})
+					continue
+				}
+			}
 			if mod != "" {
 				fileMap[relPath].Imports = append(fileMap[relPath].Imports, mod)
 				if language := fileMap[relPath].Language; language == "c" || language == "cpp" {
@@ -740,11 +747,48 @@ func extractImportPath(text string) string {
 	return ""
 }
 
+const (
+	// bashDynamicImport is a "${DIR}/lib/a.sh" word: the resolver can use it,
+	// but it is not a path, so it stays out of the visible import list (#154).
+	bashDynamicImport = "bash-dynamic-import"
+	// bashHelperLoad is a load outside a .bats file. It means bats' load only
+	// in a file bats reaches; see resolveBatsHelperLoads.
+	bashHelperLoad = "bash-helper-load"
+)
+
+// impactImports is every import a diff impact should match by name: the visible
+// list plus the shell words held back from it. A load counts wherever it is,
+// because a warning that names too much beats one that misses a bats helper.
+func (a FileAnalysis) impactImports() []string {
+	imports := a.Imports
+	for _, ref := range a.References {
+		if ref.Kind == bashDynamicImport || ref.Kind == bashHelperLoad {
+			imports = append(slices.Clip(imports), ref.Path)
+		}
+	}
+	return imports
+}
+
+// bashDeferredKind names the reference kind for a shell import the import list
+// must not carry, or "" for a literal one that belongs there.
+func bashDeferredKind(file, text, target string) string {
+	if strings.HasPrefix(text, "load") && !strings.HasSuffix(file, ".bats") {
+		return bashHelperLoad
+	}
+	if strings.ContainsAny(target, "$`") {
+		return bashDynamicImport
+	}
+	return ""
+}
+
 // bashImportTarget returns the argument of a source line when it can name a
 // project file: a literal relative path, or a dynamic prefix ("${DIR}/lib/a.sh")
 // that the resolver can reduce to a literal remainder. Anything else yields
 // nothing rather than a "$VAR" or "/etc/profile" entry in the import list (#154).
 func bashImportTarget(args string) string {
+	if bashWordHasLiteralExpansion(args) {
+		return ""
+	}
 	segments := bashWordSegments(args)
 	word := strings.Join(segments, "/")
 	if strings.ContainsAny(word, "$`") {
@@ -757,6 +801,42 @@ func bashImportTarget(args string) string {
 		return ""
 	}
 	return word
+}
+
+// bashWordHasLiteralExpansion reports a $ or backtick the shell would not expand
+// in the first word of s: single-quoted or backslash-escaped. '$X'/b.sh is a
+// literal path through a directory named $X, not a dynamic prefix.
+func bashWordHasLiteralExpansion(s string) bool {
+	s = strings.TrimSpace(s)
+	var quote byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case quote == '\'':
+			if c == '\'' {
+				quote = 0
+			} else if c == '$' || c == '`' {
+				return true
+			}
+		case c == '\\':
+			if i+1 < len(s) && (s[i+1] == '$' || s[i+1] == '`') {
+				return true
+			}
+			i++
+		case c == '"':
+			if quote == 0 {
+				quote = c
+			} else {
+				quote = 0
+			}
+		case quote != 0:
+		case c == '\'':
+			quote = c
+		case c == ' ' || c == '\t' || c == ';':
+			return false
+		}
+	}
+	return false
 }
 
 // bashLoadTarget applies bats' load rule: relative to the file, name.bash and

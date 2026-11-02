@@ -28,7 +28,13 @@ type unresolvedImportTally struct {
 	issues   []analysis.Issue    // every miss, one issue each, for the contract
 
 	phpUnresolvedUse string // smallest "file -> name" PHP use that resolved to nothing
+
+	aboveRoot map[string][]string // display language -> "file -> specifier" dropped for leaving the root
 }
+
+// aboveRootLanguages are those whose relative imports the tally does not count
+// as project-looking in general, but whose climb out of the root is a known drop.
+var aboveRootLanguages = map[string]bool{"bash": true, "c": true, "cpp": true, "dart": true, "lua": true, "php": true, "ruby": true, "solidity": true}
 
 func newUnresolvedImportTally(idx *fileIndex) *unresolvedImportTally {
 	t := &unresolvedImportTally{topLevel: map[string]bool{}, seen: map[string]int{}, missing: map[string]int{}, examples: map[string][]string{}}
@@ -53,9 +59,17 @@ func newUnresolvedImportTally(idx *fileIndex) *unresolvedImportTally {
 
 func (t *unresolvedImportTally) record(language, from, imp string, aliases map[string][]string, resolved bool) {
 	imp = strings.Trim(imp, "\"'`")
-	// A PHP use names a class, so it has no path separator or extension; a
-	// require or include target has at least one.
-	if language == "php" && !resolved && !strings.ContainsAny(imp, "/.") {
+	if !resolved && aboveRootLanguages[language] && strings.HasPrefix(imp, ".") && isAboveRoot(keyPath(path.Join(path.Dir(from), imp))) {
+		if t.aboveRoot == nil {
+			t.aboveRoot = map[string][]string{}
+		}
+		t.aboveRoot[LangDisplay[language]] = append(t.aboveRoot[LangDisplay[language]], from+" -> "+imp)
+		t.issues = append(t.issues, analysis.Issue{Code: "unresolved-import", Path: from, Message: "import " + imp + " climbs above the scan root"})
+	}
+	// A PHP use with a namespace names a class, unlike a require or include
+	// target, which has a path separator or extension. An unqualified name
+	// (use DateTime) is usually PHP's own global class: no project evidence.
+	if language == "php" && !resolved && strings.Contains(imp, `\`) && !strings.ContainsAny(imp, "/.") {
 		if use := strings.ReplaceAll(from, "\\", "/") + " -> " + imp; t.phpUnresolvedUse == "" || use < t.phpUnresolvedUse {
 			t.phpUnresolvedUse = use
 		}
@@ -87,7 +101,7 @@ func (t *unresolvedImportTally) projectLooking(language, imp string, aliases map
 	case isJavaScriptLanguage(language):
 		// A stylesheet, image or JSON import is not a dependency edge the
 		// graph would ever hold, so its absence is not a missing edge.
-		if ext := strings.ToLower(path.Ext(imp)); ext != "" && extToLang[ext] == "" {
+		if ext := strings.ToLower(path.Ext(imp)); ext != "" && ext != "." && extToLang[ext] == "" {
 			return false
 		}
 		// A path through a hidden directory (./.next/types/x.d.ts) names
@@ -124,6 +138,14 @@ func (t *unresolvedImportTally) sources() []ScanSourceOutcome {
 			Name:      strings.ToLower(display) + "-unresolved-imports",
 			Status:    ScanSourceMixed,
 			Detail:    fmt.Sprintf("%s: %d of %d project-relative imports did not resolve to a file; those edges are missing (%s)", display, missing, t.seen[display], strings.Join(t.examples[display], ", ")),
+			Languages: languagesForDisplay(display),
+		})
+	}
+	for display, examples := range t.aboveRoot {
+		out = append(out, ScanSourceOutcome{
+			Name:      strings.ToLower(display) + "-imports-above-root",
+			Status:    ScanSourceMixed,
+			Detail:    fmt.Sprintf("%s: relative imports climbing above the scan root: %d; those edges are missing (%s)", display, len(examples), strings.Join(examples[:min(3, len(examples))], ", ")),
 			Languages: languagesForDisplay(display),
 		})
 	}

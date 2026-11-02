@@ -82,13 +82,14 @@ func TestBashLoadResolvesRelativeToFile(t *testing.T) {
 		"scripts/unrelate.sh": "load missing\n",
 	})
 	assertEdges(t, g, "test/a.bats", []string{"test/helper.bash", "test/sub/util.bash", "test/dyn.bash"})
-	assertEdges(t, g, "scripts/run.sh", []string{"test/helper.bash"})
+	assertEdges(t, g, "scripts/run.sh", nil)
 	assertEdges(t, g, "scripts/unrelate.sh", nil)
 }
 
 func TestBashDynamicPrefixNeedsUniqueMatch(t *testing.T) {
 	g := buildFixtureGraph(t, map[string]string{
-		"bin/run.sh": "source \"${DIR}/lib/d.sh\"\n" +
+		"bin/run.sh": "DIR=.; ROOT=.; LIBDIR=lib\n" +
+			"source \"${DIR}/lib/d.sh\"\n" +
 			"source \"$(dirname \"${BASH_SOURCE[0]}\")/../lib/e.sh\"\n" +
 			". \"$ROOT/$LIBDIR/core/f.bash\"\n" +
 			"source \"$(cd \"$(dirname \"$0\")\" && pwd)/g.sh\"\n" +

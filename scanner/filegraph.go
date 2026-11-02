@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	pathpkg "path"
 	"path/filepath"
@@ -116,6 +117,11 @@ type fileIndex struct {
 	goPkgs      map[string][]string // Go package path -> files
 	cueModules  []cueModuleInfo
 	cuePackages map[string]string
+	// bashAssigned is filled on first use by bashAssignedVariables.
+	bashAssigned map[string]bool
+	// unfilteredFiles, set when an only list narrowed this index, lists what the
+	// ignore rules and excludes still allow.
+	unfilteredFiles func() ([]FileInfo, error)
 	// absRoot and filters back a narrow fallback in tryExactMatch: a file
 	// excluded from the scanned inventory purely by .gitignore can still be
 	// the exact, unambiguous target of a plain relative import from a file
@@ -258,6 +264,11 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
+	if len(filters.Only) > 0 {
+		idx.unfilteredFiles = func() ([]FileInfo, error) {
+			return ScanFiles(ctx, root, gitCache, nil, filters.Exclude)
+		}
+	}
 	if languages.hasCUE || hasCUEAnalysis {
 		idx.cueModules = detectCUEModulesWithFiles(absRoot, files)
 		idx.cuePackages = make(map[string]string)
@@ -315,7 +326,13 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 		} else {
 			sourceLanguage := DetectLanguage(a.Path)
 			angleIncludes := angleOnlyIncludes(a.References)
-			for _, imp := range a.Imports {
+			imports := a.Imports
+			for _, ref := range a.References {
+				if ref.Kind == bashDynamicImport {
+					imports = append(slices.Clip(imports), ref.Path)
+				}
+			}
+			for _, imp := range imports {
 				if err := ctx.Err(); err != nil {
 					return nil, err
 				}
@@ -346,11 +363,14 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 		resolvedImports = slices.DeleteFunc(slashPaths(resolvedImports), func(target string) bool { return target == key })
 		if len(resolvedImports) > 0 {
 			fg.Imports[key] = dedupe(resolvedImports)
-
-			// Build reverse map
-			for _, imported := range fg.Imports[key] {
-				fg.Importers[imported] = append(fg.Importers[imported], key)
-			}
+		}
+	}
+	batsReached := resolveBatsHelperLoads(analyses, fg, func(imp, from string) []string {
+		return fuzzyResolveWithWorkspace(imp, from, idx, fg.Module, fg.PathAliases, fg.BaseURL, jsResolver, dartResolver)
+	})
+	for key, imports := range fg.Imports {
+		for _, imported := range imports {
+			fg.Importers[imported] = append(fg.Importers[imported], key)
 		}
 	}
 
@@ -368,7 +388,7 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 	}
 	fg.Coverage.Issues = append(fg.Coverage.Issues, unresolved.issues...)
 	if CoverageFromSources(fg.Coverage.Sources).Status != analysis.CoverageUnavailable {
-		for _, source := range missingEdgeSources(absRoot, files, unresolved.phpUnresolvedUse) {
+		for _, source := range missingEdgeSources(absRoot, files, unresolved.phpUnresolvedUse, idx, batsReached) {
 			fg.Coverage.AddSource(source)
 		}
 	}
@@ -829,7 +849,7 @@ func fuzzyResolveWithWorkspace(
 	normalized := normalizeImport(imp)
 
 	if sourceLanguage == "lua" {
-		return resolveLuaModule(normalized, idx)
+		return resolveLuaModule(normalized, fromDir, idx)
 	}
 
 	// Strategy 2: Relative path resolution (./foo, ../bar)
@@ -841,6 +861,11 @@ func fuzzyResolveWithWorkspace(
 		// every intra-package edge in a Python project was lost.
 		if sourceLanguage == "python" {
 			return resolvePythonRelative(imp, fromDir, idx)
+		}
+		if isJavaScriptLanguage(sourceLanguage) && keyPath(filepath.Join(fromDir, imp)) == "." {
+			if files := jsResolver.rootPackageMain(idx, sourceLanguage); len(files) > 0 {
+				return files
+			}
 		}
 		return resolveRelative(imp, fromDir, idx, sourceLanguage)
 	}
@@ -881,7 +906,15 @@ func fuzzyResolveWithWorkspace(
 // lua/app/init.lua wins over a same-named plugin/app.lua. A bare name found only
 // deeper ("cjson" -> kong/tools/cjson.lua) is an external library, and a module
 // never names a directory, so the suffix and directory fan-outs stay off for it.
-func resolveLuaModule(module string, idx *fileIndex) []string {
+// A dotted spelling is a dofile-style path from the file, and "." or ".." name
+// no file at all.
+func resolveLuaModule(module, fromDir string, idx *fileIndex) []string {
+	if strings.HasPrefix(module, ".") {
+		if base := pathpkg.Base(module); base == "." || base == ".." {
+			return nil
+		}
+		return resolveRelative(module, fromDir, idx, "lua")
+	}
 	for _, root := range []string{"lua/", "src/", "lib/", ""} {
 		if files := tryExactMatch(root+module, idx, "lua"); len(files) > 0 {
 			return files
@@ -898,7 +931,7 @@ func resolveLuaModule(module string, idx *fileIndex) []string {
 // second candidate makes the target a guess.
 func resolveBashDynamic(imp string, idx *fileIndex) []string {
 	remainder := bashDynamicRemainder(imp)
-	if remainder == "" {
+	if remainder == "" || !idx.bashPrefixInRepo(imp) {
 		return nil
 	}
 	matches := idx.suffixMatches(remainder)
@@ -910,6 +943,230 @@ func resolveBashDynamic(imp string, idx *fileIndex) []string {
 		return nil
 	}
 	return matches
+}
+
+var (
+	bashShebang           = regexp.MustCompile(`^#!.*\bk?(?:ba|z|da)?sh\b`)
+	bashVariableReference = regexp.MustCompile(`\$\{?[#!]?([A-Za-z_]\w*|0)`)
+	bashDefaultAssignment = regexp.MustCompile(`\$\{([A-Za-z_]\w*):?=`)
+	bashAssignmentWord    = regexp.MustCompile(`^([A-Za-z_]\w*)\+?=`)
+	// The shell or bats sets these to a place inside the project.
+	bashSelfLocatingVariables = map[string]bool{"0": true, "BASH_SOURCE": true, "PWD": true, "BATS_TEST_DIRNAME": true, "BATS_TEST_FILENAME": true}
+	// Words that may precede an assignment in a command.
+	bashAssignmentPrefixes = map[string]bool{"then": true, "do": true, "else": true, "if": true, "elif": true, "while": true, "until": true, "!": true, "export": true, "local": true, "readonly": true, "declare": true, "typeset": true, "exec": true, "env": true, "command": true, "builtin": true}
+)
+
+// bashPrefixInRepo reports whether the dynamic prefix of imp plausibly points
+// into the project: a self-locating form, or variables the project assigns.
+// "$NVM_DIR/nvm.sh" with NVM_DIR set only by the user's shell points elsewhere.
+//
+// ponytail: an assignment anywhere counts, whatever its value or file, so a
+// variable the repo sets to an outside path still links. Evaluating the value
+// is the upgrade if that shows up.
+func (idx *fileIndex) bashPrefixInRepo(imp string) bool {
+	for _, segment := range bashWordSegments(imp) {
+		if !strings.ContainsAny(segment, "$`") {
+			break
+		}
+		if body, ok := bashSubstitutionBody(segment); ok {
+			if !idx.bashSubstitutionInRepo(body) {
+				return false
+			}
+			continue
+		}
+		for _, match := range bashVariableReference.FindAllStringSubmatch(segment, -1) {
+			if !idx.bashVariableInRepo(match[1]) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (idx *fileIndex) bashVariableInRepo(name string) bool {
+	return bashSelfLocatingVariables[name] || name != "HOME" && idx.bashAssignedVariables()[name]
+}
+
+func bashSubstitutionBody(segment string) (string, bool) {
+	if open := strings.Index(segment, "$("); open >= 0 {
+		end := strings.LastIndexByte(segment, ')')
+		return segment[open+2 : max(end, open+2)], true
+	}
+	if open := strings.IndexByte(segment, '`'); open >= 0 {
+		end := strings.LastIndexByte(segment, '`')
+		return segment[open+1 : max(end, open+1)], true
+	}
+	return "", false
+}
+
+// bashSubstitutionInRepo reports whether a command substitution prints a path in
+// the project: its last command locates itself, and any cd before that goes
+// somewhere the project can vouch for.
+func (idx *fileIndex) bashSubstitutionInRepo(body string) bool {
+	commands, _ := bashCommands(body)
+	located := false
+	for _, command := range commands {
+		words := strings.Fields(command)
+		for len(words) > 0 && (bashAssignmentWord.MatchString(words[0]) || words[0] == "command" || words[0] == "builtin") {
+			words = words[1:]
+		}
+		if len(words) == 0 {
+			continue
+		}
+		args := strings.Join(words[1:], " ")
+		switch pathpkg.Base(strings.TrimPrefix(words[0], `\`)) {
+		case "pwd":
+			located = true
+		case "git":
+			located = len(words) > 1 && words[1] == "rev-parse"
+		case "dirname", "realpath", "readlink":
+			located = idx.bashArgumentInRepo(args)
+		case "cd", "pushd":
+			if !idx.bashArgumentInRepo(args) {
+				return false
+			}
+			located = false
+		default:
+			located = false
+		}
+	}
+	return located
+}
+
+// bashArgumentInRepo reports whether args reference variables, all of which point
+// into the project. A literal path could be anywhere.
+func (idx *fileIndex) bashArgumentInRepo(args string) bool {
+	references := bashVariableReference.FindAllStringSubmatch(args, -1)
+	return len(references) > 0 && !slices.ContainsFunc(references, func(match []string) bool {
+		return !idx.bashVariableInRepo(match[1])
+	})
+}
+
+func (idx *fileIndex) bashAssignedVariables() map[string]bool {
+	if idx.bashAssigned != nil {
+		return idx.bashAssigned
+	}
+	idx.bashAssigned = make(map[string]bool)
+	// An only list drops an extensionless launcher (bats' bin/bats) from the
+	// index, yet it is often what sets the root the libraries source from. It
+	// stays out of the graph; only its assignments are read.
+	shellCandidates := slices.Collect(maps.Keys(idx.byExact))
+	if idx.unfilteredFiles != nil {
+		if unfiltered, err := idx.unfilteredFiles(); err == nil {
+			for _, file := range unfiltered {
+				shellCandidates = append(shellCandidates, keyPath(file.Path))
+			}
+		}
+	}
+	for _, file := range shellCandidates {
+		if DetectLanguage(file) != "bash" && pathpkg.Ext(file) != "" {
+			continue
+		}
+		data, _ := readProjectFile(idx.absRoot, file)
+		if DetectLanguage(file) != "bash" && !bashShebang.Match(data) {
+			continue
+		}
+		forEachBashCommand(data, func(_ int, command string) {
+			addBashAssignments(command, idx.bashAssigned)
+		})
+	}
+	return idx.bashAssigned
+}
+
+// addBashAssignments records the variables a command assigns: words in assignment
+// position, a for variable, and ${X:=y}. Quoted text assigns nothing, except that
+// a double-quoted ${X:=y} still expands.
+func addBashAssignments(command string, assigned map[string]bool) {
+	for _, match := range bashDefaultAssignment.FindAllStringSubmatch(blankBashQuotes(command, false), -1) {
+		assigned[match[1]] = true
+	}
+	words := strings.Fields(blankBashQuotes(command, true))
+	for i := 0; i < len(words); i++ {
+		word := strings.TrimLeft(words[i], "({")
+		if match := bashAssignmentWord.FindStringSubmatch(word); match != nil {
+			assigned[match[1]] = true
+			continue
+		}
+		switch {
+		case word == "for" && i+2 < len(words) && words[i+2] == "in":
+			assigned[words[i+1]] = true
+			return
+		case word == "function":
+			i++
+		case word != "" && !bashAssignmentPrefixes[word] && word[0] != '-' && !strings.HasSuffix(word, ")"):
+			return
+		}
+	}
+}
+
+// blankBashQuotes empties single-quoted strings, and double-quoted ones if asked.
+func blankBashQuotes(command string, double bool) string {
+	var out strings.Builder
+	var quote byte
+	for i := 0; i < len(command); i++ {
+		c := command[i]
+		switch {
+		case quote == '\'':
+			if c == quote {
+				quote = 0
+				out.WriteByte(c)
+			}
+		case c == '\\' && i+1 < len(command):
+			i++
+			if quote == 0 || !double {
+				out.WriteByte(c)
+				out.WriteByte(command[i])
+			}
+		case c == '\'' && quote == 0:
+			quote = c
+			out.WriteByte(c)
+		case c == '"':
+			quote ^= '"'
+			out.WriteByte(c)
+		case quote == 0 || !double:
+			out.WriteByte(c)
+		}
+	}
+	return out.String()
+}
+
+// resolveBatsHelperLoads links load calls in the files bats reaches: every .bats
+// file, the setup_suite.bash bats runs itself, and whatever those import. load
+// is a bats function, so anywhere else it is the project's own command. It returns
+// the files reached.
+func resolveBatsHelperLoads(analyses []FileAnalysis, fg *FileGraph, resolve func(imp, from string) []string) map[string]bool {
+	loads := make(map[string][]string)
+	var pending []string
+	for _, a := range analyses {
+		key := keyPath(a.Path)
+		for _, ref := range a.References {
+			if ref.Kind == bashHelperLoad {
+				loads[key] = append(loads[key], ref.Path)
+			}
+		}
+		if strings.HasSuffix(key, ".bats") || pathpkg.Base(key) == "setup_suite.bash" {
+			pending = append(pending, key)
+		}
+	}
+	seen := make(map[string]bool)
+	for len(pending) > 0 {
+		file := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if seen[file] {
+			continue
+		}
+		seen[file] = true
+		imports := fg.Imports[file]
+		for _, load := range loads[file] {
+			imports = append(imports, resolve(load, file)...)
+		}
+		imports = slices.DeleteFunc(dedupe(slashPaths(imports)), func(target string) bool { return target == file })
+		if len(imports) > 0 {
+			fg.Imports[file] = imports
+		}
+		pending = append(pending, imports...)
+	}
+	return seen
 }
 
 func nearestCUEModule(fromFile string, modules []cueModuleInfo) (cueModuleInfo, bool) {
@@ -1044,19 +1301,22 @@ func resolvePythonRelative(imp, fromDir string, idx *fileIndex) []string {
 
 // resolveRelative handles ./foo and ../bar style imports
 func resolveRelative(imp, fromDir string, idx *fileIndex, sourceLanguage string) []string {
-	candidate := keyPath(filepath.Join(fromDir, imp))
-	// A path above the scan root names nothing we indexed. Probing it would
-	// either miss or, through the on-disk recovery below, leave the project.
-	if candidate == ".." || strings.HasPrefix(candidate, "../") {
-		return nil
-	}
-	return tryExactMatch(candidate, idx, sourceLanguage)
+	return tryExactMatch(filepath.Join(fromDir, imp), idx, sourceLanguage)
+}
+
+func isAboveRoot(path string) bool {
+	return path == ".." || strings.HasPrefix(path, "../")
 }
 
 // tryExactMatch looks for exact path matches with common extensions.
 // Extension list derived from the canonical scanner registry.
 func tryExactMatch(path string, idx *fileIndex, sourceLanguage string) []string {
 	path = keyPath(path)
+	// A path above the scan root names nothing we indexed. Probing it would
+	// either miss or, through the on-disk recovery below, leave the project.
+	if isAboveRoot(path) {
+		return nil
+	}
 	// The project root as a directory import. Appending "/index.js" to an
 	// empty path would build the absolute "/index.js", a key no file has.
 	if path == "" {
