@@ -135,21 +135,22 @@ func TestWeakEvidenceDoesNotLowerCoverage(t *testing.T) {
 		file, body string
 		want       analysis.CoverageStatus
 	}{
-		"string":        {"a.sh", "echo \"go; source $x\"\n", analysis.CoverageComplete},
-		"comment":       {"a.sh", "true # ; source $x\n", analysis.CoverageComplete},
-		"heredoc":       {"a.sh", "cat <<'EOF'\nsource $x\nEOF\n", analysis.CoverageComplete},
-		"escaped":       {"a.sh", ". \\$x\n", analysis.CoverageComplete},
-		"load in sh":    {"a.sh", "load \"$x\"\n", analysis.CoverageComplete},
-		"global use":    {"a.php", "<?php\nuse DateTime;\n", analysis.CoverageComplete},
-		"docblock":      {"a.php", "<?php\n/**\n namespace Foo;\n*/\n", analysis.CoverageComplete},
-		"ruby string":   {"a.rb", "puts \"Zeitwerk::Loader\"\n", analysis.CoverageComplete},
-		"real if":       {"a.sh", "if x; then source \"$y\"; fi\n", analysis.CoveragePartial},
-		"real and":      {"a.sh", "[ -f z ] && . \"$w\"\n", analysis.CoveragePartial},
-		"real case":     {"a.sh", "case $a in\n  b) source \"$y\" ;;\nesac\n", analysis.CoveragePartial},
-		"after heredoc": {"a.sh", "cat <<-EOF\n\tx\n\tEOF\nsource \"$y\"\n", analysis.CoveragePartial},
-		"real ns":       {"a.php", "<?php\nnamespace Foo\\Bar;\n", analysis.CoveragePartial},
-		"real use":      {"a.php", "<?php\nuse Foo\\Bar;\n", analysis.CoveragePartial},
-		"real loader":   {"a.rb", "l = Zeitwerk::Loader.new\n", analysis.CoveragePartial},
+		"string":               {"a.sh", "echo \"go; source $x\"\n", analysis.CoverageComplete},
+		"comment":              {"a.sh", "true # ; source $x\n", analysis.CoverageComplete},
+		"heredoc":              {"a.sh", "cat <<'EOF'\nsource $x\nEOF\n", analysis.CoverageComplete},
+		"unterminated heredoc": {"a.sh", "cat <<EOF\nsource $x\n", analysis.CoverageComplete},
+		"escaped":              {"a.sh", ". \\$x\n", analysis.CoverageComplete},
+		"load in sh":           {"a.sh", "load \"$x\"\n", analysis.CoverageComplete},
+		"global use":           {"a.php", "<?php\nuse DateTime;\n", analysis.CoverageComplete},
+		"docblock":             {"a.php", "<?php\n/**\n namespace Foo;\n*/\n", analysis.CoverageComplete},
+		"ruby string":          {"a.rb", "puts \"Zeitwerk::Loader\"\n", analysis.CoverageComplete},
+		"real if":              {"a.sh", "if x; then source \"$y\"; fi\n", analysis.CoveragePartial},
+		"real and":             {"a.sh", "[ -f z ] && . \"$w\"\n", analysis.CoveragePartial},
+		"real case":            {"a.sh", "case $a in\n  b) source \"$y\" ;;\nesac\n", analysis.CoveragePartial},
+		"after heredoc":        {"a.sh", "cat <<-EOF\n\tx\n\tEOF\nsource \"$y\"\n", analysis.CoveragePartial},
+		"real ns":              {"a.php", "<?php\nnamespace Foo\\Bar;\n", analysis.CoveragePartial},
+		"real use":             {"a.php", "<?php\nuse Foo\\Bar;\n", analysis.CoveragePartial},
+		"real loader":          {"a.rb", "l = Zeitwerk::Loader.new\n", analysis.CoveragePartial},
 	} {
 		t.Run(name, func(t *testing.T) {
 			assertFileCoverage(t, evidenceGraph(t, map[string]string{tc.file: tc.body}), tc.file, tc.want, "")

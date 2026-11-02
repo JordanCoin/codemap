@@ -105,9 +105,16 @@ func missingEdgeSources(absRoot string, files []FileInfo, phpUnresolvedUse strin
 func bashDynamicSourceEvidence(absRoot string, shellFiles []string, idx *fileIndex) string {
 	first, total := "", 0
 	for _, path := range shellFiles {
-		lines := strings.Split(string(readProjectFile(absRoot, path)), "\n")
-		for index := 0; index < len(lines); index++ {
-			commands, heredoc := bashCommands(lines[index])
+		heredoc := ""
+		for index, line := range strings.Split(string(readProjectFile(absRoot, path)), "\n") {
+			if heredoc != "" {
+				if strings.TrimSpace(line) == heredoc {
+					heredoc = ""
+				}
+				continue
+			}
+			var commands []string
+			commands, heredoc = bashCommands(line)
 			for _, command := range commands {
 				if !bashCommandMissesEdge(command, path, idx) {
 					continue
@@ -116,11 +123,6 @@ func bashDynamicSourceEvidence(absRoot string, shellFiles []string, idx *fileInd
 					first = fmt.Sprintf("%s:%d", path, index+1)
 				}
 				total++
-			}
-			if heredoc != "" {
-				if end := slices.IndexFunc(lines[index+1:], func(line string) bool { return strings.TrimSpace(line) == heredoc }); end >= 0 {
-					index += end + 1
-				}
 			}
 		}
 	}
