@@ -260,7 +260,7 @@ func AnalyzeImpactFromAnalyses(changedFiles []FileInfo, analyses []FileAnalysis)
 	usageCounts := make(map[string]int)
 	for _, analysis := range analyses {
 		// Check each import to see if it references a changed file
-		for _, imp := range analysis.Imports {
+		for _, imp := range analysis.impactImports() {
 			// Extract the last component of the import path
 			impBase := filepath.Base(imp)
 			impBase = strings.TrimSuffix(impBase, filepath.Ext(impBase))

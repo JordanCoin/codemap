@@ -43,8 +43,8 @@ func TestGraphBuildSurvivesNonRegularSourceNames(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("graph build hung on a non-regular file")
 	}
-	if got := readProjectFile(dir, "z.php"); got != nil {
-		t.Fatalf("read %d bytes through a link to /dev/zero", len(got))
+	if got, whole := readProjectFile(dir, "z.php"); got != nil || !whole {
+		t.Fatalf("read %d bytes through a link to /dev/zero, whole = %v", len(got), whole)
 	}
 }
 
@@ -57,7 +57,7 @@ func TestReadProjectFileBoundsLargeFile(t *testing.T) {
 	if err := os.Truncate(path, maxEvidenceFileBytes+1); err != nil {
 		t.Fatal(err)
 	}
-	if got := len(readProjectFile(dir, "big.sh")); got != maxEvidenceFileBytes {
-		t.Fatalf("read %d bytes, want %d", got, maxEvidenceFileBytes)
+	if got, whole := readProjectFile(dir, "big.sh"); len(got) != maxEvidenceFileBytes || whole {
+		t.Fatalf("read %d bytes, whole = %v, want %d and false", len(got), whole, maxEvidenceFileBytes)
 	}
 }

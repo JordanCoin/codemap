@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -754,6 +755,19 @@ const (
 	// in a file bats reaches; see resolveBatsHelperLoads.
 	bashHelperLoad = "bash-helper-load"
 )
+
+// impactImports is every import a diff impact should match by name: the visible
+// list plus the shell words held back from it. A load counts wherever it is,
+// because a warning that names too much beats one that misses a bats helper.
+func (a FileAnalysis) impactImports() []string {
+	imports := a.Imports
+	for _, ref := range a.References {
+		if ref.Kind == bashDynamicImport || ref.Kind == bashHelperLoad {
+			imports = append(slices.Clip(imports), ref.Path)
+		}
+	}
+	return imports
+}
 
 // bashDeferredKind names the reference kind for a shell import the import list
 // must not carry, or "" for a literal one that belongs there.

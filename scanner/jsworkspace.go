@@ -370,18 +370,19 @@ func (r *jsWorkspaceResolver) resolve(imp, fromFile string, idx *fileIndex, sour
 	return candidates[0].resolve(subpath, idx, sourceLanguage)
 }
 
-// rootPackageMain resolves a directory import of the scan root the way Node
-// does: through package.json main when it names one, ahead of index.js.
-func (r *jsWorkspaceResolver) rootPackageMain(idx *fileIndex, sourceLanguage string) ([]string, bool) {
+// rootPackageMain resolves a directory import of the scan root through
+// package.json main, which Node tries ahead of index.js. Empty means fall back to
+// index, as Node does when main names nothing.
+func (r *jsWorkspaceResolver) rootPackageMain(idx *fileIndex, sourceLanguage string) []string {
 	if r == nil {
-		return nil, false
+		return nil
 	}
 	for i := range r.packageScopes {
 		if pkg := r.packageScopes[i].pkg; r.packageScopes[i].root == "" && pkg != nil && pkg.main != "" {
-			return pkg.resolveInferredTarget(pkg.main, idx, sourceLanguage), true
+			return pkg.resolveInferredTarget(pkg.main, idx, sourceLanguage)
 		}
 	}
-	return nil, false
+	return nil
 }
 
 func (r *jsWorkspaceResolver) nearestPackageScope(fromFile string) *jsPackageScope {

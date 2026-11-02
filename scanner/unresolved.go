@@ -34,7 +34,7 @@ type unresolvedImportTally struct {
 
 // aboveRootLanguages are those whose relative imports the tally does not count
 // as project-looking in general, but whose climb out of the root is a known drop.
-var aboveRootLanguages = map[string]bool{"bash": true, "c": true, "cpp": true, "lua": true, "php": true, "ruby": true}
+var aboveRootLanguages = map[string]bool{"bash": true, "c": true, "cpp": true, "dart": true, "lua": true, "php": true, "ruby": true, "solidity": true}
 
 func newUnresolvedImportTally(idx *fileIndex) *unresolvedImportTally {
 	t := &unresolvedImportTally{topLevel: map[string]bool{}, seen: map[string]int{}, missing: map[string]int{}, examples: map[string][]string{}}
@@ -101,7 +101,7 @@ func (t *unresolvedImportTally) projectLooking(language, imp string, aliases map
 	case isJavaScriptLanguage(language):
 		// A stylesheet, image or JSON import is not a dependency edge the
 		// graph would ever hold, so its absence is not a missing edge.
-		if ext := strings.ToLower(path.Ext(imp)); ext != "" && extToLang[ext] == "" {
+		if ext := strings.ToLower(path.Ext(imp)); ext != "" && ext != "." && extToLang[ext] == "" {
 			return false
 		}
 		// A path through a hidden directory (./.next/types/x.d.ts) names

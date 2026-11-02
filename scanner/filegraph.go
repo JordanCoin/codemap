@@ -356,7 +356,7 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 			fg.Imports[key] = dedupe(resolvedImports)
 		}
 	}
-	resolveBatsHelperLoads(analyses, fg, func(imp, from string) []string {
+	batsReached := resolveBatsHelperLoads(analyses, fg, func(imp, from string) []string {
 		return fuzzyResolveWithWorkspace(imp, from, idx, fg.Module, fg.PathAliases, fg.BaseURL, jsResolver, dartResolver)
 	})
 	for key, imports := range fg.Imports {
@@ -379,7 +379,7 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 	}
 	fg.Coverage.Issues = append(fg.Coverage.Issues, unresolved.issues...)
 	if CoverageFromSources(fg.Coverage.Sources).Status != analysis.CoverageUnavailable {
-		for _, source := range missingEdgeSources(absRoot, files, unresolved.phpUnresolvedUse, idx) {
+		for _, source := range missingEdgeSources(absRoot, files, unresolved.phpUnresolvedUse, idx, batsReached) {
 			fg.Coverage.AddSource(source)
 		}
 	}
@@ -854,7 +854,7 @@ func fuzzyResolveWithWorkspace(
 			return resolvePythonRelative(imp, fromDir, idx)
 		}
 		if isJavaScriptLanguage(sourceLanguage) && keyPath(filepath.Join(fromDir, imp)) == "." {
-			if files, declared := jsResolver.rootPackageMain(idx, sourceLanguage); declared {
+			if files := jsResolver.rootPackageMain(idx, sourceLanguage); len(files) > 0 {
 				return files
 			}
 		}
@@ -937,12 +937,14 @@ func resolveBashDynamic(imp string, idx *fileIndex) []string {
 }
 
 var (
-	bashShebang             = regexp.MustCompile(`^#!.*\bk?(?:ba|z|da)?sh\b`)
-	bashVariableReference   = regexp.MustCompile(`\$\{?[#!]?([A-Za-z_]\w*|0)`)
-	bashVariableAssignment  = regexp.MustCompile(`(?m)(?:^|[\s;&|(])([A-Za-z_]\w*)\+?=|\$\{([A-Za-z_]\w*):?=|\bfor\s+([A-Za-z_]\w*)\s+in\b`)
-	bashSelfLocatingCommand = regexp.MustCompile(`\b(?:dirname|pwd|realpath|readlink|rev-parse)\b|BASH_SOURCE|\$\{?0`)
+	bashShebang           = regexp.MustCompile(`^#!.*\bk?(?:ba|z|da)?sh\b`)
+	bashVariableReference = regexp.MustCompile(`\$\{?[#!]?([A-Za-z_]\w*|0)`)
+	bashDefaultAssignment = regexp.MustCompile(`\$\{([A-Za-z_]\w*):?=`)
+	bashAssignmentWord    = regexp.MustCompile(`^([A-Za-z_]\w*)\+?=`)
 	// The shell or bats sets these to a place inside the project.
 	bashSelfLocatingVariables = map[string]bool{"0": true, "BASH_SOURCE": true, "PWD": true, "BATS_TEST_DIRNAME": true, "BATS_TEST_FILENAME": true}
+	// Words that may precede an assignment in a command.
+	bashAssignmentPrefixes = map[string]bool{"then": true, "do": true, "else": true, "if": true, "elif": true, "while": true, "until": true, "!": true, "export": true, "local": true, "readonly": true, "declare": true, "typeset": true, "exec": true, "env": true, "command": true, "builtin": true}
 )
 
 // bashPrefixInRepo reports whether the dynamic prefix of imp plausibly points
@@ -957,19 +959,77 @@ func (idx *fileIndex) bashPrefixInRepo(imp string) bool {
 		if !strings.ContainsAny(segment, "$`") {
 			break
 		}
-		if strings.Contains(segment, "$(") || strings.Contains(segment, "`") {
-			if !bashSelfLocatingCommand.MatchString(segment) {
+		if body, ok := bashSubstitutionBody(segment); ok {
+			if !idx.bashSubstitutionInRepo(body) {
 				return false
 			}
 			continue
 		}
 		for _, match := range bashVariableReference.FindAllStringSubmatch(segment, -1) {
-			if !bashSelfLocatingVariables[match[1]] && !idx.bashAssignedVariables()[match[1]] {
+			if !idx.bashVariableInRepo(match[1]) {
 				return false
 			}
 		}
 	}
 	return true
+}
+
+func (idx *fileIndex) bashVariableInRepo(name string) bool {
+	return bashSelfLocatingVariables[name] || name != "HOME" && idx.bashAssignedVariables()[name]
+}
+
+func bashSubstitutionBody(segment string) (string, bool) {
+	if open := strings.Index(segment, "$("); open >= 0 {
+		end := strings.LastIndexByte(segment, ')')
+		return segment[open+2 : max(end, open+2)], true
+	}
+	if open := strings.IndexByte(segment, '`'); open >= 0 {
+		end := strings.LastIndexByte(segment, '`')
+		return segment[open+1 : max(end, open+1)], true
+	}
+	return "", false
+}
+
+// bashSubstitutionInRepo reports whether a command substitution prints a path in
+// the project: its last command locates itself, and any cd before that goes
+// somewhere the project can vouch for.
+func (idx *fileIndex) bashSubstitutionInRepo(body string) bool {
+	commands, _ := bashCommands(body)
+	located := false
+	for _, command := range commands {
+		words := strings.Fields(command)
+		for len(words) > 0 && (bashAssignmentWord.MatchString(words[0]) || words[0] == "command" || words[0] == "builtin") {
+			words = words[1:]
+		}
+		if len(words) == 0 {
+			continue
+		}
+		args := strings.Join(words[1:], " ")
+		switch strings.TrimPrefix(words[0], `\`) {
+		case "pwd", "realpath", "readlink":
+			located = true
+		case "git":
+			located = slices.Contains(words[1:], "rev-parse")
+		case "dirname":
+			located = idx.bashArgumentInRepo(args)
+		case "cd":
+			if !idx.bashArgumentInRepo(args) && (strings.Contains(args, "$") || strings.Contains(args, " /") || strings.HasPrefix(args, "/")) {
+				return false
+			}
+			located = false
+		default:
+			located = false
+		}
+	}
+	return located
+}
+
+// bashArgumentInRepo reports whether args reference a variable that points into
+// the project.
+func (idx *fileIndex) bashArgumentInRepo(args string) bool {
+	return slices.ContainsFunc(bashVariableReference.FindAllStringSubmatch(args, -1), func(match []string) bool {
+		return idx.bashVariableInRepo(match[1])
+	})
 }
 
 func (idx *fileIndex) bashAssignedVariables() map[string]bool {
@@ -983,25 +1043,79 @@ func (idx *fileIndex) bashAssignedVariables() map[string]bool {
 		if DetectLanguage(file) != "bash" && pathpkg.Ext(file) != "" {
 			continue
 		}
-		data := readProjectFile(idx.absRoot, file)
+		data, _ := readProjectFile(idx.absRoot, file)
 		if DetectLanguage(file) != "bash" && !bashShebang.Match(data) {
 			continue
 		}
-		for _, match := range bashVariableAssignment.FindAllSubmatch(data, -1) {
-			for _, name := range match[1:] {
-				if len(name) > 0 {
-					idx.bashAssigned[string(name)] = true
-				}
-			}
-		}
+		forEachBashCommand(data, func(_ int, command string) {
+			addBashAssignments(command, idx.bashAssigned)
+		})
 	}
 	return idx.bashAssigned
 }
 
+// addBashAssignments records the variables a command assigns: words in assignment
+// position, a for variable, and ${X:=y}. Quoted text assigns nothing, except that
+// a double-quoted ${X:=y} still expands.
+func addBashAssignments(command string, assigned map[string]bool) {
+	for _, match := range bashDefaultAssignment.FindAllStringSubmatch(blankBashQuotes(command, false), -1) {
+		assigned[match[1]] = true
+	}
+	words := strings.Fields(blankBashQuotes(command, true))
+	for i := 0; i < len(words); i++ {
+		word := strings.TrimLeft(words[i], "({")
+		if match := bashAssignmentWord.FindStringSubmatch(word); match != nil {
+			assigned[match[1]] = true
+			continue
+		}
+		switch {
+		case word == "for" && i+2 < len(words) && words[i+2] == "in":
+			assigned[words[i+1]] = true
+			return
+		case word == "function":
+			i++
+		case word != "" && !bashAssignmentPrefixes[word] && word[0] != '-' && !strings.HasSuffix(word, ")"):
+			return
+		}
+	}
+}
+
+// blankBashQuotes empties single-quoted strings, and double-quoted ones if asked.
+func blankBashQuotes(command string, double bool) string {
+	var out strings.Builder
+	var quote byte
+	for i := 0; i < len(command); i++ {
+		c := command[i]
+		switch {
+		case quote == '\'':
+			if c == quote {
+				quote = 0
+				out.WriteByte(c)
+			}
+		case c == '\\' && i+1 < len(command):
+			i++
+			if quote == 0 || !double {
+				out.WriteByte(c)
+				out.WriteByte(command[i])
+			}
+		case c == '\'' && quote == 0:
+			quote = c
+			out.WriteByte(c)
+		case c == '"':
+			quote ^= '"'
+			out.WriteByte(c)
+		case quote == 0 || !double:
+			out.WriteByte(c)
+		}
+	}
+	return out.String()
+}
+
 // resolveBatsHelperLoads links load calls in the files bats reaches: every .bats
 // file, the setup_suite.bash bats runs itself, and whatever those import. load
-// is a bats function, so anywhere else it is the project's own command.
-func resolveBatsHelperLoads(analyses []FileAnalysis, fg *FileGraph, resolve func(imp, from string) []string) {
+// is a bats function, so anywhere else it is the project's own command. It returns
+// the files reached.
+func resolveBatsHelperLoads(analyses []FileAnalysis, fg *FileGraph, resolve func(imp, from string) []string) map[string]bool {
 	loads := make(map[string][]string)
 	var pending []string
 	for _, a := range analyses {
@@ -1014,9 +1128,6 @@ func resolveBatsHelperLoads(analyses []FileAnalysis, fg *FileGraph, resolve func
 		if strings.HasSuffix(key, ".bats") || pathpkg.Base(key) == "setup_suite.bash" {
 			pending = append(pending, key)
 		}
-	}
-	if len(loads) == 0 {
-		return
 	}
 	seen := make(map[string]bool)
 	for len(pending) > 0 {
@@ -1036,6 +1147,7 @@ func resolveBatsHelperLoads(analyses []FileAnalysis, fg *FileGraph, resolve func
 		}
 		pending = append(pending, imports...)
 	}
+	return seen
 }
 
 func nearestCUEModule(fromFile string, modules []cueModuleInfo) (cueModuleInfo, bool) {
