@@ -289,6 +289,66 @@ func TestBashAssignmentAndCommandMustBeReal(t *testing.T) {
 	}
 }
 
+func TestOnlyListStillReadsLauncherAssignments(t *testing.T) {
+	files := map[string]string{
+		"bin/launch": "#!/usr/bin/env bash\nX=.\n",
+		"a.sh":       "source \"$X/lib/b.sh\"\n",
+		"lib/b.sh":   "x=1\n",
+	}
+	build := func() *FileGraph {
+		dir := t.TempDir()
+		for name, body := range files {
+			path := filepath.Join(dir, filepath.FromSlash(name))
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		graph, err := BuildFileGraph(context.Background(), dir, Filters{Only: []string{"sh"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return graph
+	}
+	graph := build()
+	assertImports(t, graph, "a.sh", "lib/b.sh")
+	if graph.KnownFiles["bin/launch"] {
+		t.Fatal("the launcher joined the graph")
+	}
+	files[".gitignore"] = "bin/\n"
+	assertImports(t, build(), "a.sh")
+}
+
+func TestPHPCommentOpenerInLineCommentOrString(t *testing.T) {
+	for _, line := range []string{"// loads src/*.php", "$g='src/*.php';", "# a/*b"} {
+		t.Run(line, func(t *testing.T) {
+			body := "<?php\n" + line + "\nnamespace App;\n/** doc */\nclass A {}\n"
+			assertFileCoverage(t, evidenceGraph(t, map[string]string{"a.php": body}), "a.php", analysis.CoveragePartial, "")
+		})
+	}
+}
+
+func TestSelfLocatingCommandsAreVouchedFor(t *testing.T) {
+	for _, sub := range []string{
+		`$(cd "/opt" && pwd)`, `$(cd '/opt' && pwd)`, `$(cd ~/x && pwd)`, `$(cd; pwd)`, `$(pushd /opt; pwd)`,
+		`$(readlink -f /opt/x)`, `$(realpath /opt/x)`, `$(realpath "$HOME")`,
+		`$(git -C /opt/o rev-parse --show-toplevel)`, `$(git log rev-parse)`,
+	} {
+		t.Run(sub, func(t *testing.T) {
+			graph := falseEdgeGraph(t, map[string]string{"a.sh": "source \"" + sub + "/lib/b.sh\"\n", "lib/b.sh": "x=1\n"})
+			assertImports(t, graph, "a.sh")
+		})
+	}
+	for _, sub := range []string{`$(/usr/bin/pwd)`, `$(/usr/bin/dirname "$0")`, `$(readlink -f "$0")`, `$(cd "$(dirname "$0")" && pwd)`} {
+		t.Run(sub, func(t *testing.T) {
+			graph := falseEdgeGraph(t, map[string]string{"a.sh": "source \"" + sub + "/lib/b.sh\"\n", "lib/b.sh": "x=1\n"})
+			assertImports(t, graph, "a.sh", "lib/b.sh")
+		})
+	}
+}
+
 func TestStrongEvidenceStillLowersCoverage(t *testing.T) {
 	for name, tc := range map[string]struct {
 		files map[string]string

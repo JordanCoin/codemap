@@ -17,7 +17,9 @@ import (
 
 var (
 	phpNamespaceStatement = regexp.MustCompile(`(?m)^\s*(?:<\?php\s+)?namespace\s+[^\s;{]+\s*[;{]`)
-	phpBlockComment       = regexp.MustCompile(`(?s)/\*.*?\*/`)
+	// A string is matched so that a /* or // inside it opens nothing; only the
+	// comment alternatives are removed.
+	phpCommentOrString    = regexp.MustCompile(`(?s:/\*.*?\*/)|//[^\n]*|#[^\n]*|'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"`)
 	rubyGemfileAutoloader = regexp.MustCompile(`(?m)^\s*gem\s*\(?\s*['"](rails|railties|zeitwerk)['"]`)
 	// A development dependency tests against Rails; it does not load this gem.
 	rubyGemspecAutoloader = regexp.MustCompile(`(?m)^\s*\w+\.add_(?:runtime_)?dependency\s*\(?\s*['"](rails|railties|zeitwerk)['"]`)
@@ -270,7 +272,7 @@ func phpAutoloadEvidence(absRoot string, phpFiles []string, unresolvedUse string
 	}
 	for _, path := range phpFiles {
 		data, whole := readProjectFile(absRoot, path)
-		if phpNamespaceStatement.Match(phpBlockComment.ReplaceAll(data, nil)) {
+		if phpNamespaceStatement.Match(stripPHPComments(data)) {
 			return path + " has a namespace statement"
 		}
 		if !whole && unread == "" {
@@ -278,6 +280,15 @@ func phpAutoloadEvidence(absRoot string, phpFiles []string, unresolvedUse string
 		}
 	}
 	return unreadEvidence(unread)
+}
+
+func stripPHPComments(data []byte) []byte {
+	return phpCommentOrString.ReplaceAllFunc(data, func(match []byte) []byte {
+		if match[0] == '\'' || match[0] == '"' {
+			return match
+		}
+		return nil
+	})
 }
 
 func composerDeclaresAutoload(data []byte) bool {
@@ -296,14 +307,14 @@ func composerDeclaresAutoload(data []byte) bool {
 
 // readProjectFile returns up to maxEvidenceFileBytes of a regular file, and
 // whether that is all of it. A scanned name can be a FIFO, or a link to a FIFO or
-// /dev/zero: those and missing files are not source, so they read as empty and
-// whole. A regular file it cannot read, or read to its end, is not whole, so the
-// caller can say what it did not check.
+// /dev/zero: those, missing files and symlink loops are not source, so they read
+// as empty and whole. A file it may not read, or cannot read to its end, is not
+// whole, so the caller can say what it did not check.
 func readProjectFile(absRoot, path string) (data []byte, whole bool) {
 	fullPath := filepath.Join(absRoot, filepath.FromSlash(path))
 	info, err := os.Stat(fullPath)
 	if err != nil {
-		return nil, errors.Is(err, os.ErrNotExist)
+		return nil, !errors.Is(err, os.ErrPermission)
 	}
 	if !info.Mode().IsRegular() {
 		return nil, true

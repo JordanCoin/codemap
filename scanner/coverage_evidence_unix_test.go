@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"codemap/analysis"
 )
 
 func TestGraphBuildSurvivesNonRegularSourceNames(t *testing.T) {
@@ -46,6 +48,21 @@ func TestGraphBuildSurvivesNonRegularSourceNames(t *testing.T) {
 	if got, whole := readProjectFile(dir, "z.php"); got != nil || !whole {
 		t.Fatalf("read %d bytes through a link to /dev/zero, whole = %v", len(got), whole)
 	}
+}
+
+func TestSymlinkLoopIsNotEvidence(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Symlink("loop.sh", filepath.Join(dir, "loop.sh")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.sh"), []byte("echo hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	graph, err := BuildFileGraph(context.Background(), dir, Filters{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFileCoverage(t, graph, "a.sh", analysis.CoverageComplete, "")
 }
 
 func TestReadProjectFileBoundsLargeFile(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	pathpkg "path"
 	"path/filepath"
@@ -118,6 +119,9 @@ type fileIndex struct {
 	cuePackages map[string]string
 	// bashAssigned is filled on first use by bashAssignedVariables.
 	bashAssigned map[string]bool
+	// unfilteredFiles, set when an only list narrowed this index, lists what the
+	// ignore rules and excludes still allow.
+	unfilteredFiles func() ([]FileInfo, error)
 	// absRoot and filters back a narrow fallback in tryExactMatch: a file
 	// excluded from the scanned inventory purely by .gitignore can still be
 	// the exact, unambiguous target of a plain relative import from a file
@@ -259,6 +263,11 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 	idx, err := buildFileIndexContext(ctx, files, fg.Module, absRoot, filters)
 	if err != nil {
 		return nil, err
+	}
+	if len(filters.Only) > 0 {
+		idx.unfilteredFiles = func() ([]FileInfo, error) {
+			return ScanFiles(ctx, root, gitCache, nil, filters.Exclude)
+		}
 	}
 	if languages.hasCUE || hasCUEAnalysis {
 		idx.cueModules = detectCUEModulesWithFiles(absRoot, files)
@@ -1005,15 +1014,15 @@ func (idx *fileIndex) bashSubstitutionInRepo(body string) bool {
 			continue
 		}
 		args := strings.Join(words[1:], " ")
-		switch strings.TrimPrefix(words[0], `\`) {
-		case "pwd", "realpath", "readlink":
+		switch pathpkg.Base(strings.TrimPrefix(words[0], `\`)) {
+		case "pwd":
 			located = true
 		case "git":
-			located = slices.Contains(words[1:], "rev-parse")
-		case "dirname":
+			located = len(words) > 1 && words[1] == "rev-parse"
+		case "dirname", "realpath", "readlink":
 			located = idx.bashArgumentInRepo(args)
-		case "cd":
-			if !idx.bashArgumentInRepo(args) && (strings.Contains(args, "$") || strings.Contains(args, " /") || strings.HasPrefix(args, "/")) {
+		case "cd", "pushd":
+			if !idx.bashArgumentInRepo(args) {
 				return false
 			}
 			located = false
@@ -1024,11 +1033,12 @@ func (idx *fileIndex) bashSubstitutionInRepo(body string) bool {
 	return located
 }
 
-// bashArgumentInRepo reports whether args reference a variable that points into
-// the project.
+// bashArgumentInRepo reports whether args reference variables, all of which point
+// into the project. A literal path could be anywhere.
 func (idx *fileIndex) bashArgumentInRepo(args string) bool {
-	return slices.ContainsFunc(bashVariableReference.FindAllStringSubmatch(args, -1), func(match []string) bool {
-		return idx.bashVariableInRepo(match[1])
+	references := bashVariableReference.FindAllStringSubmatch(args, -1)
+	return len(references) > 0 && !slices.ContainsFunc(references, func(match []string) bool {
+		return !idx.bashVariableInRepo(match[1])
 	})
 }
 
@@ -1037,9 +1047,18 @@ func (idx *fileIndex) bashAssignedVariables() map[string]bool {
 		return idx.bashAssigned
 	}
 	idx.bashAssigned = make(map[string]bool)
-	for file := range idx.byExact {
-		// An extensionless launcher (bats' bin/bats) is often what sets the
-		// root the libraries source from.
+	// An only list drops an extensionless launcher (bats' bin/bats) from the
+	// index, yet it is often what sets the root the libraries source from. It
+	// stays out of the graph; only its assignments are read.
+	shellCandidates := slices.Collect(maps.Keys(idx.byExact))
+	if idx.unfilteredFiles != nil {
+		if unfiltered, err := idx.unfilteredFiles(); err == nil {
+			for _, file := range unfiltered {
+				shellCandidates = append(shellCandidates, keyPath(file.Path))
+			}
+		}
+	}
+	for _, file := range shellCandidates {
 		if DetectLanguage(file) != "bash" && pathpkg.Ext(file) != "" {
 			continue
 		}
