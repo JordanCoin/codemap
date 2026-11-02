@@ -19,7 +19,10 @@ func resolveCInclude(imp, fromDir string, idx *fileIndex, language string) []str
 	angle := strings.HasPrefix(imp, "<")
 	imp = strings.Trim(imp, "<>")
 	if strings.HasPrefix(imp, ".") {
-		return tryExactMatch(filepath.Join(fromDir, imp), idx, language)
+		if files := tryExactMatch(filepath.Join(fromDir, imp), idx, language); len(files) > 0 {
+			return files
+		}
+		return includeClimbingPastRoot(filepath.Join(fromDir, imp), idx, language)
 	}
 	// An include names a file literally, so <memory> never means memory.h.
 	if pathpkg.Ext(imp) == "" {
@@ -34,6 +37,25 @@ func resolveCInclude(imp, fromDir string, idx *fileIndex, language string) []str
 		return nil
 	}
 	return closestFiles(compatibleFiles(language, idx.suffixMatches(imp)), tryExactMatch(imp, idx, language), filepath.ToSlash(fromDir))
+}
+
+// includeClimbingPastRoot handles an include that climbs above the includer's
+// directories. A compiler also tries it from each -I directory, so with
+// -Isrc/sub "../../include/x.h" is the repo's include/x.h. A bare "../x.h" has no
+// directory left to corroborate the match, so it stays unresolved.
+func includeClimbingPastRoot(path string, idx *fileIndex, language string) []string {
+	path = keyPath(path)
+	if !isAboveRoot(path) {
+		return nil
+	}
+	rest := path
+	for isAboveRoot(rest) {
+		rest = strings.TrimPrefix(strings.TrimPrefix(rest, ".."), "/")
+	}
+	if !strings.Contains(rest, "/") || idx.exact(rest) != 1 || !languagesCompatible(language, DetectLanguage(rest)) {
+		return nil
+	}
+	return []string{rest}
 }
 
 // closestFiles keeps the matches sharing the most leading directories with
