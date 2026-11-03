@@ -125,7 +125,7 @@ func TestRunSetupCreatesConfigAndHooks(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-	first := captureOutput(func() { RunSetup([]string{root}, ".") })
+	first := captureOutput(func() { RunSetup([]string{"--agent", "both", root}, ".") })
 	if !strings.Contains(first, "Config: created") || !strings.Contains(first, "Claude hooks: created") || !strings.Contains(first, "Codex hooks: created") {
 		t.Fatalf("unexpected first setup output:\n%s", first)
 	}
@@ -149,7 +149,7 @@ func TestRunSetupCreatesConfigAndHooks(t *testing.T) {
 		t.Fatalf("user-scope Codex MCP pins a project root:\n%s", data)
 	}
 
-	second := captureOutput(func() { RunSetup([]string{root}, ".") })
+	second := captureOutput(func() { RunSetup([]string{"--agent", "both", root}, ".") })
 	if !strings.Contains(second, "Config: already exists") || !strings.Contains(second, "Claude hooks: already configured") || !strings.Contains(second, "Codex hooks: already configured") {
 		t.Fatalf("unexpected second setup output:\n%s", second)
 	}
