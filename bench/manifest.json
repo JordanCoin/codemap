@@ -1,0 +1,1047 @@
+{
+ "schema": 1,
+ "created_at": "2026-11-03T12:46:45Z",
+ "created_by": "bench/select.py",
+ "search": {
+  "endpoint": "GET /search/repositories",
+  "queries": {
+   "go": "language:go fork:false archived:false stars:>3000",
+   "typescript": "language:typescript fork:false archived:false stars:>3000",
+   "javascript": "language:javascript fork:false archived:false stars:>3000",
+   "python": "language:python fork:false archived:false stars:>3000"
+  },
+  "sort": "stars",
+  "order": "desc",
+  "per_page": 100,
+  "fetched_at": "2026-11-03T12:34:36Z",
+  "note": "one search call per language, results trimmed to the fields select.py uses"
+ },
+ "rule": {
+  "order": "GitHub search results for the language, sorted by stars descending, as committed in bench/selection/",
+  "exclude": "repos earlier codemap fixes were tuned on (the tuned group), forks, archived repos",
+  "pin": "SHA of the default branch HEAD from git ls-remote at selection time",
+  "manifest": "go: go.mod at root; typescript: package.json at root and a tsconfig.json anywhere; javascript: package.json at root; python: pyproject.toml, setup.py or setup.cfg at root",
+  "size": "100 <= source files <= 3000, counted by extension outside vendor, node_modules, third_party, dist, build, .git",
+  "pick": "first 3 accepted per language are held out; the next 2 are alternates used in order only when a held-out repo's toolchain truth cannot be built, and any substitution is reported",
+  "tuned": {
+   "typescript": [
+    "sindresorhus/ky",
+    "excalidraw/excalidraw",
+    "trpc/trpc"
+   ],
+   "javascript": [
+    "expressjs/express",
+    "eslint/eslint",
+    "NodeBB/NodeBB"
+   ],
+   "python": [
+    "pytest-dev/pytest",
+    "pallets/werkzeug"
+   ],
+   "go": []
+  }
+ },
+ "groups": {
+  "held_out": {
+   "go": [
+    {
+     "rank": 2,
+     "repo": "ollama/ollama",
+     "url": "https://github.com/ollama/ollama",
+     "stars": 185772,
+     "default_branch": "main",
+     "sha": "9a3e8177767245acc62b735eba7d5d8a553606d0",
+     "source_files": 1035,
+     "manifest": true,
+     "decision": "accepted",
+     "slug": "ollama__ollama"
+    },
+    {
+     "rank": 5,
+     "repo": "JuliusBrussee/caveman",
+     "url": "https://github.com/JuliusBrussee/caveman",
+     "stars": 117084,
+     "default_branch": "main",
+     "sha": "2e068f735253cce28256744804785f01887d9646",
+     "source_files": 647,
+     "manifest": true,
+     "decision": "accepted",
+     "slug": "JuliusBrussee__caveman"
+    },
+    {
+     "rank": 7,
+     "repo": "fatedier/frp",
+     "url": "https://github.com/fatedier/frp",
+     "stars": 110416,
+     "default_branch": "dev",
+     "sha": "e6e0aaf9d48d359c0abe3dd47e8d9a5e65b2d7d0",
+     "source_files": 380,
+     "manifest": true,
+     "decision": "accepted",
+     "slug": "fatedier__frp"
+    }
+   ],
+   "typescript": [
+    {
+     "rank": 1,
+     "repo": "freeCodeCamp/freeCodeCamp",
+     "url": "https://github.com/freeCodeCamp/freeCodeCamp",
+     "stars": 458475,
+     "default_branch": "main",
+     "sha": "ef7b6a229bb3491ac8070518d542384ccda56961",
+     "source_files": 990,
+     "manifest": true,
+     "decision": "accepted",
+     "slug": "freeCodeCamp__freeCodeCamp"
+    },
+    {
+     "rank": 7,
+     "repo": "vuejs/vue",
+     "url": "https://github.com/vuejs/vue",
+     "stars": 212502,
+     "default_branch": "main",
+     "sha": "9e88707940088cb1f4cd7dd210c9168a50dc347c",
+     "source_files": 364,
+     "manifest": true,
+     "decision": "accepted",
+     "slug": "vuejs__vue"
+    },
+    {
+     "rank": 12,
+     "repo": "yangshun/tech-interview-handbook",
+     "url": "https://github.com/yangshun/tech-interview-handbook",
+     "stars": 143205,
+     "default_branch": "main",
+     "sha": "e1d28e8886c0b6ff3e50da991ce0e895134ddc59",
+     "source_files": 284,
+     "manifest": true,
+     "decision": "accepted",
+     "slug": "yangshun__tech-interview-handbook"
+    }
+   ],
+   "javascript": [
+    {
+     "rank": 1,
+     "repo": "affaan-m/ECC",
+     "url": "https://github.com/affaan-m/ECC",
+     "stars": 296125,
+     "default_branch": "main",
+     "sha": "b38be6a7f6350964d59328b52f0624e1d1d552d1",
+     "source_files": 1071,
+     "manifest": true,
+     "decision": "accepted",
+     "slug": "affaan-m__ECC"
+    },
+    {
+     "rank": 3,
+     "repo": "trekhleb/javascript-algorithms",
+     "url": "https://github.com/trekhleb/javascript-algorithms",
+     "stars": 196722,
+     "default_branch": "master",
+     "sha": "85293e3e2b88f4d2ce330d956b139cf628aa1e82",
+     "source_files": 361,
+     "manifest": true,
+     "decision": "accepted",
+     "slug": "trekhleb__javascript-algorithms"
+    },
+    {
+     "rank": 9,
+     "repo": "Chalarangelo/30-seconds-of-code",
+     "url": "https://github.com/Chalarangelo/30-seconds-of-code",
+     "stars": 129394,
+     "default_branch": "master",
+     "sha": "bd756f8b2283a38560efe83cb30af38324d4e9e9",
+     "source_files": 106,
+     "manifest": true,
+     "decision": "accepted",
+     "slug": "Chalarangelo__30-seconds-of-code"
+    }
+   ],
+   "python": [
+    {
+     "rank": 7,
+     "repo": "TheAlgorithms/Python",
+     "url": "https://github.com/TheAlgorithms/Python",
+     "stars": 225806,
+     "default_branch": "master",
+     "sha": "574d100b7181956e9c8384552fd078165e4cc326",
+     "source_files": 1608,
+     "manifest": true,
+     "decision": "accepted",
+     "slug": "TheAlgorithms__Python"
+    },
+    {
+     "rank": 8,
+     "repo": "yt-dlp/yt-dlp",
+     "url": "https://github.com/yt-dlp/yt-dlp",
+     "stars": 204903,
+     "default_branch": "master",
+     "sha": "b77c9304e1c4220cca450c583491904daf8455af",
+     "source_files": 1122,
+     "manifest": true,
+     "decision": "accepted",
+     "slug": "yt-dlp__yt-dlp"
+    },
+    {
+     "rank": 14,
+     "repo": "AUTOMATIC1111/stable-diffusion-webui",
+     "url": "https://github.com/AUTOMATIC1111/stable-diffusion-webui",
+     "stars": 165235,
+     "default_branch": "master",
+     "sha": "82a973c04367123ae98bd9abdf80d9eda9b910e2",
+     "source_files": 213,
+     "manifest": true,
+     "decision": "accepted",
+     "slug": "AUTOMATIC1111__stable-diffusion-webui"
+    }
+   ]
+  },
+  "alternates": {
+   "go": [
+    {
+     "rank": 9,
+     "repo": "gohugoio/hugo",
+     "url": "https://github.com/gohugoio/hugo",
+     "stars": 90334,
+     "default_branch": "master",
+     "sha": "fa5a3d48b8dcf6c0bfcd7d06726a6530b2efc174",
+     "source_files": 912,
+     "manifest": true,
+     "decision": "accepted",
+     "slug": "gohugoio__hugo"
+    },
+    {
+     "rank": 10,
+     "repo": "syncthing/syncthing",
+     "url": "https://github.com/syncthing/syncthing",
+     "stars": 90036,
+     "default_branch": "main",
+     "sha": "b34734376128492fa4e1b01412193de033e20613",
+     "source_files": 542,
+     "manifest": true,
+     "decision": "accepted",
+     "slug": "syncthing__syncthing"
+    }
+   ],
+   "typescript": [
+    {
+     "rank": 14,
+     "repo": "garrytan/gstack",
+     "url": "https://github.com/garrytan/gstack",
+     "stars": 138766,
+     "default_branch": "main",
+     "sha": "bf2bcf14b08d774291613c8073674a0e90eb4f9f",
+     "source_files": 2652,
+     "manifest": true,
+     "decision": "accepted",
+     "slug": "garrytan__gstack"
+    },
+    {
+     "rank": 17,
+     "repo": "earendil-works/pi",
+     "url": "https://github.com/earendil-works/pi",
+     "stars": 119756,
+     "default_branch": "main",
+     "sha": "3551ec07eb87afebac20191958163ae58976f1d0",
+     "source_files": 2434,
+     "manifest": true,
+     "decision": "accepted",
+     "slug": "earendil-works__pi"
+    }
+   ],
+   "javascript": [
+    {
+     "rank": 11,
+     "repo": "mrdoob/three.js",
+     "url": "https://github.com/mrdoob/three.js",
+     "stars": 117476,
+     "default_branch": "dev",
+     "sha": "601bc21631e24674aa68fe5875f98d631a41b551",
+     "source_files": 1757,
+     "manifest": true,
+     "decision": "accepted",
+     "slug": "mrdoob__three.js"
+    },
+    {
+     "rank": 13,
+     "repo": "axios/axios",
+     "url": "https://github.com/axios/axios",
+     "stars": 109318,
+     "default_branch": "v1.x",
+     "sha": "fb88a1b133c1a2d774713070b8ca25f7bcd382ac",
+     "source_files": 249,
+     "manifest": true,
+     "decision": "accepted",
+     "slug": "axios__axios"
+    }
+   ],
+   "python": [
+    {
+     "rank": 18,
+     "repo": "github/spec-kit",
+     "url": "https://github.com/github/spec-kit",
+     "stars": 146178,
+     "default_branch": "main",
+     "sha": "ba8363f8ab56b2da456a81299cfdbfee1ef7b871",
+     "source_files": 673,
+     "manifest": true,
+     "decision": "accepted",
+     "slug": "github__spec-kit"
+    },
+    {
+     "rank": 19,
+     "repo": "Comfy-Org/ComfyUI",
+     "url": "https://github.com/Comfy-Org/ComfyUI",
+     "stars": 144790,
+     "default_branch": "master",
+     "sha": "ab08f7b2caa6d4007ecde3762116c6193613f43b",
+     "source_files": 1029,
+     "manifest": true,
+     "decision": "accepted",
+     "slug": "Comfy-Org__ComfyUI"
+    }
+   ]
+  },
+  "tuned": {
+   "go": [],
+   "typescript": [
+    {
+     "repo": "sindresorhus/ky",
+     "url": "https://github.com/sindresorhus/ky",
+     "sha": "3541888878c4d303a8bc2ad61815f4e048f55a5d",
+     "source_files": 98,
+     "slug": "sindresorhus__ky"
+    },
+    {
+     "repo": "excalidraw/excalidraw",
+     "url": "https://github.com/excalidraw/excalidraw",
+     "sha": "dd2f8fc32b92cbf56f4abee6a0cf3b14681b4b55",
+     "source_files": 682,
+     "slug": "excalidraw__excalidraw"
+    },
+    {
+     "repo": "trpc/trpc",
+     "url": "https://github.com/trpc/trpc",
+     "sha": "70e1d688c790feb40d8d1cad976fb87ab1f796e6",
+     "source_files": 1181,
+     "slug": "trpc__trpc"
+    }
+   ],
+   "javascript": [
+    {
+     "repo": "expressjs/express",
+     "url": "https://github.com/expressjs/express",
+     "sha": "43fca52d28a422c8be48fd489cbd4f2d6152bab6",
+     "source_files": 142,
+     "slug": "expressjs__express"
+    },
+    {
+     "repo": "eslint/eslint",
+     "url": "https://github.com/eslint/eslint",
+     "sha": "896b8ad4f260d060a1df1e6297f4d23b2999bb6f",
+     "source_files": 1456,
+     "slug": "eslint__eslint"
+    },
+    {
+     "repo": "NodeBB/NodeBB",
+     "url": "https://github.com/NodeBB/NodeBB",
+     "sha": "2f5e2f04508a54e7ad329ad4c881a98a036c808f",
+     "source_files": 946,
+     "slug": "NodeBB__NodeBB"
+    }
+   ],
+   "python": [
+    {
+     "repo": "pytest-dev/pytest",
+     "url": "https://github.com/pytest-dev/pytest",
+     "sha": "8b005ed7f972987033ec34dc1e68b0635fb8142b",
+     "source_files": 274,
+     "slug": "pytest-dev__pytest"
+    },
+    {
+     "repo": "pallets/werkzeug",
+     "url": "https://github.com/pallets/werkzeug",
+     "sha": "2adaad1ab68312fa46efb07ff072b15b720e2444",
+     "source_files": 142,
+     "slug": "pallets__werkzeug"
+    }
+   ]
+  }
+ },
+ "screen_log": {
+  "go": [
+   {
+    "rank": 1,
+    "repo": "avelino/awesome-go",
+    "url": "https://github.com/avelino/awesome-go",
+    "stars": 191832,
+    "default_branch": "main",
+    "sha": "5e201a5e2340964477bbf5dc1babf83577606f92",
+    "source_files": 19,
+    "manifest": true,
+    "decision": "excluded: 19 source files < 100"
+   },
+   {
+    "rank": 2,
+    "repo": "ollama/ollama",
+    "url": "https://github.com/ollama/ollama",
+    "stars": 185772,
+    "default_branch": "main",
+    "sha": "9a3e8177767245acc62b735eba7d5d8a553606d0",
+    "source_files": 1035,
+    "manifest": true,
+    "decision": "accepted",
+    "slug": "ollama__ollama"
+   },
+   {
+    "rank": 3,
+    "repo": "golang/go",
+    "url": "https://github.com/golang/go",
+    "stars": 139546,
+    "default_branch": "master",
+    "sha": "44b6bc904602c7ffe674956d59f804a997f9bae3",
+    "source_files": 10856,
+    "manifest": false,
+    "decision": "excluded: no toolchain manifest at root"
+   },
+   {
+    "rank": 4,
+    "repo": "kubernetes/kubernetes",
+    "url": "https://github.com/kubernetes/kubernetes",
+    "stars": 128634,
+    "default_branch": "master",
+    "sha": "6575724b63e50cd5dd454e774bc293c6de1e4e12",
+    "source_files": 13696,
+    "manifest": true,
+    "decision": "excluded: 13696 source files > 3000"
+   },
+   {
+    "rank": 5,
+    "repo": "JuliusBrussee/caveman",
+    "url": "https://github.com/JuliusBrussee/caveman",
+    "stars": 117084,
+    "default_branch": "main",
+    "sha": "2e068f735253cce28256744804785f01887d9646",
+    "source_files": 647,
+    "manifest": true,
+    "decision": "accepted",
+    "slug": "JuliusBrussee__caveman"
+   },
+   {
+    "rank": 6,
+    "repo": "microsoft/TypeScript",
+    "url": "https://github.com/microsoft/TypeScript",
+    "stars": 111724,
+    "default_branch": "main",
+    "sha": "042e0fb9574980bd67964165df295e629f834fe3",
+    "source_files": 5220,
+    "manifest": false,
+    "decision": "excluded: no toolchain manifest at root"
+   },
+   {
+    "rank": 7,
+    "repo": "fatedier/frp",
+    "url": "https://github.com/fatedier/frp",
+    "stars": 110416,
+    "default_branch": "dev",
+    "sha": "e6e0aaf9d48d359c0abe3dd47e8d9a5e65b2d7d0",
+    "source_files": 380,
+    "manifest": true,
+    "decision": "accepted",
+    "slug": "fatedier__frp"
+   },
+   {
+    "rank": 8,
+    "repo": "infiniflow/ragflow",
+    "url": "https://github.com/infiniflow/ragflow",
+    "stars": 93424,
+    "default_branch": "main",
+    "sha": "2c4bbbc720fe24bd7ac509ab989325d4c1e8e532",
+    "source_files": 3004,
+    "manifest": true,
+    "decision": "excluded: 3004 source files > 3000"
+   },
+   {
+    "rank": 9,
+    "repo": "gohugoio/hugo",
+    "url": "https://github.com/gohugoio/hugo",
+    "stars": 90334,
+    "default_branch": "master",
+    "sha": "fa5a3d48b8dcf6c0bfcd7d06726a6530b2efc174",
+    "source_files": 912,
+    "manifest": true,
+    "decision": "accepted",
+    "slug": "gohugoio__hugo"
+   },
+   {
+    "rank": 10,
+    "repo": "syncthing/syncthing",
+    "url": "https://github.com/syncthing/syncthing",
+    "stars": 90036,
+    "default_branch": "main",
+    "sha": "b34734376128492fa4e1b01412193de033e20613",
+    "source_files": 542,
+    "manifest": true,
+    "decision": "accepted",
+    "slug": "syncthing__syncthing"
+   }
+  ],
+  "typescript": [
+   {
+    "rank": 1,
+    "repo": "freeCodeCamp/freeCodeCamp",
+    "url": "https://github.com/freeCodeCamp/freeCodeCamp",
+    "stars": 458475,
+    "default_branch": "main",
+    "sha": "ef7b6a229bb3491ac8070518d542384ccda56961",
+    "source_files": 990,
+    "manifest": true,
+    "decision": "accepted",
+    "slug": "freeCodeCamp__freeCodeCamp"
+   },
+   {
+    "rank": 2,
+    "repo": "morluto/rea",
+    "url": "https://github.com/morluto/rea",
+    "stars": 425207,
+    "default_branch": "main",
+    "sha": "8c857ce56c68ca46d202db0c9571277974c9e167",
+    "source_files": 5734,
+    "manifest": true,
+    "decision": "excluded: 5734 source files > 3000"
+   },
+   {
+    "rank": 3,
+    "repo": "openclaw/openclaw",
+    "url": "https://github.com/openclaw/openclaw",
+    "stars": 393809,
+    "default_branch": "main",
+    "sha": "0a5f30f82d33eae69d10c5a5ceecd01bdb9706e7",
+    "source_files": 51994,
+    "manifest": true,
+    "decision": "excluded: 51994 source files > 3000"
+   },
+   {
+    "rank": 4,
+    "repo": "nilbuild/developer-roadmap",
+    "url": "https://github.com/nilbuild/developer-roadmap",
+    "stars": 371140,
+    "default_branch": "master",
+    "sha": "c79ff103df995d722deb00d4d2f1d6f8d54916f6",
+    "source_files": 8,
+    "manifest": true,
+    "decision": "excluded: 8 source files < 100"
+   },
+   {
+    "rank": 5,
+    "repo": "deepseek-ai/deepseek-harness",
+    "url": "https://github.com/deepseek-ai/deepseek-harness",
+    "stars": 270566,
+    "default_branch": "master",
+    "sha": "8bd073392eef6f54e921a093b95076248eb08cbb",
+    "source_files": 6866,
+    "manifest": true,
+    "decision": "excluded: 6866 source files > 3000"
+   },
+   {
+    "rank": 6,
+    "repo": "anomalyco/opencode",
+    "url": "https://github.com/anomalyco/opencode",
+    "stars": 224237,
+    "default_branch": "dev",
+    "sha": "3ba597f7769e19cc3b5f67e3d6667e7b6318f6a3",
+    "source_files": 5588,
+    "manifest": true,
+    "decision": "excluded: 5588 source files > 3000"
+   },
+   {
+    "rank": 7,
+    "repo": "vuejs/vue",
+    "url": "https://github.com/vuejs/vue",
+    "stars": 212502,
+    "default_branch": "main",
+    "sha": "9e88707940088cb1f4cd7dd210c9168a50dc347c",
+    "source_files": 364,
+    "manifest": true,
+    "decision": "accepted",
+    "slug": "vuejs__vue"
+   },
+   {
+    "rank": 8,
+    "repo": "n8n-io/n8n",
+    "url": "https://github.com/n8n-io/n8n",
+    "stars": 209435,
+    "default_branch": "master",
+    "sha": "5339f0c988dd2fc89040cc5150bd3b991a4c6198",
+    "source_files": 24134,
+    "manifest": true,
+    "decision": "excluded: 24134 source files > 3000"
+   },
+   {
+    "rank": 9,
+    "repo": "firecrawl/firecrawl",
+    "url": "https://github.com/firecrawl/firecrawl",
+    "stars": 198173,
+    "default_branch": "main",
+    "sha": "5ca5e53bde538864e0ddcf359992583f381ea119",
+    "source_files": 1137,
+    "manifest": false,
+    "decision": "excluded: no toolchain manifest at root"
+   },
+   {
+    "rank": 10,
+    "repo": "microsoft/vscode",
+    "url": "https://github.com/microsoft/vscode",
+    "stars": 194530,
+    "default_branch": "main",
+    "sha": "932f88461087801fd2cfe50e78871b581866b144",
+    "source_files": 14960,
+    "manifest": true,
+    "decision": "excluded: 14960 source files > 3000"
+   },
+   {
+    "rank": 11,
+    "repo": "anthropics/claude-code",
+    "url": "https://github.com/anthropics/claude-code",
+    "stars": 154374,
+    "default_branch": "main",
+    "sha": "964d69565952a176ac1975ed218362991db71433",
+    "source_files": 1372,
+    "manifest": false,
+    "decision": "excluded: no toolchain manifest at root"
+   },
+   {
+    "rank": 12,
+    "repo": "yangshun/tech-interview-handbook",
+    "url": "https://github.com/yangshun/tech-interview-handbook",
+    "stars": 143205,
+    "default_branch": "main",
+    "sha": "e1d28e8886c0b6ff3e50da991ce0e895134ddc59",
+    "source_files": 284,
+    "manifest": true,
+    "decision": "accepted",
+    "slug": "yangshun__tech-interview-handbook"
+   },
+   {
+    "rank": 13,
+    "repo": "iptv-org/iptv",
+    "url": "https://github.com/iptv-org/iptv",
+    "stars": 143114,
+    "default_branch": "master",
+    "sha": "726b042085776846c6aea36e7557031ca4bc8143",
+    "source_files": 63,
+    "manifest": true,
+    "decision": "excluded: 63 source files < 100"
+   },
+   {
+    "rank": 14,
+    "repo": "garrytan/gstack",
+    "url": "https://github.com/garrytan/gstack",
+    "stars": 138766,
+    "default_branch": "main",
+    "sha": "bf2bcf14b08d774291613c8073674a0e90eb4f9f",
+    "source_files": 2652,
+    "manifest": true,
+    "decision": "accepted",
+    "slug": "garrytan__gstack"
+   },
+   {
+    "rank": 15,
+    "repo": "excalidraw/excalidraw",
+    "url": "https://github.com/excalidraw/excalidraw",
+    "stars": 135084,
+    "default_branch": "master",
+    "decision": "excluded: tuned list"
+   },
+   {
+    "rank": 16,
+    "repo": "shadcn-ui/ui",
+    "url": "https://github.com/shadcn-ui/ui",
+    "stars": 127252,
+    "default_branch": "main",
+    "sha": "4aaea19d9cff3e0908e12a8c1d504b8c5ec34610",
+    "source_files": 4298,
+    "manifest": true,
+    "decision": "excluded: 4298 source files > 3000"
+   },
+   {
+    "rank": 17,
+    "repo": "earendil-works/pi",
+    "url": "https://github.com/earendil-works/pi",
+    "stars": 119756,
+    "default_branch": "main",
+    "sha": "3551ec07eb87afebac20191958163ae58976f1d0",
+    "source_files": 2434,
+    "manifest": true,
+    "decision": "accepted",
+    "slug": "earendil-works__pi"
+   }
+  ],
+  "javascript": [
+   {
+    "rank": 1,
+    "repo": "affaan-m/ECC",
+    "url": "https://github.com/affaan-m/ECC",
+    "stars": 296125,
+    "default_branch": "main",
+    "sha": "b38be6a7f6350964d59328b52f0624e1d1d552d1",
+    "source_files": 1071,
+    "manifest": true,
+    "decision": "accepted",
+    "slug": "affaan-m__ECC"
+   },
+   {
+    "rank": 2,
+    "repo": "react/react",
+    "url": "https://github.com/react/react",
+    "stars": 251891,
+    "default_branch": "main",
+    "sha": "76baa3b5434fad315ece9cfd4d20d7a8d6c34a25",
+    "source_files": 3935,
+    "manifest": true,
+    "decision": "excluded: 3935 source files > 3000"
+   },
+   {
+    "rank": 3,
+    "repo": "trekhleb/javascript-algorithms",
+    "url": "https://github.com/trekhleb/javascript-algorithms",
+    "stars": 196722,
+    "default_branch": "master",
+    "sha": "85293e3e2b88f4d2ce330d956b139cf628aa1e82",
+    "source_files": 361,
+    "manifest": true,
+    "decision": "accepted",
+    "slug": "trekhleb__javascript-algorithms"
+   },
+   {
+    "rank": 4,
+    "repo": "CyC2018/CS-Notes",
+    "url": "https://github.com/CyC2018/CS-Notes",
+    "stars": 186440,
+    "default_branch": "master",
+    "sha": "f84ab45a806e4bda8cd8ffc01ed53cf22601e25c",
+    "source_files": 381,
+    "manifest": false,
+    "decision": "excluded: no toolchain manifest at root"
+   },
+   {
+    "rank": 5,
+    "repo": "DietrichGebert/ponytail",
+    "url": "https://github.com/DietrichGebert/ponytail",
+    "stars": 183331,
+    "default_branch": "main",
+    "sha": "96608e078b2d5ea607c5c3b8b5a54d1c1fba6846",
+    "source_files": 47,
+    "manifest": true,
+    "decision": "excluded: 47 source files < 100"
+   },
+   {
+    "rank": 6,
+    "repo": "Snailclimb/JavaGuide",
+    "url": "https://github.com/Snailclimb/JavaGuide",
+    "stars": 159402,
+    "default_branch": "main",
+    "sha": "992dae31eade2a34ba8dbbbcf5ed9de5511325ec",
+    "source_files": 3,
+    "manifest": true,
+    "decision": "excluded: 3 source files < 100"
+   },
+   {
+    "rank": 7,
+    "repo": "airbnb/javascript",
+    "url": "https://github.com/airbnb/javascript",
+    "stars": 148028,
+    "default_branch": "master",
+    "sha": "8ed19247bef145e3cc41b24a02dd1fe6d9b5e681",
+    "source_files": 28,
+    "manifest": true,
+    "decision": "excluded: 28 source files < 100"
+   },
+   {
+    "rank": 8,
+    "repo": "vercel/next.js",
+    "url": "https://github.com/vercel/next.js",
+    "stars": 143246,
+    "default_branch": "canary",
+    "sha": "4c3f5618ffdcd08e33693a1b25d47a4ef1254d90",
+    "source_files": 11942,
+    "manifest": true,
+    "decision": "excluded: 11942 source files > 3000"
+   },
+   {
+    "rank": 9,
+    "repo": "Chalarangelo/30-seconds-of-code",
+    "url": "https://github.com/Chalarangelo/30-seconds-of-code",
+    "stars": 129394,
+    "default_branch": "master",
+    "sha": "bd756f8b2283a38560efe83cb30af38324d4e9e9",
+    "source_files": 106,
+    "manifest": true,
+    "decision": "accepted",
+    "slug": "Chalarangelo__30-seconds-of-code"
+   },
+   {
+    "rank": 10,
+    "repo": "nodejs/node",
+    "url": "https://github.com/nodejs/node",
+    "stars": 123205,
+    "default_branch": "main",
+    "sha": "1b070ffad67f380036c1c5e5acf01aafd32c51ce",
+    "source_files": 23490,
+    "manifest": false,
+    "decision": "excluded: no toolchain manifest at root"
+   },
+   {
+    "rank": 11,
+    "repo": "mrdoob/three.js",
+    "url": "https://github.com/mrdoob/three.js",
+    "stars": 117476,
+    "default_branch": "dev",
+    "sha": "601bc21631e24674aa68fe5875f98d631a41b551",
+    "source_files": 1757,
+    "manifest": true,
+    "decision": "accepted",
+    "slug": "mrdoob__three.js"
+   },
+   {
+    "rank": 12,
+    "repo": "addyosmani/agent-skills",
+    "url": "https://github.com/addyosmani/agent-skills",
+    "stars": 112938,
+    "default_branch": "main",
+    "sha": "301b02b12bff98e4688e6984af6556802322bbde",
+    "source_files": 38,
+    "manifest": false,
+    "decision": "excluded: no toolchain manifest at root"
+   },
+   {
+    "rank": 13,
+    "repo": "axios/axios",
+    "url": "https://github.com/axios/axios",
+    "stars": 109318,
+    "default_branch": "v1.x",
+    "sha": "fb88a1b133c1a2d774713070b8ca25f7bcd382ac",
+    "source_files": 249,
+    "manifest": true,
+    "decision": "accepted",
+    "slug": "axios__axios"
+   }
+  ],
+  "python": [
+   {
+    "rank": 1,
+    "repo": "public-apis/public-apis",
+    "url": "https://github.com/public-apis/public-apis",
+    "stars": 495722,
+    "default_branch": "master",
+    "sha": "2676ca49d557ef14a0f478311506dae947639028",
+    "source_files": 6,
+    "manifest": false,
+    "decision": "excluded: no toolchain manifest at root"
+   },
+   {
+    "rank": 2,
+    "repo": "EbookFoundation/free-programming-books",
+    "url": "https://github.com/EbookFoundation/free-programming-books",
+    "stars": 400794,
+    "default_branch": "main",
+    "sha": "b4c4cc4040b614d2aca81ad5f2bcd92ed3d422ec",
+    "source_files": 1,
+    "manifest": false,
+    "decision": "excluded: no toolchain manifest at root"
+   },
+   {
+    "rank": 3,
+    "repo": "donnemartin/system-design-primer",
+    "url": "https://github.com/donnemartin/system-design-primer",
+    "stars": 376645,
+    "default_branch": "master",
+    "sha": "ae9bbd7b02d90b9866215de185217d33f39ab733",
+    "source_files": 26,
+    "manifest": false,
+    "decision": "excluded: no toolchain manifest at root"
+   },
+   {
+    "rank": 4,
+    "repo": "vinta/awesome-python",
+    "url": "https://github.com/vinta/awesome-python",
+    "stars": 332155,
+    "default_branch": "master",
+    "sha": "2a1a1959a3a6e6853ecb229b7a8deb5790367442",
+    "source_files": 13,
+    "manifest": true,
+    "decision": "excluded: 13 source files < 100"
+   },
+   {
+    "rank": 5,
+    "repo": "practical-tutorials/project-based-learning",
+    "url": "https://github.com/practical-tutorials/project-based-learning",
+    "stars": 288877,
+    "default_branch": "master",
+    "sha": "2146917314b5e98e58513c930c0a745cc6c7100c",
+    "source_files": 1,
+    "manifest": false,
+    "decision": "excluded: no toolchain manifest at root"
+   },
+   {
+    "rank": 6,
+    "repo": "NousResearch/hermes-agent",
+    "url": "https://github.com/NousResearch/hermes-agent",
+    "stars": 260073,
+    "default_branch": "main",
+    "sha": "c314285f077e91937c995d419b9fa40af9eb4981",
+    "source_files": 10634,
+    "manifest": true,
+    "decision": "excluded: 10634 source files > 3000"
+   },
+   {
+    "rank": 7,
+    "repo": "TheAlgorithms/Python",
+    "url": "https://github.com/TheAlgorithms/Python",
+    "stars": 225806,
+    "default_branch": "master",
+    "sha": "574d100b7181956e9c8384552fd078165e4cc326",
+    "source_files": 1608,
+    "manifest": true,
+    "decision": "accepted",
+    "slug": "TheAlgorithms__Python"
+   },
+   {
+    "rank": 8,
+    "repo": "yt-dlp/yt-dlp",
+    "url": "https://github.com/yt-dlp/yt-dlp",
+    "stars": 204903,
+    "default_branch": "master",
+    "sha": "b77c9304e1c4220cca450c583491904daf8455af",
+    "source_files": 1122,
+    "manifest": true,
+    "decision": "accepted",
+    "slug": "yt-dlp__yt-dlp"
+   },
+   {
+    "rank": 9,
+    "repo": "microsoft/markitdown",
+    "url": "https://github.com/microsoft/markitdown",
+    "stars": 193672,
+    "default_branch": "main",
+    "sha": "7482c092d9c0074a89803c9fdb63a969e7fe17fc",
+    "source_files": 93,
+    "manifest": false,
+    "decision": "excluded: no toolchain manifest at root"
+   },
+   {
+    "rank": 10,
+    "repo": "Significant-Gravitas/AutoGPT",
+    "url": "https://github.com/Significant-Gravitas/AutoGPT",
+    "stars": 187885,
+    "default_branch": "master",
+    "sha": "ef7f41cea9dba465d6cdcc2c81ae8b6e3d5b77d8",
+    "source_files": 3582,
+    "manifest": false,
+    "decision": "excluded: no toolchain manifest at root"
+   },
+   {
+    "rank": 11,
+    "repo": "anthropics/skills",
+    "url": "https://github.com/anthropics/skills",
+    "stars": 186973,
+    "default_branch": "main",
+    "sha": "ca45fc496a3436251f191354091d557da31c15b5",
+    "source_files": 72,
+    "manifest": false,
+    "decision": "excluded: no toolchain manifest at root"
+   },
+   {
+    "rank": 12,
+    "repo": "521xueweihan/HelloGitHub",
+    "url": "https://github.com/521xueweihan/HelloGitHub",
+    "stars": 186549,
+    "default_branch": "master",
+    "sha": "d65699c2892f3ad7516398a3fbd3855913f9d17d",
+    "source_files": 2,
+    "manifest": false,
+    "decision": "excluded: no toolchain manifest at root"
+   },
+   {
+    "rank": 13,
+    "repo": "huggingface/transformers",
+    "url": "https://github.com/huggingface/transformers",
+    "stars": 168487,
+    "default_branch": "main",
+    "sha": "f7184029548a31aebb6c732ac8739b9959845a4b",
+    "source_files": 5035,
+    "manifest": true,
+    "decision": "excluded: 5035 source files > 3000"
+   },
+   {
+    "rank": 14,
+    "repo": "AUTOMATIC1111/stable-diffusion-webui",
+    "url": "https://github.com/AUTOMATIC1111/stable-diffusion-webui",
+    "stars": 165235,
+    "default_branch": "master",
+    "sha": "82a973c04367123ae98bd9abdf80d9eda9b910e2",
+    "source_files": 213,
+    "manifest": true,
+    "decision": "accepted",
+    "slug": "AUTOMATIC1111__stable-diffusion-webui"
+   },
+   {
+    "rank": 15,
+    "repo": "langgenius/dify",
+    "url": "https://github.com/langgenius/dify",
+    "stars": 160317,
+    "default_branch": "main",
+    "sha": "312c2c28a3cd826269285793fa86d5533125c79f",
+    "source_files": 4884,
+    "manifest": false,
+    "decision": "excluded: no toolchain manifest at root"
+   },
+   {
+    "rank": 16,
+    "repo": "langflow-ai/langflow",
+    "url": "https://github.com/langflow-ai/langflow",
+    "stars": 156287,
+    "default_branch": "main",
+    "sha": "e63907b0f05304f2de2dab3e19add7e2b6393fb2",
+    "source_files": 4930,
+    "manifest": true,
+    "decision": "excluded: 4930 source files > 3000"
+   },
+   {
+    "rank": 17,
+    "repo": "langchain-ai/langchain",
+    "url": "https://github.com/langchain-ai/langchain",
+    "stars": 148940,
+    "default_branch": "master",
+    "sha": "2775506076baf2cba8126b21b9e63424fcd97ab9",
+    "source_files": 2641,
+    "manifest": false,
+    "decision": "excluded: no toolchain manifest at root"
+   },
+   {
+    "rank": 18,
+    "repo": "github/spec-kit",
+    "url": "https://github.com/github/spec-kit",
+    "stars": 146178,
+    "default_branch": "main",
+    "sha": "ba8363f8ab56b2da456a81299cfdbfee1ef7b871",
+    "source_files": 673,
+    "manifest": true,
+    "decision": "accepted",
+    "slug": "github__spec-kit"
+   },
+   {
+    "rank": 19,
+    "repo": "Comfy-Org/ComfyUI",
+    "url": "https://github.com/Comfy-Org/ComfyUI",
+    "stars": 144790,
+    "default_branch": "master",
+    "sha": "ab08f7b2caa6d4007ecde3762116c6193613f43b",
+    "source_files": 1029,
+    "manifest": true,
+    "decision": "accepted",
+    "slug": "Comfy-Org__ComfyUI"
+   }
+  ]
+ }
+}

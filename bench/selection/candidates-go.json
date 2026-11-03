@@ -1,0 +1,1002 @@
+[
+  {
+    "full_name": "avelino/awesome-go",
+    "html_url": "https://github.com/avelino/awesome-go",
+    "stargazers_count": 191832,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T10:03:02Z",
+    "size": 12819
+  },
+  {
+    "full_name": "ollama/ollama",
+    "html_url": "https://github.com/ollama/ollama",
+    "stargazers_count": 185772,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T06:11:27Z",
+    "size": 97012
+  },
+  {
+    "full_name": "golang/go",
+    "html_url": "https://github.com/golang/go",
+    "stargazers_count": 139546,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T02:49:30Z",
+    "size": 465505
+  },
+  {
+    "full_name": "kubernetes/kubernetes",
+    "html_url": "https://github.com/kubernetes/kubernetes",
+    "stargazers_count": 128634,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T10:27:21Z",
+    "size": 1544030
+  },
+  {
+    "full_name": "JuliusBrussee/caveman",
+    "html_url": "https://github.com/JuliusBrussee/caveman",
+    "stargazers_count": 117084,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T07:21:24Z",
+    "size": 20857
+  },
+  {
+    "full_name": "microsoft/TypeScript",
+    "html_url": "https://github.com/microsoft/TypeScript",
+    "stargazers_count": 111724,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T07:07:14Z",
+    "size": 2934958
+  },
+  {
+    "full_name": "fatedier/frp",
+    "html_url": "https://github.com/fatedier/frp",
+    "stargazers_count": 110416,
+    "default_branch": "dev",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T06:56:37Z",
+    "size": 32873
+  },
+  {
+    "full_name": "infiniflow/ragflow",
+    "html_url": "https://github.com/infiniflow/ragflow",
+    "stargazers_count": 93424,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:12:31Z",
+    "size": 189972
+  },
+  {
+    "full_name": "gohugoio/hugo",
+    "html_url": "https://github.com/gohugoio/hugo",
+    "stargazers_count": 90334,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T09:47:53Z",
+    "size": 151663
+  },
+  {
+    "full_name": "syncthing/syncthing",
+    "html_url": "https://github.com/syncthing/syncthing",
+    "stargazers_count": 90036,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T09:15:32Z",
+    "size": 127790
+  },
+  {
+    "full_name": "gin-gonic/gin",
+    "html_url": "https://github.com/gin-gonic/gin",
+    "stargazers_count": 89474,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-10T04:20:35Z",
+    "size": 10657
+  },
+  {
+    "full_name": "junegunn/fzf",
+    "html_url": "https://github.com/junegunn/fzf",
+    "stargazers_count": 83971,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T05:27:49Z",
+    "size": 8688
+  },
+  {
+    "full_name": "jesseduffield/lazygit",
+    "html_url": "https://github.com/jesseduffield/lazygit",
+    "stargazers_count": 83628,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-31T14:20:09Z",
+    "size": 168770
+  },
+  {
+    "full_name": "netdata/netdata",
+    "html_url": "https://github.com/netdata/netdata",
+    "stargazers_count": 81260,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T09:36:49Z",
+    "size": 338169
+  },
+  {
+    "full_name": "caddyserver/caddy",
+    "html_url": "https://github.com/caddyserver/caddy",
+    "stargazers_count": 78682,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T08:57:38Z",
+    "size": 21240
+  },
+  {
+    "full_name": "nektos/act",
+    "html_url": "https://github.com/nektos/act",
+    "stargazers_count": 72526,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T03:46:20Z",
+    "size": 20041
+  },
+  {
+    "full_name": "moby/moby",
+    "html_url": "https://github.com/moby/moby",
+    "stargazers_count": 72241,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T08:23:47Z",
+    "size": 277814
+  },
+  {
+    "full_name": "prometheus/prometheus",
+    "html_url": "https://github.com/prometheus/prometheus",
+    "stargazers_count": 66920,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:00:17Z",
+    "size": 296943
+  },
+  {
+    "full_name": "traefik/traefik",
+    "html_url": "https://github.com/traefik/traefik",
+    "stargazers_count": 65448,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T10:42:06Z",
+    "size": 163561
+  },
+  {
+    "full_name": "usememos/memos",
+    "html_url": "https://github.com/usememos/memos",
+    "stargazers_count": 64248,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T13:10:22Z",
+    "size": 49540
+  },
+  {
+    "full_name": "rclone/rclone",
+    "html_url": "https://github.com/rclone/rclone",
+    "stargazers_count": 60764,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T17:40:44Z",
+    "size": 258243
+  },
+  {
+    "full_name": "FiloSottile/mkcert",
+    "html_url": "https://github.com/FiloSottile/mkcert",
+    "stargazers_count": 59824,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2024-08-13T13:37:46Z",
+    "size": 1799
+  },
+  {
+    "full_name": "go-gitea/gitea",
+    "html_url": "https://github.com/go-gitea/gitea",
+    "stargazers_count": 58842,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:25:48Z",
+    "size": 369573
+  },
+  {
+    "full_name": "router-for-me/CLIProxyAPI",
+    "html_url": "https://github.com/router-for-me/CLIProxyAPI",
+    "stargazers_count": 57383,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:27:02Z",
+    "size": 50709
+  },
+  {
+    "full_name": "multica-ai/multica",
+    "html_url": "https://github.com/multica-ai/multica",
+    "stargazers_count": 54739,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T10:50:25Z",
+    "size": 212235
+  },
+  {
+    "full_name": "wagoodman/dive",
+    "html_url": "https://github.com/wagoodman/dive",
+    "stargazers_count": 54696,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T17:54:03Z",
+    "size": 7107
+  },
+  {
+    "full_name": "jesseduffield/lazydocker",
+    "html_url": "https://github.com/jesseduffield/lazydocker",
+    "stargazers_count": 53245,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-04-19T02:51:06Z",
+    "size": 30218
+  },
+  {
+    "full_name": "etcd-io/etcd",
+    "html_url": "https://github.com/etcd-io/etcd",
+    "stargazers_count": 52443,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T02:41:44Z",
+    "size": 102727
+  },
+  {
+    "full_name": "ethereum/go-ethereum",
+    "html_url": "https://github.com/ethereum/go-ethereum",
+    "stargazers_count": 51459,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T05:22:19Z",
+    "size": 241906
+  },
+  {
+    "full_name": "QuantumNous/new-api",
+    "html_url": "https://github.com/QuantumNous/new-api",
+    "stargazers_count": 51277,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T11:33:43Z",
+    "size": 92795
+  },
+  {
+    "full_name": "AlistGo/alist",
+    "html_url": "https://github.com/AlistGo/alist",
+    "stargazers_count": 50405,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-21T10:37:43Z",
+    "size": 6916
+  },
+  {
+    "full_name": "mudler/LocalAI",
+    "html_url": "https://github.com/mudler/LocalAI",
+    "stargazers_count": 50156,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:07:44Z",
+    "size": 166802
+  },
+  {
+    "full_name": "hashicorp/terraform",
+    "html_url": "https://github.com/hashicorp/terraform",
+    "stargazers_count": 50119,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T11:19:10Z",
+    "size": 361715
+  },
+  {
+    "full_name": "alibaba/open-code-review",
+    "html_url": "https://github.com/alibaba/open-code-review",
+    "stargazers_count": 49348,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T11:34:04Z",
+    "size": 56318
+  },
+  {
+    "full_name": "MHSanaei/3x-ui",
+    "html_url": "https://github.com/MHSanaei/3x-ui",
+    "stargazers_count": 49205,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T15:21:33Z",
+    "size": 80581
+  },
+  {
+    "full_name": "gogs/gogs",
+    "html_url": "https://github.com/gogs/gogs",
+    "stargazers_count": 47915,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-31T17:18:16Z",
+    "size": 212171
+  },
+  {
+    "full_name": "v2ray/v2ray-core",
+    "html_url": "https://github.com/v2ray/v2ray-core",
+    "stargazers_count": 46915,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-08-31T03:24:40Z",
+    "size": 55173
+  },
+  {
+    "full_name": "cli/cli",
+    "html_url": "https://github.com/cli/cli",
+    "stargazers_count": 46854,
+    "default_branch": "trunk",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T00:25:44Z",
+    "size": 82884
+  },
+  {
+    "full_name": "milvus-io/milvus",
+    "html_url": "https://github.com/milvus-io/milvus",
+    "stargazers_count": 46571,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T11:59:59Z",
+    "size": 373890
+  },
+  {
+    "full_name": "charmbracelet/bubbletea",
+    "html_url": "https://github.com/charmbracelet/bubbletea",
+    "stargazers_count": 45598,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-01T17:42:39Z",
+    "size": 5990
+  },
+  {
+    "full_name": "Wei-Shaw/sub2api",
+    "html_url": "https://github.com/Wei-Shaw/sub2api",
+    "stargazers_count": 45369,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T09:32:06Z",
+    "size": 122413
+  },
+  {
+    "full_name": "juanfont/headscale",
+    "html_url": "https://github.com/juanfont/headscale",
+    "stargazers_count": 45322,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T10:51:54Z",
+    "size": 64456
+  },
+  {
+    "full_name": "spf13/cobra",
+    "html_url": "https://github.com/spf13/cobra",
+    "stargazers_count": 44744,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-07-11T00:43:07Z",
+    "size": 2107
+  },
+  {
+    "full_name": "danielmiessler/Fabric",
+    "html_url": "https://github.com/danielmiessler/Fabric",
+    "stargazers_count": 44539,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T18:51:38Z",
+    "size": 165950
+  },
+  {
+    "full_name": "astaxie/build-web-application-with-golang",
+    "html_url": "https://github.com/astaxie/build-web-application-with-golang",
+    "stargazers_count": 43863,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2024-05-12T00:47:46Z",
+    "size": 38293
+  },
+  {
+    "full_name": "XTLS/Xray-core",
+    "html_url": "https://github.com/XTLS/Xray-core",
+    "stargazers_count": 42592,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T22:02:23Z",
+    "size": 32531
+  },
+  {
+    "full_name": "schollz/croc",
+    "html_url": "https://github.com/schollz/croc",
+    "stargazers_count": 40841,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T15:52:42Z",
+    "size": 12942
+  },
+  {
+    "full_name": "pingcap/tidb",
+    "html_url": "https://github.com/pingcap/tidb",
+    "stargazers_count": 40701,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:12:54Z",
+    "size": 851366
+  },
+  {
+    "full_name": "photoprism/photoprism",
+    "html_url": "https://github.com/photoprism/photoprism",
+    "stargazers_count": 40403,
+    "default_branch": "develop",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T14:34:59Z",
+    "size": 419362
+  },
+  {
+    "full_name": "gofiber/fiber",
+    "html_url": "https://github.com/gofiber/fiber",
+    "stargazers_count": 40242,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T11:26:58Z",
+    "size": 47299
+  },
+  {
+    "full_name": "evanw/esbuild",
+    "html_url": "https://github.com/evanw/esbuild",
+    "stargazers_count": 40120,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-08-09T17:20:12Z",
+    "size": 20899
+  },
+  {
+    "full_name": "go-gorm/gorm",
+    "html_url": "https://github.com/go-gorm/gorm",
+    "stargazers_count": 39986,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-24T07:00:16Z",
+    "size": 4664
+  },
+  {
+    "full_name": "The-Vibe-Company/quivr",
+    "html_url": "https://github.com/The-Vibe-Company/quivr",
+    "stargazers_count": 39626,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T14:24:50Z",
+    "size": 174467
+  },
+  {
+    "full_name": "SagerNet/sing-box",
+    "html_url": "https://github.com/SagerNet/sing-box",
+    "stargazers_count": 39575,
+    "default_branch": "testing",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T05:52:38Z",
+    "size": 30458
+  },
+  {
+    "full_name": "aquasecurity/trivy",
+    "html_url": "https://github.com/aquasecurity/trivy",
+    "stargazers_count": 38926,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:12:45Z",
+    "size": 946418
+  },
+  {
+    "full_name": "harness/harness",
+    "html_url": "https://github.com/harness/harness",
+    "stargazers_count": 38801,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:30:49Z",
+    "size": 60178
+  },
+  {
+    "full_name": "docker/compose",
+    "html_url": "https://github.com/docker/compose",
+    "stargazers_count": 38580,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T14:43:47Z",
+    "size": 30346
+  },
+  {
+    "full_name": "tailscale/tailscale",
+    "html_url": "https://github.com/tailscale/tailscale",
+    "stargazers_count": 38567,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:31:16Z",
+    "size": 90968
+  },
+  {
+    "full_name": "istio/istio",
+    "html_url": "https://github.com/istio/istio",
+    "stargazers_count": 38485,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T11:57:35Z",
+    "size": 307946
+  },
+  {
+    "full_name": "glanceapp/glance",
+    "html_url": "https://github.com/glanceapp/glance",
+    "stargazers_count": 37996,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T15:05:27Z",
+    "size": 20504
+  },
+  {
+    "full_name": "IceWhaleTech/CasaOS",
+    "html_url": "https://github.com/IceWhaleTech/CasaOS",
+    "stargazers_count": 37533,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-09-28T10:37:14Z",
+    "size": 181034
+  },
+  {
+    "full_name": "1Panel-dev/1Panel",
+    "html_url": "https://github.com/1Panel-dev/1Panel",
+    "stargazers_count": 37348,
+    "default_branch": "dev-v2",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T10:58:25Z",
+    "size": 121228
+  },
+  {
+    "full_name": "restic/restic",
+    "html_url": "https://github.com/restic/restic",
+    "stargazers_count": 36970,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-01T01:42:59Z",
+    "size": 68161
+  },
+  {
+    "full_name": "wailsapp/wails",
+    "html_url": "https://github.com/wailsapp/wails",
+    "stargazers_count": 36932,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:33:53Z",
+    "size": 582533
+  },
+  {
+    "full_name": "hashicorp/vault",
+    "html_url": "https://github.com/hashicorp/vault",
+    "stargazers_count": 36462,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T03:03:08Z",
+    "size": 363599
+  },
+  {
+    "full_name": "Tencent/WeKnora",
+    "html_url": "https://github.com/Tencent/WeKnora",
+    "stargazers_count": 36362,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T03:33:48Z",
+    "size": 258186
+  },
+  {
+    "full_name": "esengine/DeepSeek-Reasonix",
+    "html_url": "https://github.com/esengine/DeepSeek-Reasonix",
+    "stargazers_count": 36053,
+    "default_branch": "studio",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:32:38Z",
+    "size": 232029
+  },
+  {
+    "full_name": "seaweedfs/seaweedfs",
+    "html_url": "https://github.com/seaweedfs/seaweedfs",
+    "stargazers_count": 35884,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T08:30:17Z",
+    "size": 250221
+  },
+  {
+    "full_name": "binwiederhier/ntfy",
+    "html_url": "https://github.com/binwiederhier/ntfy",
+    "stargazers_count": 35262,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T03:53:26Z",
+    "size": 45277
+  },
+  {
+    "full_name": "unknwon/the-way-to-go_ZH_CN",
+    "html_url": "https://github.com/unknwon/the-way-to-go_ZH_CN",
+    "stargazers_count": 34998,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2024-08-14T07:04:25Z",
+    "size": 12602
+  },
+  {
+    "full_name": "derailed/k9s",
+    "html_url": "https://github.com/derailed/k9s",
+    "stargazers_count": 34914,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T21:31:19Z",
+    "size": 65699
+  },
+  {
+    "full_name": "v2fly/v2ray-core",
+    "html_url": "https://github.com/v2fly/v2ray-core",
+    "stargazers_count": 34745,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T22:53:21Z",
+    "size": 69531
+  },
+  {
+    "full_name": "k3s-io/k3s",
+    "html_url": "https://github.com/k3s-io/k3s",
+    "stargazers_count": 34324,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T09:31:54Z",
+    "size": 592583
+  },
+  {
+    "full_name": "ehang-io/nps",
+    "html_url": "https://github.com/ehang-io/nps",
+    "stargazers_count": 34262,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2024-05-30T03:51:08Z",
+    "size": 9168
+  },
+  {
+    "full_name": "github/github-mcp-server",
+    "html_url": "https://github.com/github/github-mcp-server",
+    "stargazers_count": 34182,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T11:04:24Z",
+    "size": 57684
+  },
+  {
+    "full_name": "halfrost/LeetCode-Go",
+    "html_url": "https://github.com/halfrost/LeetCode-Go",
+    "stargazers_count": 33815,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-12T15:45:11Z",
+    "size": 43097
+  },
+  {
+    "full_name": "zeromicro/go-zero",
+    "html_url": "https://github.com/zeromicro/go-zero",
+    "stargazers_count": 33420,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T19:52:50Z",
+    "size": 33336
+  },
+  {
+    "full_name": "podman-container-tools/podman",
+    "html_url": "https://github.com/podman-container-tools/podman",
+    "stargazers_count": 33168,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T08:35:21Z",
+    "size": 190210
+  },
+  {
+    "full_name": "vxcontrol/pentagi",
+    "html_url": "https://github.com/vxcontrol/pentagi",
+    "stargazers_count": 33137,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-22T23:26:13Z",
+    "size": 60557
+  },
+  {
+    "full_name": "labstack/echo",
+    "html_url": "https://github.com/labstack/echo",
+    "stargazers_count": 32787,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-30T15:04:26Z",
+    "size": 6903
+  },
+  {
+    "full_name": "cockroachdb/cockroach",
+    "html_url": "https://github.com/cockroachdb/cockroach",
+    "stargazers_count": 32602,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-29T12:06:14Z",
+    "size": 2680537
+  },
+  {
+    "full_name": "projectdiscovery/nuclei",
+    "html_url": "https://github.com/projectdiscovery/nuclei",
+    "stargazers_count": 32559,
+    "default_branch": "dev",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T11:58:13Z",
+    "size": 49254
+  },
+  {
+    "full_name": "beego/beego",
+    "html_url": "https://github.com/beego/beego",
+    "stargazers_count": 32428,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-05T13:43:56Z",
+    "size": 11988
+  },
+  {
+    "full_name": "kubernetes/minikube",
+    "html_url": "https://github.com/kubernetes/minikube",
+    "stargazers_count": 32221,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T23:43:32Z",
+    "size": 305112
+  },
+  {
+    "full_name": "grafana/k6",
+    "html_url": "https://github.com/grafana/k6",
+    "stargazers_count": 32112,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T10:13:00Z",
+    "size": 86711
+  },
+  {
+    "full_name": "iawia002/lux",
+    "html_url": "https://github.com/iawia002/lux",
+    "stargazers_count": 31818,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-03-29T18:18:56Z",
+    "size": 2566
+  },
+  {
+    "full_name": "abiosoft/colima",
+    "html_url": "https://github.com/abiosoft/colima",
+    "stargazers_count": 31506,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-13T21:49:45Z",
+    "size": 3300
+  },
+  {
+    "full_name": "chubin/wttr.in",
+    "html_url": "https://github.com/chubin/wttr.in",
+    "stargazers_count": 30731,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-09-07T20:12:34Z",
+    "size": 14764
+  },
+  {
+    "full_name": "opentofu/opentofu",
+    "html_url": "https://github.com/opentofu/opentofu",
+    "stargazers_count": 30709,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T09:55:07Z",
+    "size": 290684
+  },
+  {
+    "full_name": "gitleaks/gitleaks",
+    "html_url": "https://github.com/gitleaks/gitleaks",
+    "stargazers_count": 30622,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-28T04:14:29Z",
+    "size": 6446
+  },
+  {
+    "full_name": "netbirdio/netbird",
+    "html_url": "https://github.com/netbirdio/netbird",
+    "stargazers_count": 30618,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:31:09Z",
+    "size": 178498
+  },
+  {
+    "full_name": "spf13/viper",
+    "html_url": "https://github.com/spf13/viper",
+    "stargazers_count": 30501,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-01-12T21:42:47Z",
+    "size": 1625
+  },
+  {
+    "full_name": "helm/helm",
+    "html_url": "https://github.com/helm/helm",
+    "stargazers_count": 30390,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T21:34:21Z",
+    "size": 30203
+  },
+  {
+    "full_name": "hashicorp/consul",
+    "html_url": "https://github.com/hashicorp/consul",
+    "stargazers_count": 30100,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:14:53Z",
+    "size": 512932
+  },
+  {
+    "full_name": "sipeed/picoclaw",
+    "html_url": "https://github.com/sipeed/picoclaw",
+    "stargazers_count": 30088,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-30T18:08:20Z",
+    "size": 41594
+  },
+  {
+    "full_name": "micro-editor/micro",
+    "html_url": "https://github.com/micro-editor/micro",
+    "stargazers_count": 29823,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T00:23:03Z",
+    "size": 14161
+  },
+  {
+    "full_name": "XIU2/CloudflareSpeedTest",
+    "html_url": "https://github.com/XIU2/CloudflareSpeedTest",
+    "stargazers_count": 29798,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-09-15T05:40:30Z",
+    "size": 406
+  },
+  {
+    "full_name": "goharbor/harbor",
+    "html_url": "https://github.com/goharbor/harbor",
+    "stargazers_count": 29665,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T11:16:03Z",
+    "size": 266802
+  },
+  {
+    "full_name": "authelia/authelia",
+    "html_url": "https://github.com/authelia/authelia",
+    "stargazers_count": 29493,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T05:27:31Z",
+    "size": 91264
+  },
+  {
+    "full_name": "grafana/loki",
+    "html_url": "https://github.com/grafana/loki",
+    "stargazers_count": 29114,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:33:26Z",
+    "size": 578152
+  }
+]

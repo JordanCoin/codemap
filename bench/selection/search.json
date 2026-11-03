@@ -1,0 +1,14 @@
+{
+  "endpoint": "GET /search/repositories",
+  "queries": {
+    "go": "language:go fork:false archived:false stars:>3000",
+    "typescript": "language:typescript fork:false archived:false stars:>3000",
+    "javascript": "language:javascript fork:false archived:false stars:>3000",
+    "python": "language:python fork:false archived:false stars:>3000"
+  },
+  "sort": "stars",
+  "order": "desc",
+  "per_page": 100,
+  "fetched_at": "2026-11-03T12:34:36Z",
+  "note": "one search call per language, results trimmed to the fields select.py uses"
+}
