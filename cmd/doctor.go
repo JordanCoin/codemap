@@ -160,7 +160,18 @@ func RunDoctor(args []string, defaultRoot string) int {
 		checkScopedFile("Codex hooks", doctorScopesFor(root, *global, codexHooksPath), func(path string) error {
 			return validateHooks(path, recommendedCodexHooks)
 		}, &failures)
-		if codexAvailable && codexHooksErr == nil && validateHooks(codexHooks, recommendedCodexHooks) == nil {
+		userCodexHooks, userCodexHooksErr := codexHooksPath(root, true)
+		if !*global && codexHooksErr == nil && userCodexHooksErr == nil {
+			executable := defaultIntegrationExecutable()
+			inProject, _ := hasOwnedCodexHooks(codexHooks, executable)
+			inUser, _ := hasOwnedCodexHooks(userCodexHooks, executable)
+			if inProject && inUser {
+				fmt.Printf("MISS Codex hooks: codemap hooks are in both %s and %s, so they run twice in a trusted project; repair with `codemap setup --agent codex`\n", codexHooks, userCodexHooks)
+				failures++
+			}
+		}
+		if codexAvailable && ((codexHooksErr == nil && validateHooks(codexHooks, recommendedCodexHooks) == nil) ||
+			(userCodexHooksErr == nil && validateHooks(userCodexHooks, recommendedCodexHooks) == nil)) {
 			if err := validateCodexHookTrust(root); err != nil {
 				fmt.Printf("MISS Codex hook trust: %v\n", err)
 				failures++
@@ -200,7 +211,7 @@ func doctorCheckLocalCodemapIgnore(root string, failures *int) {
 		*failures++
 		return
 	}
-	fmt.Printf("MISS local Codemap ignore: %s does not ignore %s; repair with `codemap setup --no-hooks --no-mcp --no-config %s`\n", path, ignoreEntry, root)
+	fmt.Printf("MISS local Codemap ignore: %s does not ignore %s; repair with `codemap setup --no-hooks --no-mcp --no-skills --no-config %s`\n", path, ignoreEntry, root)
 	*failures++
 }
 

@@ -12,7 +12,12 @@ func TestRunDoctorUsesNearestGitRootFromNestedDirectory(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("windows: temp-dir path assumption, tracked in #214")
 	}
-	root := t.TempDir()
+	root, home := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	prevCodex := runCodexPluginCommand
+	runCodexPluginCommand = func(string, ...string) ([]byte, error) { return nil, os.ErrNotExist }
+	t.Cleanup(func() { runCodexPluginCommand = prevCodex })
 	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}

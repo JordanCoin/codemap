@@ -96,6 +96,9 @@ var statusTools = []statusTool{
 type RuntimeOptions struct {
 	ConfiguredVersion string
 	Integration       string
+	// ProjectScoped is set when the entry launched the server with
+	// --project-root, i.e. it lives in project config, not user config.
+	ProjectScoped bool
 }
 
 func ParseRuntimeOptions(args []string) (RuntimeOptions, error) {
@@ -131,15 +134,8 @@ func (options RuntimeOptions) upgradeGuidance() string {
 		return ""
 	}
 
-	var repairCommand string
-	switch options.Integration {
-	case IntegrationClaudeSetup:
-		repairCommand = "codemap setup --agent claude"
-	case IntegrationCodexSetup:
-		repairCommand = "codemap setup --agent codex"
-	case IntegrationCodexPlugin:
-		repairCommand = "codemap plugin install"
-	default:
+	repairCommand := RepairCommand(options.Integration, options.ProjectScoped)
+	if repairCommand == "" {
 		return ""
 	}
 
@@ -149,6 +145,24 @@ func (options RuntimeOptions) upgradeGuidance() string {
 		buildinfo.Current(),
 		repairCommand,
 	)
+}
+
+// RepairCommand names the command that rewrites a managed integration entry,
+// or "" for an unknown integration. Setup writes Codex at user scope unless
+// told --project, so a project-scope Codex entry needs that flag to refresh.
+func RepairCommand(integration string, projectScoped bool) string {
+	switch integration {
+	case IntegrationClaudeSetup:
+		return "codemap setup --agent claude"
+	case IntegrationCodexSetup:
+		if projectScoped {
+			return "codemap setup --agent codex --project"
+		}
+		return "codemap setup --agent codex"
+	case IntegrationCodexPlugin:
+		return "codemap plugin install"
+	}
+	return ""
 }
 
 // Input types for tools

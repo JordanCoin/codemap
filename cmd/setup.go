@@ -15,7 +15,9 @@ import (
 
 	"codemap/config"
 	"codemap/internal/buildinfo"
+	"codemap/internal/gitexclude"
 	"codemap/internal/projectpath"
+	"codemap/skills"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -167,6 +169,7 @@ func managedHookCommand(executable string) string {
 // By default it creates:
 //   - <project>/.codemap/config.json (if missing)
 //   - <project>/.claude/settings.local.json codemap hook entries
+//   - <project>/.claude/skills/<name>/SKILL.md for each builtin skill
 //
 // Use --global to target ~/.claude/settings.json for hooks.
 func RunSetup(args []string, defaultRoot string) int {
@@ -177,17 +180,23 @@ func RunSetup(args []string, defaultRoot string) int {
 	skipConfig := fs.Bool("no-config", false, "Skip creating .codemap/config.json")
 	skipHooks := fs.Bool("no-hooks", false, "Skip writing agent hook settings")
 	skipMCP := fs.Bool("no-mcp", false, "Skip writing agent MCP settings")
+	skipSkills := fs.Bool("no-skills", false, "Skip installing codemap skills for Claude")
+	projectCodex := fs.Bool("project", false, "Write Codex hooks and MCP to this project's .codex/ instead of ~/.codex")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			fmt.Println("Usage: codemap setup [--global] [--agent claude|codex|both] [--no-config] [--no-hooks] [--no-mcp] [path]")
+			fmt.Println("Usage: codemap setup [--global] [--project] [--agent claude|codex|both] [--no-config] [--no-hooks] [--no-mcp] [--no-skills] [path]")
 			return 0
 		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		fmt.Fprintln(os.Stderr, "Usage: codemap setup [--global] [--agent claude|codex|both] [--no-config] [--no-hooks] [--no-mcp] [path]")
+		fmt.Fprintln(os.Stderr, "Usage: codemap setup [--global] [--project] [--agent claude|codex|both] [--no-config] [--no-hooks] [--no-mcp] [--no-skills] [path]")
+		return 2
+	}
+	if *useGlobalHooks && *projectCodex {
+		fmt.Fprintln(os.Stderr, "Error: --global and --project are mutually exclusive")
 		return 2
 	}
 	if fs.NArg() > 1 {
-		fmt.Fprintln(os.Stderr, "Usage: codemap setup [--global] [--agent claude|codex|both] [--no-config] [--no-hooks] [--no-mcp] [path]")
+		fmt.Fprintln(os.Stderr, "Usage: codemap setup [--global] [--project] [--agent claude|codex|both] [--no-config] [--no-hooks] [--no-mcp] [--no-skills] [path]")
 		return 2
 	}
 	selectedAgent := setupAgentBoth
@@ -278,6 +287,19 @@ func RunSetup(args []string, defaultRoot string) int {
 	if *skipMCP {
 		fmt.Println("MCP: skipped (--no-mcp)")
 	}
+	if *skipSkills {
+		fmt.Println("Skills: skipped (--no-skills)")
+	}
+	// Codex ignores project .codex/ until the project is trusted, so it
+	// defaults to user scope; Claude reads project config right away.
+	codexGlobal := !*projectCodex
+	// A user-scope server serves every project, so it must not pin this one.
+	mcpRootFor := func(global bool) string {
+		if global {
+			return ""
+		}
+		return absRoot
+	}
 	failed := false
 	if selectedAgent == setupAgentBoth || selectedAgent == setupAgentClaude {
 		if !*skipHooks && configureHooks("Claude", claudeSettingsPath, func(path string, global bool) (ensureHooksResult, error) {
@@ -287,24 +309,38 @@ func RunSetup(args []string, defaultRoot string) int {
 		}
 		if !*skipMCP {
 			if configureMCP("Claude", claudeMCPPath, func(path string) (bool, error) {
-				return ensureClaudeMCPWithExecutable(path, executable, absRoot)
+				return ensureClaudeMCPWithExecutable(path, executable, mcpRootFor(*useGlobalHooks))
 			}, absRoot, *useGlobalHooks) != nil {
 				failed = true
 			} else if !*useGlobalHooks {
 				fmt.Println("  Note: .mcp.json references this machine's codemap path; if the file is committed, teammates should run `codemap setup` after pulling.")
 			}
 		}
+		if !*skipSkills && configureClaudeSkills(absRoot, *useGlobalHooks) != nil {
+			failed = true
+		}
 	}
 	if selectedAgent == setupAgentBoth || selectedAgent == setupAgentCodex {
 		if !*skipHooks && configureHooks("Codex", codexHooksPath, func(path string, global bool) (ensureHooksResult, error) {
 			return ensureCodexHooksWithExecutable(path, global, executable)
-		}, absRoot, *useGlobalHooks) != nil {
+		}, absRoot, codexGlobal) != nil {
 			failed = true
 		}
 		if !*skipMCP && configureMCP("Codex", codexConfigPath, func(path string) (bool, error) {
-			return ensureCodexMCPWithExecutable(path, executable, absRoot)
-		}, absRoot, *useGlobalHooks) != nil {
+			return ensureCodexMCPWithExecutable(path, executable, mcpRootFor(codexGlobal))
+		}, absRoot, codexGlobal) != nil {
 			failed = true
+		}
+		if codexDir, err := codexHomeDir(); err == nil && codexGlobal && !failed && (!*skipHooks || !*skipMCP) {
+			if !*useGlobalHooks {
+				fmt.Printf("  Codex: configured for your user in %s (Codex skips a project's .codex/ until the project is trusted); use --project for this project only.\n", codexDir)
+			}
+			if moved, err := removeProjectCodexEntries(absRoot, executable, !*skipHooks, !*skipMCP); err != nil {
+				fmt.Fprintf(os.Stderr, "Codex: could not remove codemap entries from %s (%v)\n", filepath.Join(absRoot, ".codex"), err)
+				failed = true
+			} else if moved > 0 {
+				fmt.Printf("  Codex: moved codemap's entries from %s to %s so hooks do not run twice.\n", filepath.Join(absRoot, ".codex"), codexDir)
+			}
 		}
 	}
 	if failed {
@@ -329,6 +365,104 @@ func RunSetup(args []string, defaultRoot string) int {
 		fmt.Println("  3. Tune .codemap/config.json if you want narrower context.")
 	}
 	return 0
+}
+
+// removeProjectCodexEntries drops only codemap-owned hooks and the codemap MCP
+// table from <root>/.codex, once the user scope carries them, and reports how
+// many files it changed.
+func removeProjectCodexEntries(root, executable string, hooks, mcp bool) (int, error) {
+	changed := 0
+	hooksPath := filepath.Join(root, ".codex", "hooks.json")
+	if owned, err := hasOwnedCodexHooks(hooksPath, executable); hooks && err == nil && owned {
+		data, err := os.ReadFile(hooksPath)
+		if err != nil {
+			return changed, err
+		}
+		payload, err := decodeJSONObject(data)
+		if err != nil {
+			return changed, err
+		}
+		hooksByEvent, _ := payload["hooks"].(map[string]any)
+		specs := generatedCodexHooks(executable)
+		aliases := codexHookCommandAliases(specs)
+		for event := range hooksByEvent {
+			entries, _ := rawHookEntries(hooksByEvent, event)
+			kept := make([]any, 0, len(entries))
+			for _, rawEntry := range entries {
+				entry, ok := rawEntry.(map[string]any)
+				rawHooks, _ := entry["hooks"].([]any)
+				if !ok || rawHooks == nil {
+					kept = append(kept, rawEntry)
+					continue
+				}
+				keptHooks := make([]any, 0, len(rawHooks))
+				for _, rawHook := range rawHooks {
+					hook, _ := rawHook.(map[string]any)
+					command, _ := hook["command"].(string)
+					if codexOwnedHookSpecIndex(strings.TrimSpace(command), aliases, specs) < 0 {
+						keptHooks = append(keptHooks, rawHook)
+					}
+				}
+				if len(keptHooks) > 0 {
+					entry["hooks"] = keptHooks
+					kept = append(kept, entry)
+				}
+			}
+			if len(kept) == 0 {
+				delete(hooksByEvent, event)
+			} else {
+				hooksByEvent[event] = kept
+			}
+		}
+		out, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			return changed, err
+		}
+		if err := writeFileAtomic(hooksPath, append(out, '\n'), 0o644); err != nil {
+			return changed, err
+		}
+		changed++
+	}
+	configPath := filepath.Join(root, ".codex", "config.toml")
+	if owned, err := hasOwnedCodexMCP(configPath); mcp && err == nil && owned {
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			return changed, err
+		}
+		updated, err := removeCodexMCPTable(data)
+		if err != nil {
+			return changed, err
+		}
+		if err := writeValidatedTOML(configPath, updated); err != nil {
+			return changed, err
+		}
+		changed++
+	}
+	return changed, nil
+}
+
+// removeCodexMCPTable deletes the [mcp_servers.codemap] table and any of its
+// subtables, leaving every other line as it was.
+func removeCodexMCPTable(data []byte) ([]byte, error) {
+	lines := strings.SplitAfter(string(data), "\n")
+	kept := make([]string, 0, len(lines))
+	inTable, found := false, false
+	for _, line := range lines {
+		header := strings.TrimSpace(tomlValueWithoutComment(strings.TrimSpace(line)))
+		if strings.HasPrefix(header, "[") {
+			name := strings.Trim(header, "[]")
+			name = strings.NewReplacer(`"codemap"`, "codemap", `'codemap'`, "codemap").Replace(name)
+			inTable = name == "mcp_servers.codemap" || strings.HasPrefix(name, "mcp_servers.codemap.")
+			found = found || inTable
+		}
+		if !inTable {
+			kept = append(kept, line)
+		}
+	}
+	if !found {
+		return nil, errors.New("recognized codemap table could not be located")
+	}
+	return []byte(strings.Join(kept, "")), nil
 }
 
 func printCodexHookReviewInstructions(root string) {
@@ -379,6 +513,68 @@ func configureMCP(label string, pathFor func(string, bool) (string, error), ensu
 	return nil
 }
 
+func configureClaudeSkills(root string, global bool) error {
+	base, rel := root, filepath.Join(".claude", "skills")
+	if global {
+		// ~/.claude is the user's own and may be a dotfiles symlink; only a
+		// cloned repo's paths need the strict no-symlink walk.
+		home, err := os.UserHomeDir()
+		if err == nil {
+			err = os.MkdirAll(filepath.Join(home, ".claude"), 0o755)
+		}
+		if err == nil {
+			base, err = filepath.EvalSymlinks(filepath.Join(home, ".claude"))
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Claude skills: failed to resolve ~/.claude (%v)\n", err)
+			return err
+		}
+		rel = "skills"
+	}
+	dir := filepath.Join(base, rel)
+	result, err := skills.InstallHostSkills(base, rel)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Claude skills: failed (%v)\n", err)
+		return err
+	}
+	if len(result.Written) == 0 {
+		fmt.Printf("Claude skills: already current (%s, %d skills)\n", dir, len(result.Unchanged))
+	} else {
+		fmt.Printf("Claude skills: wrote %d to %s (%s)\n", len(result.Written), dir, strings.Join(result.Written, ", "))
+	}
+	if len(result.Skipped) > 0 {
+		fmt.Printf("  Skipped %d edited, foreign, or symlinked skill(s), left as is: %s\n", len(result.Skipped), strings.Join(result.Skipped, ", "))
+	}
+	if !global {
+		if err := excludeWrittenSkillDirs(root, result.Written); err != nil {
+			fmt.Printf("  Warning: could not add skill dirs to .git/info/exclude (%v)\n", err)
+		}
+	}
+	return nil
+}
+
+// excludeWrittenSkillDirs keeps the skill dirs setup just wrote out of
+// `git status` via the clone-local exclude, one rule per dir, never .claude/.
+func excludeWrittenSkillDirs(root string, names []string) error {
+	if len(names) == 0 || !gitexclude.IsWorkTree(root) {
+		return nil
+	}
+	target, err := gitexclude.InfoExcludePath(root)
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		entry := "/.claude/skills/" + name + "/"
+		if data, _ := os.ReadFile(target); gitexclude.HasLine(data, entry) {
+			continue
+		}
+		if err := gitexclude.AppendEntry(target, entry); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func claudeSettingsPath(projectRoot string, global bool) (string, error) {
 	if !global {
 		return filepath.Join(projectRoot, ".claude", "settings.local.json"), nil
@@ -402,26 +598,32 @@ func claudeMCPPath(projectRoot string, global bool) (string, error) {
 	return filepath.Join(homeDir, ".claude.json"), nil
 }
 
-func codexHooksPath(projectRoot string, global bool) (string, error) {
-	if !global {
-		return filepath.Join(projectRoot, ".codex", "hooks.json"), nil
+// codexHomeDir is Codex's user config dir: $CODEX_HOME, else ~/.codex.
+func codexHomeDir() (string, error) {
+	if dir := os.Getenv("CODEX_HOME"); dir != "" {
+		return dir, nil
 	}
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(homeDir, ".codex", "hooks.json"), nil
+	return filepath.Join(homeDir, ".codex"), nil
+}
+
+func codexHooksPath(projectRoot string, global bool) (string, error) {
+	if !global {
+		return filepath.Join(projectRoot, ".codex", "hooks.json"), nil
+	}
+	dir, err := codexHomeDir()
+	return filepath.Join(dir, "hooks.json"), err
 }
 
 func codexConfigPath(projectRoot string, global bool) (string, error) {
 	if !global {
 		return filepath.Join(projectRoot, ".codex", "config.toml"), nil
 	}
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(homeDir, ".codex", "config.toml"), nil
+	dir, err := codexHomeDir()
+	return filepath.Join(dir, "config.toml"), err
 }
 
 func ensureClaudeMCPWithExecutable(path, executable, projectRoot string) (bool, error) {

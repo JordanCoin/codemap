@@ -46,6 +46,49 @@ func TestRunSetupNoConfigNoHooks(t *testing.T) {
 	}
 }
 
+func TestRunSetupInstallsClaudeSkillsIdempotently(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"--agent", "claude", "--no-config", "--no-hooks", "--no-mcp", root}
+	out := captureOutput(func() { RunSetup(args, ".") })
+	if !strings.Contains(out, "Claude skills: wrote ") {
+		t.Fatalf("expected skills install, got:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".claude", "skills", "hub-safety", "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+	if out := captureOutput(func() { RunSetup(args, ".") }); !strings.Contains(out, "Claude skills: already current") {
+		t.Fatalf("rerun should be a no-op, got:\n%s", out)
+	}
+	out = captureOutput(func() { RunSetup(append([]string{"--no-skills"}, args...), ".") })
+	if !strings.Contains(out, "Skills: skipped (--no-skills)") || strings.Contains(out, "Claude skills:") {
+		t.Fatalf("--no-skills ignored:\n%s", out)
+	}
+}
+
+func TestRunSetupGlobalSkillsFollowSymlinkedClaudeHome(t *testing.T) {
+	root, home, dotfiles := t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(dotfiles, filepath.Join(home, ".claude")); err != nil {
+		t.Fatal(err)
+	}
+	out := captureOutput(func() {
+		RunSetup([]string{"--global", "--agent", "claude", "--no-config", "--no-hooks", "--no-mcp", root}, ".")
+	})
+	if !strings.Contains(out, "Claude skills: wrote ") {
+		t.Fatalf("global install refused a symlinked ~/.claude:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(dotfiles, "skills", "hub-safety", "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRunSetupNoMCP(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
@@ -53,7 +96,7 @@ func TestRunSetupNoMCP(t *testing.T) {
 	}
 
 	out := captureOutput(func() {
-		RunSetup([]string{"--agent", "codex", "--no-config", "--no-mcp", root}, ".")
+		RunSetup([]string{"--agent", "codex", "--project", "--no-config", "--no-mcp", root}, ".")
 	})
 	if !strings.Contains(out, "MCP: skipped (--no-mcp)") {
 		t.Fatalf("expected MCP skip output, got:\n%s", out)
@@ -78,7 +121,11 @@ func TestRunSetupCreatesConfigAndHooks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	first := captureOutput(func() { RunSetup([]string{root}, ".") })
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	first := captureOutput(func() { RunSetup([]string{"--agent", "both", root}, ".") })
 	if !strings.Contains(first, "Config: created") || !strings.Contains(first, "Claude hooks: created") || !strings.Contains(first, "Codex hooks: created") {
 		t.Fatalf("unexpected first setup output:\n%s", first)
 	}
@@ -91,8 +138,18 @@ func TestRunSetupCreatesConfigAndHooks(t *testing.T) {
 	if _, err := os.Stat(settingsPath); err != nil {
 		t.Fatalf("expected settings file to exist: %v", err)
 	}
+	// Codex defaults to user scope: it ignores an untrusted project's .codex/.
+	if _, err := os.Stat(filepath.Join(home, ".codex", "hooks.json")); err != nil {
+		t.Fatalf("expected user-scope Codex hooks: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".codex")); !os.IsNotExist(err) {
+		t.Fatalf("default setup must not write project .codex/, err=%v", err)
+	}
+	if data, _ := os.ReadFile(filepath.Join(home, ".codex", "config.toml")); strings.Contains(string(data), "--project-root") {
+		t.Fatalf("user-scope Codex MCP pins a project root:\n%s", data)
+	}
 
-	second := captureOutput(func() { RunSetup([]string{root}, ".") })
+	second := captureOutput(func() { RunSetup([]string{"--agent", "both", root}, ".") })
 	if !strings.Contains(second, "Config: already exists") || !strings.Contains(second, "Claude hooks: already configured") || !strings.Contains(second, "Codex hooks: already configured") {
 		t.Fatalf("unexpected second setup output:\n%s", second)
 	}

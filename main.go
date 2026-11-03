@@ -181,7 +181,7 @@ func main() {
 
 	// Handle "mcp" subcommand before default analysis flag parsing.
 	if len(os.Args) >= 2 && os.Args[1] == "mcp" {
-		if code := cmd.RunMCP(os.Args[2:]); code != 0 {
+		if code := cmd.RunMCPScoped(os.Args[2:], projectRootExplicit); code != 0 {
 			os.Exit(code)
 		}
 		return
