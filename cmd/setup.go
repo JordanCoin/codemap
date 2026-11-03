@@ -284,6 +284,11 @@ func RunSetup(args []string, defaultRoot string) int {
 	if *skipSkills {
 		fmt.Println("Skills: skipped (--no-skills)")
 	}
+	// A user-scope server serves every project, so it must not pin this one.
+	mcpProjectRoot := absRoot
+	if *useGlobalHooks {
+		mcpProjectRoot = ""
+	}
 	failed := false
 	if selectedAgent == setupAgentBoth || selectedAgent == setupAgentClaude {
 		if !*skipHooks && configureHooks("Claude", claudeSettingsPath, func(path string, global bool) (ensureHooksResult, error) {
@@ -293,7 +298,7 @@ func RunSetup(args []string, defaultRoot string) int {
 		}
 		if !*skipMCP {
 			if configureMCP("Claude", claudeMCPPath, func(path string) (bool, error) {
-				return ensureClaudeMCPWithExecutable(path, executable, absRoot)
+				return ensureClaudeMCPWithExecutable(path, executable, mcpProjectRoot)
 			}, absRoot, *useGlobalHooks) != nil {
 				failed = true
 			} else if !*useGlobalHooks {
@@ -311,7 +316,7 @@ func RunSetup(args []string, defaultRoot string) int {
 			failed = true
 		}
 		if !*skipMCP && configureMCP("Codex", codexConfigPath, func(path string) (bool, error) {
-			return ensureCodexMCPWithExecutable(path, executable, absRoot)
+			return ensureCodexMCPWithExecutable(path, executable, mcpProjectRoot)
 		}, absRoot, *useGlobalHooks) != nil {
 			failed = true
 		}
@@ -409,7 +414,7 @@ func configureClaudeSkills(root string, global bool) error {
 		fmt.Printf("Claude skills: wrote %d to %s (%s)\n", len(result.Written), dir, strings.Join(result.Written, ", "))
 	}
 	if len(result.Skipped) > 0 {
-		fmt.Printf("  Skipped %d edited or foreign skill(s), left as is: %s\n", len(result.Skipped), strings.Join(result.Skipped, ", "))
+		fmt.Printf("  Skipped %d edited, foreign, or symlinked skill(s), left as is: %s\n", len(result.Skipped), strings.Join(result.Skipped, ", "))
 	}
 	return nil
 }

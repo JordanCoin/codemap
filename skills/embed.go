@@ -113,8 +113,14 @@ func InstallHostSkills(dir string) (InstallResult, error) {
 	if err != nil {
 		return result, err
 	}
+	// A repo can ship any of these paths as a symlink to a file outside it.
+	rootLinked := isSymlink(dir)
 	for _, s := range builtins {
 		target := filepath.Join(dir, s.Meta.Name, "SKILL.md")
+		if rootLinked || isSymlink(filepath.Dir(target)) || isSymlink(target) {
+			result.Skipped = append(result.Skipped, s.Meta.Name)
+			continue
+		}
 		want := installedSkillFile(s)
 		existing, err := os.ReadFile(target)
 		switch {
@@ -130,10 +136,36 @@ func InstallHostSkills(dir string) (InstallResult, error) {
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return result, err
 		}
-		if err := os.WriteFile(target, want, 0o644); err != nil {
+		if err := writeFileViaRename(target, want); err != nil {
 			return result, err
 		}
 		result.Written = append(result.Written, s.Meta.Name)
 	}
 	return result, nil
+}
+
+func isSymlink(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.Mode()&os.ModeSymlink != 0
+}
+
+// writeFileViaRename replaces path itself, never a file a symlink points at.
+func writeFileViaRename(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".SKILL.md.tmp-")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"codemap/internal/buildinfo"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 )
+
+var stampedVersionPattern = regexp.MustCompile(`^(dev|v?\d+\.\d+\.\d+([-+][0-9A-Za-z.-]+)?)$`)
 
 // hostMCPEntry is one codemap MCP registration the hook's host agent loads.
 type hostMCPEntry struct {
@@ -33,7 +36,12 @@ func hostCodemapMCPEntries(root, agent string) []hostMCPEntry {
 			return
 		}
 		entry := hostMCPEntry{Path: path, Global: global}
-		if _, args, err := ParseGlobalRootOptions(mcpServerArgs(server)); err == nil && len(args) == 5 && args[0] == "mcp" && args[1] == "--configured-version" && args[3] == "--integration" {
+		// These files can come from a cloned repo and the values reach agent
+		// context, so only a codemap binary with a well-formed stamp counts.
+		command, _ := server["command"].(string)
+		if _, args, err := ParseGlobalRootOptions(mcpServerArgs(server)); err == nil && isLegacyCodemapHookExecutable(command) &&
+			len(args) == 5 && args[0] == "mcp" && args[1] == "--configured-version" && args[3] == "--integration" &&
+			stampedVersionPattern.MatchString(args[2]) && codemapmcp.RepairCommand(args[4]) != "" {
 			entry.ConfiguredVersion, entry.Integration = args[2], args[4]
 		}
 		entries = append(entries, entry)

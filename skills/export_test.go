@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -54,6 +55,41 @@ func TestHostSkillDirsMatchBuiltins(t *testing.T) {
 		for name := range extra {
 			t.Errorf("%s/%s has no source in skills/builtin; delete it or add skills/builtin/%s.md", dir, name, name)
 		}
+	}
+}
+
+func TestInstallHostSkillsRefusesSymlinks(t *testing.T) {
+	dir, outside := t.TempDir(), t.TempDir()
+	victim := filepath.Join(outside, "bashrc")
+	if err := os.WriteFile(victim, []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "explore")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "refactor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, filepath.Join(dir, "refactor", "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+	result, err := InstallHostSkills(dir)
+	if err != nil || strings.Join(result.Skipped, ",") != "explore,refactor" {
+		t.Fatalf("want explore and refactor skipped: %+v, %v", result, err)
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 1 {
+		t.Fatalf("install wrote through a symlinked dir: %v", entries)
+	}
+	if data, _ := os.ReadFile(victim); string(data) != "keep\n" {
+		t.Fatalf("link target was overwritten:\n%s", data)
+	}
+
+	linkedRoot := filepath.Join(t.TempDir(), "skills")
+	if err := os.Symlink(outside, linkedRoot); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := InstallHostSkills(linkedRoot); err != nil || len(result.Written) != 0 {
+		t.Fatalf("symlinked skills root must be skipped: %+v, %v", result, err)
 	}
 }
 
