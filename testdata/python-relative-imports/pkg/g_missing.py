@@ -1,5 +1,5 @@
-from . import does_not_exist
+from .does_not_exist import thing
 
 
 def use():
-    return does_not_exist
+    return thing

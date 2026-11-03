@@ -326,6 +326,7 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 		} else {
 			sourceLanguage := DetectLanguage(a.Path)
 			angleIncludes := angleOnlyIncludes(a.References)
+			pythonMembers := pythonFromMembers(a.References)
 			imports := a.Imports
 			for _, ref := range a.References {
 				if ref.Kind == bashDynamicImport {
@@ -340,9 +341,14 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 				if angleIncludes[imp] {
 					spelled = "<" + imp + ">"
 				}
-				resolved := fuzzyResolveWithWorkspace(
-					spelled, a.Path, idx, fg.Module, fg.PathAliases, fg.BaseURL, jsResolver, dartResolver,
-				)
+				var resolved []string
+				if pythonMembers[imp] {
+					resolved = resolvePythonMember(imp, a.Path, idx)
+				} else {
+					resolved = fuzzyResolveWithWorkspace(
+						spelled, a.Path, idx, fg.Module, fg.PathAliases, fg.BaseURL, jsResolver, dartResolver,
+					)
+				}
 				// A package the nearest package.json declares is external even
 				// when a tsconfig alias would also match it.
 				if !jsResolver.declaresDependency(a.Path, strings.Trim(imp, "\"'`")) {
@@ -845,6 +851,10 @@ func fuzzyResolveWithWorkspace(
 		return resolveBashDynamic(imp, idx)
 	}
 
+	if sourceLanguage == "python" && !strings.HasPrefix(imp, ".") {
+		return resolvePythonModule(imp, fromDir, idx)
+	}
+
 	// Normalize the import path
 	normalized := normalizeImport(imp)
 
@@ -1257,19 +1267,13 @@ func normalizeImport(imp string) string {
 // follows the dots is a dotted module path, where each dot is a directory
 // separator.
 //
-// A bare run of dots ("from . import mod") names the package, not a module;
-// the imported name lives in the import list rather than the path, so it is
-// recovered during extraction. Anything that still arrives here as dots alone
-// resolves to nothing rather than to a guess at which file was meant.
+// A bare run of dots names the package itself, which is its __init__.py.
 func resolvePythonRelative(imp, fromDir string, idx *fileIndex) []string {
 	level := 0
 	for level < len(imp) && imp[level] == '.' {
 		level++
 	}
 	module := imp[level:]
-	if module == "" {
-		return nil
-	}
 
 	targetDir := fromDir
 	for i := 1; i < level; i++ {
@@ -1287,6 +1291,9 @@ func resolvePythonRelative(imp, fromDir string, idx *fileIndex) []string {
 		}
 	}
 
+	if module == "" {
+		return tryExactMatch(filepath.Join(targetDir, "__init__"), idx, "python")
+	}
 	candidate := filepath.FromSlash(strings.ReplaceAll(module, ".", "/"))
 	if targetDir != "" {
 		candidate = filepath.Join(targetDir, candidate)
@@ -1297,6 +1304,52 @@ func resolvePythonRelative(imp, fromDir string, idx *fileIndex) []string {
 	// A package rather than a module: "from .sub import x" where sub/ is a
 	// package directory resolves to its __init__.py.
 	return tryExactMatch(filepath.Join(candidate, "__init__"), idx, "python")
+}
+
+// resolvePythonModule resolves a dotted module path to its module file or
+// package __init__.py. A namespace package has no file, so it resolves to
+// nothing rather than to every file in its directory (#265).
+func resolvePythonModule(module, fromDir string, idx *fileIndex) []string {
+	if strings.HasPrefix(module, ".") {
+		return resolvePythonRelative(module, fromDir, idx)
+	}
+	path := strings.ReplaceAll(module, ".", "/")
+	if files := tryExactMatch(path, idx, "python"); len(files) > 0 {
+		return files
+	}
+	return trySuffixMatch(path, idx, "python")
+}
+
+// resolvePythonMember resolves "from P import name", spelled "P.name" (or
+// ".name" when P is bare dots): the submodule P.name if one exists, otherwise
+// a name defined in P, so P's own file (#266).
+func resolvePythonMember(spec, fromFile string, idx *fileIndex) []string {
+	fromDir := filepath.Dir(fromFile)
+	if fromDir == "." {
+		fromDir = ""
+	}
+	if files := resolvePythonModule(spec, fromDir, idx); len(files) > 0 {
+		return files
+	}
+	i := strings.LastIndex(spec, ".")
+	parent := spec[:i]
+	if strings.Trim(spec[:i+1], ".") == "" {
+		parent = spec[:i+1]
+	}
+	return resolvePythonModule(parent, fromDir, idx)
+}
+
+func pythonFromMembers(refs []ImportReference) map[string]bool {
+	var members map[string]bool
+	for _, ref := range refs {
+		if ref.Kind == pythonFromMember {
+			if members == nil {
+				members = make(map[string]bool)
+			}
+			members[ref.Path] = true
+		}
+	}
+	return members
 }
 
 // resolveRelative handles ./foo and ../bar style imports
