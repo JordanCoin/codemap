@@ -259,6 +259,15 @@ func AnalyzeImpactFromAnalyses(changedFiles []FileInfo, analyses []FileAnalysis)
 
 	usageCounts := make(map[string]int)
 	for _, analysis := range analyses {
+		// One importer counts once per target: "from pkg import a, b" is two
+		// import specs that both reduce to "pkg".
+		counted := make(map[string]bool)
+		count := func(target string) {
+			if !counted[target] {
+				counted[target] = true
+				usageCounts[target]++
+			}
+		}
 		// Check each import to see if it references a changed file
 		for _, imp := range analysis.impactImports() {
 			// Extract the last component of the import path
@@ -268,7 +277,7 @@ func AnalyzeImpactFromAnalyses(changedFiles []FileInfo, analyses []FileAnalysis)
 			// Check if this import matches a changed file (by filename)
 			if changedPath, ok := changedBases[impBase]; ok {
 				if analysis.Path != changedPath {
-					usageCounts[changedPath]++
+					count(changedPath)
 				}
 			}
 
@@ -276,7 +285,7 @@ func AnalyzeImpactFromAnalyses(changedFiles []FileInfo, analyses []FileAnalysis)
 			if changedPath, ok := changedDirs[impBase]; ok {
 				changedDir := filepath.Dir(changedPath)
 				if filepath.Dir(analysis.Path) != changedDir {
-					usageCounts[changedDir+"/"]++
+					count(changedDir + "/")
 				}
 			}
 		}

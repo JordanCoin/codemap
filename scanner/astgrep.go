@@ -637,15 +637,15 @@ func pythonFromImportMembers(language, path, text string) []string {
 	if !found {
 		return nil
 	}
-	// Black wraps a long list across lines inside parentheses, so the names
-	// cannot be read from the first line alone. Strip each line's comment,
-	// then flatten.
+	// Black wraps a long list across lines inside parentheses, and older code
+	// uses a trailing backslash, so the names cannot be read from the first
+	// line alone. Strip each line's comment and continuation, then flatten.
 	var flattened strings.Builder
 	for _, line := range strings.Split(after, "\n") {
 		if idx := strings.Index(line, "#"); idx >= 0 {
 			line = line[:idx]
 		}
-		flattened.WriteString(line)
+		flattened.WriteString(strings.TrimSuffix(strings.TrimRight(line, " \t\r"), `\`))
 		flattened.WriteString(" ")
 	}
 	after = strings.TrimSpace(flattened.String())
@@ -656,8 +656,13 @@ func pythonFromImportMembers(language, path, text string) []string {
 		// "mod as alias" imports the module named before the alias.
 		name, _, _ := strings.Cut(strings.TrimSpace(part), " ")
 		name = strings.TrimSpace(name)
-		if name == "" || name == "*" || !isValidIdentifier(name) {
+		if name == "" {
 			continue
+		}
+		// A star, or a name this parser cannot read, leaves the whole module
+		// as the import rather than a partial list.
+		if !isValidIdentifier(name) {
+			return nil
 		}
 		names = append(names, path+name)
 	}

@@ -119,6 +119,10 @@ type fileIndex struct {
 	cuePackages map[string]string
 	// bashAssigned is filled on first use by bashAssignedVariables.
 	bashAssigned map[string]bool
+	// pythonDirs and pythonRoots are filled on first use by pythonDir and
+	// pythonFromRoot.
+	pythonDirs  map[string]bool
+	pythonRoots map[string]pythonRoot
 	// unfilteredFiles, set when an only list narrowed this index, lists what the
 	// ignore rules and excludes still allow.
 	unfilteredFiles func() ([]FileInfo, error)
@@ -342,17 +346,19 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 					spelled = "<" + imp + ">"
 				}
 				var resolved []string
+				var found bool
 				if pythonMembers[imp] {
-					resolved = resolvePythonMember(imp, a.Path, idx)
+					resolved, found = resolvePythonMember(imp, a.Path, idx)
 				} else {
 					resolved = fuzzyResolveWithWorkspace(
 						spelled, a.Path, idx, fg.Module, fg.PathAliases, fg.BaseURL, jsResolver, dartResolver,
 					)
+					found = len(resolved) > 0 || sourceLanguage == "python" && idx.pythonNamespacePackage(imp, pythonFromDir(a.Path))
 				}
 				// A package the nearest package.json declares is external even
 				// when a tsconfig alias would also match it.
 				if !jsResolver.declaresDependency(a.Path, strings.Trim(imp, "\"'`")) {
-					unresolved.record(sourceLanguage, a.Path, imp, fg.PathAliases, len(resolved) > 0)
+					unresolved.record(sourceLanguage, a.Path, imp, fg.PathAliases, found)
 				}
 				// A Go import names a package, and a package is every non-test
 				// .go file in its directory, so one import fans out to one edge
@@ -1261,20 +1267,19 @@ func normalizeImport(imp string) string {
 	return imp
 }
 
-// resolvePythonRelative resolves a Python relative import. One leading dot
-// means the current package, and each additional dot climbs one package: so
-// from "pkg/sub/user.py", ".mod" is pkg/sub/mod and "..mod" is pkg/mod. What
-// follows the dots is a dotted module path, where each dot is a directory
-// separator.
-//
-// A bare run of dots names the package itself, which is its __init__.py.
-func resolvePythonRelative(imp, fromDir string, idx *fileIndex) []string {
+// pythonModulePath turns a dotted module path into its root-relative path
+// (no extension). One leading dot means the current package, and each
+// additional dot climbs one package: from "pkg/sub/user.py", ".mod" is
+// pkg/sub/mod and "..mod" is pkg/mod. ok is false for a climb past the root.
+func pythonModulePath(module, fromDir string) (string, bool) {
 	level := 0
-	for level < len(imp) && imp[level] == '.' {
+	for level < len(module) && module[level] == '.' {
 		level++
 	}
-	module := imp[level:]
-
+	path := filepath.FromSlash(strings.ReplaceAll(module[level:], ".", "/"))
+	if level == 0 {
+		return path, true
+	}
 	targetDir := fromDir
 	for i := 1; i < level; i++ {
 		// filepath.Dir("") is ".", which normalizes back to "", so an
@@ -1283,27 +1288,37 @@ func resolvePythonRelative(imp, fromDir string, idx *fileIndex) []string {
 		// past the root has to resolve to nothing: the package above the root
 		// is not visible, and guessing produces a fabricated edge.
 		if targetDir == "" {
-			return nil
+			return "", false
 		}
 		targetDir = filepath.Dir(targetDir)
 		if targetDir == "." {
 			targetDir = ""
 		}
 	}
+	return filepath.Join(targetDir, path), true
+}
 
-	if module == "" {
-		return tryExactMatch(filepath.Join(targetDir, "__init__"), idx, "python")
+// resolvePythonRelative resolves a Python relative import (see
+// pythonModulePath). A bare run of dots names the package itself, which is
+// its __init__.py.
+func resolvePythonRelative(imp, fromDir string, idx *fileIndex) []string {
+	candidate, ok := pythonModulePath(imp, fromDir)
+	if !ok {
+		return nil
 	}
-	candidate := filepath.FromSlash(strings.ReplaceAll(module, ".", "/"))
-	if targetDir != "" {
-		candidate = filepath.Join(targetDir, candidate)
+	if strings.Trim(imp, ".") == "" {
+		return tryExactMatch(filepath.Join(candidate, "__init__"), idx, "python")
 	}
-	if files := tryExactMatch(candidate, idx, "python"); len(files) > 0 {
+	return pythonPackageMember(candidate, idx)
+}
+
+// pythonPackageMember resolves a module path to its module file, or to its
+// package __init__.py.
+func pythonPackageMember(path string, idx *fileIndex) []string {
+	if files := tryExactMatch(path, idx, "python"); len(files) > 0 {
 		return files
 	}
-	// A package rather than a module: "from .sub import x" where sub/ is a
-	// package directory resolves to its __init__.py.
-	return tryExactMatch(filepath.Join(candidate, "__init__"), idx, "python")
+	return tryExactMatch(filepath.Join(path, "__init__"), idx, "python")
 }
 
 // resolvePythonModule resolves a dotted module path to its module file or
@@ -1320,23 +1335,102 @@ func resolvePythonModule(module, fromDir string, idx *fileIndex) []string {
 	return trySuffixMatch(path, idx, "python")
 }
 
+// pythonNamespacePackage reports whether module names a project directory
+// that holds Python code but no __init__.py: it resolves, with no file edge.
+func (idx *fileIndex) pythonNamespacePackage(module, fromDir string) bool {
+	path, ok := pythonModulePath(module, fromDir)
+	return ok && idx.pythonDir(path)
+}
+
+// pythonDir reports whether path is a project directory with Python code at
+// or below it.
+func (idx *fileIndex) pythonDir(path string) bool {
+	if path == "" {
+		return false
+	}
+	if idx.pythonDirs == nil {
+		idx.pythonDirs = map[string]bool{}
+		for dir, files := range idx.byDir {
+			if !slices.ContainsFunc(files, func(f string) bool { return DetectLanguage(f) == "python" }) {
+				continue
+			}
+			for ; dir != "" && dir != "." && !idx.pythonDirs[dir]; dir = pathpkg.Dir(dir) {
+				idx.pythonDirs[dir] = true
+			}
+		}
+	}
+	return idx.pythonDirs[filepath.ToSlash(path)]
+}
+
+// pythonRoot is what the P of "from P import name" resolves to: its files
+// (module or __init__.py), or its directory when it is a namespace package.
+type pythonRoot struct {
+	files     []string
+	namespace string
+}
+
+func (idx *fileIndex) pythonFromRoot(parent, fromDir string) pythonRoot {
+	key := parent
+	if strings.HasPrefix(parent, ".") {
+		key = fromDir + "\x00" + parent
+	}
+	if root, ok := idx.pythonRoots[key]; ok {
+		return root
+	}
+	var root pythonRoot
+	if strings.Trim(parent, ".") == "" {
+		root.files = resolvePythonRelative(parent, fromDir, idx)
+	} else {
+		root.files = resolvePythonModule(parent, fromDir, idx)
+	}
+	if len(root.files) == 0 && idx.pythonNamespacePackage(parent, fromDir) {
+		root.namespace, _ = pythonModulePath(parent, fromDir)
+	}
+	if idx.pythonRoots == nil {
+		idx.pythonRoots = map[string]pythonRoot{}
+	}
+	idx.pythonRoots[key] = root
+	return root
+}
+
 // resolvePythonMember resolves "from P import name", spelled "P.name" (or
-// ".name" when P is bare dots): the submodule P.name if one exists, otherwise
-// a name defined in P, so P's own file (#266).
-func resolvePythonMember(spec, fromFile string, idx *fileIndex) []string {
-	fromDir := filepath.Dir(fromFile)
-	if fromDir == "." {
-		fromDir = ""
-	}
-	if files := resolvePythonModule(spec, fromDir, idx); len(files) > 0 {
-		return files
-	}
+// ".name" when P is bare dots). P resolves first; name is then the submodule
+// beside P's __init__.py, or a name defined in P, so P's own file (#266). A
+// submodule is only looked for where P resolved, so a stdlib P cannot pick up
+// a same-named project directory through the suffix match. resolved is true
+// when the import names something in the project, even with no file edge.
+func resolvePythonMember(spec, fromFile string, idx *fileIndex) (files []string, resolved bool) {
+	fromDir := pythonFromDir(fromFile)
 	i := strings.LastIndex(spec, ".")
-	parent := spec[:i]
+	parent, name := spec[:i], spec[i+1:]
 	if strings.Trim(spec[:i+1], ".") == "" {
 		parent = spec[:i+1]
 	}
-	return resolvePythonModule(parent, fromDir, idx)
+	root := idx.pythonFromRoot(parent, fromDir)
+	for _, file := range root.files {
+		if filepath.Base(file) != "__init__.py" {
+			files = append(files, file)
+			continue
+		}
+		dir := filepath.Dir(file)
+		if sub := pythonPackageMember(filepath.Join(dir, name), idx); len(sub) > 0 {
+			files = append(files, sub...)
+		} else if !idx.pythonDir(filepath.Join(dir, name)) {
+			files = append(files, file)
+		}
+	}
+	if root.namespace != "" {
+		files = append(files, pythonPackageMember(filepath.Join(root.namespace, name), idx)...)
+		resolved = idx.pythonDir(filepath.Join(root.namespace, name))
+	}
+	return files, resolved || len(root.files) > 0 || len(files) > 0
+}
+
+func pythonFromDir(fromFile string) string {
+	if dir := filepath.Dir(fromFile); dir != "." {
+		return dir
+	}
+	return ""
 }
 
 func pythonFromMembers(refs []ImportReference) map[string]bool {
