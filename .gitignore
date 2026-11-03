@@ -33,3 +33,8 @@ coverage.out
 
 # Rust prototype build output
 /codemapd/
+
+# Import-accuracy benchmark (bench/): clones, venvs, downloaded binaries and per-repo artifacts
+bench/cache/
+bench/tools/node_modules/
+bench/results/*/

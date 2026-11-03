@@ -33,3 +33,6 @@ clean:
 	rm -f codemap codemap-mcp
 	rm -rf scanner/.grammar-build
 	rm -rf scanner/grammars
+
+bench: ## Import-accuracy benchmark against a released codemap (see bench/README.md)
+	bash bench/run.sh
