@@ -11,7 +11,10 @@ which is the only aggregate that has a single-trial interpretation; per-repo
 rows carry their own intervals. A random sample of disagreeing edges per
 language is drawn with a fixed seed for the spot check.
 
-usage: score.py <manifest.json> <results-dir> <out.json> <out.md> <codemap-version>
+usage: score.py <manifest.json> <results-dir> <out.json> <out.md> <codemap-version> [--lang <lang>]
+
+--lang restricts the report to one language (a partial rerun of one language
+against another codemap build); the output then says so in its heading.
 """
 import json
 import math
@@ -124,11 +127,12 @@ def fmt_ci(t):
     return f"{p:.3f} [{lo:.3f}, {hi:.3f}]"
 
 
-def main(manifest_path, results_dir, out_json, out_md, version):
+def main(manifest_path, results_dir, out_json, out_md, version, only_lang=None):
     manifest = json.load(open(manifest_path))
     rng = random.Random(20261103)
-    report = {"codemap": version, "groups": {}, "spot_check_samples": {}}
-    md = [f"# codemap {version} import-accuracy benchmark results", ""]
+    langs = [l for l in ("go", "typescript", "javascript", "python") if only_lang in (None, l)]
+    report = {"codemap": version, "languages": langs, "groups": {}, "spot_check_samples": {}}
+    md = [f"# codemap {version} import-accuracy benchmark results" + (f" ({only_lang} only)" if only_lang else ""), ""]
     md.append("Scope: in-repo source file to in-repo source file edges, as defined in bench/README.md. "
               "Recall = truth edges codemap found. Precision = codemap edges that are in truth. "
               "95% intervals are Wilson score intervals on the full census (no sampling).")
@@ -137,7 +141,7 @@ def main(manifest_path, results_dir, out_json, out_md, version):
     for group in ("held_out", "tuned"):
         rows = []
         pooled = {}
-        for lang in ("go", "typescript", "javascript", "python"):
+        for lang in langs:
             for repo in manifest["groups"][group].get(lang, []):
                 slug = repo["slug"]
                 status_path = os.path.join(results_dir, slug, "status.json")
@@ -171,7 +175,7 @@ def main(manifest_path, results_dir, out_json, out_md, version):
         md.append("")
     # Spot-check samples: 5 random disagreeing edges per language from the held-out group, mixing FN and FP.
     md += ["## Spot-check samples (held-out, seed 20261103)", "", "Five random disagreeing edges per language, drawn from the pooled false negatives and false positives. Classification is filled in by hand in the PR; this table is the sample.", "", "| lang | kind | repo | source | target |", "|---|---|---|---|---|"]
-    for lang in ("go", "typescript", "javascript", "python"):
+    for lang in langs:
         pool = disagreements.get(("held_out", lang), [])
         fns = [d for d in pool if d[0] == "FN"]
         fps = [d for d in pool if d[0] == "FP"]
@@ -193,6 +197,12 @@ def main(manifest_path, results_dir, out_json, out_md, version):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 6:
-        sys.exit("usage: score.py <manifest.json> <results-dir> <out.json> <out.md> <codemap-version>")
-    main(*sys.argv[1:])
+    argv = sys.argv[1:]
+    only = None
+    if "--lang" in argv:
+        i = argv.index("--lang")
+        only = argv[i + 1]
+        del argv[i:i + 2]
+    if len(argv) != 5:
+        sys.exit("usage: score.py <manifest.json> <results-dir> <out.json> <out.md> <codemap-version> [--lang <lang>]")
+    main(*argv, only_lang=only)

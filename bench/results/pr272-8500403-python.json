@@ -1,0 +1,382 @@
+{
+ "codemap": "PR 272 at 8500403 (dev build)",
+ "languages": [
+  "python"
+ ],
+ "groups": {
+  "held_out": {
+   "repos": [
+    {
+     "sources": 1124,
+     "n_truth": 3831,
+     "n_codemap": 3817,
+     "tp": 3816,
+     "fn": 15,
+     "fp": 1,
+     "codemap_out_of_universe": 0,
+     "fp_workspace_package": 0,
+     "recall": [
+      0.9960845732184808,
+      0.9935495510943496,
+      0.997625714103923
+     ],
+     "precision": [
+      0.9997380141472361,
+      0.9985174074838024,
+      0.9999537515673751
+     ],
+     "meta": {
+      "truth": {
+       "source_files": 1124,
+       "parse_errors": 0,
+       "statements": 5903,
+       "resolved_in_repo": 9667,
+       "unresolved": 2074,
+       "edges": 3831,
+       "python": "3.13.16",
+       "executable": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/venv/yt-dlp__yt-dlp/bin/python",
+       "sys_path_head": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/yt-dlp__yt-dlp",
+       "resolution": "repo root on sys.path, then the virtualenv"
+      },
+      "codemap": {
+       "codemap": "codemap dev",
+       "method": "daemon",
+       "edges": 3817,
+       "seconds": 42.1,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": "partial",
+        "notes": [
+         "Python: 8 of 9658 project-relative imports did not resolve to a file; those edges are missing (yt_dlp/extractor/youtube/jsc/_builtin/bun.py -> yt_dlp.extractor.youtube.jsc._builtin.vendor.load_script, devscripts/lazy_load_template.py -> ..utils.age_restricted, devscripts/lazy_load_template.py -> ..utils.bug_reports_message)"
+        ],
+        "issues": 8
+       },
+       "configured_file_count": 1148,
+       "file_count": 1193,
+       "generation": 1
+      }
+     },
+     "lang": "python",
+     "repo": "yt-dlp/yt-dlp",
+     "sha": "b77c9304e1c4220cca450c583491904daf8455af",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-03T19:14:16Z"
+     }
+    },
+    {
+     "sources": 213,
+     "n_truth": 864,
+     "n_codemap": 876,
+     "tp": 863,
+     "fn": 1,
+     "fp": 13,
+     "codemap_out_of_universe": 0,
+     "fp_workspace_package": 0,
+     "recall": [
+      0.9988425925925926,
+      0.9934733192845275,
+      0.9997956599495068
+     ],
+     "precision": [
+      0.9851598173515982,
+      0.9747760480361077,
+      0.9913070927615094
+     ],
+     "meta": {
+      "truth": {
+       "source_files": 213,
+       "parse_errors": 0,
+       "statements": 1464,
+       "resolved_in_repo": 1063,
+       "unresolved": 1029,
+       "edges": 864,
+       "python": "3.13.16",
+       "executable": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/venv/AUTOMATIC1111__stable-diffusion-webui/bin/python",
+       "sys_path_head": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/AUTOMATIC1111__stable-diffusion-webui",
+       "resolution": "repo root on sys.path, then the virtualenv"
+      },
+      "codemap": {
+       "codemap": "codemap dev",
+       "method": "daemon",
+       "edges": 876,
+       "seconds": 12.0,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": "partial",
+        "notes": [
+         "Python: 12 of 1016 project-relative imports did not resolve to a file; those edges are missing (modules/call_queue.py -> html, extensions-builtin/Lora/ui_edit_user_metadata.py -> html, modules/hypernetworks/hypernetwork.py -> html)"
+        ],
+        "issues": 12
+       },
+       "configured_file_count": 268,
+       "file_count": 306,
+       "generation": 1
+      }
+     },
+     "lang": "python",
+     "repo": "AUTOMATIC1111/stable-diffusion-webui",
+     "sha": "82a973c04367123ae98bd9abdf80d9eda9b910e2",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-03T19:14:35Z"
+     }
+    },
+    {
+     "sources": 673,
+     "n_truth": 2431,
+     "n_codemap": 2432,
+     "tp": 2431,
+     "fn": 0,
+     "fp": 1,
+     "codemap_out_of_universe": 0,
+     "fp_workspace_package": 0,
+     "recall": [
+      1.0,
+      0.9984222960935368,
+      1.0
+     ],
+     "precision": [
+      0.9995888157894737,
+      0.9976744600944046,
+      0.9999274122031551
+     ],
+     "meta": {
+      "truth": {
+       "source_files": 673,
+       "parse_errors": 0,
+       "statements": 9368,
+       "resolved_in_repo": 7034,
+       "unresolved": 4601,
+       "edges": 2431,
+       "python": "3.13.16",
+       "executable": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/venv/github__spec-kit/bin/python",
+       "sys_path_head": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/github__spec-kit",
+       "resolution": "repo root on sys.path, then the virtualenv"
+      },
+      "codemap": {
+       "codemap": "codemap dev",
+       "method": "daemon",
+       "edges": 2439,
+       "seconds": 24.1,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": "partial",
+        "notes": [
+         "Bash: source, . or load with a dynamic argument resolves only when its literal remainder names one shell file (first at extensions/git/scripts/bash/create-new-feature-branch.sh:250, 1 in total): search the file name before treating 0 importers as unused"
+        ],
+        "issues": 0
+       },
+       "configured_file_count": 755,
+       "file_count": 1003,
+       "generation": 1
+      }
+     },
+     "lang": "python",
+     "repo": "github/spec-kit",
+     "sha": "ba8363f8ab56b2da456a81299cfdbfee1ef7b871",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-03T19:15:11Z"
+     }
+    }
+   ],
+   "pooled": {
+    "python": {
+     "n_truth": 7126,
+     "n_codemap": 7125,
+     "tp": 7110,
+     "recall": [
+      0.9977547010945832,
+      0.9963556147738027,
+      0.9986174208696968
+     ],
+     "precision": [
+      0.9978947368421053,
+      0.9965291528839535,
+      0.9987237280958676
+     ]
+    }
+   }
+  },
+  "tuned": {
+   "repos": [
+    {
+     "sources": 275,
+     "n_truth": 856,
+     "n_codemap": 853,
+     "tp": 852,
+     "fn": 4,
+     "fp": 1,
+     "codemap_out_of_universe": 0,
+     "fp_workspace_package": 0,
+     "recall": [
+      0.9953271028037384,
+      0.9880469769426662,
+      0.9981813460127048
+     ],
+     "precision": [
+      0.9988276670574443,
+      0.993389542948415,
+      0.9997930244673554
+     ],
+     "meta": {
+      "truth": {
+       "source_files": 275,
+       "parse_errors": 0,
+       "statements": 3281,
+       "resolved_in_repo": 1493,
+       "unresolved": 1787,
+       "edges": 856,
+       "python": "3.13.16",
+       "executable": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/venv/pytest-dev__pytest/bin/python",
+       "sys_path_head": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/pytest-dev__pytest",
+       "resolution": "repo root on sys.path, then the virtualenv"
+      },
+      "codemap": {
+       "codemap": "codemap dev",
+       "method": "daemon",
+       "edges": 853,
+       "seconds": 15.1,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": "partial",
+        "notes": [
+         "Python: 6 of 1465 project-relative imports did not resolve to a file; those edges are missing (src/_pytest/terminal.py -> _pytest._version, src/_pytest/assertion/rewrite.py -> _pytest._version.version, testing/_py/test_local.py -> py.path.local)"
+        ],
+        "issues": 6
+       },
+       "configured_file_count": 579,
+       "file_count": 640,
+       "generation": 1
+      }
+     },
+     "lang": "python",
+     "repo": "pytest-dev/pytest",
+     "sha": "8b005ed7f972987033ec34dc1e68b0635fb8142b",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-03T19:15:34Z"
+     }
+    },
+    {
+     "sources": 142,
+     "n_truth": 400,
+     "n_codemap": 448,
+     "tp": 400,
+     "fn": 0,
+     "fp": 48,
+     "codemap_out_of_universe": 0,
+     "fp_workspace_package": 0,
+     "recall": [
+      1.0,
+      0.9904877055170676,
+      1.0
+     ],
+     "precision": [
+      0.8928571428571429,
+      0.8608036745309365,
+      0.9182306373525034
+     ],
+     "meta": {
+      "truth": {
+       "source_files": 142,
+       "parse_errors": 0,
+       "statements": 1544,
+       "resolved_in_repo": 671,
+       "unresolved": 876,
+       "edges": 400,
+       "python": "3.13.16",
+       "executable": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/venv/pallets__werkzeug/bin/python",
+       "sys_path_head": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/pallets__werkzeug",
+       "resolution": "repo root on sys.path, then the virtualenv"
+      },
+      "codemap": {
+       "codemap": "codemap dev",
+       "method": "daemon",
+       "edges": 448,
+       "seconds": 9.0,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": null,
+        "notes": null,
+        "issues": 0
+       },
+       "configured_file_count": 237,
+       "file_count": 295,
+       "generation": 1
+      }
+     },
+     "lang": "python",
+     "repo": "pallets/werkzeug",
+     "sha": "2adaad1ab68312fa46efb07ff072b15b720e2444",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-03T19:15:48Z"
+     }
+    }
+   ],
+   "pooled": {
+    "python": {
+     "n_truth": 1256,
+     "n_codemap": 1301,
+     "tp": 1252,
+     "recall": [
+      0.9968152866242038,
+      0.9918399826217855,
+      0.9987608514769662
+     ],
+     "precision": [
+      0.962336664104535,
+      0.9505564487314482,
+      0.9713946372122728
+     ]
+    }
+   }
+  }
+ },
+ "spot_check_samples": {
+  "python": [
+   {
+    "kind": "FN",
+    "repo": "yt-dlp/yt-dlp",
+    "source": "test/testdata/reload_plugins/yt_dlp_plugins/postprocessor/normal.py",
+    "target": "yt_dlp/postprocessor/common.py"
+   },
+   {
+    "kind": "FP",
+    "repo": "AUTOMATIC1111/stable-diffusion-webui",
+    "source": "modules/models/diffusion/uni_pc/sampler.py",
+    "target": "modules/models/diffusion/uni_pc/uni_pc.py"
+   },
+   {
+    "kind": "FN",
+    "repo": "AUTOMATIC1111/stable-diffusion-webui",
+    "source": "modules/sd_samplers_timesteps_impl.py",
+    "target": "modules/models/diffusion/uni_pc/__init__.py"
+   },
+   {
+    "kind": "FP",
+    "repo": "AUTOMATIC1111/stable-diffusion-webui",
+    "source": "extensions-builtin/LDSR/scripts/ldsr_model.py",
+    "target": "extensions-builtin/LDSR/sd_hijack_ddpm_v1.py"
+   },
+   {
+    "kind": "FN",
+    "repo": "yt-dlp/yt-dlp",
+    "source": "yt_dlp/extractor/youtube/jsc/_builtin/vendor/__init__.py",
+    "target": "yt_dlp/extractor/youtube/jsc/_builtin/vendor/_info.py"
+   }
+  ]
+ }
+}
