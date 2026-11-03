@@ -24,6 +24,12 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	os.Setenv("CODEMAP_DAEMON_REGISTRY", dir)
+	// Setup writes Codex config to the user scope by default; keep every test
+	// off the real ~/.codex and ~/.claude even when it forgets to set HOME.
+	for _, name := range []string{"HOME", "USERPROFILE"} {
+		os.Setenv(name, dir)
+	}
+	os.Setenv("CODEX_HOME", dir+"/.codex")
 	code := m.Run()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)

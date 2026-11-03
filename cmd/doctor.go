@@ -160,7 +160,9 @@ func RunDoctor(args []string, defaultRoot string) int {
 		checkScopedFile("Codex hooks", doctorScopesFor(root, *global, codexHooksPath), func(path string) error {
 			return validateHooks(path, recommendedCodexHooks)
 		}, &failures)
-		if codexAvailable && codexHooksErr == nil && validateHooks(codexHooks, recommendedCodexHooks) == nil {
+		userCodexHooks, userCodexHooksErr := codexHooksPath(root, true)
+		if codexAvailable && ((codexHooksErr == nil && validateHooks(codexHooks, recommendedCodexHooks) == nil) ||
+			(userCodexHooksErr == nil && validateHooks(userCodexHooks, recommendedCodexHooks) == nil)) {
 			if err := validateCodexHookTrust(root); err != nil {
 				fmt.Printf("MISS Codex hook trust: %v\n", err)
 				failures++

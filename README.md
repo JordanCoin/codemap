@@ -126,8 +126,8 @@ codemap setup
 `codemap setup` configures the agents it detects: Claude Code when `~/.claude`, `~/.claude.json`, or `claude` on `PATH` exists, Codex when `~/.codex` or `codex` on `PATH` exists, and both when it finds neither. It:
 
 - creates `.codemap/config.json` with auto-detected language filters
-- merges hooks into `.claude/settings.local.json` and `.codex/hooks.json`
-- configures MCP in `.mcp.json` and `.codex/config.toml`
+- merges Claude hooks into `.claude/settings.local.json` and configures MCP in `.mcp.json` (project scope)
+- merges Codex hooks into `~/.codex/hooks.json` and configures MCP in `~/.codex/config.toml` (user scope, since Codex skips a project's `.codex/` until the project is trusted; `--project` writes `.codex/` instead)
 - writes the builtin skills to `.claude/skills/` for Claude, keeping any skill file you edited
 - hooks start and read daemon state at session start
 
@@ -138,7 +138,8 @@ Managed entries record the verified absolute path of the running `codemap`, so a
 ```bash
 codemap setup --agent claude   # one agent only
 codemap setup --agent codex
-codemap setup --global         # user-scope (~/.claude, ~/.codex), applies to every project
+codemap setup --global         # Claude at user scope too (~/.claude), applies to every project
+codemap setup --project        # Codex at project scope (.codex/) instead of ~/.codex
 ```
 
 After a `brew upgrade`, the session-start hook prints one line naming any integration still stamped with the old version and the command that refreshes it.
@@ -387,10 +388,10 @@ The prompt-submit hook classifies intent, surfaces hub-file risk, shows your wor
 
 ### Codex
 
-`codemap setup` configures Codex when it detects it. The plugin is an optional extra that adds the skills to Codex:
+`codemap setup` configures Codex when it detects it. Codex asks you to trust the hooks once from `/hooks`, even at user scope. The plugin is an optional extra that adds the skills to Codex:
 
 ```bash
-codemap setup --agent codex          # project hooks + MCP
+codemap setup --agent codex          # user-scope hooks + MCP in ~/.codex
 codemap plugin install               # optional global plugin (MCP + skills), activated by default
 codemap doctor --agent codex         # validate; reports CLI and Desktop runtimes separately
 ```

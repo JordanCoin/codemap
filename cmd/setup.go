@@ -180,17 +180,22 @@ func RunSetup(args []string, defaultRoot string) int {
 	skipHooks := fs.Bool("no-hooks", false, "Skip writing agent hook settings")
 	skipMCP := fs.Bool("no-mcp", false, "Skip writing agent MCP settings")
 	skipSkills := fs.Bool("no-skills", false, "Skip installing codemap skills for Claude")
+	projectCodex := fs.Bool("project", false, "Write Codex hooks and MCP to this project's .codex/ instead of ~/.codex")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			fmt.Println("Usage: codemap setup [--global] [--agent claude|codex|both] [--no-config] [--no-hooks] [--no-mcp] [--no-skills] [path]")
+			fmt.Println("Usage: codemap setup [--global] [--project] [--agent claude|codex|both] [--no-config] [--no-hooks] [--no-mcp] [--no-skills] [path]")
 			return 0
 		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		fmt.Fprintln(os.Stderr, "Usage: codemap setup [--global] [--agent claude|codex|both] [--no-config] [--no-hooks] [--no-mcp] [--no-skills] [path]")
+		fmt.Fprintln(os.Stderr, "Usage: codemap setup [--global] [--project] [--agent claude|codex|both] [--no-config] [--no-hooks] [--no-mcp] [--no-skills] [path]")
+		return 2
+	}
+	if *useGlobalHooks && *projectCodex {
+		fmt.Fprintln(os.Stderr, "Error: --global and --project are mutually exclusive")
 		return 2
 	}
 	if fs.NArg() > 1 {
-		fmt.Fprintln(os.Stderr, "Usage: codemap setup [--global] [--agent claude|codex|both] [--no-config] [--no-hooks] [--no-mcp] [--no-skills] [path]")
+		fmt.Fprintln(os.Stderr, "Usage: codemap setup [--global] [--project] [--agent claude|codex|both] [--no-config] [--no-hooks] [--no-mcp] [--no-skills] [path]")
 		return 2
 	}
 	selectedAgent := setupAgentBoth
@@ -284,10 +289,15 @@ func RunSetup(args []string, defaultRoot string) int {
 	if *skipSkills {
 		fmt.Println("Skills: skipped (--no-skills)")
 	}
+	// Codex ignores project .codex/ until the project is trusted, so it
+	// defaults to user scope; Claude reads project config right away.
+	codexGlobal := !*projectCodex
 	// A user-scope server serves every project, so it must not pin this one.
-	mcpProjectRoot := absRoot
-	if *useGlobalHooks {
-		mcpProjectRoot = ""
+	mcpRootFor := func(global bool) string {
+		if global {
+			return ""
+		}
+		return absRoot
 	}
 	failed := false
 	if selectedAgent == setupAgentBoth || selectedAgent == setupAgentClaude {
@@ -298,7 +308,7 @@ func RunSetup(args []string, defaultRoot string) int {
 		}
 		if !*skipMCP {
 			if configureMCP("Claude", claudeMCPPath, func(path string) (bool, error) {
-				return ensureClaudeMCPWithExecutable(path, executable, mcpProjectRoot)
+				return ensureClaudeMCPWithExecutable(path, executable, mcpRootFor(*useGlobalHooks))
 			}, absRoot, *useGlobalHooks) != nil {
 				failed = true
 			} else if !*useGlobalHooks {
@@ -312,13 +322,16 @@ func RunSetup(args []string, defaultRoot string) int {
 	if selectedAgent == setupAgentBoth || selectedAgent == setupAgentCodex {
 		if !*skipHooks && configureHooks("Codex", codexHooksPath, func(path string, global bool) (ensureHooksResult, error) {
 			return ensureCodexHooksWithExecutable(path, global, executable)
-		}, absRoot, *useGlobalHooks) != nil {
+		}, absRoot, codexGlobal) != nil {
 			failed = true
 		}
 		if !*skipMCP && configureMCP("Codex", codexConfigPath, func(path string) (bool, error) {
-			return ensureCodexMCPWithExecutable(path, executable, mcpProjectRoot)
-		}, absRoot, *useGlobalHooks) != nil {
+			return ensureCodexMCPWithExecutable(path, executable, mcpRootFor(codexGlobal))
+		}, absRoot, codexGlobal) != nil {
 			failed = true
+		}
+		if codexGlobal && !*useGlobalHooks && (!*skipHooks || !*skipMCP) {
+			fmt.Println("  Codex: configured for your user in ~/.codex (Codex skips a project's .codex/ until the project is trusted); use --project for this project only.")
 		}
 	}
 	if failed {

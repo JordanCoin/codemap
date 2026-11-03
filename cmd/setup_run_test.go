@@ -96,7 +96,7 @@ func TestRunSetupNoMCP(t *testing.T) {
 	}
 
 	out := captureOutput(func() {
-		RunSetup([]string{"--agent", "codex", "--no-config", "--no-mcp", root}, ".")
+		RunSetup([]string{"--agent", "codex", "--project", "--no-config", "--no-mcp", root}, ".")
 	})
 	if !strings.Contains(out, "MCP: skipped (--no-mcp)") {
 		t.Fatalf("expected MCP skip output, got:\n%s", out)
@@ -121,6 +121,10 @@ func TestRunSetupCreatesConfigAndHooks(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	first := captureOutput(func() { RunSetup([]string{root}, ".") })
 	if !strings.Contains(first, "Config: created") || !strings.Contains(first, "Claude hooks: created") || !strings.Contains(first, "Codex hooks: created") {
 		t.Fatalf("unexpected first setup output:\n%s", first)
@@ -133,6 +137,16 @@ func TestRunSetupCreatesConfigAndHooks(t *testing.T) {
 	settingsPath := filepath.Join(root, ".claude", "settings.local.json")
 	if _, err := os.Stat(settingsPath); err != nil {
 		t.Fatalf("expected settings file to exist: %v", err)
+	}
+	// Codex defaults to user scope: it ignores an untrusted project's .codex/.
+	if _, err := os.Stat(filepath.Join(home, ".codex", "hooks.json")); err != nil {
+		t.Fatalf("expected user-scope Codex hooks: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".codex")); !os.IsNotExist(err) {
+		t.Fatalf("default setup must not write project .codex/, err=%v", err)
+	}
+	if data, _ := os.ReadFile(filepath.Join(home, ".codex", "config.toml")); strings.Contains(string(data), "--project-root") {
+		t.Fatalf("user-scope Codex MCP pins a project root:\n%s", data)
 	}
 
 	second := captureOutput(func() { RunSetup([]string{root}, ".") })
