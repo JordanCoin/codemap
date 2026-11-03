@@ -394,17 +394,25 @@ func configureMCP(label string, pathFor func(string, bool) (string, error), ensu
 }
 
 func configureClaudeSkills(root string, global bool) error {
-	base := root
+	base, rel := root, filepath.Join(".claude", "skills")
 	if global {
+		// ~/.claude is the user's own and may be a dotfiles symlink; only a
+		// cloned repo's paths need the strict no-symlink walk.
 		home, err := os.UserHomeDir()
+		if err == nil {
+			err = os.MkdirAll(filepath.Join(home, ".claude"), 0o755)
+		}
+		if err == nil {
+			base, err = filepath.EvalSymlinks(filepath.Join(home, ".claude"))
+		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Claude skills: failed to resolve home directory (%v)\n", err)
+			fmt.Fprintf(os.Stderr, "Claude skills: failed to resolve ~/.claude (%v)\n", err)
 			return err
 		}
-		base = home
+		rel = "skills"
 	}
-	dir := filepath.Join(base, ".claude", "skills")
-	result, err := skills.InstallHostSkills(base, filepath.Join(".claude", "skills"))
+	dir := filepath.Join(base, rel)
+	result, err := skills.InstallHostSkills(base, rel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Claude skills: failed (%v)\n", err)
 		return err

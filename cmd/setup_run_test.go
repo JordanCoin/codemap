@@ -68,6 +68,27 @@ func TestRunSetupInstallsClaudeSkillsIdempotently(t *testing.T) {
 	}
 }
 
+func TestRunSetupGlobalSkillsFollowSymlinkedClaudeHome(t *testing.T) {
+	root, home, dotfiles := t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(dotfiles, filepath.Join(home, ".claude")); err != nil {
+		t.Fatal(err)
+	}
+	out := captureOutput(func() {
+		RunSetup([]string{"--global", "--agent", "claude", "--no-config", "--no-hooks", "--no-mcp", root}, ".")
+	})
+	if !strings.Contains(out, "Claude skills: wrote ") {
+		t.Fatalf("global install refused a symlinked ~/.claude:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(dotfiles, "skills", "hub-safety", "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRunSetupNoMCP(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
