@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Mechanical held-out selection for the import-accuracy benchmark.
+"""First-draft mechanical selection for the import-accuracy benchmark.
+
+Kept as the record of the draft rule described under Disclosure in
+bench/README.md. The pre-registered set in bench/manifest.json was produced
+by the revised rule (topic and pushed-date filters added) recorded there;
+this script is not run by bench/run.sh.
 
 Inputs: bench/selection/candidates-<lang>.json, one GitHub search page per
 language (q = "language:<lang> fork:false archived:false stars:>3000",

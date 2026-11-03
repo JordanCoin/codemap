@@ -40,15 +40,15 @@ The binary is the released asset, as a new user would install it: `codemap-full_
 
 ## Repositories
 
-`bench/manifest.json` is the pre-registered set. It was written by `bench/select.py` from one committed GitHub search page per language (`bench/selection/`, `language:<lang> fork:false archived:false stars:>3000`, sorted by stars, 100 results) and committed before any codemap run, so the history proves the order of events. The rule is mechanical and every candidate's decision is in the manifest's `screen_log`:
+`bench/manifest.json` is the pre-registered set, committed before any codemap run so the history proves the order of events. The rule, recorded verbatim in the manifest, was applied on 2026-11-03 by the maintainer's local session through GitHub search (this cloud session's token cannot run that search, so the resulting list is recorded as given):
 
-1. in star order, skip the tuned list (below)
-2. pin the SHA of the default branch head (`git ls-remote`) and list the tree at that SHA
-3. require the language's toolchain manifest at the root (`go.mod`; `package.json` plus a `tsconfig.json`; `package.json`; `pyproject.toml`, `setup.py` or `setup.cfg`)
-4. require 100 to 3000 source files, counted by extension outside `vendor`, `node_modules`, `third_party`, `dist`, `build`
-5. the first three that pass per language are held out; the next two are alternates, used in order only when a held-out repo's toolchain truth cannot be built, and any substitution is reported in the results
+> For each language L in {go, typescript, javascript, python}: GitHub search `language:L stars:>5000 archived:false fork:false pushed:>2025-11-03`, sorted by stars desc, top 40. Walk in order and take the first 3 that pass: not in the tuned list (ky, excalidraw, trpc, express, eslint, NodeBB, pytest, werkzeug); no GitHub topic in {algorithm, algorithms, education, interview, interview-preparation, awesome, awesome-list, snippets, learning-resources, learn, tutorial, tutorials, roadmap}; git tree not truncated; 100 to 3000 files with the language's extensions (go: .go; ts: .ts/.tsx/.mts/.cts; js: .js/.mjs/.cjs/.jsx; py: .py), excluding node_modules/vendor/dist/build paths; root marker present (go.mod; tsconfig.json; package.json; pyproject.toml or setup.py). SHA = default branch head at selection time.
 
-The **tuned** group (`sindresorhus/ky`, `excalidraw/excalidraw`, `trpc/trpc`, `expressjs/express`, `eslint/eslint`, `NodeBB/NodeBB`, `pytest-dev/pytest`, `pallets/werkzeug`) is the set of repositories earlier codemap fixes were developed against. It is pinned and scored the same way but reported separately and never pooled into the held-out numbers. There is no tuned Go repository.
+**Disclosure.** A first draft of the rule without the topic and pushed-date filters picked algorithm and snippet collections (TheAlgorithms/Python, trekhleb/javascript-algorithms, 30-seconds-of-code) and Vue 2 (unmaintained); the filters were added before codemap ran on any candidate. That draft, its committed search pages, its screen log and its picks are preserved in commit `3e9447d` (`bench/select.py`, `bench/selection/`). Eleven of the twelve final pins match the SHAs that draft screen recorded an hour earlier.
+
+There is **no substitution**: a held-out repo whose toolchain truth cannot be built is reported as truth unavailable with the reason, and nothing is swapped in.
+
+The **tuned** group (`sindresorhus/ky`, `excalidraw/excalidraw`, `trpc/trpc`, `expressjs/express`, `eslint/eslint`, `NodeBB/NodeBB`, `pytest-dev/pytest`, `pallets/werkzeug`) is the set of repositories earlier codemap fixes were developed against, pinned to their default branch heads at selection time. It is scored the same way but reported separately and never pooled into the held-out numbers. There is no tuned Go repository.
 
 ## Spot check
 
@@ -64,6 +64,6 @@ Recorded in each run's `truth.edges.meta.json` and in the results JSON: Go, Node
 - Go truth uses the default build tags; platform-specific files for other OSes are out of scope rather than counted against codemap.
 - TypeScript sources are limited to files some tsconfig includes; scripts outside every tsconfig are not scored.
 - JavaScript dynamic imports with non-literal specifiers are not edges on either side.
-- Python truth needs the repository to install; a repo whose `pip install -e .` fails even with `--no-deps` is skipped and replaced by the next alternate, which the results state.
+- Python truth needs the repository to install; a repo whose `pip install -e .` fails even with `--no-deps` is reported as truth unavailable. Nothing is swapped in.
 - Truth reflects the toolchain's view at the default configuration. A repo whose build depends on code generation that was not run will have unresolvable specifiers; those are not edges in truth, and a codemap edge to a checked-in file with the same name would count as a false positive. The spot check is where such cases are classified.
 - The per-file `--importers` query rebuilds codemap's graph on every call; the benchmark reports wall time but does not benchmark speed.
