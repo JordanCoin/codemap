@@ -16,6 +16,7 @@ import (
 	"codemap/config"
 	"codemap/internal/buildinfo"
 	"codemap/internal/projectpath"
+	"codemap/skills"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -167,6 +168,7 @@ func managedHookCommand(executable string) string {
 // By default it creates:
 //   - <project>/.codemap/config.json (if missing)
 //   - <project>/.claude/settings.local.json codemap hook entries
+//   - <project>/.claude/skills/<name>/SKILL.md for each builtin skill
 //
 // Use --global to target ~/.claude/settings.json for hooks.
 func RunSetup(args []string, defaultRoot string) int {
@@ -177,17 +179,18 @@ func RunSetup(args []string, defaultRoot string) int {
 	skipConfig := fs.Bool("no-config", false, "Skip creating .codemap/config.json")
 	skipHooks := fs.Bool("no-hooks", false, "Skip writing agent hook settings")
 	skipMCP := fs.Bool("no-mcp", false, "Skip writing agent MCP settings")
+	skipSkills := fs.Bool("no-skills", false, "Skip installing codemap skills for Claude")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			fmt.Println("Usage: codemap setup [--global] [--agent claude|codex|both] [--no-config] [--no-hooks] [--no-mcp] [path]")
+			fmt.Println("Usage: codemap setup [--global] [--agent claude|codex|both] [--no-config] [--no-hooks] [--no-mcp] [--no-skills] [path]")
 			return 0
 		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		fmt.Fprintln(os.Stderr, "Usage: codemap setup [--global] [--agent claude|codex|both] [--no-config] [--no-hooks] [--no-mcp] [path]")
+		fmt.Fprintln(os.Stderr, "Usage: codemap setup [--global] [--agent claude|codex|both] [--no-config] [--no-hooks] [--no-mcp] [--no-skills] [path]")
 		return 2
 	}
 	if fs.NArg() > 1 {
-		fmt.Fprintln(os.Stderr, "Usage: codemap setup [--global] [--agent claude|codex|both] [--no-config] [--no-hooks] [--no-mcp] [path]")
+		fmt.Fprintln(os.Stderr, "Usage: codemap setup [--global] [--agent claude|codex|both] [--no-config] [--no-hooks] [--no-mcp] [--no-skills] [path]")
 		return 2
 	}
 	selectedAgent := setupAgentBoth
@@ -278,6 +281,9 @@ func RunSetup(args []string, defaultRoot string) int {
 	if *skipMCP {
 		fmt.Println("MCP: skipped (--no-mcp)")
 	}
+	if *skipSkills {
+		fmt.Println("Skills: skipped (--no-skills)")
+	}
 	failed := false
 	if selectedAgent == setupAgentBoth || selectedAgent == setupAgentClaude {
 		if !*skipHooks && configureHooks("Claude", claudeSettingsPath, func(path string, global bool) (ensureHooksResult, error) {
@@ -293,6 +299,9 @@ func RunSetup(args []string, defaultRoot string) int {
 			} else if !*useGlobalHooks {
 				fmt.Println("  Note: .mcp.json references this machine's codemap path; if the file is committed, teammates should run `codemap setup` after pulling.")
 			}
+		}
+		if !*skipSkills && configureClaudeSkills(absRoot, *useGlobalHooks) != nil {
+			failed = true
 		}
 	}
 	if selectedAgent == setupAgentBoth || selectedAgent == setupAgentCodex {
@@ -375,6 +384,32 @@ func configureMCP(label string, pathFor func(string, bool) (string, error), ensu
 		fmt.Printf("%s MCP: configured (%s)\n", label, path)
 	} else {
 		fmt.Printf("%s MCP: already configured (%s)\n", label, path)
+	}
+	return nil
+}
+
+func configureClaudeSkills(root string, global bool) error {
+	dir := filepath.Join(root, ".claude", "skills")
+	if global {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Claude skills: failed to resolve home directory (%v)\n", err)
+			return err
+		}
+		dir = filepath.Join(home, ".claude", "skills")
+	}
+	result, err := skills.InstallHostSkills(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Claude skills: failed (%v)\n", err)
+		return err
+	}
+	if len(result.Written) == 0 {
+		fmt.Printf("Claude skills: already current (%s, %d skills)\n", dir, len(result.Unchanged))
+	} else {
+		fmt.Printf("Claude skills: wrote %d to %s (%s)\n", len(result.Written), dir, strings.Join(result.Written, ", "))
+	}
+	if len(result.Skipped) > 0 {
+		fmt.Printf("  Skipped %d edited or foreign skill(s), left as is: %s\n", len(result.Skipped), strings.Join(result.Skipped, ", "))
 	}
 	return nil
 }

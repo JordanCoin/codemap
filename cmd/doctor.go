@@ -200,7 +200,7 @@ func doctorCheckLocalCodemapIgnore(root string, failures *int) {
 		*failures++
 		return
 	}
-	fmt.Printf("MISS local Codemap ignore: %s does not ignore %s; repair with `codemap setup --no-hooks --no-mcp --no-config %s`\n", path, ignoreEntry, root)
+	fmt.Printf("MISS local Codemap ignore: %s does not ignore %s; repair with `codemap setup --no-hooks --no-mcp --no-skills --no-config %s`\n", path, ignoreEntry, root)
 	*failures++
 }
 

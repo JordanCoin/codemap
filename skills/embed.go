@@ -1,6 +1,8 @@
 package skills
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"embed"
 	"fmt"
 	"os"
@@ -75,4 +77,63 @@ func ExportHostSkills(dir string) (int, error) {
 		}
 	}
 	return len(builtins), nil
+}
+
+// InstallResult names the skills InstallHostSkills wrote, left as they were,
+// or skipped because someone else's file is in the way.
+type InstallResult struct {
+	Written   []string
+	Unchanged []string
+	Skipped   []string
+}
+
+func generatedSkillMarker(body []byte) string {
+	return fmt.Sprintf("<!-- codemap:generated sha256:%x -->\n", sha256.Sum256(body))
+}
+
+// installedSkillFile is HostSkillFile plus a hash of it, so a later install
+// can tell its own unedited output from a user's edit.
+func installedSkillFile(s Skill) []byte {
+	body := HostSkillFile(s)
+	return append(body, generatedSkillMarker(body)...)
+}
+
+// ownedSkillFile reports whether data is an installed file whose hash still
+// matches its content, whatever codemap version wrote it.
+func ownedSkillFile(data []byte) bool {
+	cut := bytes.LastIndexByte(bytes.TrimSuffix(data, []byte("\n")), '\n')
+	return cut >= 0 && string(data[cut+1:]) == generatedSkillMarker(data[:cut+1])
+}
+
+// InstallHostSkills writes every builtin as <dir>/<name>/SKILL.md, replacing
+// only files codemap wrote and nobody edited.
+func InstallHostSkills(dir string) (InstallResult, error) {
+	var result InstallResult
+	builtins, err := loadBuiltinSkills()
+	if err != nil {
+		return result, err
+	}
+	for _, s := range builtins {
+		target := filepath.Join(dir, s.Meta.Name, "SKILL.md")
+		want := installedSkillFile(s)
+		existing, err := os.ReadFile(target)
+		switch {
+		case err == nil && (bytes.Equal(existing, want) || bytes.Equal(existing, HostSkillFile(s))):
+			result.Unchanged = append(result.Unchanged, s.Meta.Name)
+			continue
+		case err == nil && !ownedSkillFile(existing):
+			result.Skipped = append(result.Skipped, s.Meta.Name)
+			continue
+		case err != nil && !os.IsNotExist(err):
+			return result, err
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return result, err
+		}
+		if err := os.WriteFile(target, want, 0o644); err != nil {
+			return result, err
+		}
+		result.Written = append(result.Written, s.Meta.Name)
+	}
+	return result, nil
 }

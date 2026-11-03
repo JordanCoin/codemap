@@ -14,9 +14,11 @@
 
 ```bash
 brew tap JordanCoin/tap && brew install codemap   # one static binary
-cd your-repo && codemap setup                      # hooks + MCP for Claude Code and Codex
-codemap mcp                                        # stdio MCP server for any other client
+cd your-repo && codemap setup                      # hooks, MCP, and skills for the agents it finds
+codemap doctor                                     # verify the wiring
 ```
+
+Other MCP clients can launch `codemap mcp` (stdio) directly.
 
 After `codemap setup`, the agent gets three answers it cannot get from the source text, at session start, before an edit, and on request.
 
@@ -121,20 +123,25 @@ cd /path/to/your/project
 codemap setup
 ```
 
-`codemap setup` configures Claude Code and Codex by default:
+`codemap setup` configures the agents it detects: Claude Code when `~/.claude`, `~/.claude.json`, or `claude` on `PATH` exists, Codex when `~/.codex` or `codex` on `PATH` exists, and both when it finds neither. It:
 
 - creates `.codemap/config.json` with auto-detected language filters
 - merges hooks into `.claude/settings.local.json` and `.codex/hooks.json`
 - configures MCP in `.mcp.json` and `.codex/config.toml`
+- writes the builtin skills to `.claude/skills/` for Claude, keeping any skill file you edited
 - hooks start and read daemon state at session start
+
+Rerunning setup is safe: it changes only what is missing or stale. `--no-config`, `--no-hooks`, `--no-mcp`, and `--no-skills` skip a piece.
 
 Managed entries record the verified absolute path of the running `codemap`, so agents don't depend on your shell `PATH`. Rerun setup if that path changes.
 
 ```bash
 codemap setup --agent claude   # one agent only
 codemap setup --agent codex
-codemap setup --global         # user-scope, applies to every project
+codemap setup --global         # user-scope (~/.claude, ~/.codex), applies to every project
 ```
+
+After a `brew upgrade`, the session-start hook prints one line naming any integration still stamped with the old version and the command that refreshes it.
 
 ### Verify
 
@@ -364,12 +371,13 @@ The prompt-submit hook classifies intent, surfaces hub-file risk, shows your wor
 
 ### MCP
 
-`codemap mcp` serves 19 tools over stdio:
+`codemap setup` registers the MCP server for each agent; `codemap mcp` serves 19 tools over stdio. When it is registered, hook nudges name the matching tool next to the CLI command, for example `codemap --importers X (MCP: get_importers)`.
 
 | Category | Tools |
 |----------|-------|
 | Structure | `get_structure`, `find`, `find_file`, `get_hubs`, `get_file_context` |
 | Dependencies | `get_dependencies`, `get_importers`, `get_diff` |
+| Topology | `get_topology`, `get_module_context` |
 | Session | `get_working_set`, `get_activity`, `get_handoff` |
 | Daemon | `start_watch`, `stop_watch`, `status` |
 | Skills | `list_skills`, `get_skill` |
@@ -379,11 +387,11 @@ The prompt-submit hook classifies intent, surfaces hub-file risk, shows your wor
 
 ### Codex
 
-`codemap setup` configures Codex alongside Claude. For Codex only:
+`codemap setup` configures Codex when it detects it. The plugin is an optional extra that adds the skills to Codex:
 
 ```bash
 codemap setup --agent codex          # project hooks + MCP
-codemap plugin install               # global plugin (MCP + skills), activated by default
+codemap plugin install               # optional global plugin (MCP + skills), activated by default
 codemap doctor --agent codex         # validate; reports CLI and Desktop runtimes separately
 ```
 

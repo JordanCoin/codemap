@@ -46,6 +46,28 @@ func TestRunSetupNoConfigNoHooks(t *testing.T) {
 	}
 }
 
+func TestRunSetupInstallsClaudeSkillsIdempotently(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"--agent", "claude", "--no-config", "--no-hooks", "--no-mcp", root}
+	out := captureOutput(func() { RunSetup(args, ".") })
+	if !strings.Contains(out, "Claude skills: wrote ") {
+		t.Fatalf("expected skills install, got:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".claude", "skills", "hub-safety", "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+	if out := captureOutput(func() { RunSetup(args, ".") }); !strings.Contains(out, "Claude skills: already current") {
+		t.Fatalf("rerun should be a no-op, got:\n%s", out)
+	}
+	out = captureOutput(func() { RunSetup(append([]string{"--no-skills"}, args...), ".") })
+	if !strings.Contains(out, "Skills: skipped (--no-skills)") || strings.Contains(out, "Claude skills:") {
+		t.Fatalf("--no-skills ignored:\n%s", out)
+	}
+}
+
 func TestRunSetupNoMCP(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {

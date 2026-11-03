@@ -424,6 +424,10 @@ func hookSessionStart(root string) error {
 	maxHubs := projCfg.HubDisplayLimit()
 
 	showConfigSetupHint(root)
+	if line := integrationDriftLine(hostCodemapMCPEntries(root, detectAgentID())); line != "" {
+		fmt.Println(line)
+		fmt.Println()
+	}
 
 	exe, err := os.Executable()
 	if err == nil {
@@ -959,7 +963,7 @@ func hookPromptSubmit(root string) error {
 		}
 	}
 
-	showNextCodemapSteps(intent, info)
+	showNextCodemapSteps(root, intent, info)
 
 	showRouteSuggestions(prompt, projCfg, topK)
 
@@ -1049,7 +1053,7 @@ func showMatchedSkills(root string, intent TaskIntent) {
 	for i, r := range refs {
 		names[i] = r.Name
 	}
-	fmt.Printf("Skills matched: %s — run `codemap skill show <name>` for guidance\n", strings.Join(names, ", "))
+	fmt.Printf("Skills matched: %s — run `codemap skill show <name>`%s for guidance\n", strings.Join(names, ", "), mcpToolHint(root)("codemap skill show <name>"))
 	for _, r := range refs {
 		if r.Name == "config-setup" && strings.HasPrefix(r.Reason, "config:") {
 			fmt.Println("🛑 Codemap setup is not finished. Before continuing the user's task: run `codemap skill show config-setup`, tune .codemap/config.json, rerun `codemap .`, then proceed.")
@@ -1063,16 +1067,17 @@ type codemapNextStep struct {
 	Reason  string
 }
 
-func showNextCodemapSteps(intent TaskIntent, info *hubInfo) {
+func showNextCodemapSteps(root string, intent TaskIntent, info *hubInfo) {
 	steps := planCodemapNextSteps(intent, info)
 	if len(steps) == 0 {
 		return
 	}
 
+	hint := mcpToolHint(root)
 	fmt.Println()
 	fmt.Println("Next codemap:")
 	for _, step := range steps {
-		fmt.Printf("   • %s — %s\n", step.Command, step.Reason)
+		fmt.Printf("   • %s%s — %s\n", step.Command, hint(step.Command), step.Reason)
 	}
 }
 
@@ -1243,7 +1248,7 @@ func showConfigSetupHint(root string) {
 	for _, reason := range assessment.Reasons {
 		fmt.Printf("   • %s\n", reason)
 	}
-	fmt.Println("Run now: codemap skill show config-setup")
+	fmt.Println("Run now: codemap skill show config-setup" + mcpToolHint(root)("codemap skill show config-setup"))
 	fmt.Println()
 }
 
@@ -2268,12 +2273,12 @@ func checkFileImportersWithPhase(root, filePath, phase string) error {
 		fmt.Println()
 	}
 
-	showFileCodemapActions(filePath, len(importers), len(hubImports) > 0, phase)
+	showFileCodemapActions(root, filePath, len(importers), len(hubImports) > 0, phase)
 
 	return nil
 }
 
-func showFileCodemapActions(filePath string, importerCount int, importsHub bool, phase string) {
+func showFileCodemapActions(root, filePath string, importerCount int, importsHub bool, phase string) {
 	steps := []codemapNextStep{
 		{
 			Command: "codemap --importers " + shellQuoteIfNeeded(filePath),
@@ -2299,8 +2304,9 @@ func showFileCodemapActions(filePath string, importerCount int, importsHub bool,
 	default:
 		fmt.Println("   Next codemap:")
 	}
+	hint := mcpToolHint(root)
 	for _, step := range steps {
-		fmt.Printf("   • %s — %s\n", step.Command, step.Reason)
+		fmt.Printf("   • %s%s — %s\n", step.Command, hint(step.Command), step.Reason)
 	}
 	fmt.Println()
 }

@@ -56,3 +56,36 @@ func TestHostSkillDirsMatchBuiltins(t *testing.T) {
 		}
 	}
 }
+
+// TestInstallHostSkillsKeepsUserEdits: setup refreshes only files it wrote
+// and nobody edited, and a rerun is a no-op.
+func TestInstallHostSkillsKeepsUserEdits(t *testing.T) {
+	dir := t.TempDir()
+	first, err := InstallHostSkills(dir)
+	if err != nil || len(first.Written) < 7 || len(first.Skipped) != 0 {
+		t.Fatalf("first install: %+v, %v", first, err)
+	}
+	again, err := InstallHostSkills(dir)
+	if err != nil || len(again.Written) != 0 || len(again.Unchanged) != len(first.Written) {
+		t.Fatalf("rerun is not idempotent: %+v, %v", again, err)
+	}
+
+	edited := filepath.Join(dir, "explore", "SKILL.md")
+	userText := []byte("---\nname: explore\ndescription: mine\n---\n\nmy notes\n")
+	if err := os.WriteFile(edited, userText, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// An unedited file from an older codemap still carries a matching hash.
+	old := []byte("---\nname: refactor\ndescription: old\n---\n\nold body\n")
+	if err := os.WriteFile(filepath.Join(dir, "refactor", "SKILL.md"), append(old, generatedSkillMarker(old)...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	third, err := InstallHostSkills(dir)
+	if err != nil || len(third.Skipped) != 1 || third.Skipped[0] != "explore" || len(third.Written) != 1 || third.Written[0] != "refactor" {
+		t.Fatalf("want explore skipped and refactor refreshed: %+v, %v", third, err)
+	}
+	if data, _ := os.ReadFile(edited); !bytes.Equal(data, userText) {
+		t.Fatalf("user-edited skill was clobbered:\n%s", data)
+	}
+}

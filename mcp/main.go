@@ -131,15 +131,8 @@ func (options RuntimeOptions) upgradeGuidance() string {
 		return ""
 	}
 
-	var repairCommand string
-	switch options.Integration {
-	case IntegrationClaudeSetup:
-		repairCommand = "codemap setup --agent claude"
-	case IntegrationCodexSetup:
-		repairCommand = "codemap setup --agent codex"
-	case IntegrationCodexPlugin:
-		repairCommand = "codemap plugin install"
-	default:
+	repairCommand := RepairCommand(options.Integration)
+	if repairCommand == "" {
 		return ""
 	}
 
@@ -149,6 +142,20 @@ func (options RuntimeOptions) upgradeGuidance() string {
 		buildinfo.Current(),
 		repairCommand,
 	)
+}
+
+// RepairCommand names the command that rewrites a managed integration entry,
+// or "" for an unknown integration.
+func RepairCommand(integration string) string {
+	switch integration {
+	case IntegrationClaudeSetup:
+		return "codemap setup --agent claude"
+	case IntegrationCodexSetup:
+		return "codemap setup --agent codex"
+	case IntegrationCodexPlugin:
+		return "codemap plugin install"
+	}
+	return ""
 }
 
 // Input types for tools
