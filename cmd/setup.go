@@ -394,16 +394,17 @@ func configureMCP(label string, pathFor func(string, bool) (string, error), ensu
 }
 
 func configureClaudeSkills(root string, global bool) error {
-	dir := filepath.Join(root, ".claude", "skills")
+	base := root
 	if global {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Claude skills: failed to resolve home directory (%v)\n", err)
 			return err
 		}
-		dir = filepath.Join(home, ".claude", "skills")
+		base = home
 	}
-	result, err := skills.InstallHostSkills(dir)
+	dir := filepath.Join(base, ".claude", "skills")
+	result, err := skills.InstallHostSkills(base, filepath.Join(".claude", "skills"))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Claude skills: failed (%v)\n", err)
 		return err

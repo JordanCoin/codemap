@@ -59,37 +59,49 @@ func TestHostSkillDirsMatchBuiltins(t *testing.T) {
 }
 
 func TestInstallHostSkillsRefusesSymlinks(t *testing.T) {
-	dir, outside := t.TempDir(), t.TempDir()
+	base, outside := t.TempDir(), t.TempDir()
 	victim := filepath.Join(outside, "bashrc")
 	if err := os.WriteFile(victim, []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(base, ".claude", "skills")
+	if err := os.MkdirAll(filepath.Join(dir, "refactor"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(outside, filepath.Join(dir, "explore")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(dir, "refactor"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.Symlink(victim, filepath.Join(dir, "refactor", "SKILL.md")); err != nil {
 		t.Fatal(err)
 	}
-	result, err := InstallHostSkills(dir)
-	if err != nil || strings.Join(result.Skipped, ",") != "explore,refactor" {
-		t.Fatalf("want explore and refactor skipped: %+v, %v", result, err)
+	result, err := InstallHostSkills(base, filepath.Join(".claude", "skills"))
+	if err != nil || strings.Join(result.Skipped, ",") != "explore,refactor" || len(result.Written) == 0 {
+		t.Fatalf("want explore and refactor skipped, the rest written: %+v, %v", result, err)
 	}
+
+	// A symlinked skills root or any ancestor below base, such as .claude itself.
+	for _, link := range []string{"skills", ".claude"} {
+		other := t.TempDir()
+		if link == "skills" {
+			if err := os.MkdirAll(filepath.Join(other, ".claude"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			link = filepath.Join(".claude", "skills")
+		}
+		if err := os.Symlink(outside, filepath.Join(other, link)); err != nil {
+			t.Fatal(err)
+		}
+		result, err := InstallHostSkills(other, filepath.Join(".claude", "skills"))
+		if err != nil || len(result.Written) != 0 || len(result.Skipped) < 7 {
+			t.Fatalf("symlinked %s must skip every skill: %+v, %v", link, result, err)
+		}
+	}
+
 	if entries, _ := os.ReadDir(outside); len(entries) != 1 {
-		t.Fatalf("install wrote through a symlinked dir: %v", entries)
+		t.Fatalf("install wrote through a symlink: %v", entries)
 	}
 	if data, _ := os.ReadFile(victim); string(data) != "keep\n" {
 		t.Fatalf("link target was overwritten:\n%s", data)
-	}
-
-	linkedRoot := filepath.Join(t.TempDir(), "skills")
-	if err := os.Symlink(outside, linkedRoot); err != nil {
-		t.Fatal(err)
-	}
-	if result, err := InstallHostSkills(linkedRoot); err != nil || len(result.Written) != 0 {
-		t.Fatalf("symlinked skills root must be skipped: %+v, %v", result, err)
 	}
 }
 
@@ -97,11 +109,11 @@ func TestInstallHostSkillsRefusesSymlinks(t *testing.T) {
 // and nobody edited, and a rerun is a no-op.
 func TestInstallHostSkillsKeepsUserEdits(t *testing.T) {
 	dir := t.TempDir()
-	first, err := InstallHostSkills(dir)
+	first, err := InstallHostSkills(dir, ".")
 	if err != nil || len(first.Written) < 7 || len(first.Skipped) != 0 {
 		t.Fatalf("first install: %+v, %v", first, err)
 	}
-	again, err := InstallHostSkills(dir)
+	again, err := InstallHostSkills(dir, ".")
 	if err != nil || len(again.Written) != 0 || len(again.Unchanged) != len(first.Written) {
 		t.Fatalf("rerun is not idempotent: %+v, %v", again, err)
 	}
@@ -117,7 +129,7 @@ func TestInstallHostSkillsKeepsUserEdits(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	third, err := InstallHostSkills(dir)
+	third, err := InstallHostSkills(dir, ".")
 	if err != nil || len(third.Skipped) != 1 || third.Skipped[0] != "explore" || len(third.Written) != 1 || third.Written[0] != "refactor" {
 		t.Fatalf("want explore skipped and refactor refreshed: %+v, %v", third, err)
 	}

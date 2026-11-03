@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"embed"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -105,67 +106,96 @@ func ownedSkillFile(data []byte) bool {
 	return cut >= 0 && string(data[cut+1:]) == generatedSkillMarker(data[:cut+1])
 }
 
-// InstallHostSkills writes every builtin as <dir>/<name>/SKILL.md, replacing
-// only files codemap wrote and nobody edited.
-func InstallHostSkills(dir string) (InstallResult, error) {
+// InstallHostSkills writes every builtin as <base>/<rel>/<name>/SKILL.md,
+// replacing only files codemap wrote and nobody edited. A repo controls every
+// path below base, so all access goes through an os.Root and any symlinked
+// component skips that skill instead of writing through it.
+func InstallHostSkills(base, rel string) (InstallResult, error) {
 	var result InstallResult
 	builtins, err := loadBuiltinSkills()
 	if err != nil {
 		return result, err
 	}
-	// A repo can ship any of these paths as a symlink to a file outside it.
-	rootLinked := isSymlink(dir)
+	root, err := os.OpenRoot(base)
+	if err != nil {
+		return result, err
+	}
+	defer root.Close()
 	for _, s := range builtins {
-		target := filepath.Join(dir, s.Meta.Name, "SKILL.md")
-		if rootLinked || isSymlink(filepath.Dir(target)) || isSymlink(target) {
+		switch state, err := installSkill(root, filepath.Join(rel, s.Meta.Name), s); {
+		case err != nil:
 			result.Skipped = append(result.Skipped, s.Meta.Name)
-			continue
-		}
-		want := installedSkillFile(s)
-		existing, err := os.ReadFile(target)
-		switch {
-		case err == nil && (bytes.Equal(existing, want) || bytes.Equal(existing, HostSkillFile(s))):
+		case state == "written":
+			result.Written = append(result.Written, s.Meta.Name)
+		case state == "unchanged":
 			result.Unchanged = append(result.Unchanged, s.Meta.Name)
-			continue
-		case err == nil && !ownedSkillFile(existing):
+		default:
 			result.Skipped = append(result.Skipped, s.Meta.Name)
-			continue
-		case err != nil && !os.IsNotExist(err):
-			return result, err
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return result, err
-		}
-		if err := writeFileViaRename(target, want); err != nil {
-			return result, err
-		}
-		result.Written = append(result.Written, s.Meta.Name)
 	}
 	return result, nil
 }
 
-func isSymlink(path string) bool {
-	info, err := os.Lstat(path)
-	return err == nil && info.Mode()&os.ModeSymlink != 0
+func installSkill(root *os.Root, dir string, s Skill) (string, error) {
+	// ponytail: os.Root has no Rename/MkdirAll before Go 1.25, so each
+	// component is Lstat-checked here; switch to root.MkdirAll/Rename then.
+	prefix := ""
+	for _, part := range strings.Split(filepath.Clean(dir), string(filepath.Separator)) {
+		prefix = filepath.Join(prefix, part)
+		info, err := root.Lstat(prefix)
+		switch {
+		case os.IsNotExist(err):
+			if err := root.Mkdir(prefix, 0o755); err != nil {
+				return "", err
+			}
+		case err != nil:
+			return "", err
+		case info.Mode()&os.ModeSymlink != 0 || !info.IsDir():
+			return "", fmt.Errorf("%s is not a plain directory", prefix)
+		}
+	}
+	target := filepath.Join(dir, "SKILL.md")
+	want := installedSkillFile(s)
+	if info, err := root.Lstat(target); err == nil {
+		if !info.Mode().IsRegular() {
+			return "", fmt.Errorf("%s is not a regular file", target)
+		}
+		existing, err := readRootFile(root, target)
+		if err != nil {
+			return "", err
+		}
+		if bytes.Equal(existing, want) || bytes.Equal(existing, HostSkillFile(s)) {
+			return "unchanged", nil
+		}
+		if !ownedSkillFile(existing) {
+			return "skipped", nil
+		}
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+
+	tmp := filepath.Join(dir, fmt.Sprintf(".SKILL.md.tmp-%d", os.Getpid()))
+	file, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return "", err
+	}
+	defer root.Remove(tmp)
+	if _, err := file.Write(want); err != nil {
+		file.Close()
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		return "", err
+	}
+	base := root.Name()
+	return "written", os.Rename(filepath.Join(base, tmp), filepath.Join(base, target))
 }
 
-// writeFileViaRename replaces path itself, never a file a symlink points at.
-func writeFileViaRename(path string, data []byte) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".SKILL.md.tmp-")
+func readRootFile(root *os.Root, name string) ([]byte, error) {
+	file, err := root.Open(name)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(0o644); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), path)
+	defer file.Close()
+	return io.ReadAll(file)
 }
