@@ -41,7 +41,7 @@ func hostCodemapMCPEntries(root, agent string) []hostMCPEntry {
 		command, _ := server["command"].(string)
 		if _, args, err := ParseGlobalRootOptions(mcpServerArgs(server)); err == nil && isLegacyCodemapHookExecutable(command) &&
 			len(args) == 5 && args[0] == "mcp" && args[1] == "--configured-version" && args[3] == "--integration" &&
-			stampedVersionPattern.MatchString(args[2]) && codemapmcp.RepairCommand(args[4]) != "" {
+			stampedVersionPattern.MatchString(args[2]) && codemapmcp.RepairCommand(args[4], false) != "" {
 			entry.ConfiguredVersion, entry.Integration = args[2], args[4]
 		}
 		entries = append(entries, entry)
@@ -63,10 +63,11 @@ func hostCodemapMCPEntries(root, agent string) []hostMCPEntry {
 	}
 
 	if agent == "codex" {
+		codexUserConfig, _ := codexConfigPath(root, true)
 		for _, scope := range []struct {
 			path   string
 			global bool
-		}{{filepath.Join(root, ".codex", "config.toml"), false}, {filepath.Join(home, ".codex", "config.toml"), true}} {
+		}{{filepath.Join(root, ".codex", "config.toml"), false}, {codexUserConfig, true}} {
 			data, err := os.ReadFile(scope.path)
 			if err != nil {
 				continue
@@ -128,7 +129,7 @@ func mcpToolHint(root string) func(command string) string {
 // codemap version, or "" when every entry matches the running binary.
 func integrationDriftLine(entries []hostMCPEntry) string {
 	for _, entry := range entries {
-		repair := codemapmcp.RepairCommand(entry.Integration)
+		repair := codemapmcp.RepairCommand(entry.Integration, !entry.Global)
 		if entry.ConfiguredVersion == "" || repair == "" || buildinfo.Equal(entry.ConfiguredVersion, buildinfo.Current()) {
 			continue
 		}

@@ -29,7 +29,7 @@ func TestMain(m *testing.M) {
 	for _, name := range []string{"HOME", "USERPROFILE"} {
 		os.Setenv(name, dir)
 	}
-	os.Setenv("CODEX_HOME", dir+"/.codex")
+	os.Unsetenv("CODEX_HOME")
 	code := m.Run()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)

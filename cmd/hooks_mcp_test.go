@@ -67,6 +67,12 @@ func TestIntegrationDriftLineNamesRepairCommand(t *testing.T) {
 	if line := integrationDriftLine(hostCodemapMCPEntries(root, "claude")); line != "" {
 		t.Fatalf("non-codemap command produced a drift line: %q", line)
 	}
+	// Setup writes Codex at user scope by default, so a stale project entry
+	// needs --project or the line would repeat forever.
+	project := []hostMCPEntry{{Path: "x", Integration: "codex-setup", ConfiguredVersion: "0.0.1"}}
+	if line := integrationDriftLine(project); !strings.Contains(line, "`codemap setup --agent codex --project`") {
+		t.Fatalf("project codex drift line: %q", line)
+	}
 	global := []hostMCPEntry{{Path: "x", Global: true, Integration: "claude-setup", ConfiguredVersion: "0.0.1"}}
 	if line := integrationDriftLine(global); !strings.Contains(line, "`codemap setup --agent claude --global`") {
 		t.Fatalf("global drift line: %q", line)
