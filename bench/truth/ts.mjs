@@ -5,7 +5,13 @@
 //
 // Scope (see bench/README.md):
 //   sources  = every file listed by some tsconfig.json in the repo (outside
-//              node_modules), excluding .d.ts files
+//              node_modules), excluding .d.ts files. A file listed by more
+//              than one tsconfig is resolved under each of them and the
+//              edges are unioned: every configuration that compiles the file
+//              resolves its imports, and a monorepo's root tsconfig (with
+//              `paths` to package sources) and a package's own tsconfig
+//              (resolving through node_modules to built declarations) can
+//              legitimately disagree.
 //   edges    = import declarations, export ... from, import x = require(),
 //              require("literal") calls and import("literal") calls whose
 //              specifier the compiler resolves to an in-repo file that is not
@@ -74,8 +80,13 @@ function specifiers(sf) {
 
 const sources = new Set();
 const edges = new Set();
-const stats = { configs: configs.length, parsed_files: 0, specifiers: 0, resolved_in_repo: 0, unresolved: 0, config_errors: [] };
-const seenFile = new Map(); // file -> options used (first config wins for reporting only)
+// Specifiers the compiler resolved to an in-repo declaration file (.d.ts),
+// typically a workspace package's built `types` entry. Not edges (a .d.ts is
+// not a source file), but recorded so the scorer can label codemap edges
+// that resolve the same import to the package's source instead.
+const dtsResolutions = new Set();
+const stats = { configs: configs.length, parsed_files: 0, file_config_pairs: 0, specifiers: 0, resolved_in_repo: 0, unresolved: 0, config_errors: [] };
+const parsedOnce = new Set();
 
 for (const cfgPath of configs) {
   const cfgDir = path.dirname(cfgPath);
@@ -95,20 +106,20 @@ for (const cfgPath of configs) {
     const rel = inRepo(fileName);
     if (rel === null || isDts(rel)) continue;
     if (!/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/.test(rel)) continue;
-    if (seenFile.has(rel)) continue;
-    seenFile.set(rel, cfgPath);
     sources.add(rel);
     let text;
     try { text = fs.readFileSync(fileName, "utf8"); } catch { continue; }
     const sf = ts.createSourceFile(fileName, text, options.target ?? ts.ScriptTarget.Latest, true);
-    stats.parsed_files++;
+    stats.file_config_pairs++;
+    if (!parsedOnce.has(rel)) { parsedOnce.add(rel); stats.parsed_files++; }
     for (const spec of specifiers(sf)) {
       stats.specifiers++;
       const r = ts.resolveModuleName(spec, fileName, options, host, cache);
       const rm = r.resolvedModule;
       if (!rm) { stats.unresolved++; continue; }
       const dst = inRepo(rm.resolvedFileName);
-      if (dst === null || isDts(dst) || dst === rel) continue;
+      if (dst !== null && isDts(dst)) { dtsResolutions.add(`${rel}\t${dst}`); continue; }
+      if (dst === null || dst === rel) continue;
       edges.add(`${rel}\t${dst}`);
       stats.resolved_in_repo++;
     }
@@ -117,6 +128,7 @@ for (const cfgPath of configs) {
 
 fs.writeFileSync(outPath, [...edges].sort().map((e) => e + "\n").join(""));
 fs.writeFileSync(outPath + ".files", [...sources].sort().map((f) => f + "\n").join(""));
-const meta = { ...stats, source_files: sources.size, edges: edges.size, typescript: ts.version, node: process.version };
+fs.writeFileSync(outPath + ".dts", [...dtsResolutions].sort().map((e) => e + "\n").join(""));
+const meta = { ...stats, source_files: sources.size, edges: edges.size, dts_resolutions: dtsResolutions.size, typescript: ts.version, node: process.version };
 fs.writeFileSync(outPath + ".meta.json", JSON.stringify(meta, null, 1));
 console.log(JSON.stringify(meta));

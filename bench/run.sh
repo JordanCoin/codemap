@@ -19,15 +19,17 @@ BENCH_CACHE="${BENCH_CACHE:-$HERE/cache}"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 2)}"
 MANIFEST="$HERE/manifest.json"
 RESULTS="$HERE/results"
-GROUPS="held_out tuned"
+BENCH_GROUPS="held_out tuned"
 ONLY_REPO=""
 ONLY_LANG=""
+METHOD="${METHOD:-daemon}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --group) GROUPS="$2"; shift 2 ;;
+    --group) BENCH_GROUPS="$2"; shift 2 ;;
     --repo) ONLY_REPO="$2"; shift 2 ;;
     --lang) ONLY_LANG="$2"; shift 2 ;;
+    --method) METHOD="$2"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -73,14 +75,22 @@ clone_at() { # url sha dest
 }
 
 install_node_deps() { # repo-dir -> 0 on success
+  # The package manager named by the repo's lockfile is fetched from the npm
+  # registry with npx (corepack's shims download yarn/pnpm from
+  # repo.yarnpkg.com, which some networks block). Scripts never run.
   local dir="$1"
-  if [ -f "$dir/pnpm-lock.yaml" ]; then
-    (cd "$dir" && corepack enable >/dev/null 2>&1 || true; COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm install --frozen-lockfile --ignore-scripts >/dev/null 2>&1)
+  export COREPACK_ENABLE_DOWNLOAD_PROMPT=0 COREPACK_ENABLE_STRICT=0
+  if [ -f "$dir/bun.lock" ] || [ -f "$dir/bun.lockb" ]; then
+    (cd "$dir" && bun install --frozen-lockfile --ignore-scripts >/dev/null 2>&1)
+  elif [ -f "$dir/pnpm-lock.yaml" ]; then
+    local pm; pm="$(sed -n 's/.*"packageManager": *"\(pnpm@[0-9.]*\)".*/\1/p' "$dir/package.json" | head -1)"
+    (cd "$dir" && npx --yes "${pm:-pnpm@10}" install --frozen-lockfile --ignore-scripts >/dev/null 2>&1)
   elif [ -f "$dir/yarn.lock" ]; then
     if grep -q '__metadata' "$dir/yarn.lock"; then
-      (cd "$dir" && corepack enable >/dev/null 2>&1 || true; YARN_ENABLE_SCRIPTS=false COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack yarn install --immutable >/dev/null 2>&1)
+      local yv; yv="$(sed -n 's/.*"packageManager": *"yarn@\([0-9.]*\).*/\1/p' "$dir/package.json" | head -1)"
+      (cd "$dir" && YARN_ENABLE_SCRIPTS=false npx --yes --package="@yarnpkg/cli-dist@${yv:-4}" yarn install --immutable >/dev/null 2>&1)
     else
-      (cd "$dir" && corepack enable >/dev/null 2>&1 || true; COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack yarn@1 install --frozen-lockfile --ignore-scripts --non-interactive >/dev/null 2>&1)
+      (cd "$dir" && npx --yes yarn@1.22.22 install --frozen-lockfile --ignore-scripts --non-interactive >/dev/null 2>&1)
     fi
   elif [ -f "$dir/package-lock.json" ]; then
     (cd "$dir" && npm ci --ignore-scripts --no-audit --no-fund --silent >/dev/null 2>&1)
@@ -123,34 +133,38 @@ run_repo() { # group lang repo url sha slug
     python)
       local venv="$BENCH_CACHE/venv/$slug"
       [ -x "$venv/bin/python" ] || python3 -m venv "$venv"
-      if ! "$venv/bin/pip" install -q -e "$dir" > "$out/install.log" 2>&1; then
-        log "$repo: pip install -e . failed, retrying with --no-deps"
-        if "$venv/bin/pip" install -q --no-deps -e "$dir" >> "$out/install.log" 2>&1; then
-          echo '{"dependency_install":"no-deps"}' > "$out/install.json"
-        else
-          echo '{"dependency_install":"failed"}' > "$out/install.json"; ok=0
-        fi
-      else
+      if "$venv/bin/pip" install -q -e "$dir" > "$out/install.log" 2>&1; then
         echo '{"dependency_install":"ok"}' > "$out/install.json"
+      elif "$venv/bin/pip" install -q --no-deps -e "$dir" >> "$out/install.log" 2>&1; then
+        log "$repo: pip install -e . failed, installed with --no-deps"
+        echo '{"dependency_install":"no-deps"}' > "$out/install.json"
+      else
+        # Not a package (an application run from its root); the truth generator
+        # always has the repo root first on sys.path, so resolution still works.
+        log "$repo: not pip-installable; resolving from the repo root only"
+        echo '{"dependency_install":"failed"}' > "$out/install.json"
       fi
-      [ $ok = 1 ] && { "$venv/bin/python" -I "$HERE/truth/py_walk.py" "$dir" "$out/truth.edges" > "$out/truth.log" 2>&1 || ok=0; } ;;
+      "$venv/bin/python" -I "$HERE/truth/py_walk.py" "$dir" "$out/truth.edges" > "$out/truth.log" 2>&1 || ok=0 ;;
   esac
   if [ $ok != 1 ] || [ ! -s "$out/truth.edges.files" ]; then
     write_status "$out" skipped "toolchain truth unavailable (see truth.log)"; return 0
   fi
   log "$repo: truth $(wc -l < "$out/truth.edges") edges over $(wc -l < "$out/truth.edges.files") files in $((SECONDS - t0))s"
 
-  log "$repo: codemap --json --importers per file ($JOBS jobs, default config)"
+  log "$repo: codemap edges via $METHOD (default config)"
   t0=$SECONDS
-  if ! python3 -I "$HERE/codemap_edges.py" "$CODEMAP" "$dir" "$out/truth.edges.files" "$out/codemap.edges" "$JOBS" > "$out/codemap.log" 2>&1; then
-    write_status "$out" skipped "codemap run failed (see codemap.log)"; return 0
+  if ! python3 -I "$HERE/codemap_edges.py" "$CODEMAP" "$dir" "$out/truth.edges.files" "$out/codemap.edges" "$JOBS" --method "$METHOD" > "$out/codemap.log" 2>&1; then
+    # codemap produced no graph: scored as zero edges, with the reason.
+    : > "$out/codemap.edges"
+    reason="$(grep -o 'RuntimeError: .*' "$out/codemap.log" | tail -1 | cut -c15- | tr -d '"' | cut -c1-300)"
+    write_status "$out" codemap_failed "${reason:-see codemap.log}"; return 0
   fi
   log "$repo: codemap $(wc -l < "$out/codemap.edges") edges in $((SECONDS - t0))s"
   write_status "$out" ok ""
 }
 
 # ---------------------------------------------------------------- main
-for group in $GROUPS; do
+for group in $BENCH_GROUPS; do
   for lang in go typescript javascript python; do
     [ -n "$ONLY_LANG" ] && [ "$ONLY_LANG" != "$lang" ] && continue
     python3 -c "

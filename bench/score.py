@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Score codemap's edges against toolchain truth, per repository.
 
-Scope is applied identically to both sides: an edge counts only if its source
-is in the truth generator's source-file list and its target is an in-repo
-file with one of the language's target extensions (see bench/README.md).
+Scope is applied identically to both sides: an edge counts only if both its
+source and its target are in the truth generator's file universe and the
+target carries one of the language's target extensions (see bench/README.md).
 
 Metrics per repo: n_truth, n_codemap, tp, fn, fp, recall, precision, and
 95% Wilson score intervals. Aggregates per group are pooled (sum of counts),
@@ -57,8 +57,10 @@ def read_lines(path):
 
 
 def in_scope(edge, sources, exts):
+    """Both endpoints must be in the truth generator's file universe, and the
+    target must carry one of the language's target extensions."""
     src, dst = edge
-    return src in sources and dst.endswith(exts) and not dst.endswith(".d.ts") and "node_modules" not in dst.split("/")
+    return src in sources and dst in sources and dst.endswith(exts) and not dst.endswith(".d.ts") and "node_modules" not in dst.split("/")
 
 
 def score_repo(lang, slug, results_dir):
@@ -68,10 +70,36 @@ def score_repo(lang, slug, results_dir):
     codemap = read_edges(os.path.join(base, "codemap.edges"))
     exts = TARGET_EXTS[lang]
     truth = {e for e in truth if in_scope(e, sources, exts)}
+    # codemap edges whose source is in scope but whose target the toolchain
+    # does not consider part of the build (for Go: files excluded by build
+    # constraints on this platform). Scoped out, but reported.
+    codemap_out = {e for e in codemap if e[0] in sources and not in_scope(e, sources, exts)}
     codemap = {e for e in codemap if in_scope(e, sources, exts)}
     tp = truth & codemap
     fn = truth - codemap
     fp = codemap - truth
+    # TypeScript/JavaScript: false positives where the compiler resolved an
+    # import from the same source file to a built declaration file (.d.ts)
+    # inside a package directory and codemap's target lies in that package.
+    # Reported separately as "fp via workspace package" so the reader can see
+    # how much of the precision gap is this one disagreement.
+    fp_workspace = set()
+    dts_path = os.path.join(base, "truth.edges.dts")
+    if os.path.exists(dts_path):
+        pkg_roots = {}
+        for line in open(dts_path):
+            line = line.rstrip("\n")
+            if not line:
+                continue
+            src, dts = line.split("\t", 1)
+            parts = dts.split("/")
+            root_parts = parts[:parts.index("dist")] if "dist" in parts else parts[:-1]
+            pkg_roots.setdefault(src, set()).add("/".join(root_parts) + "/" if root_parts else "")
+        for s_, t_ in fp:
+            for root in pkg_roots.get(s_, ()):
+                if root == "" or t_.startswith(root):
+                    fp_workspace.add((s_, t_))
+                    break
     recall = wilson(len(tp), len(truth))
     precision = wilson(len(tp), len(codemap))
     meta = {}
@@ -83,6 +111,8 @@ def score_repo(lang, slug, results_dir):
         "sources": len(sources),
         "n_truth": len(truth), "n_codemap": len(codemap),
         "tp": len(tp), "fn": len(fn), "fp": len(fp),
+        "codemap_out_of_universe": len(codemap_out),
+        "fp_workspace_package": len(fp_workspace),
         "recall": recall, "precision": precision,
         "fn_edges": sorted(fn), "fp_edges": sorted(fp),
         "meta": meta,
@@ -112,7 +142,7 @@ def main(manifest_path, results_dir, out_json, out_md, version):
                 slug = repo["slug"]
                 status_path = os.path.join(results_dir, slug, "status.json")
                 status = json.load(open(status_path)) if os.path.exists(status_path) else {"status": "missing"}
-                if status.get("status") != "ok":
+                if status.get("status") not in ("ok", "codemap_failed"):
                     rows.append({"lang": lang, "repo": repo["repo"], "sha": repo["sha"], "status": status})
                     continue
                 r = score_repo(lang, slug, results_dir)
@@ -128,12 +158,13 @@ def main(manifest_path, results_dir, out_json, out_md, version):
             agg["precision"] = wilson(agg["tp"], agg["n_codemap"])
         report["groups"][group] = {"repos": [{k: v for k, v in row.items() if k not in ("fn_edges", "fp_edges")} for row in rows], "pooled": pooled}
         title = "Held-out (pre-registered, never used to tune codemap)" if group == "held_out" else "Tuned (repos earlier fixes were tuned on; reported separately, never in headline numbers)"
-        md += [f"## {title}", "", "| lang | repo | sha | sources | n truth | n codemap | tp | fn | fp | recall [95% CI] | precision [95% CI] |", "|---|---|---|---:|---:|---:|---:|---:|---:|---|---|"]
+        md += [f"## {title}", "", "| lang | repo | sha | sources | n truth | n codemap | tp | fn | fp | recall [95% CI] | precision [95% CI] | fp via workspace package | codemap edges to out-of-universe targets |", "|---|---|---|---:|---:|---:|---:|---:|---:|---|---|---:|---:|"]
         for row in rows:
-            if row["status"].get("status") != "ok":
-                md.append(f"| {row['lang']} | {row['repo']} | {row['sha'][:12]} | | | | | | | skipped: {row['status'].get('reason', row['status'].get('status'))} | |")
+            if row["status"].get("status") not in ("ok", "codemap_failed"):
+                md.append(f"| {row['lang']} | {row['repo']} | {row['sha'][:12]} | | | | | | | truth unavailable: {row['status'].get('reason', row['status'].get('status'))} | | | |")
                 continue
-            md.append(f"| {row['lang']} | {row['repo']} | {row['sha'][:12]} | {row['sources']} | {row['n_truth']} | {row['n_codemap']} | {row['tp']} | {row['fn']} | {row['fp']} | {fmt_ci(row['recall'])} | {fmt_ci(row['precision'])} |")
+            label = row['repo'] if row["status"].get("status") == "ok" else f"{row['repo']} (codemap produced no graph: {row['status'].get('reason','')})"
+            md.append(f"| {row['lang']} | {label} | {row['sha'][:12]} | {row['sources']} | {row['n_truth']} | {row['n_codemap']} | {row['tp']} | {row['fn']} | {row['fp']} | {fmt_ci(row['recall'])} | {fmt_ci(row['precision'])} | {row['fp_workspace_package']} | {row['codemap_out_of_universe']} |")
         md += ["", "Pooled per language (counts summed across the group's repos):", "", "| lang | n truth | n codemap | tp | recall [95% CI] | precision [95% CI] |", "|---|---:|---:|---:|---|---|"]
         for lang, agg in pooled.items():
             md.append(f"| {lang} | {agg['n_truth']} | {agg['n_codemap']} | {agg['tp']} | {fmt_ci(agg['recall'])} | {fmt_ci(agg['precision'])} |")
