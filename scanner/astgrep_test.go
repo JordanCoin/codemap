@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -85,6 +86,7 @@ func TestAstGrepAnalyzer(t *testing.T) {
 import (
 	"fmt"
 	"os"
+	"os/exec"
 )
 
 func main() {
@@ -925,5 +927,135 @@ func TestScanDirectorySkipsMinifiedFiles(t *testing.T) {
 	source := outcome.Sources[0]
 	if source.Status != ScanSourceAuthoritative || !strings.Contains(source.Detail, "bundle.cjs") {
 		t.Fatalf("source = %#v, want authoritative with a note naming bundle.cjs", source)
+	}
+}
+
+// recordAstGrepCommands swaps the exec seam for one that records every argv
+// and runs a harmless command printing "[]" in its place.
+func recordAstGrepCommands(t *testing.T) *[][]string {
+	t.Helper()
+	var calls [][]string
+	prev := execCommandContext
+	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		if slices.Contains(args, "--version") {
+			return exec.CommandContext(ctx, name, args...)
+		}
+		calls = append(calls, append([]string{name}, args...))
+		if runtime.GOOS == "windows" {
+			return exec.CommandContext(ctx, "cmd.exe", "/c", "echo []")
+		}
+		return exec.CommandContext(ctx, "sh", "-c", "echo '[]'")
+	}
+	t.Cleanup(func() { execCommandContext = prev })
+	return &calls
+}
+
+// hostileScanRoot holds files whose names cmd.exe would execute or expand.
+func hostileScanRoot(t *testing.T) (string, []string) {
+	t.Helper()
+	names := []string{"x&calc.ts", "y%PATH%.ts", "z^w.ts", "-dash.ts"}
+	if runtime.GOOS != "windows" {
+		names = append(names, `q"r.ts`)
+	}
+	root := t.TempDir()
+	for _, name := range names {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("export {};\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root, names
+}
+
+// A cmd shim with no resolvable native ast-grep scans "." in one pass: no
+// repository path may reach the cmd.exe command line.
+func TestCmdShimScanKeepsRepoPathsOffCmdLine(t *testing.T) {
+	prevGOOS := goos
+	goos = "windows"
+	t.Cleanup(func() { goos = prevGOOS })
+	calls := recordAstGrepCommands(t)
+	root, names := hostileScanRoot(t)
+	shim := filepath.Join(t.TempDir(), "ast-grep.cmd")
+	if err := os.WriteFile(shim, []byte("@echo off\r\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := &AstGrepScanner{binary: shim}
+	t.Cleanup(s.Close)
+
+	outcome, err := s.ScanDirectory(context.Background(), root)
+	if err != nil {
+		t.Fatalf("ScanDirectory() error = %v", err)
+	}
+	if len(*calls) == 0 {
+		t.Fatal("ast-grep was never invoked")
+	}
+	for _, call := range *calls {
+		if call[0] != "cmd.exe" {
+			t.Fatalf("argv %q: want every call through cmd.exe for an unresolved shim", call)
+		}
+		for _, arg := range call {
+			for _, name := range names {
+				if strings.Contains(arg, strings.TrimSuffix(name, ".ts")) {
+					t.Fatalf("repo path %q reached the cmd.exe line: %q", name, call)
+				}
+			}
+		}
+	}
+	if detail := outcome.Sources[0].Detail; !strings.Contains(detail, "cmd.exe shim") {
+		t.Fatalf("detail = %q, want the one-pass shim note", detail)
+	}
+}
+
+// A cmd shim whose native target resolves runs that binary directly, so the
+// batched paths go to it after "--" and never through cmd.exe.
+func TestCmdShimResolvesToNativeBinary(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake native binary is a shell script")
+	}
+	prevGOOS := goos
+	goos = "windows"
+	t.Cleanup(func() { goos = prevGOOS })
+	binDir := t.TempDir()
+	native := filepath.Join(binDir, "node_modules", "@ast-grep", "cli-win32-x64-msvc", "ast-grep.exe")
+	if err := os.MkdirAll(filepath.Dir(native), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(native, []byte("#!/bin/sh\necho ast-grep 0.42.0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	shim := filepath.Join(binDir, "ast-grep.cmd")
+	if err := os.WriteFile(shim, []byte("@ECHO off\r\n\"%dp0%\\node_modules\\@ast-grep\\cli-win32-x64-msvc\\ast-grep.exe\" %*\r\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveCmdShimTarget(shim); got != native {
+		t.Fatalf("resolveCmdShimTarget = %q, want %q", got, native)
+	}
+
+	calls := recordAstGrepCommands(t)
+	root, names := hostileScanRoot(t)
+	s := &AstGrepScanner{binary: shim}
+	t.Cleanup(s.Close)
+	if _, err := s.ScanDirectory(context.Background(), root); err != nil {
+		t.Fatalf("ScanDirectory() error = %v", err)
+	}
+	var scan []string
+	for _, call := range *calls {
+		if call[0] == "cmd.exe" {
+			t.Fatalf("argv %q went through cmd.exe", call)
+		}
+		if slices.Contains(call, "scan") {
+			scan = call
+		}
+	}
+	if scan == nil || scan[0] != native {
+		t.Fatalf("scan argv = %q, want the native binary", scan)
+	}
+	sep := slices.Index(scan, "--")
+	if sep < 0 {
+		t.Fatalf("scan argv = %q, want -- before the paths", scan)
+	}
+	for _, name := range names {
+		if i := slices.Index(scan, name); i <= sep {
+			t.Fatalf("path %q at argv index %d, want it after -- (index %d)", name, i, sep)
+		}
 	}
 }

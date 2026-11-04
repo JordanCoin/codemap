@@ -95,16 +95,21 @@ func extractJSONArray(data []byte) []byte {
 // astGrepCommand builds the exec.Cmd for an ast-grep binary path. Windows
 // cmd/bat shims (created by `npm install -g @ast-grep/cli`) cannot be
 // executed by CreateProcess directly, so they are wrapped in cmd.exe /c.
+// cmd.exe parses every argument it carries, so scan paths taken from the
+// repository must never ride on that line (see scanDirectory).
 func astGrepCommand(ctx context.Context, path string, args ...string) *exec.Cmd {
-	if runtime.GOOS == "windows" {
-		switch strings.ToLower(filepath.Ext(path)) {
-		case ".cmd", ".bat":
-			wrapped := append([]string{"/c", path}, args...)
-			return exec.CommandContext(ctx, "cmd.exe", wrapped...)
-		}
+	if isWindowsCmdShim(path) {
+		wrapped := append([]string{"/c", path}, args...)
+		return execCommandContext(ctx, "cmd.exe", wrapped...)
 	}
-	return exec.CommandContext(ctx, path, args...)
+	return execCommandContext(ctx, path, args...)
 }
+
+// Test seams: tests record argv and exercise the Windows shim path anywhere.
+var (
+	execCommandContext = exec.CommandContext
+	goos               = runtime.GOOS
+)
 
 func isAstGrepBinary(path string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -122,7 +127,7 @@ func isAstGrepBinary(path string) bool {
 // run through cmd.exe and cannot reliably carry long multi-line arguments
 // such as --inline-rules.
 func isWindowsCmdShim(path string) bool {
-	if runtime.GOOS != "windows" {
+	if goos != "windows" {
 		return false
 	}
 	switch strings.ToLower(filepath.Ext(path)) {
@@ -131,6 +136,45 @@ func isWindowsCmdShim(path string) bool {
 	}
 	return false
 }
+
+// resolveCmdShimTarget finds the native ast-grep an npm cmd shim launches:
+// the quoted %dp0% path in the shim, or the platform package's executable
+// under the shim's node_modules. It returns "" when neither is a working
+// ast-grep, and the caller keeps scan paths off the cmd.exe line.
+func resolveCmdShimTarget(shim string) string {
+	dir := filepath.Dir(shim)
+	var candidates []string
+	if data, err := os.ReadFile(shim); err == nil {
+		for _, m := range cmdShimTargetPattern.FindAllStringSubmatch(string(data), -1) {
+			target := filepath.Join(dir, filepath.FromSlash(strings.ReplaceAll(m[1], `\`, "/")))
+			candidates = append(candidates, target, target+".exe")
+		}
+	}
+	for _, pattern := range []string{
+		filepath.Join(dir, "node_modules", "@ast-grep", "cli-*", "*.exe"),
+		filepath.Join(dir, "node_modules", "@ast-grep", "cli", "node_modules", "@ast-grep", "cli-*", "*.exe"),
+	} {
+		matches, _ := filepath.Glob(pattern)
+		candidates = append(candidates, matches...)
+	}
+	for _, candidate := range candidates {
+		switch strings.ToLower(filepath.Ext(candidate)) {
+		case ".cmd", ".bat", ".js", ".ps1":
+			continue
+		}
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && isAstGrepBinary(candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+// cmdShimTargetPattern captures the shim-relative path in npm cmd-shim's
+// `"%dp0%\node_modules\..."` (or older `"%~dp0\..."`) launch line.
+var cmdShimTargetPattern = regexp.MustCompile(`"%~?dp0%?\\?([^"%]+)"`)
+
+// cmdMetachars are the characters cmd.exe interprets on a command line.
+const cmdMetachars = "&|<>^%()!\""
 
 // ensureShimRules materializes the embedded rules into a temp directory once
 // so the scan can pass a short --config path instead of the multi-line
@@ -289,11 +333,8 @@ const astGrepMaxLineBytes = 16 << 10
 
 // astGrepBatchArgBytes bounds the file paths one ast-grep invocation takes,
 // well under ARG_MAX and Windows' 32 KiB command line (the inline rules
-// share it); a cmd.exe shim is capped at 8 KiB in total.
-var (
-	astGrepBatchArgBytes     = 16 << 10
-	astGrepShimBatchArgBytes = 4 << 10
-)
+// share it).
+var astGrepBatchArgBytes = 16 << 10
 
 // ScanDirectory analyzes all files in a directory while honoring caller
 // cancellation and recording ast-grep provenance. Files are scanned in
@@ -359,20 +400,15 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) (ast
 		inlineRules = strings.Join(rules, "\n---\n")
 	}
 
-	args := []string{"scan", "--json"}
-	batchBytes := astGrepBatchArgBytes
-	if isWindowsCmdShim(s.binary) {
-		// cmd.exe shims mangle long multi-line arguments, so pass a short
-		// --config path to materialized rules instead of --inline-rules.
-		rulesDir, err := s.ensureShimRules()
-		if err != nil {
-			return astGrepScan{}, newIncompleteScanError("ast-grep", ScanSourceFailed, fmt.Sprintf("failed to materialize rules for cmd shim: %v", err), err)
+	binary := s.binary
+	if isWindowsCmdShim(binary) {
+		if target := resolveCmdShimTarget(binary); target != "" {
+			binary = target
+		} else {
+			return s.scanThroughCmdShim(parent, root)
 		}
-		args = append(args, "--config", filepath.Join(rulesDir, "sgconfig.yml"))
-		batchBytes = astGrepShimBatchArgBytes
-	} else {
-		args = append(args, "--inline-rules", inlineRules)
 	}
+	args := []string{"scan", "--json", "--inline-rules", inlineRules}
 
 	// The file walker's inventory is the scan set, so ast-grep sees exactly
 	// what `codemap .` calls project source: hidden directories included,
@@ -400,13 +436,13 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) (ast
 		scan.notes = append(scan.notes, fmt.Sprintf("ast-grep skipped %d minified or generated files (a line over %d KiB); their edges are not in the graph (%s)", len(minified), astGrepMaxLineBytes>>10, strings.Join(minified[:min(3, len(minified))], ", ")))
 	}
 
-	batches := batchPaths(paths, batchBytes)
+	batches := batchPaths(paths, astGrepBatchArgBytes)
 	var matches []ScanMatch
 	var firstErr *IncompleteScanError
 	var unscanned []string
 	failed := 0
 	for _, batch := range batches {
-		batchMatches, err := s.runAstGrepBatch(parent, root, args, batch)
+		batchMatches, err := runAstGrepBatch(parent, root, binary, args, batch)
 		if err != nil {
 			var incomplete *IncompleteScanError
 			if !errors.As(err, &incomplete) {
@@ -491,14 +527,63 @@ func batchPaths(paths []string, limit int) [][]string {
 	return batches
 }
 
+// scanThroughCmdShim is the pre-#269 single pass over "." for a cmd.exe
+// shim whose native ast-grep could not be found: no repository path goes on
+// the cmd.exe line, so there is no batching and no minified-file skip. A
+// nested repository whose path cmd.exe would parse is left unexcluded.
+func (s *AstGrepScanner) scanThroughCmdShim(parent context.Context, root string) (astGrepScan, error) {
+	// cmd.exe shims mangle long multi-line arguments, so pass a short
+	// --config path to materialized rules instead of --inline-rules.
+	rulesDir, err := s.ensureShimRules()
+	if err != nil {
+		return astGrepScan{}, newIncompleteScanError("ast-grep", ScanSourceFailed, fmt.Sprintf("failed to materialize rules for cmd shim: %v", err), err)
+	}
+	// ast-grep skips dot-directories by default; --no-ignore hidden turns
+	// that off, so .git and codemap's never-source names are re-excluded.
+	args := []string{"scan", "--json", "--config", filepath.Join(rulesDir, "sgconfig.yml"), "--no-ignore", "hidden"}
+	for _, name := range hiddenScanExcludes() {
+		args = append(args, "--globs", "!**/"+name+"/**")
+	}
+	var unsafe []string
+	for _, repo := range findNestedGitRepos(root) {
+		repo = filepath.ToSlash(repo)
+		if strings.ContainsAny(repo, cmdMetachars) {
+			unsafe = append(unsafe, repo)
+			continue
+		}
+		args = append(args, "--globs", "!"+repo+"/**")
+	}
+	matches, err := runAstGrepBatch(parent, root, s.binary, args, []string{"."})
+	if err != nil {
+		return astGrepScan{}, err
+	}
+	scan := astGrepScan{analyses: analysesFromMatches(root, matches)}
+	scan.notes = append(scan.notes, "ast-grep ran through a cmd.exe shim whose native binary was not found, so it scanned in one pass with no time-budget batching or minified-file skip")
+	if len(unsafe) > 0 {
+		scan.notes = append(scan.notes, fmt.Sprintf("nested repositories with cmd.exe metacharacters in their path were scanned as project source (%s)", strings.Join(unsafe[:min(3, len(unsafe))], ", ")))
+	}
+	return scan, nil
+}
+
+// hiddenScanExcludes lists IgnoredDirs (.git, vendor trees, build output,
+// caches, .codemap) for the shim pass, which walks with --no-ignore hidden.
+func hiddenScanExcludes() []string {
+	names := make([]string, 0, len(IgnoredDirs))
+	for name := range IgnoredDirs {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
 // runAstGrepBatch scans one batch of root-relative paths under its own
 // astGrepScanTimeout.
-func (s *AstGrepScanner) runAstGrepBatch(parent context.Context, root string, args, paths []string) ([]ScanMatch, error) {
+func runAstGrepBatch(parent context.Context, root, binary string, args, paths []string) ([]ScanMatch, error) {
 	ctx, cancel := context.WithTimeout(parent, astGrepScanTimeout)
 	defer cancel()
 
 	// "--" keeps a path that starts with a dash from reading as a flag.
-	cmd := astGrepCommand(ctx, s.binary, append(append(slices.Clone(args), "--"), paths...)...)
+	cmd := astGrepCommand(ctx, binary, append(append(slices.Clone(args), "--"), paths...)...)
 	cmd.Dir = root
 	cmd.WaitDelay = 100 * time.Millisecond
 	out, err := cmd.Output()
