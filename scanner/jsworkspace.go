@@ -527,9 +527,15 @@ func (pkg *jsWorkspacePackage) resolveTarget(target string, idx *fileIndex, sour
 		return nil
 	}
 	sourcePath := cleanRepoPath(filepath.Join(repoPath(pkg.root), filepath.FromSlash(pkg.sourceRoot), relative))
+	stem := sourcePath
 	for _, extension := range []string{".mjs", ".cjs", ".jsx", ".js"} {
-		sourcePath = strings.TrimSuffix(sourcePath, extension)
+		stem = strings.TrimSuffix(stem, extension)
 	}
+	if files := tryExactMatch(stem, idx, sourceLanguage); len(files) > 0 {
+		return files
+	}
+	// Extensionless probing skips .mjs/.cjs, so dist/x.mjs reaches src/x.mjs
+	// (or x.mts through the emit swap) only by its own extension.
 	return tryExactMatch(sourcePath, idx, sourceLanguage)
 }
 

@@ -239,8 +239,11 @@ var extToLang = map[string]string{
 	".js":    "javascript",
 	".jsx":   "javascript",
 	".mjs":   "javascript",
+	".cjs":   "javascript",
 	".ts":    "typescript",
 	".tsx":   "typescript",
+	".mts":   "typescript",
+	".cts":   "typescript",
 	".rs":    "rust",
 	".rb":    "ruby",
 	".c":     "c",
@@ -344,10 +347,16 @@ func ResolverExtensions() []string {
 	return slices.Clone(resolverExtensions)
 }
 
+// explicitOnlyExtensions resolve only when the specifier names them: Node never
+// appends .mjs/.cjs to an extensionless path, nor TypeScript .mts/.cts.
+var explicitOnlyExtensions = map[string]bool{".mjs": true, ".cjs": true, ".mts": true, ".cts": true}
+
 func buildResolverExtensions() []string {
 	var exts []string
 	for ext := range extToLang {
-		exts = append(exts, ext)
+		if !explicitOnlyExtensions[ext] {
+			exts = append(exts, ext)
+		}
 	}
 	// Sort by length descending, then alphabetically for stability
 	sort.Slice(exts, func(i, j int) bool {

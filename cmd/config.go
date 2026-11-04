@@ -229,14 +229,19 @@ func initProjectConfig(root string) (configInitResult, error) {
 		entries = append(entries, extEntry{Ext: ext, Count: count})
 	}
 	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Count > entries[j].Count
+		if entries[i].Count != entries[j].Count {
+			return entries[i].Count > entries[j].Count
+		}
+		return entries[i].Ext < entries[j].Ext
 	})
 
+	// The top five by count bound the list, but a source extension the
+	// scanner parses is never cut: dropping a minority one (a few .mjs files
+	// in a .js repo) silently loses its files and their import edges.
 	for i, e := range entries {
-		if i >= 5 {
-			break
+		if i < 5 || scanner.IsSourceExt("."+e.Ext) {
+			result.TopExts = append(result.TopExts, e.Ext)
 		}
-		result.TopExts = append(result.TopExts, e.Ext)
 	}
 
 	// Mode is written explicitly: an init that looked for noise is a

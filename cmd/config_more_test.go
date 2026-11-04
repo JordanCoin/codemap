@@ -3,9 +3,12 @@ package cmd
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -259,5 +262,54 @@ func TestEnsureProjectConfigKeepsFreshCloneClean(t *testing.T) {
 	}
 	if !gitIgnoresCodemap(t, clone) {
 		t.Fatal("git does not ignore .codemap after auto-init")
+	}
+}
+
+func TestInitProjectConfigKeepsMinoritySourceExtension(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 6; i++ {
+		n := strconv.Itoa(i)
+		mustWriteConfigFixture(t, filepath.Join(root, "src", "mod"+n+".js"), "export const x = 1\n")
+		mustWriteConfigFixture(t, filepath.Join(root, "tools", "t"+n+".py"), "print('ok')\n")
+		mustWriteConfigFixture(t, filepath.Join(root, "conf", "c"+n+".yaml"), "a: 1\n")
+		mustWriteConfigFixture(t, filepath.Join(root, "bin", "s"+n+".sh"), "echo ok\n")
+		mustWriteConfigFixture(t, filepath.Join(root, "conf", "c"+n+".toml"), "a = 1\n")
+	}
+	mustWriteConfigFixture(t, filepath.Join(root, "scripts", "build.mjs"), "export default 1\n")
+	mustWriteConfigFixture(t, filepath.Join(root, "scripts", "release.mjs"), "export default 2\n")
+	mustWriteConfigFixture(t, filepath.Join(root, "notes", "a.rst"), "notes\n")
+
+	result, err := initProjectConfig(root)
+	if err != nil {
+		t.Fatalf("initProjectConfig: %v", err)
+	}
+	if !slices.Contains(result.TopExts, "mjs") {
+		t.Fatalf("TopExts = %v, want it to include mjs", result.TopExts)
+	}
+	if slices.Contains(result.TopExts, "rst") {
+		t.Fatalf("TopExts = %v, non-source minority extension rst should stay cut", result.TopExts)
+	}
+	if result.MatchedFiles != 32 {
+		t.Fatalf("MatchedFiles = %d, want 32", result.MatchedFiles)
+	}
+}
+
+// Six unparsed extensions tie for four slots; without a name tiebreak the
+// map order decides which survive, so `only` changed between runs.
+func TestInitProjectConfigBreaksCountTiesByName(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 3; i++ {
+		mustWriteConfigFixture(t, filepath.Join(root, "src", fmt.Sprintf("m%d.js", i)), "export const x = 1\n")
+	}
+	for _, ext := range []string{"yaml", "toml", "ini", "html", "css", "cfg"} {
+		mustWriteConfigFixture(t, filepath.Join(root, "conf", "a."+ext), "x\n")
+	}
+
+	result, err := initProjectConfig(root)
+	if err != nil {
+		t.Fatalf("initProjectConfig: %v", err)
+	}
+	if got, want := strings.Join(result.TopExts, ","), "js,cfg,css,html,ini"; got != want {
+		t.Fatalf("TopExts = %q, want %q", got, want)
 	}
 }
