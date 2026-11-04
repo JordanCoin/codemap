@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -15,7 +16,7 @@ import (
 // check, and spawn nothing.
 func TestRunWatchStartTwiceSpawnsOneDaemon(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("uses sh to stand in for the daemon process")
+		t.Skip("the ownership check reads the stand-in daemon from ps")
 	}
 	root := t.TempDir()
 	projectpath.ResetSetupRoot()
@@ -35,8 +36,10 @@ func TestRunWatchStartTwiceSpawnsOneDaemon(t *testing.T) {
 			spawns++
 			// A stand-in daemon: publishes readiness, then stays alive with
 			// "watch daemon <root>" at the end of its command line, which is
-			// what the ownership check reads from ps.
-			child = exec.Command("sh", "-c", `printf '{}' > "$CODEMAP_WATCH_READINESS_FILE"; sleep 30`, "watch", "daemon", absRoot)
+			// what the ownership check reads from ps. One process, so the
+			// cleanup kill leaves nothing behind.
+			child = exec.Command(os.Args[0], "-test.run=TestMainWatchHelperProcess", "--", "watch", "daemon", absRoot)
+			child.Env = append(os.Environ(), "CODEMAP_MAIN_WATCH_HELPER=1", "CODEMAP_MAIN_WATCH_HELPER_PUBLISH_AFTER=0s")
 			return child
 		},
 		func() (string, error) { return "/tmp/codemap-test", nil },
