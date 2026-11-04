@@ -229,7 +229,10 @@ func initProjectConfig(root string) (configInitResult, error) {
 		entries = append(entries, extEntry{Ext: ext, Count: count})
 	}
 	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Count > entries[j].Count
+		if entries[i].Count != entries[j].Count {
+			return entries[i].Count > entries[j].Count
+		}
+		return entries[i].Ext < entries[j].Ext
 	})
 
 	// The top five by count bound the list, but a source extension the

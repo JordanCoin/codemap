@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -290,5 +291,25 @@ func TestInitProjectConfigKeepsMinoritySourceExtension(t *testing.T) {
 	}
 	if result.MatchedFiles != 32 {
 		t.Fatalf("MatchedFiles = %d, want 32", result.MatchedFiles)
+	}
+}
+
+// Six unparsed extensions tie for four slots; without a name tiebreak the
+// map order decides which survive, so `only` changed between runs.
+func TestInitProjectConfigBreaksCountTiesByName(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 3; i++ {
+		mustWriteConfigFixture(t, filepath.Join(root, "src", fmt.Sprintf("m%d.js", i)), "export const x = 1\n")
+	}
+	for _, ext := range []string{"yaml", "toml", "ini", "html", "css", "cfg"} {
+		mustWriteConfigFixture(t, filepath.Join(root, "conf", "a."+ext), "x\n")
+	}
+
+	result, err := initProjectConfig(root)
+	if err != nil {
+		t.Fatalf("initProjectConfig: %v", err)
+	}
+	if got, want := strings.Join(result.TopExts, ","), "js,cfg,css,html,ini"; got != want {
+		t.Fatalf("TopExts = %q, want %q", got, want)
 	}
 }
