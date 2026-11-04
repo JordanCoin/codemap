@@ -66,9 +66,9 @@ func TestPythonRelativeImportNames(t *testing.T) {
 		{"multiline with per-line comments", ".", "from . import (\n    mod,  # keep\n    second,\n)", []string{".mod", ".second"}},
 		{"star imports no module", ".", "from . import *", nil},
 		{"trailing comment ignored", ".", "from . import mod  # keep", []string{".mod"}},
-		// The path already names the module here, so the imported names are
-		// symbols and must not be turned into modules.
-		{"dotted path is left alone", ".mod", "from .mod import helper", nil},
+		// The name may be a submodule of mod or a symbol in it; the resolver decides.
+		{"dotted path gains the member", ".mod", "from .mod import helper", []string{".mod.helper"}},
+		{"absolute package members", "modules", "from modules import a, b", []string{"modules.a", "modules.b"}},
 		{"absolute import is left alone", "os.path", "import os.path", nil},
 		{"non-python is left alone", ".", "from . import mod", nil},
 	} {
@@ -77,9 +77,9 @@ func TestPythonRelativeImportNames(t *testing.T) {
 			if tc.name == "non-python is left alone" {
 				language = "javascript"
 			}
-			got := pythonRelativeImportNames(language, tc.path, tc.text)
+			got := pythonFromImportMembers(language, tc.path, tc.text)
 			if !reflect.DeepEqual(got, tc.want) {
-				t.Fatalf("pythonRelativeImportNames(%q, %q, %q) = %v, want %v", language, tc.path, tc.text, got, tc.want)
+				t.Fatalf("pythonFromImportMembers(%q, %q, %q) = %v, want %v", language, tc.path, tc.text, got, tc.want)
 			}
 		})
 	}
@@ -105,7 +105,8 @@ func TestResolvePythonRelativeLevels(t *testing.T) {
 		{"dotted path descends", ".sub.deep", "pkg", []string{"pkg/sub/deep.py"}},
 		{"package resolves to its __init__", ".sub", "pkg", []string{"pkg/sub/__init__.py"}},
 		{"three dots from a nested package reach the root", "...top", "pkg/sub", []string{"top.py"}},
-		{"bare dots resolve to nothing", ".", "pkg", nil},
+		{"bare dots without __init__ resolve to nothing", ".", "pkg", nil},
+		{"bare dots name the package __init__", ".", "pkg/sub", []string{"pkg/sub/__init__.py"}},
 		// filepath.Dir("") is ".", which normalizes back to "", so an
 		// unchecked climb clamps at the root and resolves a dot count deeper
 		// than the file to a root-level module it never named.
@@ -138,5 +139,43 @@ func TestPythonRelativeImportClimbingPastRootResolvesToNothing(t *testing.T) {
 		if importer == "pkg/sub/i_over_climb.py" {
 			t.Fatalf("pkg/mod.py gained a fabricated importer from a four-dot import in pkg/sub")
 		}
+	}
+}
+
+// "from P import X" names the submodule P/X when one exists, otherwise a name
+// defined in P, so P's own file. It never names the rest of P (#265, #266).
+func TestPythonFromImportMembers(t *testing.T) {
+	graph := falseEdgeGraph(t, map[string]string{
+		"modules/a.py":        "",
+		"modules/b.py":        "",
+		"modules/c.py":        "",
+		"modules/user.py":     "from modules import a, b\n",
+		"pkg/__init__.py":     "def helper(): pass\n",
+		"pkg/socks.py":        "",
+		"pkg/sub/__init__.py": "def g(): pass\n",
+		"pkg/sub/child.py":    "from . import g\n",
+		"pkg/sub/up.py":       "from .. import socks\n",
+		"use_sub.py":          "from pkg import socks\n",
+		"use_name.py":         "from pkg import helper\n",
+		"mixed.py":            "from pkg import (\n    socks,\n    helper,\n)\n",
+		"dotted.py":           "import pkg.socks\nfrom pkg.socks import thing\n",
+		"namespace.py":        "import modules\nfrom modules import *\n",
+	})
+	for _, tc := range []struct {
+		name, file string
+		want       []string
+	}{
+		{"namespace package members", "modules/user.py", []string{"modules/a.py", "modules/b.py"}},
+		{"regular package submodule", "use_sub.py", []string{"pkg/socks.py"}},
+		{"name from __init__", "use_name.py", []string{"pkg/__init__.py"}},
+		{"relative name from __init__", "pkg/sub/child.py", []string{"pkg/sub/__init__.py"}},
+		{"relative parent submodule", "pkg/sub/up.py", []string{"pkg/socks.py"}},
+		{"mixed submodule and name", "mixed.py", []string{"pkg/__init__.py", "pkg/socks.py"}},
+		{"dotted module paths", "dotted.py", []string{"pkg/socks.py"}},
+		{"namespace package itself has no file", "namespace.py", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertImports(t, graph, tc.file, tc.want...)
+		})
 	}
 }

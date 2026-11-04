@@ -534,11 +534,14 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 			} else {
 				mod = extractImportPath(m.Text)
 			}
-			// "from . import mod" puts the module in the import list, not the
-			// path, so $PATH is a bare run of dots and the edge would be lost.
-			// Recover each name and re-form it as the relative module it means.
-			if names := pythonRelativeImportNames(fileMap[relPath].Language, mod, m.Text); len(names) > 0 {
-				fileMap[relPath].Imports = append(fileMap[relPath].Imports, names...)
+			// "from P import a, b" names a submodule or a name per entry, so
+			// $PATH alone either loses the edge (P is bare dots) or fans out
+			// to all of P (#265). Each name becomes its own member spec.
+			if members := pythonFromImportMembers(fileMap[relPath].Language, mod, m.Text); len(members) > 0 {
+				fileMap[relPath].Imports = append(fileMap[relPath].Imports, members...)
+				for _, member := range members {
+					fileMap[relPath].References = append(fileMap[relPath].References, ImportReference{Path: member, Kind: pythonFromMember})
+				}
 				continue
 			}
 			// "import pkg.mod as alias" captures the alias inside $PATH, so
@@ -619,28 +622,30 @@ func detectLangFromRuleID(ruleID string) string {
 	return ""
 }
 
-// pythonRelativeImportNames expands "from . import a, b" into the relative
-// modules it names (".a", ".b"), which the $PATH metavariable cannot carry
-// because the modules appear in the import list. It returns nil for anything
-// else, including "from .mod import name", where the path already names the
-// module and the imported names are symbols rather than modules.
-func pythonRelativeImportNames(language, path, text string) []string {
-	if language != "python" || path == "" || strings.Trim(path, ".") != "" {
+// pythonFromImportMembers expands "from P import a, b" into one member spec
+// per name: "P.a", "P.b", or ".a" when P is bare dots. Each may be a submodule
+// or a name defined in P, which only the resolver can tell apart. It returns
+// nil for plain imports and star imports.
+func pythonFromImportMembers(language, path, text string) []string {
+	if language != "python" || path == "" || !strings.HasPrefix(text, "from") {
 		return nil
+	}
+	if strings.Trim(path, ".") != "" {
+		path += "."
 	}
 	_, after, found := strings.Cut(text, " import ")
 	if !found {
 		return nil
 	}
-	// Black wraps a long list across lines inside parentheses, so the names
-	// cannot be read from the first line alone. Strip each line's comment,
-	// then flatten.
+	// Black wraps a long list across lines inside parentheses, and older code
+	// uses a trailing backslash, so the names cannot be read from the first
+	// line alone. Strip each line's comment and continuation, then flatten.
 	var flattened strings.Builder
 	for _, line := range strings.Split(after, "\n") {
 		if idx := strings.Index(line, "#"); idx >= 0 {
 			line = line[:idx]
 		}
-		flattened.WriteString(line)
+		flattened.WriteString(strings.TrimSuffix(strings.TrimRight(line, " \t\r"), `\`))
 		flattened.WriteString(" ")
 	}
 	after = strings.TrimSpace(flattened.String())
@@ -651,8 +656,13 @@ func pythonRelativeImportNames(language, path, text string) []string {
 		// "mod as alias" imports the module named before the alias.
 		name, _, _ := strings.Cut(strings.TrimSpace(part), " ")
 		name = strings.TrimSpace(name)
-		if name == "" || name == "*" || !isValidIdentifier(name) {
+		if name == "" {
 			continue
+		}
+		// A star, or a name this parser cannot read, leaves the whole module
+		// as the import rather than a partial list.
+		if !isValidIdentifier(name) {
+			return nil
 		}
 		names = append(names, path+name)
 	}
@@ -754,6 +764,9 @@ const (
 	// bashHelperLoad is a load outside a .bats file. It means bats' load only
 	// in a file bats reaches; see resolveBatsHelperLoads.
 	bashHelperLoad = "bash-helper-load"
+	// pythonFromMember marks an import spec as "from P import name": the
+	// resolver tries the submodule P.name, then P itself (#266).
+	pythonFromMember = "python-from-member"
 )
 
 // impactImports is every import a diff impact should match by name: the visible

@@ -147,9 +147,7 @@ func TestPythonSuffixMatchRequiresARealImportRoot(t *testing.T) {
 	})
 	assertImports(t, graph, "src/_pytest/pathlib.py")
 	assertImports(t, graph, "src/_pytest/warnings.py")
-	if got := graph.Imports["src/_pytest/nodes.py"]; !slices.Contains(got, "src/_pytest/pathlib.py") || !slices.Contains(got, "src/_pytest/__init__.py") {
-		t.Fatalf("nodes.py imports = %v, want the real package edges", got)
-	}
+	assertImports(t, graph, "src/_pytest/nodes.py", "src/_pytest/pathlib.py", "src/_pytest/warnings.py")
 	assertImports(t, graph, "scripts/release.py", "scripts/helper.py")
 	assertImports(t, graph, "examples/run.py", "examples/shop/models.py")
 }
