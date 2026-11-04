@@ -429,7 +429,7 @@ func (d *Daemon) filterControlEvent(path string) (resetIgnoreCache, control bool
 	if clean == filepath.Join(projectpath.CanonicalPath(d.configDir), "config.json") {
 		return false, true
 	}
-	if filepath.Base(clean) == ".gitignore" {
+	if base := filepath.Base(clean); base == ".gitignore" || base == ".ignore" {
 		return true, true
 	}
 	return false, false

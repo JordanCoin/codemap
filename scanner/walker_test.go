@@ -1003,3 +1003,114 @@ func TestReadExternalDepsSkipsNestedRepos(t *testing.T) {
 		t.Fatalf("outer go.mod was not read: %v", deps)
 	}
 }
+
+// ast-grep honored every git ignore source; the walker it now reads from
+// must too, or code excluded only locally (private dirs) leaks into the graph.
+func TestScanFilesHonorsRepoIgnoreSources(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", root).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	write := func(path, content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	globalIgnore := filepath.Join(t.TempDir(), "global-ignore")
+	globalConfig := filepath.Join(t.TempDir(), "gitconfig")
+	write(globalIgnore, "glob/\n")
+	write(globalConfig, "[core]\n\texcludesFile = "+filepath.ToSlash(globalIgnore)+"\n")
+	t.Setenv("GIT_CONFIG_GLOBAL", globalConfig)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	write(filepath.Join(root, ".git", "info", "exclude"), "priv/\n")
+	write(filepath.Join(root, ".ignore"), "ign/\n")
+	for _, name := range []string{"keep.go", "priv/a.go", "ign/b.go", "glob/c.go"} {
+		write(filepath.Join(root, name), "package p\n")
+	}
+
+	files, err := ScanFiles(context.Background(), root, NewGitIgnoreCache(root), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, f := range files {
+		if f.Ext == ".go" {
+			got = append(got, filepath.ToSlash(f.Path))
+		}
+	}
+	if !reflect.DeepEqual(got, []string{"keep.go"}) {
+		t.Fatalf("files = %v, want only keep.go (.git/info/exclude, .ignore and core.excludesFile honored)", got)
+	}
+}
+
+// With no core.excludesFile, git's default $XDG_CONFIG_HOME/git/ignore applies.
+func TestScanFilesHonorsDefaultGlobalExcludes(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "none"))
+	if err := os.MkdirAll(filepath.Join(xdg, "git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(xdg, "git", "ignore"), []byte("*.secret.go\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"keep.go", "x.secret.go"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("package p\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files, err := ScanFiles(context.Background(), root, NewGitIgnoreCache(root), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Path != "keep.go" {
+		t.Fatalf("files = %v, want only keep.go", files)
+	}
+}
+
+// A nested .gitignore's patterns are relative to its own directory: gumroad's
+// resend_callbacks/.gitignore lists "/resend_callbacks" (the built binary),
+// which hid the whole Go service once deps read the walker.
+func TestScanFilesAnchorsNestedGitignoreAtItsDirectory(t *testing.T) {
+	root := t.TempDir()
+	for name, content := range map[string]string{
+		"svc/.gitignore": "/svc\n*.log\n!keep.log\n",
+		"svc/main.go":    "package main\n",
+		"svc/svc":        "binary\n",
+		"svc/a/b.log":    "x\n",
+		"svc/a/keep.log": "x\n",
+		"top.log":        "x\n",
+	} {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files, err := ScanFiles(context.Background(), root, NewGitIgnoreCache(root), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, f := range files {
+		got = append(got, filepath.ToSlash(f.Path))
+	}
+	sort.Strings(got)
+	want := []string{"svc/.gitignore", "svc/a/keep.log", "svc/main.go", "top.log"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("files = %v, want %v", got, want)
+	}
+}

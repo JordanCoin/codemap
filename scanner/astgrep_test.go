@@ -11,6 +11,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -892,41 +893,45 @@ printf '%s\n' '[{"file":"fast.go","ruleId":"go-imports","range":{"start":{"line"
 	}
 }
 
-// A one-line bundle is left out of the scan with a note: ast-grep's JSON
-// repeats the whole line for every match in it (#269).
-func TestScanDirectorySkipsMinifiedFiles(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("requires shell script execution")
-	}
+// A file with a 16 KiB line keeps its edges: it is scanned alone with the
+// import rules only, since ast-grep's JSON repeats the whole line for every
+// match on it (#269). Coverage stays authoritative; the note says why its
+// functions are missing.
+func TestScanDirectoryScansLongLineFilesForImportsOnly(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "bundle.cjs"), []byte("var a=1;"+strings.Repeat("x", astGrepMaxLineBytes)+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "core-enums.ts"), []byte("import { a } from './a';\nexport const x = '"+strings.Repeat("x", astGrepMaxLineBytes)+"';\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "app.js"), []byte("require('./b');\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "app.ts"), []byte("import { b } from './b';\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	capturedArgs := filepath.Join(t.TempDir(), "args.txt")
-	fakeBinary := filepath.Join(t.TempDir(), "fake-sg.sh")
-	if err := os.WriteFile(fakeBinary, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE_ARGS\"\nprintf '[]\\n'\n"), 0o755); err != nil {
+	calls := recordAstGrepCommands(t)
+	s, err := NewAstGrepScanner()
+	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("CAPTURE_ARGS", capturedArgs)
-
-	scanner := &AstGrepScanner{rulesDir: t.TempDir(), binary: fakeBinary}
-	outcome, err := scanner.ScanDirectory(context.Background(), root)
+	s.binary = "ast-grep-fake"
+	outcome, err := s.ScanDirectory(context.Background(), root)
 	if err != nil {
 		t.Fatalf("ScanDirectory() error = %v", err)
 	}
-	args, err := os.ReadFile(capturedArgs)
-	if err != nil {
-		t.Fatal(err)
+	full, importsOnly := s.inlineRules, importRulesOnly(s.inlineRules)
+	if importsOnly == "" || strings.Contains(importsOnly, "-functions") {
+		t.Fatalf("importRulesOnly kept non-import rules or nothing:\n%s", importsOnly)
 	}
-	if strings.Contains(string(args), "bundle.cjs") || !strings.Contains(string(args), "app.js") {
-		t.Fatalf("args = %s, want app.js scanned and bundle.cjs skipped", args)
+	seen := map[string]string{}
+	for _, call := range *calls {
+		rules := call[slices.Index(call, "--inline-rules")+1]
+		for _, arg := range call[slices.Index(call, "--")+1:] {
+			seen[arg] = rules
+		}
+	}
+	if seen["app.ts"] != full || seen["core-enums.ts"] != importsOnly {
+		t.Fatalf("app.ts must get every rule and core-enums.ts only the import rules; calls = %d", len(*calls))
 	}
 	source := outcome.Sources[0]
-	if source.Status != ScanSourceAuthoritative || !strings.Contains(source.Detail, "bundle.cjs") {
-		t.Fatalf("source = %#v, want authoritative with a note naming bundle.cjs", source)
+	if source.Status != ScanSourceAuthoritative || !strings.Contains(source.Detail, "core-enums.ts") {
+		t.Fatalf("source = %#v, want authoritative with a note naming core-enums.ts", source)
 	}
 }
 
@@ -935,12 +940,15 @@ func TestScanDirectorySkipsMinifiedFiles(t *testing.T) {
 func recordAstGrepCommands(t *testing.T) *[][]string {
 	t.Helper()
 	var calls [][]string
+	var mu sync.Mutex
 	prev := execCommandContext
 	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
 		if slices.Contains(args, "--version") {
 			return exec.CommandContext(ctx, name, args...)
 		}
+		mu.Lock()
 		calls = append(calls, append([]string{name}, args...))
+		mu.Unlock()
 		if runtime.GOOS == "windows" {
 			return exec.CommandContext(ctx, "cmd.exe", "/c", "echo []")
 		}
