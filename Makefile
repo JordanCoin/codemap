@@ -34,5 +34,5 @@ clean:
 	rm -rf scanner/.grammar-build
 	rm -rf scanner/grammars
 
-bench: ## Import-accuracy benchmark against a released codemap (see bench/README.md)
+bench: ## Import-accuracy benchmark, run directly on this machine (CI: .github/workflows/bench.yml; see bench/README.md)
 	bash bench/run.sh

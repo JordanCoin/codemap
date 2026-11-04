@@ -1,0 +1,179 @@
+name: Import-accuracy benchmark
+
+# Manual only. Each pinned repository is built on its own throwaway runner
+# (cmake configure, cargo build scripts, pip install -e . all execute that
+# repository's code), with a read-only token and no secrets, then the per-repo
+# results are scored in a final job. Run it after a release is cut, against
+# that release's tag. See bench/README.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      codemap_version:
+        description: "Released codemap version to score (e.g. 4.7.1); the asset and checksums.txt are downloaded from that release"
+        required: true
+        type: string
+      groups:
+        description: "Groups to run"
+        required: false
+        default: "held_out tuned"
+        type: string
+      languages:
+        description: "Space-separated language filter (go typescript javascript python c cpp rust); empty = all that the version supports"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-${{ inputs.codemap_version }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Plan matrix
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: plan
+        name: Read the manifest
+        env:
+          VERSION: ${{ inputs.codemap_version }}
+          GROUPS_IN: ${{ inputs.groups }}
+          LANGS_IN: ${{ inputs.languages }}
+        run: |
+          python3 -I - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json, os
+          m = json.load(open("bench/manifest.json"))
+          version = os.environ["VERSION"]
+          groups = os.environ["GROUPS_IN"].split()
+          langs = os.environ["LANGS_IN"].split() or ["go", "typescript", "javascript", "python", "c", "cpp", "rust"]
+          def tup(v): return tuple(int(x) for x in v.split(".") if x.isdigit())
+          since = m.get("languages_since") or {}
+          rows = []
+          for group in groups:
+              for lang in langs:
+                  if lang in since and tup(version) < tup(since[lang]):
+                      continue
+                  for r in m["groups"][group].get(lang, []):
+                      rows.append({"group": group, "lang": lang, "slug": r["slug"], "repo": r["repo"]})
+          print("matrix=" + json.dumps({"include": rows}))
+          EOF
+
+  repo:
+    name: ${{ matrix.lang }} ${{ matrix.repo }}
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    env:
+      CODEMAP_VERSION: ${{ inputs.codemap_version }}
+      BENCH_INSTALL_DEPS: "1"
+      BENCH_GROUPS: ${{ matrix.group }}
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Go toolchain
+        if: matrix.lang == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Node toolchain
+        if: matrix.lang == 'typescript' || matrix.lang == 'javascript'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: bun (for repositories with a bun lockfile)
+        if: matrix.lang == 'typescript' || matrix.lang == 'javascript'
+        run: npm install -g bun@1.4.2
+
+      - name: Python toolchain
+        if: matrix.lang == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: C and C++ toolchain
+        if: matrix.lang == 'c' || matrix.lang == 'cpp'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang cmake ninja-build pkg-config nasm
+          clang --version | head -1; cmake --version | head -1
+
+      - name: Rust toolchain
+        if: matrix.lang == 'rust'
+        run: |
+          rustup update stable
+          rustup component add rust-analyzer
+          sudo apt-get update
+          rustc --version; cargo --version; rust-analyzer --version
+
+      - name: apt index (for the repository's build dependencies)
+        if: matrix.lang == 'c' || matrix.lang == 'cpp' || matrix.lang == 'rust'
+        run: sudo apt-get update
+
+      - name: Run the benchmark on this repository
+        run: bash bench/run.sh --repo "${{ matrix.slug }}"
+
+      - name: Upload this repository's results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ inputs.codemap_version }}-${{ matrix.slug }}
+          path: |
+            bench/results/${{ inputs.codemap_version }}/${{ matrix.slug }}/
+            !bench/results/${{ inputs.codemap_version }}/${{ matrix.slug }}/**/*.pch
+          if-no-files-found: warn
+          retention-days: 30
+
+  score:
+    name: Score
+    needs: repo
+    if: always()
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ inputs.codemap_version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download every repository's results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bench-${{ inputs.codemap_version }}-*
+          path: bench/results/${{ inputs.codemap_version }}/
+      - name: Flatten artifact directories
+        run: |
+          cd "bench/results/$VERSION"
+          for d in bench-"$VERSION"-*; do
+            [ -d "$d" ] || continue
+            slug="${d#bench-"$VERSION"-}"
+            mkdir -p "$slug"
+            cp -r "$d"/. "$slug"/
+            rm -rf "$d"
+          done
+          ls
+      - name: Score
+        run: |
+          python3 -I bench/score.py bench/manifest.json "bench/results/$VERSION" "bench/results/v$VERSION.json" "bench/results/v$VERSION.md" "$VERSION" > /dev/null
+          {
+            echo "## codemap $VERSION import-accuracy benchmark"
+            echo
+            sed -n '/## Held-out/,/## Spot-check/p' "bench/results/v$VERSION.md" | sed '$d'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the scored results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ inputs.codemap_version }}-results
+          path: |
+            bench/results/v${{ inputs.codemap_version }}.md
+            bench/results/v${{ inputs.codemap_version }}.json
+          retention-days: 90

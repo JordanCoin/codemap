@@ -126,7 +126,85 @@
      "sha": "7a25c3fd8b5eb87c2d2e0606cae36e32014bc6fa",
      "slug": "obsproject__obs-studio",
      "stars": 78922,
-     "source_files": 713
+     "source_files": 713,
+     "build": {
+      "apt": [
+       "extra-cmake-modules",
+       "libsimde-dev",
+       "libavcodec-dev",
+       "libavdevice-dev",
+       "libavfilter-dev",
+       "libavformat-dev",
+       "libavutil-dev",
+       "libswresample-dev",
+       "libswscale-dev",
+       "libx264-dev",
+       "libcurl4-openssl-dev",
+       "libmbedtls-dev",
+       "libgl1-mesa-dev",
+       "libjansson-dev",
+       "libluajit-5.1-dev",
+       "python3-dev",
+       "libx11-dev",
+       "libxcb-randr0-dev",
+       "libxcb-shm0-dev",
+       "libxcb-xinerama0-dev",
+       "libxcb-composite0-dev",
+       "libxcomposite-dev",
+       "libxinerama-dev",
+       "libxcb1-dev",
+       "libx11-xcb-dev",
+       "libxcb-xfixes0-dev",
+       "swig",
+       "libcmocka-dev",
+       "libxss-dev",
+       "libglvnd-dev",
+       "libgles2-mesa-dev",
+       "libwayland-dev",
+       "librist-dev",
+       "libsrt-openssl-dev",
+       "libpci-dev",
+       "libpipewire-0.3-dev",
+       "libqrcodegencpp-dev",
+       "uthash-dev",
+       "qt6-base-dev",
+       "qt6-base-private-dev",
+       "qt6-svg-dev",
+       "qt6-wayland",
+       "qt6-image-formats-plugins",
+       "libasound2-dev",
+       "libfdk-aac-dev",
+       "libfontconfig-dev",
+       "libfreetype6-dev",
+       "libjack-jackd2-dev",
+       "libpulse-dev",
+       "libsndio-dev",
+       "libspeexdsp-dev",
+       "libudev-dev",
+       "libv4l-dev",
+       "libva-dev",
+       "libvlc-dev",
+       "libvpl-dev",
+       "libdrm-dev",
+       "nlohmann-json3-dev",
+       "libwebsocketpp-dev",
+       "libasio-dev",
+       "libxkbcommon-dev",
+       "libdbus-1-dev",
+       "libglib2.0-dev",
+       "libsystemd-dev",
+       "libxcb-ewmh-dev",
+       "libxcb-icccm4-dev",
+       "libxcb-util-dev",
+       "libxcb-keysyms1-dev",
+       "libxcb-xkb-dev"
+      ],
+      "setup": [
+       "git fetch -q --unshallow origin && git fetch -q --tags origin",
+       "git submodule update --init --recursive --depth 1"
+      ],
+      "note": "cmake also requires FFmpeg >= 8.0, newer than Ubuntu 24.04 ships; expected truth unavailable there"
+     }
     },
     {
      "repo": "curl/curl",
@@ -134,7 +212,10 @@
      "sha": "41e2abc56c1fc2abcf76b6e5e77c2e3de4051888",
      "slug": "curl__curl",
      "stars": 43372,
-     "source_files": 1061
+     "source_files": 1061,
+     "build": {
+      "apt": []
+     }
     },
     {
      "repo": "raysan5/raylib",
@@ -142,7 +223,20 @@
      "sha": "3b12ba162bf58289fd2536604b6c805c128b0813",
      "slug": "raysan5__raylib",
      "stars": 35554,
-     "source_files": 275
+     "source_files": 275,
+     "build": {
+      "apt": [
+       "libgl1-mesa-dev",
+       "libx11-dev",
+       "libxrandr-dev",
+       "libxi-dev",
+       "libxcursor-dev",
+       "libxinerama-dev",
+       "libglu1-mesa-dev",
+       "libwayland-dev",
+       "libxkbcommon-dev"
+      ]
+     }
     }
    ],
    "cpp": [
@@ -152,7 +246,12 @@
      "sha": "bee23322f1baa3d2dd16b8339bed6aff4a8eb663",
      "slug": "ggml-org__llama.cpp",
      "stars": 133319,
-     "source_files": 1168
+     "source_files": 1168,
+     "build": {
+      "apt": [
+       "libcurl4-openssl-dev"
+      ]
+     }
     },
     {
      "repo": "bitcoin/bitcoin",
@@ -160,7 +259,17 @@
      "sha": "ed3d34ba0c0b28bb281b265eaca62222aae3a796",
      "slug": "bitcoin__bitcoin",
      "stars": 90595,
-     "source_files": 1534
+     "source_files": 1534,
+     "build": {
+      "apt": [
+       "libboost-dev",
+       "libevent-dev",
+       "libsqlite3-dev",
+       "libzmq3-dev",
+       "capnproto",
+       "libcapnp-dev"
+      ]
+     }
     },
     {
      "repo": "tesseract-ocr/tesseract",
@@ -168,7 +277,14 @@
      "sha": "c21194d06998e244754d65329d6c9f1e14fe392e",
      "slug": "tesseract-ocr__tesseract",
      "stars": 77327,
-     "source_files": 601
+     "source_files": 601,
+     "build": {
+      "apt": [
+       "libleptonica-dev",
+       "libarchive-dev",
+       "libcurl4-openssl-dev"
+      ]
+     }
     }
    ],
    "rust": [
@@ -178,7 +294,21 @@
      "sha": "14abc4c4ee82deb48e13d054a2f336c9d7888cc5",
      "slug": "clash-verge-rev__clash-verge-rev",
      "stars": 156180,
-     "source_files": 147
+     "source_files": 147,
+     "build": {
+      "apt": [
+       "libwebkit2gtk-4.1-dev",
+       "libgtk-3-dev",
+       "libxdo-dev",
+       "libssl-dev",
+       "libayatana-appindicator3-dev",
+       "librsvg2-dev"
+      ],
+      "setup": [
+       "mkdir -p src-tauri/sidecar src-tauri/resources dist && for n in verge-mihomo verge-mihomo-alpha clash-verge-service clash-verge-service-install clash-verge-service-uninstall; do f=src-tauri/sidecar/$n-x86_64-unknown-linux-gnu; [ -e \"$f\" ] || { printf '#!/bin/sh\\nexit 0\\n' > \"$f\"; chmod +x \"$f\"; }; done; [ -e src-tauri/resources/placeholder.txt ] || echo placeholder > src-tauri/resources/placeholder.txt; [ -e dist/index.html ] || echo '<!doctype html>' > dist/index.html"
+      ],
+      "note": "tauri-build's build script requires the sidecar binaries, resources and frontend dist that the project's `pnpm prepare` downloads; empty placeholders let cargo check run and are outside the Rust universe"
+     }
     },
     {
      "repo": "rustdesk/rustdesk",
@@ -186,7 +316,26 @@
      "sha": "55786aaa5709ac0a450aabcf06f9d1fee3119908",
      "slug": "rustdesk__rustdesk",
      "stars": 128115,
-     "source_files": 339
+     "source_files": 339,
+     "build": {
+      "apt": [
+       "libgtk-3-dev",
+       "libxcb-randr0-dev",
+       "libxdo-dev",
+       "libxfixes-dev",
+       "libxcb-shape0-dev",
+       "libxcb-xfixes0-dev",
+       "libasound2-dev",
+       "libpulse-dev",
+       "libpam0g-dev",
+       "libgstreamer1.0-dev",
+       "libgstreamer-plugins-base1.0-dev"
+      ],
+      "setup": [
+       "git submodule update --init --recursive --depth 1"
+      ],
+      "note": "scrap and magnum-opus build libyuv, opus and vpx through vcpkg (VCPKG_ROOT); without it the main crate has no dep-info and the universe is the library crates that compiled"
+     }
     },
     {
      "repo": "tauri-apps/tauri",
@@ -194,7 +343,17 @@
      "sha": "eebf7c23c1b55629aac7c8f4913d845bdbb46da3",
      "slug": "tauri-apps__tauri",
      "stars": 112480,
-     "source_files": 327
+     "source_files": 327,
+     "build": {
+      "apt": [
+       "libwebkit2gtk-4.1-dev",
+       "libgtk-3-dev",
+       "libxdo-dev",
+       "libssl-dev",
+       "libayatana-appindicator3-dev",
+       "librsvg2-dev"
+      ]
+     }
     }
    ]
   },
@@ -1002,5 +1161,6 @@
   "cpp": "4.7.1",
   "rust": "4.7.1"
  },
- "languages_since_note": "A language is benchmarked only against codemap releases at or above its version here, so a rerun of an earlier release reproduces the report that release had (go, typescript, javascript and python have no entry and are always run)."
+ "languages_since_note": "A language is benchmarked only against codemap releases at or above its version here, so a rerun of an earlier release reproduces the report that release had (go, typescript, javascript and python have no entry and are always run).",
+ "build_note": "groups.*.*[].build lists the Ubuntu 24.04 packages (apt) and the setup commands (run in the clone, after checkout, before truth) a repository needs; bench/run.sh runs them when BENCH_INSTALL_DEPS=1 (the CI workflow sets it) and skips apt otherwise. Go, TypeScript, JavaScript and Python repositories need none beyond their language toolchain."
 }

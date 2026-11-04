@@ -13,6 +13,12 @@
 #   JOBS             parallel codemap queries per repo (default: nproc)
 #   BENCH_RESULTS_STEM  results file stem (default v<version>); BENCH_SCORE_LANG
 #                    restricts scoring to one language or to c-cpp-rust
+#   BENCH_INSTALL_DEPS=1  apt-install each repository's build dependencies
+#                    from the manifest (the CI workflow sets it)
+#
+# Run this only in a disposable environment: building truth executes each
+# pinned repository's own build machinery. .github/workflows/bench.yml runs
+# one repository per throwaway runner and is the intended way to run it.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -102,6 +108,31 @@ install_node_deps() { # repo-dir -> 0 on success
   fi
 }
 
+repo_build() { # group lang slug clone-dir
+  local group="$1" lang="$2" slug="$3" dir="$4" out="$RESULTS/$VERSION/$3"
+  python3 -I -c "
+import json,sys
+m=json.load(open(sys.argv[1])); group, lang, slug = sys.argv[2:5]
+for r in m['groups'][group].get(lang, []):
+    if r['slug'] == slug:
+        b = r.get('build') or {}
+        print(' '.join(b.get('apt') or []))
+        for cmd in b.get('setup') or []:
+            print(cmd)
+" "$MANIFEST" "$group" "$lang" "$slug" > "$out/setup.cmds"
+  local apt_pkgs; apt_pkgs="$(head -1 "$out/setup.cmds")"
+  if [ -n "$apt_pkgs" ] && [ "${BENCH_INSTALL_DEPS:-0}" = 1 ]; then
+    log "$slug: installing build dependencies: $apt_pkgs"
+    # shellcheck disable=SC2086
+    (sudo -n true 2>/dev/null && sudo apt-get install -y --no-install-recommends $apt_pkgs || apt-get install -y --no-install-recommends $apt_pkgs) > "$out/setup.log" 2>&1 || return 1
+  fi
+  tail -n +2 "$out/setup.cmds" | while IFS= read -r cmd; do
+    [ -n "$cmd" ] || continue
+    log "$slug: setup: ${cmd:0:80}"
+    (cd "$dir" && bash -c "$cmd") >> "$out/setup.log" 2>&1 || exit 1
+  done
+}
+
 write_status() { # dir status reason [repo-sha]
   printf '{"status":"%s","reason":"%s","finished_at":"%s","codemap_sha256":"%s","repo_sha":"%s"}\n' "$2" "$3" "$(date -u +%FT%TZ)" "$CODEMAP_SHA256" "${4:-}" > "$1/status.json"
 }
@@ -123,6 +154,10 @@ run_repo() { # group lang repo url sha slug
   fi
   log "$repo ($lang, $group): clone at $sha"
   if ! clone_at "$url" "$sha" "$dir"; then write_status "$out" skipped "clone failed" "$sha"; return 0; fi
+  # Per-repository build dependencies and setup commands from the manifest
+  # (apt only when BENCH_INSTALL_DEPS=1, as the CI workflow sets; setup
+  # commands always, in the clone, idempotent).
+  repo_build "$group" "$lang" "$slug" "$dir" || { write_status "$out" skipped "build setup failed (see setup.log)" "$sha"; return 0; }
 
   log "$repo: toolchain truth"
   local t0=$SECONDS ok=1
