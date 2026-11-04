@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"bufio"
 	"context"
 	"embed"
 	"encoding/json"
@@ -13,7 +14,6 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -273,38 +273,38 @@ func (s *AstGrepScanner) Available() bool {
 	return s.binary != ""
 }
 
-// hiddenScanExcludes lists directory names ast-grep must keep skipping once
-// --no-ignore hidden lets it walk into dot-directories in general: `.git`
-// (whose internals are never source) plus every name codemap's own walker
-// already treats as never-source (IgnoredDirs — vendor trees, build output,
-// language caches), so relaxing the hidden-file default doesn't also start
-// indexing those. `.codemap` is codemap's own state directory (skills,
-// config, cache) and is excluded the same way the plain file walker strips
-// it from its inventory (see ScanConfiguredFilesWithFilters).
-func hiddenScanExcludes() []string {
-	names := make([]string, 0, len(IgnoredDirs))
-	for name := range IgnoredDirs {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
-
 // findNestedGitRepos returns the root-relative paths of every repository
 // nested under root (linked worktrees, plain clones, submodules), at any
-// depth, so the ast-grep scan and the Go fallback exclude exactly what the
-// file walker skips. See NestedGitRepos.
+// depth, so the Go fallback excludes exactly what the file walker skips.
+// See NestedGitRepos.
 func findNestedGitRepos(root string) []string {
 	return NestedGitRepos(root)
 }
 
+// astGrepMaxLineBytes marks a file as minified or generated. ast-grep's JSON
+// repeats every source line a match spans, so each function match in a
+// one-line bundle copies the whole bundle: claude-mem's six committed bundles
+// turned a 5 s scan into 5.6 GB of JSON and a 30 s timeout (#269).
+const astGrepMaxLineBytes = 16 << 10
+
+// astGrepBatchArgBytes bounds the file paths one ast-grep invocation takes,
+// well under ARG_MAX and Windows' 32 KiB command line (the inline rules
+// share it); a cmd.exe shim is capped at 8 KiB in total.
+var (
+	astGrepBatchArgBytes     = 16 << 10
+	astGrepShimBatchArgBytes = 4 << 10
+)
+
 // ScanDirectory analyzes all files in a directory while honoring caller
-// cancellation and recording ast-grep provenance. A timed-out or failed scan
-// fails closed to an empty outcome whose Sources record the degraded status,
-// so callers get an honest, usable answer instead of a hard error; an
-// unavailable scanner (ast-grep not installed) still returns an error.
+// cancellation and recording ast-grep provenance. Files are scanned in
+// batches, each with its own astGrepScanTimeout, so the budget grows with the
+// file count and a slow batch costs only its own files: the outcome stays
+// usable, marked mixed, with a detail naming what was not scanned. A scan in
+// which every batch failed fails closed to an empty outcome whose Sources
+// record the degraded status; an unavailable scanner (ast-grep not installed)
+// still returns an error.
 func (s *AstGrepScanner) ScanDirectory(parent context.Context, root string) (ScanOutcome, error) {
-	analyses, err := s.scanDirectory(parent, root)
+	scan, err := s.scanDirectory(parent, root)
 	if err != nil {
 		var incomplete *IncompleteScanError
 		if errors.As(err, &incomplete) && incomplete.Outcome.Status != ScanSourceUnavailable {
@@ -321,20 +321,26 @@ func (s *AstGrepScanner) ScanDirectory(parent context.Context, root string) (Sca
 	// gap owned by rust-cargo, which the file graph records separately; labeling
 	// ast-grep mixed here would degrade a Go+Rust monorepo's Go analysis and
 	// duplicate the same caveat on two sources.
-	return ScanOutcome{
-		Analyses: analyses,
-		Sources:  []analysis.Source{{Name: "ast-grep", Status: analysis.SourceAuthoritative, Languages: astGrepLanguages}},
-	}, nil
+	source := analysis.Source{Name: "ast-grep", Status: analysis.SourceAuthoritative, Languages: astGrepLanguages, Detail: strings.Join(scan.notes, "; ")}
+	if scan.partial {
+		source.Status = analysis.SourceMixed
+	}
+	return ScanOutcome{Analyses: scan.analyses, Sources: []analysis.Source{source}}, nil
+}
+
+type astGrepScan struct {
+	analyses []FileAnalysis
+	notes    []string
+	partial  bool // a batch timed out or failed, so some files were never scanned
 }
 
 // scanDirectory analyzes all files in a directory while honoring caller cancellation.
-// The existing internal timeout remains a best-effort empty-result safety cap.
-func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]FileAnalysis, error) {
+func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) (astGrepScan, error) {
 	if err := parent.Err(); err != nil {
-		return nil, err
+		return astGrepScan{}, err
 	}
 	if !s.Available() {
-		return nil, newIncompleteScanError("ast-grep", ScanSourceUnavailable, ErrAstGrepNotFound.Error(), ErrAstGrepNotFound)
+		return astGrepScan{}, newIncompleteScanError("ast-grep", ScanSourceUnavailable, ErrAstGrepNotFound.Error(), ErrAstGrepNotFound)
 	}
 
 	inlineRules := s.inlineRules
@@ -353,52 +359,146 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 		inlineRules = strings.Join(rules, "\n---\n")
 	}
 
-	// Build command args, excluding nested git repos that ast-grep would
-	// treat as separate repo boundaries (ignoring parent .gitignore)
 	args := []string{"scan", "--json"}
+	batchBytes := astGrepBatchArgBytes
 	if isWindowsCmdShim(s.binary) {
 		// cmd.exe shims mangle long multi-line arguments, so pass a short
 		// --config path to materialized rules instead of --inline-rules.
 		rulesDir, err := s.ensureShimRules()
 		if err != nil {
-			return nil, newIncompleteScanError("ast-grep", ScanSourceFailed, fmt.Sprintf("failed to materialize rules for cmd shim: %v", err), err)
+			return astGrepScan{}, newIncompleteScanError("ast-grep", ScanSourceFailed, fmt.Sprintf("failed to materialize rules for cmd shim: %v", err), err)
 		}
 		args = append(args, "--config", filepath.Join(rulesDir, "sgconfig.yml"))
+		batchBytes = astGrepShimBatchArgBytes
 	} else {
 		args = append(args, "--inline-rules", inlineRules)
 	}
-	// ast-grep skips dot-directories by default (its "hidden" ignore rule),
-	// so a project whose source lives under e.g. `.agents/` is invisible to
-	// it with no way to opt in. --no-ignore hidden turns that default off,
-	// but it also stops ast-grep from treating `.git` as special and opens
-	// up every other genuinely-internal dot-directory codemap already
-	// excludes by name (IgnoredDirs) — so both are re-excluded explicitly
-	// via --globs, at any depth, right alongside it.
-	//
-	// ast-grep's --globs match the literal path string it walks, with no
-	// awareness of where "root" begins: given an absolute root, a pattern
-	// like "**/testdata/**" matches even when "testdata" is an *ancestor* of
-	// root rather than something inside it (this repo's own scanner tests,
-	// which build fixtures under ../testdata/, hit exactly that false
-	// exclusion). Running the scan with its cwd set to root and "." as the
-	// scanned path keeps every walked path root-relative, so the globs can
-	// never see anything above root.
-	args = append(args, "--no-ignore", "hidden")
-	for _, name := range hiddenScanExcludes() {
-		args = append(args, "--globs", "!**/"+name+"/**")
-	}
-	// Nested repositories are excluded by their root-relative path (the
-	// scan runs with cwd=root, so the glob is anchored there and cannot
-	// match a same-named directory elsewhere in the tree).
-	for _, repo := range findNestedGitRepos(root) {
-		args = append(args, "--globs", "!"+filepath.ToSlash(repo)+"/**")
-	}
-	args = append(args, ".")
 
+	// The file walker's inventory is the scan set, so ast-grep sees exactly
+	// what `codemap .` calls project source: hidden directories included,
+	// IgnoredDirs, .gitignore and nested repositories excluded. ast-grep
+	// scans explicit paths without applying its own ignore rules and skips
+	// any whose language it does not know. Paths stay root-relative (cmd.Dir
+	// is root) so match paths come back as graph keys.
+	files, err := ScanFiles(parent, root, NewGitIgnoreCache(root), nil, nil)
+	if err != nil {
+		if parentErr := parent.Err(); parentErr != nil {
+			return astGrepScan{}, parentErr
+		}
+		return astGrepScan{}, newIncompleteScanError("ast-grep", ScanSourceFailed, fmt.Sprintf("file walk failed: %v", err), err)
+	}
+	var scan astGrepScan
+	var paths, minified []string
+	for _, file := range files {
+		if file.Size > astGrepMaxLineBytes && astGrepMinifiable(file.Ext) && hasLineLongerThan(filepath.Join(root, file.Path), astGrepMaxLineBytes) {
+			minified = append(minified, filepath.ToSlash(file.Path))
+			continue
+		}
+		paths = append(paths, file.Path)
+	}
+	if len(minified) > 0 {
+		scan.notes = append(scan.notes, fmt.Sprintf("ast-grep skipped %d minified or generated files (a line over %d KiB); their edges are not in the graph (%s)", len(minified), astGrepMaxLineBytes>>10, strings.Join(minified[:min(3, len(minified))], ", ")))
+	}
+
+	batches := batchPaths(paths, batchBytes)
+	var matches []ScanMatch
+	var firstErr *IncompleteScanError
+	var unscanned []string
+	failed := 0
+	for _, batch := range batches {
+		batchMatches, err := s.runAstGrepBatch(parent, root, args, batch)
+		if err != nil {
+			var incomplete *IncompleteScanError
+			if !errors.As(err, &incomplete) {
+				return astGrepScan{}, err
+			}
+			if firstErr == nil {
+				firstErr = incomplete
+			}
+			failed++
+			for _, path := range batch {
+				unscanned = append(unscanned, filepath.ToSlash(path))
+			}
+			continue
+		}
+		matches = append(matches, batchMatches...)
+	}
+	if failed > 0 {
+		if failed == len(batches) {
+			return astGrepScan{}, firstErr
+		}
+		scan.partial = true
+		scan.notes = append(scan.notes, fmt.Sprintf("%s on %d of %d batches; %d files were not scanned and their edges are missing (%s)", firstErr.Outcome.Detail, failed, len(batches), len(unscanned), strings.Join(unscanned[:min(3, len(unscanned))], ", ")))
+	}
+	scan.analyses = analysesFromMatches(root, matches)
+	return scan, nil
+}
+
+// astGrepMinifiable limits the long-line probe to source files, so a large
+// image or archive is never read.
+//
+// ponytail: extToLang plus the JS/TS module extensions it lacks; ast-grep
+// knows a few more (.pyi, .cxx, ...) that are rarely minified.
+func astGrepMinifiable(ext string) bool {
+	switch strings.ToLower(ext) {
+	case ".cjs", ".mts", ".cts":
+		return true
+	}
+	return IsSourceExt(ext)
+}
+
+// hasLineLongerThan reports whether the file has a line longer than limit bytes.
+func hasLineLongerThan(path string, limit int) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	r := bufio.NewReader(f)
+	run := 0
+	for {
+		chunk, err := r.ReadSlice('\n')
+		run += len(chunk)
+		if run > limit {
+			return true
+		}
+		switch err {
+		case nil:
+			run = 0
+		case bufio.ErrBufferFull:
+		default:
+			return false
+		}
+	}
+}
+
+// batchPaths splits paths into runs whose combined length stays under limit.
+func batchPaths(paths []string, limit int) [][]string {
+	var batches [][]string
+	var batch []string
+	size := 0
+	for _, path := range paths {
+		if len(batch) > 0 && size+len(path)+1 > limit {
+			batches = append(batches, batch)
+			batch, size = nil, 0
+		}
+		batch = append(batch, path)
+		size += len(path) + 1
+	}
+	if len(batch) > 0 {
+		batches = append(batches, batch)
+	}
+	return batches
+}
+
+// runAstGrepBatch scans one batch of root-relative paths under its own
+// astGrepScanTimeout.
+func (s *AstGrepScanner) runAstGrepBatch(parent context.Context, root string, args, paths []string) ([]ScanMatch, error) {
 	ctx, cancel := context.WithTimeout(parent, astGrepScanTimeout)
 	defer cancel()
 
-	cmd := astGrepCommand(ctx, s.binary, args...)
+	// "--" keeps a path that starts with a dash from reading as a flag.
+	cmd := astGrepCommand(ctx, s.binary, append(append(slices.Clone(args), "--"), paths...)...)
 	cmd.Dir = root
 	cmd.WaitDelay = 100 * time.Millisecond
 	out, err := cmd.Output()
@@ -433,7 +533,11 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 	if decodeErr := json.Unmarshal(jsonData, &matches); decodeErr != nil {
 		return nil, newIncompleteScanError("ast-grep", ScanSourceFailed, "ast-grep produced invalid JSON results", decodeErr)
 	}
+	return matches, nil
+}
 
+// analysesFromMatches groups ast-grep matches into one analysis per file.
+func analysesFromMatches(root string, matches []ScanMatch) []FileAnalysis {
 	// Group matches by file
 	fileMap := make(map[string]*FileAnalysis)
 
@@ -585,7 +689,7 @@ func (s *AstGrepScanner) scanDirectory(parent context.Context, root string) ([]F
 		results = append(results, *a)
 	}
 
-	return results, nil
+	return results
 }
 
 func dedupeImportReferences(refs []ImportReference) []ImportReference {

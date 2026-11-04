@@ -307,9 +307,13 @@ func TestScanForDepsFailsClosedOnFailedScanner(t *testing.T) {
 	}
 	t.Setenv("PATH", binDir)
 
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	// Malformed ast-grep output fails closed: no analyses, honest failed source,
 	// and no hard error so hooks and MCP keep a usable answer.
-	outcome, err := ScanForDeps(context.Background(), t.TempDir(), Filters{})
+	outcome, err := ScanForDeps(context.Background(), root, Filters{})
 	if err != nil {
 		t.Fatalf("ScanForDeps() error = %v, want degraded outcome", err)
 	}
@@ -320,7 +324,7 @@ func TestScanForDepsFailsClosedOnFailedScanner(t *testing.T) {
 		t.Fatalf("degraded ScanForDeps sources = %#v, want failed ast-grep", outcome.Sources)
 	}
 
-	graph, err := BuildFileGraph(context.Background(), t.TempDir(), Filters{})
+	graph, err := BuildFileGraph(context.Background(), root, Filters{})
 	if err != nil {
 		t.Fatalf("BuildFileGraph() error = %v, want degraded graph", err)
 	}

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -338,6 +339,9 @@ func TestAstGrepScanDirectoryRustStaysAuthoritative(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(rootDir, "src"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(rootDir, "src", "lib.rs"), []byte("use std::collections::HashMap;\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	fakeBinary := filepath.Join(tmpDir, "fake-sg.sh")
 	// Emit a successful scan whose only analysis is a Rust file.
 	match := `[{"file":"` + filepath.Join(rootDir, "src", "lib.rs") +
@@ -576,23 +580,22 @@ class App extends StatelessWidget {
 	}
 }
 
-// TestScanDirectoryInvokesAstGrepWithHiddenDirsEnabled locks in the exact
-// invocation shape the hidden-directory fix depends on: --no-ignore hidden
-// (so ast-grep stops skipping dot-directories by default), --globs excludes
-// for the directories codemap has always treated as never-source (so
-// relaxing that default doesn't newly index .git, vendor, node_modules,
-// etc.), a "." scan path, and cmd.Dir set to root. The last two matter
-// together: ast-grep's --globs match the literal walked path with no
-// awareness of where root begins, so an absolute root under a directory
-// that happens to share a name with one of those excludes (this repo's own
-// scanner tests build fixtures under ../testdata/) would otherwise be
-// wrongly excluded in its entirety. See TestScanDirectoryDoesNotExcludeRootsNestedUnderAnIgnoredDirName.
-func TestScanDirectoryInvokesAstGrepWithHiddenDirsEnabled(t *testing.T) {
+// ast-grep scans the file walker's inventory, passed after "--" as paths
+// relative to cmd.Dir=root: hidden directories in, never-source ones out.
+func TestScanDirectoryPassesWalkerInventoryAsRootRelativePaths(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires shell script execution")
 	}
 
 	tmpDir := t.TempDir()
+	for _, name := range []string{".agents/a.js", "node_modules/pkg/dep.js"} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(tmpDir, name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, name), []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	capturedArgs := filepath.Join(tmpDir, "args.txt")
 	capturedPwd := filepath.Join(tmpDir, "pwd.txt")
 	fakeBinary := filepath.Join(tmpDir, "fake-sg.sh")
@@ -614,16 +617,18 @@ func TestScanDirectoryInvokesAstGrepWithHiddenDirsEnabled(t *testing.T) {
 	}
 	argLines := strings.Split(strings.TrimRight(string(args), "\n"), "\n")
 
-	if !strings.Contains(string(args), "--no-ignore\nhidden\n") {
-		t.Fatalf("expected --no-ignore hidden in args, got: %s", args)
+	sep := slices.Index(argLines, "--")
+	if sep < 0 {
+		t.Fatalf("expected -- before the scan paths, got: %s", args)
 	}
-	for _, want := range []string{"!**/.git/**", "!**/node_modules/**", "!**/vendor/**", "!**/testdata/**"} {
-		if !strings.Contains(string(args), want) {
-			t.Errorf("expected a --globs exclude for %q, got: %s", want, args)
+	paths := argLines[sep+1:]
+	if !slices.Contains(paths, filepath.Join(".agents", "a.js")) {
+		t.Errorf("scan paths = %v, want the hidden-directory file root-relative (via cmd.Dir)", paths)
+	}
+	for _, path := range paths {
+		if strings.Contains(path, "node_modules") {
+			t.Errorf("scan paths = %v, include a never-source directory", paths)
 		}
-	}
-	if got := argLines[len(argLines)-1]; got != "." {
-		t.Fatalf("scan path argument = %q, want %q (root-relative, via cmd.Dir)", got, ".")
 	}
 
 	pwdBytes, err := os.ReadFile(capturedPwd)
@@ -804,13 +809,11 @@ func TestScanDirectoryExcludesNestedWorktreesByPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"--globs\n!.claude/worktrees/agent-x/**\n", "--globs\n!tools/sub-clone/**\n"} {
-		if !strings.Contains(string(args), want) {
-			t.Errorf("expected %q in ast-grep args, got:\n%s", want, args)
-		}
+	if strings.Contains(string(args), "agent-x") || strings.Contains(string(args), "sub-clone") {
+		t.Errorf("nested repositories must not be scanned, got:\n%s", args)
 	}
-	if strings.Contains(string(args), "!lib/**") {
-		t.Errorf("plain source directory must not be excluded, got:\n%s", args)
+	if !strings.Contains(string(args), "--\nlib/lib.go\nlib/util.go\nmain.go\n") {
+		t.Errorf("project files must be scanned, got:\n%s", args)
 	}
 }
 
@@ -843,5 +846,84 @@ func TestScanDirectoryRealAstGrepSkipsNestedWorktree(t *testing.T) {
 	sort.Strings(paths)
 	if !reflect.DeepEqual(paths, []string{"a.js"}) {
 		t.Fatalf("analyses = %v, want only a.js (nested worktree and clone excluded)", paths)
+	}
+}
+
+// A batch that times out costs only its own files (#269): the rest of the
+// graph survives, coverage reads partial, and the detail names what was skipped.
+func TestScanDirectoryTimedOutBatchYieldsPartialGraph(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires shell script execution")
+	}
+	root := t.TempDir()
+	for _, name := range []string{"fast.go", "slow.go"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("package p\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fakeBinary := filepath.Join(t.TempDir(), "fake-sg.sh")
+	script := `#!/bin/sh
+for a in "$@"; do [ "$a" = slow.go ] && sleep 30; done
+printf '%s\n' '[{"file":"fast.go","ruleId":"go-imports","range":{"start":{"line":1,"column":1}},"text":"import \"fmt\"","metaVariables":{"single":{"PATH":{"text":"fmt"}}}}]'
+`
+	if err := os.WriteFile(fakeBinary, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prevTimeout, prevBatch := astGrepScanTimeout, astGrepBatchArgBytes
+	astGrepScanTimeout, astGrepBatchArgBytes = 2*time.Second, 1
+	t.Cleanup(func() { astGrepScanTimeout, astGrepBatchArgBytes = prevTimeout, prevBatch })
+
+	scanner := &AstGrepScanner{rulesDir: t.TempDir(), binary: fakeBinary}
+	outcome, err := scanner.ScanDirectory(context.Background(), root)
+	if err != nil {
+		t.Fatalf("ScanDirectory() error = %v", err)
+	}
+	if len(outcome.Analyses) != 1 || outcome.Analyses[0].Path != "fast.go" {
+		t.Fatalf("analyses = %#v, want fast.go kept (sources %#v)", outcome.Analyses, outcome.Sources)
+	}
+	source := outcome.Sources[0]
+	if source.Status != ScanSourceMixed || !strings.Contains(source.Detail, "timed out") || !strings.Contains(source.Detail, "slow.go") {
+		t.Fatalf("source = %#v, want mixed with a timeout detail naming slow.go", source)
+	}
+	if got := CoverageFromSources(outcome.Sources).Status; got != analysis.CoveragePartial {
+		t.Fatalf("coverage = %q, want partial", got)
+	}
+}
+
+// A one-line bundle is left out of the scan with a note: ast-grep's JSON
+// repeats the whole line for every match in it (#269).
+func TestScanDirectorySkipsMinifiedFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires shell script execution")
+	}
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "bundle.cjs"), []byte("var a=1;"+strings.Repeat("x", astGrepMaxLineBytes)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "app.js"), []byte("require('./b');\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	capturedArgs := filepath.Join(t.TempDir(), "args.txt")
+	fakeBinary := filepath.Join(t.TempDir(), "fake-sg.sh")
+	if err := os.WriteFile(fakeBinary, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE_ARGS\"\nprintf '[]\\n'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CAPTURE_ARGS", capturedArgs)
+
+	scanner := &AstGrepScanner{rulesDir: t.TempDir(), binary: fakeBinary}
+	outcome, err := scanner.ScanDirectory(context.Background(), root)
+	if err != nil {
+		t.Fatalf("ScanDirectory() error = %v", err)
+	}
+	args, err := os.ReadFile(capturedArgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(args), "bundle.cjs") || !strings.Contains(string(args), "app.js") {
+		t.Fatalf("args = %s, want app.js scanned and bundle.cjs skipped", args)
+	}
+	source := outcome.Sources[0]
+	if source.Status != ScanSourceAuthoritative || !strings.Contains(source.Detail, "bundle.cjs") {
+		t.Fatalf("source = %#v, want authoritative with a note naming bundle.cjs", source)
 	}
 }
