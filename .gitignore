@@ -38,3 +38,4 @@ coverage.out
 bench/cache/
 bench/tools/node_modules/
 bench/results/*/
+bench/truth/rustsyn/target/

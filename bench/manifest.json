@@ -118,6 +118,84 @@
      "slug": "github__spec-kit",
      "source_files_first_draft_screen": 673
     }
+   ],
+   "c": [
+    {
+     "repo": "obsproject/obs-studio",
+     "url": "https://github.com/obsproject/obs-studio",
+     "sha": "7a25c3fd8b5eb87c2d2e0606cae36e32014bc6fa",
+     "slug": "obsproject__obs-studio",
+     "stars": 78922,
+     "source_files": 713
+    },
+    {
+     "repo": "curl/curl",
+     "url": "https://github.com/curl/curl",
+     "sha": "41e2abc56c1fc2abcf76b6e5e77c2e3de4051888",
+     "slug": "curl__curl",
+     "stars": 43372,
+     "source_files": 1061
+    },
+    {
+     "repo": "raysan5/raylib",
+     "url": "https://github.com/raysan5/raylib",
+     "sha": "3b12ba162bf58289fd2536604b6c805c128b0813",
+     "slug": "raysan5__raylib",
+     "stars": 35554,
+     "source_files": 275
+    }
+   ],
+   "cpp": [
+    {
+     "repo": "ggml-org/llama.cpp",
+     "url": "https://github.com/ggml-org/llama.cpp",
+     "sha": "bee23322f1baa3d2dd16b8339bed6aff4a8eb663",
+     "slug": "ggml-org__llama.cpp",
+     "stars": 133319,
+     "source_files": 1168
+    },
+    {
+     "repo": "bitcoin/bitcoin",
+     "url": "https://github.com/bitcoin/bitcoin",
+     "sha": "ed3d34ba0c0b28bb281b265eaca62222aae3a796",
+     "slug": "bitcoin__bitcoin",
+     "stars": 90595,
+     "source_files": 1534
+    },
+    {
+     "repo": "tesseract-ocr/tesseract",
+     "url": "https://github.com/tesseract-ocr/tesseract",
+     "sha": "c21194d06998e244754d65329d6c9f1e14fe392e",
+     "slug": "tesseract-ocr__tesseract",
+     "stars": 77327,
+     "source_files": 601
+    }
+   ],
+   "rust": [
+    {
+     "repo": "clash-verge-rev/clash-verge-rev",
+     "url": "https://github.com/clash-verge-rev/clash-verge-rev",
+     "sha": "14abc4c4ee82deb48e13d054a2f336c9d7888cc5",
+     "slug": "clash-verge-rev__clash-verge-rev",
+     "stars": 156180,
+     "source_files": 147
+    },
+    {
+     "repo": "rustdesk/rustdesk",
+     "url": "https://github.com/rustdesk/rustdesk",
+     "sha": "55786aaa5709ac0a450aabcf06f9d1fee3119908",
+     "slug": "rustdesk__rustdesk",
+     "stars": 128115,
+     "source_files": 339
+    },
+    {
+     "repo": "tauri-apps/tauri",
+     "url": "https://github.com/tauri-apps/tauri",
+     "sha": "eebf7c23c1b55629aac7c8f4913d845bdbb46da3",
+     "slug": "tauri-apps__tauri",
+     "stars": 112480,
+     "source_files": 327
+    }
    ]
   },
   "tuned": {
@@ -186,5 +264,737 @@
    ]
   }
  },
- "tuned_pinned_at": "2026-11-03T12:46:45Z"
+ "tuned_pinned_at": "2026-11-03T12:46:45Z",
+ "extensions": {
+  "c_cpp_rust": {
+   "applied_on": "2026-11-04",
+   "rule": "to each language's 40 candidates in star order, C first, then\nC++, then Rust:\n  1. skip a repo already picked for another language (GitHub files a C++\n     repo under C or the reverse; it is scored once, under the language it\n     was picked for)\n  2. skip a repo carrying any of the collection topics\n       algorithm, algorithms, education, interview, interview-preparation,\n       awesome, awesome-list, snippets, learning-resources, learn, tutorial,\n       tutorials, roadmap\n  3. pin SHA = `git ls-remote <url> HEAD` at selection time\n  4. list the tree at that SHA with a blobless, no-checkout clone; a\n     truncated listing is a skip\n  5. require the toolchain manifest at the repo root:\n       c, cpp: CMakeLists.txt (the truth generator reads cmake's\n               compile_commands.json; `bear` is not available here, so a\n               make-only build cannot produce one)\n       rust:   Cargo.toml\n  6. require 100 <= N <= 3000 source files, N counted by extension\n       (c: .c .h; cpp: .cpp .cc .cxx .hpp .hh .hxx .h; rust: .rs) outside\n       vendor, third_party, thirdparty, external, deps, node_modules, dist,\n       build and .git\n  7. the first three that pass are the held-out set; there are no\n     alternates and no substitution: a held-out repo whose toolchain truth\n     cannot be built is reported as truth unavailable",
+   "search": "search-c-cpp-rust.json",
+   "tuned": [],
+   "substitution": "none",
+   "screen_log": {
+    "c": [
+     {
+      "rank": 1,
+      "repo": "torvalds/linux",
+      "url": "https://github.com/torvalds/linux",
+      "stars": 254322,
+      "default_branch": "master",
+      "topics": [],
+      "sha": "05441d697f7f9a927264f4058cbbc6a03dfcac9d",
+      "source_files": 65005,
+      "manifest": false,
+      "decision": "excluded: no CMakeLists.txt at root"
+     },
+     {
+      "rank": 2,
+      "repo": "Genymobile/scrcpy",
+      "url": "https://github.com/Genymobile/scrcpy",
+      "stars": 153969,
+      "default_branch": "master",
+      "topics": [
+       "android",
+       "c",
+       "ffmpeg",
+       "genyteam-system",
+       "libav",
+       "mirroring",
+       "recording",
+       "screen",
+       "sdl2"
+      ],
+      "sha": "a60891aea193d92e7e5c3942700eca63f9d19a5f",
+      "source_files": 196,
+      "manifest": false,
+      "decision": "excluded: no CMakeLists.txt at root"
+     },
+     {
+      "rank": 3,
+      "repo": "microsoft/PowerToys",
+      "url": "https://github.com/microsoft/PowerToys",
+      "stars": 140515,
+      "default_branch": "main",
+      "topics": [
+       "advanced-paste",
+       "color-picker",
+       "command-palette",
+       "desktop",
+       "fancyzones",
+       "keyboard-manager",
+       "microsoft-powertoys",
+       "powerrename",
+       "powertoys",
+       "windows",
+       "windows-10",
+       "windows-11"
+      ],
+      "sha": "99537d3f15a9934a9e2272b5582b187610a61f6c",
+      "source_files": 722,
+      "manifest": false,
+      "decision": "excluded: no CMakeLists.txt at root"
+     },
+     {
+      "rank": 4,
+      "repo": "ventoy/Ventoy",
+      "url": "https://github.com/ventoy/Ventoy",
+      "stars": 80575,
+      "default_branch": "master",
+      "topics": [
+       "arm64",
+       "auto-install",
+       "bootable-usb",
+       "bsd",
+       "chromeos",
+       "iso-files",
+       "legacy",
+       "linux",
+       "multiboot",
+       "persistence",
+       "secure-boot",
+       "uefi",
+       "unattended",
+       "unix",
+       "usb",
+       "windows",
+       "x86",
+       "x86-64"
+      ],
+      "sha": "74cff34240dca6991b79c6656770670da7b0c39e",
+      "source_files": 728,
+      "manifest": false,
+      "decision": "excluded: no CMakeLists.txt at root"
+     },
+     {
+      "rank": 5,
+      "repo": "obsproject/obs-studio",
+      "url": "https://github.com/obsproject/obs-studio",
+      "stars": 78922,
+      "default_branch": "master",
+      "topics": [
+       "c",
+       "c-plus-plus",
+       "directshow",
+       "facebook-live",
+       "ffmpeg",
+       "game-capture",
+       "live-streaming",
+       "screen-capture",
+       "twitch-tv",
+       "video-recording",
+       "youtube-live"
+      ],
+      "sha": "7a25c3fd8b5eb87c2d2e0606cae36e32014bc6fa",
+      "source_files": 713,
+      "manifest": true,
+      "decision": "accepted"
+     },
+     {
+      "rank": 6,
+      "repo": "redis/redis",
+      "url": "https://github.com/redis/redis",
+      "stars": 77172,
+      "default_branch": "unstable",
+      "topics": [
+       "cache",
+       "caching",
+       "database",
+       "distributed-systems",
+       "in-memory",
+       "in-memory-database",
+       "json",
+       "key-value",
+       "key-value-store",
+       "message-broker",
+       "message-queue",
+       "no-sql",
+       "nosql",
+       "open-source",
+       "real-time",
+       "realtime",
+       "redis",
+       "time-series",
+       "vector-databases",
+       "vector-search"
+      ],
+      "sha": "8e2ba8c4ef6ccf76d327c689cddd5fbe64daa5e5",
+      "source_files": 288,
+      "manifest": false,
+      "decision": "excluded: no CMakeLists.txt at root"
+     },
+     {
+      "rank": 7,
+      "repo": "FFmpeg/FFmpeg",
+      "url": "https://github.com/FFmpeg/FFmpeg",
+      "stars": 66440,
+      "default_branch": "master",
+      "topics": [
+       "audio",
+       "c",
+       "ffmpeg",
+       "fft",
+       "hevc",
+       "hls",
+       "matroska",
+       "mp4",
+       "mpeg",
+       "multimedia",
+       "rtmp",
+       "rtsp",
+       "streaming",
+       "video",
+       "webm"
+      ],
+      "sha": "2546b6f061fe6bc869ac9a1c0ed892555bd24402",
+      "source_files": 4799,
+      "manifest": false,
+      "decision": "excluded: no CMakeLists.txt at root"
+     },
+     {
+      "rank": 8,
+      "repo": "git/git",
+      "url": "https://github.com/git/git",
+      "stars": 64154,
+      "default_branch": "master",
+      "topics": [
+       "c",
+       "hacktoberfest",
+       "shell"
+      ],
+      "sha": "750f5de7dfe9a4062f95088212b063f189d50e91",
+      "source_files": 988,
+      "manifest": false,
+      "decision": "excluded: no CMakeLists.txt at root"
+     },
+     {
+      "rank": 9,
+      "repo": "tmux/tmux",
+      "url": "https://github.com/tmux/tmux",
+      "stars": 50145,
+      "default_branch": "master",
+      "topics": [],
+      "sha": "a73616d781f2af13085691c741cfb0780d365328",
+      "source_files": 216,
+      "manifest": false,
+      "decision": "excluded: no CMakeLists.txt at root"
+     },
+     {
+      "rank": 10,
+      "repo": "DeusData/codebase-memory-mcp",
+      "url": "https://github.com/DeusData/codebase-memory-mcp",
+      "stars": 48084,
+      "default_branch": "main",
+      "topics": [
+       "aider",
+       "ast",
+       "claude-code",
+       "code-analysis",
+       "code-intelligence",
+       "codex",
+       "cursor",
+       "cypher",
+       "developer-tools",
+       "gemini-cli",
+       "graph-visualization",
+       "kilocode",
+       "knowledge-graph",
+       "mcp",
+       "mcp-server",
+       "model-context-protocol",
+       "opencode",
+       "sqlite",
+       "tree-sitter",
+       "windsurf"
+      ],
+      "sha": "e0c7a1da6c067149716afad5a06f2465c114840d",
+      "source_files": 1839,
+      "manifest": false,
+      "decision": "excluded: no CMakeLists.txt at root"
+     },
+     {
+      "rank": 11,
+      "repo": "JustVugg/colibri",
+      "url": "https://github.com/JustVugg/colibri",
+      "stars": 47409,
+      "default_branch": "main",
+      "topics": [],
+      "sha": "0a5504a1dc64f86fcd0fe7db298b0448c730e7e6",
+      "source_files": 517,
+      "manifest": false,
+      "decision": "excluded: no CMakeLists.txt at root"
+     },
+     {
+      "rank": 12,
+      "repo": "curl/curl",
+      "url": "https://github.com/curl/curl",
+      "stars": 43372,
+      "default_branch": "master",
+      "topics": [
+       "c",
+       "client",
+       "curl",
+       "ftp",
+       "gopher",
+       "hacktoberfest",
+       "http",
+       "https",
+       "imaps",
+       "ldap",
+       "libcurl",
+       "library",
+       "mqtt",
+       "pop3",
+       "scp",
+       "sftp",
+       "transfer-data",
+       "transferring-data",
+       "user-agent",
+       "websocket"
+      ],
+      "sha": "41e2abc56c1fc2abcf76b6e5e77c2e3de4051888",
+      "source_files": 1061,
+      "manifest": true,
+      "decision": "accepted"
+     },
+     {
+      "rank": 13,
+      "repo": "php/php-src",
+      "url": "https://github.com/php/php-src",
+      "stars": 41759,
+      "default_branch": "master",
+      "topics": [],
+      "sha": "e78d4e6a064dc108bf663be8bbaff0dafd80ffb9",
+      "source_files": 2240,
+      "manifest": false,
+      "decision": "excluded: no CMakeLists.txt at root"
+     },
+     {
+      "rank": 14,
+      "repo": "pbatard/rufus",
+      "url": "https://github.com/pbatard/rufus",
+      "stars": 38239,
+      "default_branch": "master",
+      "topics": [
+       "bios",
+       "boot",
+       "bootable-drives",
+       "freedos",
+       "gpt",
+       "grub",
+       "grub4dos",
+       "iso",
+       "mbr",
+       "md5",
+       "persistence",
+       "rufus",
+       "secure-boot",
+       "sha1",
+       "sha256",
+       "syslinux",
+       "uefi",
+       "usb",
+       "windows",
+       "windows-to-go"
+      ],
+      "sha": "acf7de640848ab249bedeb6feb59b33001f656b6",
+      "source_files": 478,
+      "manifest": false,
+      "decision": "excluded: no CMakeLists.txt at root"
+     },
+     {
+      "rank": 15,
+      "repo": "mpv-player/mpv",
+      "url": "https://github.com/mpv-player/mpv",
+      "stars": 37695,
+      "default_branch": "master",
+      "topics": [
+       "audio",
+       "c",
+       "ffmpeg",
+       "mplayer",
+       "mpv",
+       "multimedia",
+       "video"
+      ],
+      "sha": "fba63421a8de9454788d64adaa1fd0ae79795112",
+      "source_files": 607,
+      "manifest": false,
+      "decision": "excluded: no CMakeLists.txt at root"
+     },
+     {
+      "rank": 16,
+      "repo": "jqlang/jq",
+      "url": "https://github.com/jqlang/jq",
+      "stars": 36029,
+      "default_branch": "master",
+      "topics": [
+       "jq"
+      ],
+      "sha": "5c001b18d7237cce1fdba63608732163f978dd23",
+      "source_files": 49,
+      "manifest": false,
+      "decision": "excluded: no CMakeLists.txt at root"
+     },
+     {
+      "rank": 17,
+      "repo": "raysan5/raylib",
+      "url": "https://github.com/raysan5/raylib",
+      "stars": 35554,
+      "default_branch": "master",
+      "topics": [
+       "android",
+       "c",
+       "embedded",
+       "esp32",
+       "game-development",
+       "game-engine",
+       "gamedev",
+       "graphics",
+       "iot",
+       "linux",
+       "macos",
+       "opengl",
+       "programming",
+       "raspberry-pi",
+       "raylib",
+       "riscv",
+       "wasm",
+       "webassembly",
+       "win32"
+      ],
+      "sha": "3b12ba162bf58289fd2536604b6c805c128b0813",
+      "source_files": 275,
+      "manifest": true,
+      "decision": "accepted"
+     }
+    ],
+    "cpp": [
+     {
+      "rank": 1,
+      "repo": "tensorflow/tensorflow",
+      "url": "https://github.com/tensorflow/tensorflow",
+      "stars": 201293,
+      "default_branch": "master",
+      "topics": [
+       "deep-learning",
+       "deep-neural-networks",
+       "distributed",
+       "machine-learning",
+       "ml",
+       "neural-network",
+       "python",
+       "tensorflow"
+      ],
+      "sha": "faa06da43657488c1f7479289d11d15e03a15ba1",
+      "source_files": 10577,
+      "manifest": false,
+      "decision": "excluded: no CMakeLists.txt at root"
+     },
+     {
+      "rank": 2,
+      "repo": "ggml-org/llama.cpp",
+      "url": "https://github.com/ggml-org/llama.cpp",
+      "stars": 133319,
+      "default_branch": "master",
+      "topics": [
+       "ggml"
+      ],
+      "sha": "bee23322f1baa3d2dd16b8339bed6aff4a8eb663",
+      "source_files": 1168,
+      "manifest": true,
+      "decision": "accepted"
+     },
+     {
+      "rank": 3,
+      "repo": "react/react-native",
+      "url": "https://github.com/react/react-native",
+      "stars": 126852,
+      "default_branch": "main",
+      "topics": [
+       "android",
+       "app-framework",
+       "cross-platform",
+       "ios",
+       "mobile",
+       "mobile-development",
+       "react",
+       "react-native"
+      ],
+      "sha": "edf2b86e63b311cd844a53b7fba474e9b0994658",
+      "source_files": 2101,
+      "manifest": false,
+      "decision": "excluded: no CMakeLists.txt at root"
+     },
+     {
+      "rank": 4,
+      "repo": "electron/electron",
+      "url": "https://github.com/electron/electron",
+      "stars": 123760,
+      "default_branch": "main",
+      "topics": [
+       "c-plus-plus",
+       "chrome",
+       "css",
+       "electron",
+       "html",
+       "javascript",
+       "nodejs",
+       "v8",
+       "works-with-codespaces"
+      ],
+      "sha": "6752821287dd7eae86525b5a63d53a2040cb80a3",
+      "source_files": 882,
+      "manifest": false,
+      "decision": "excluded: no CMakeLists.txt at root"
+     },
+     {
+      "rank": 5,
+      "repo": "godotengine/godot",
+      "url": "https://github.com/godotengine/godot",
+      "stars": 119544,
+      "default_branch": "master",
+      "topics": [
+       "game-development",
+       "game-engine",
+       "gamedev",
+       "godot",
+       "godotengine",
+       "multi-platform",
+       "open-source"
+      ],
+      "sha": "fefec82d74b46f5e6cc31f373071058f80a5cbee",
+      "source_files": 3753,
+      "manifest": false,
+      "decision": "excluded: no CMakeLists.txt at root"
+     },
+     {
+      "rank": 6,
+      "repo": "microsoft/terminal",
+      "url": "https://github.com/microsoft/terminal",
+      "stars": 105322,
+      "default_branch": "main",
+      "topics": [
+       "cmd",
+       "command-line",
+       "console",
+       "contributions-welcome",
+       "good-first-issue",
+       "hacktoberfest",
+       "terminal",
+       "windows",
+       "windows-console",
+       "windows-terminal",
+       "wsl"
+      ],
+      "sha": "188822fa51dba7e11b64801483f4909db5fd020a",
+      "source_files": 1140,
+      "manifest": false,
+      "decision": "excluded: no CMakeLists.txt at root"
+     },
+     {
+      "rank": 7,
+      "repo": "opencv/opencv",
+      "url": "https://github.com/opencv/opencv",
+      "stars": 91438,
+      "default_branch": "5.x",
+      "topics": [
+       "c-plus-plus",
+       "computer-vision",
+       "deep-learning",
+       "image-processing",
+       "opencv"
+      ],
+      "sha": "343825b248144e41ea888ef897e259ba3a4ca4ff",
+      "source_files": 3477,
+      "manifest": true,
+      "decision": "excluded: 3477 source files > 3000"
+     },
+     {
+      "rank": 8,
+      "repo": "bitcoin/bitcoin",
+      "url": "https://github.com/bitcoin/bitcoin",
+      "stars": 90595,
+      "default_branch": "master",
+      "topics": [
+       "bitcoin",
+       "c-plus-plus",
+       "cryptocurrency",
+       "cryptography",
+       "p2p"
+      ],
+      "sha": "ed3d34ba0c0b28bb281b265eaca62222aae3a796",
+      "source_files": 1534,
+      "manifest": true,
+      "decision": "accepted"
+     },
+     {
+      "rank": 9,
+      "repo": "tesseract-ocr/tesseract",
+      "url": "https://github.com/tesseract-ocr/tesseract",
+      "stars": 77327,
+      "default_branch": "main",
+      "topics": [
+       "hacktoberfest",
+       "lstm",
+       "machine-learning",
+       "ocr",
+       "ocr-engine",
+       "tesseract",
+       "tesseract-ocr"
+      ],
+      "sha": "c21194d06998e244754d65329d6c9f1e14fe392e",
+      "source_files": 601,
+      "manifest": true,
+      "decision": "accepted"
+     }
+    ],
+    "rust": [
+     {
+      "rank": 1,
+      "repo": "ultraworkers/claw-code",
+      "url": "https://github.com/ultraworkers/claw-code",
+      "stars": 194967,
+      "default_branch": "main",
+      "topics": [],
+      "sha": "51cfca114cf506a5d7a53ab1bffa8e1bbd3c780d",
+      "source_files": 118,
+      "manifest": false,
+      "decision": "excluded: no Cargo.toml at root"
+     },
+     {
+      "rank": 2,
+      "repo": "clash-verge-rev/clash-verge-rev",
+      "url": "https://github.com/clash-verge-rev/clash-verge-rev",
+      "stars": 156180,
+      "default_branch": "dev",
+      "topics": [
+       "clash",
+       "clash-meta",
+       "clash-verge",
+       "linux",
+       "mac",
+       "mihomo",
+       "tauri-app",
+       "windows"
+      ],
+      "sha": "14abc4c4ee82deb48e13d054a2f336c9d7888cc5",
+      "source_files": 147,
+      "manifest": true,
+      "decision": "accepted"
+     },
+     {
+      "rank": 3,
+      "repo": "farion1231/cc-switch",
+      "url": "https://github.com/farion1231/cc-switch",
+      "stars": 151642,
+      "default_branch": "main",
+      "topics": [
+       "ai-tools",
+       "claude-code",
+       "codex",
+       "deepseek-harness",
+       "desktop-app",
+       "grok",
+       "grokbuild",
+       "hermes",
+       "kimi-code",
+       "mcp",
+       "open-source",
+       "opencode",
+       "pi",
+       "provider-management",
+       "rust",
+       "skills",
+       "skills-management",
+       "tauri",
+       "wsl-support"
+      ],
+      "sha": "e217bfcbbbbbf82f4619ab62f08fb002635b7858",
+      "source_files": 383,
+      "manifest": false,
+      "decision": "excluded: no Cargo.toml at root"
+     },
+     {
+      "rank": 4,
+      "repo": "openai/codex",
+      "url": "https://github.com/openai/codex",
+      "stars": 133071,
+      "default_branch": "main",
+      "topics": [],
+      "sha": "93b4e5b4c6474cdbf12614c4ac3acbd006fbee89",
+      "source_files": 5813,
+      "manifest": false,
+      "decision": "excluded: no Cargo.toml at root"
+     },
+     {
+      "rank": 5,
+      "repo": "rustdesk/rustdesk",
+      "url": "https://github.com/rustdesk/rustdesk",
+      "stars": 128115,
+      "default_branch": "master",
+      "topics": [
+       "android",
+       "anydesk",
+       "dart",
+       "flatpak",
+       "flutter",
+       "flutter-apps",
+       "ios",
+       "linux",
+       "macos",
+       "p2p",
+       "rdp",
+       "remote-control",
+       "remote-desktop",
+       "rust",
+       "rust-lang",
+       "teamviewer",
+       "vnc",
+       "wayland",
+       "windows"
+      ],
+      "sha": "55786aaa5709ac0a450aabcf06f9d1fee3119908",
+      "source_files": 339,
+      "manifest": true,
+      "decision": "accepted"
+     },
+     {
+      "rank": 6,
+      "repo": "rust-lang/rust",
+      "url": "https://github.com/rust-lang/rust",
+      "stars": 121039,
+      "default_branch": "main",
+      "topics": [
+       "compiler",
+       "language",
+       "rust"
+      ],
+      "sha": "cabb1ea4ced589dfee40c08aeffff3cac78af43b",
+      "source_files": 39541,
+      "manifest": true,
+      "decision": "excluded: 39541 source files > 3000"
+     },
+     {
+      "rank": 7,
+      "repo": "tauri-apps/tauri",
+      "url": "https://github.com/tauri-apps/tauri",
+      "stars": 112480,
+      "default_branch": "dev",
+      "topics": [
+       "desktop-app",
+       "high-performance",
+       "mobile-app",
+       "native-app",
+       "rust",
+       "web-frontend",
+       "webview"
+      ],
+      "sha": "eebf7c23c1b55629aac7c8f4913d845bdbb46da3",
+      "source_files": 327,
+      "manifest": true,
+      "decision": "accepted"
+     }
+    ]
+   }
+  }
+ }
 }
