@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"codemap/analysis"
 	"codemap/scanner"
 )
 
@@ -50,5 +51,30 @@ func TestImportersCommandListsCJSRequire(t *testing.T) {
 	}
 	if !strings.Contains(out, "• main.cjs") || strings.Contains(out, "no language mapping") {
 		t.Fatalf("--importers lib.cjs must list main.cjs with no mapping caveat:\n%s", out)
+	}
+}
+
+// Extensionless specifiers never resolve to .mjs/.cjs/.mts/.cts: dup.js beats
+// dup.cjs, tdup.ts beats tdup.mts, and a lone onlycjs.cjs or onlymjs.mjs stays
+// an unresolved import rather than an invented edge.
+func TestExtensionlessImportsSkipModuleExtensions(t *testing.T) {
+	root, err := filepath.Abs("testdata/js-module-extensions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fg, err := scanner.BuildFileGraph(context.Background(), root, scanner.Filters{})
+	if err != nil {
+		t.Fatalf("BuildFileGraph: %v", err)
+	}
+	for from, want := range map[string][]string{
+		"probe/main.js": {"probe/dup.js"},
+		"probe/main.ts": {"probe/tdup.ts"},
+	} {
+		if got := fg.Imports[from]; !slices.Equal(got, want) {
+			t.Errorf("Imports[%s] = %v, want %v", from, got, want)
+		}
+	}
+	if fg.Coverage.EffectiveStatus() == analysis.CoverageComplete {
+		t.Errorf("coverage = complete, want ./onlycjs and ./onlymjs declared unresolved (notes = %v)", fg.Coverage.Notes)
 	}
 }
