@@ -17,6 +17,14 @@ type jsWorkspaceResolver struct {
 	packageScopes []jsPackageScope
 	denoScopes    []jsImportScope
 	workspaces    []jsPackageWorkspace
+	pathScopes    []jsPathAliasScope // deepest root first
+}
+
+// jsPathAliasScope is the paths one tsconfig/jsconfig gives the files under it.
+type jsPathAliasScope struct {
+	root    string
+	aliases map[string][]string
+	baseURL string
 }
 
 type jsPackageWorkspace struct {
@@ -80,6 +88,7 @@ func buildJSWorkspaceResolver(ctx context.Context, root string, files []FileInfo
 	tsConfigs := make(map[string]map[string]any)
 	pnpmWorkspaces := make(map[string][]string)
 	rushWorkspaces := make(map[string][]jsRushProject)
+	pathScopes := make(map[string]jsPathAliasScope)
 	for _, file := range files {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -90,7 +99,16 @@ func buildJSWorkspaceResolver(ctx context.Context, root string, files []FileInfo
 			pnpmWorkspaces[manifestRoot] = readPnpmWorkspace(filepath.Join(root, file.Path))
 			continue
 		}
-		if name == "tsconfig.json" {
+		if name == "tsconfig.json" || name == "jsconfig.json" {
+			// tsconfig.json wins over a jsconfig.json beside it, as in detectPathAliases.
+			if _, taken := pathScopes[manifestRoot]; !taken || name == "tsconfig.json" {
+				if aliases, baseURL := readTSConfig(filepath.Join(root, file.Path), root); len(aliases) > 0 {
+					pathScopes[manifestRoot] = jsPathAliasScope{root: manifestRoot, aliases: aliases, baseURL: baseURL}
+				}
+			}
+			if name == "jsconfig.json" {
+				continue
+			}
 			if doc, ok := readJSWorkspaceManifest(filepath.Join(root, file.Path)); ok {
 				tsConfigs[manifestRoot] = doc
 			}
@@ -132,6 +150,12 @@ func buildJSWorkspaceResolver(ctx context.Context, root string, files []FileInfo
 	}
 
 	resolver := &jsWorkspaceResolver{}
+	for _, scope := range pathScopes {
+		resolver.pathScopes = append(resolver.pathScopes, scope)
+	}
+	sort.Slice(resolver.pathScopes, func(i, j int) bool {
+		return len(resolver.pathScopes[i].root) > len(resolver.pathScopes[j].root)
+	})
 	for _, manifest := range packages {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -370,19 +394,45 @@ func (r *jsWorkspaceResolver) resolve(imp, fromFile string, idx *fileIndex, sour
 	return candidates[0].resolve(subpath, idx, sourceLanguage)
 }
 
-// rootPackageMain resolves a directory import of the scan root through
-// package.json main, which Node tries ahead of index.js. Empty means fall back to
-// index, as Node does when main names nothing.
-func (r *jsWorkspaceResolver) rootPackageMain(idx *fileIndex, sourceLanguage string) []string {
+// directoryPackageMain resolves a directory import through the package.json in
+// that directory: main, which Node tries ahead of index.js, then a plain string
+// exports ".". Empty means fall back to index, as Node does when main names
+// nothing.
+func (r *jsWorkspaceResolver) directoryPackageMain(dir string, idx *fileIndex, sourceLanguage string) []string {
 	if r == nil {
 		return nil
 	}
 	for i := range r.packageScopes {
-		if pkg := r.packageScopes[i].pkg; r.packageScopes[i].root == "" && pkg != nil && pkg.main != "" {
-			return pkg.resolveInferredTarget(pkg.main, idx, sourceLanguage)
+		pkg := r.packageScopes[i].pkg
+		if r.packageScopes[i].root != dir || pkg == nil {
+			continue
 		}
+		if pkg.main != "" {
+			if files := pkg.resolveInferredTarget(pkg.main, idx, sourceLanguage); len(files) > 0 {
+				return files
+			}
+		}
+		if target, ok := pkg.exports.exact["."]; ok && target.valid {
+			return pkg.resolveInferredTarget(target.target, idx, sourceLanguage)
+		}
+		return nil
 	}
 	return nil
+}
+
+// pathAliases returns the paths of the nearest tsconfig/jsconfig above fromFile
+// that declares any, or the root ones when none does.
+// ponytail: a nearer config without paths defers to an outer one; TypeScript
+// would apply none, but that would drop edges codemap has always drawn.
+func (r *jsWorkspaceResolver) pathAliases(fromFile string, rootAliases map[string][]string, rootBaseURL string) (map[string][]string, string) {
+	if r != nil {
+		for i := range r.pathScopes {
+			if pathContains(r.pathScopes[i].root, fromFile) {
+				return r.pathScopes[i].aliases, r.pathScopes[i].baseURL
+			}
+		}
+	}
+	return rootAliases, rootBaseURL
 }
 
 func (r *jsWorkspaceResolver) nearestPackageScope(fromFile string) *jsPackageScope {

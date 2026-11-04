@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
@@ -358,7 +357,8 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 				// A package the nearest package.json declares is external even
 				// when a tsconfig alias would also match it.
 				if !jsResolver.declaresDependency(a.Path, strings.Trim(imp, "\"'`")) {
-					unresolved.record(sourceLanguage, a.Path, imp, fg.PathAliases, found)
+					aliases, _ := jsResolver.pathAliases(a.Path, fg.PathAliases, fg.BaseURL)
+					unresolved.record(sourceLanguage, a.Path, imp, aliases, found)
 				}
 				// A Go import names a package, and a package is every non-test
 				// .go file in its directory, so one import fans out to one edge
@@ -878,15 +878,24 @@ func fuzzyResolveWithWorkspace(
 		if sourceLanguage == "python" {
 			return resolvePythonRelative(imp, fromDir, idx)
 		}
-		if isJavaScriptLanguage(sourceLanguage) && keyPath(filepath.Join(fromDir, imp)) == "." {
-			if files := jsResolver.rootPackageMain(idx, sourceLanguage); len(files) > 0 {
-				return files
+		files := resolveRelative(imp, fromDir, idx, sourceLanguage)
+		// A file match (dir.js beside dir/) wins over the directory, as in Node;
+		// a dir/index.* match yields to the directory's package.json main.
+		if isJavaScriptLanguage(sourceLanguage) {
+			dir := cleanRepoPath(filepath.Join(fromDir, imp))
+			if len(files) == 0 || dir == "" || strings.HasPrefix(files[0], dir+"/") {
+				if main := jsResolver.directoryPackageMain(dir, idx, sourceLanguage); len(main) > 0 {
+					return main
+				}
 			}
 		}
-		return resolveRelative(imp, fromDir, idx, sourceLanguage)
+		return files
 	}
 
 	// Strategy 3: TypeScript/JavaScript path alias resolution (@modules/auth, @shared/utils)
+	if isJavaScriptLanguage(sourceLanguage) {
+		pathAliases, baseURL = jsResolver.pathAliases(fromFile, pathAliases, baseURL)
+	}
 	if isJavaScriptLanguage(sourceLanguage) && len(pathAliases) > 0 {
 		if files := resolvePathAlias(imp, pathAliases, baseURL, idx, sourceLanguage); len(files) > 0 {
 			return files
@@ -1839,15 +1848,6 @@ func (fg *FileGraph) ConnectedFiles(path string) []string {
 	return result
 }
 
-// tsConfig represents the structure of tsconfig.json we care about
-type tsConfig struct {
-	CompilerOptions struct {
-		BaseURL string              `json:"baseUrl"`
-		Paths   map[string][]string `json:"paths"`
-	} `json:"compilerOptions"`
-	Extends string `json:"extends"`
-}
-
 // detectPathAliases reads tsconfig.json (and jsconfig.json) to find path aliases
 // Returns the paths map and baseUrl
 func detectPathAliases(root string) (map[string][]string, string) {
@@ -1862,53 +1862,100 @@ func detectPathAliases(root string) (map[string][]string, string) {
 	return nil, ""
 }
 
-// readTSConfig reads a tsconfig/jsconfig file and extracts paths, following extends
+// readTSConfig reads a tsconfig/jsconfig file and returns its paths, following
+// extends, with the directory the targets resolve against relative to root.
+// TypeScript resolves a target against the effective baseUrl, or without one
+// against the config that declared the paths, so an inherited key whose
+// declaring config sits elsewhere is rebased onto the returned directory.
 func readTSConfig(configPath, root string) (map[string][]string, string) {
-	data, err := os.ReadFile(configPath)
+	paths, declaredIn, baseURL := readTSConfigChain(configPath, 0)
+	if len(paths) == 0 {
+		return nil, ""
+	}
+	base := baseURL
+	if base == "" {
+		base = filepath.Dir(configPath)
+	}
+	for key, targets := range paths {
+		keyBase := baseURL
+		if keyBase == "" {
+			keyBase = declaredIn[key]
+		}
+		if keyBase == base {
+			continue
+		}
+		rebased := make([]string, 0, len(targets))
+		for _, target := range targets {
+			if !filepath.IsAbs(target) {
+				if rel, err := filepath.Rel(base, filepath.Join(keyBase, target)); err == nil {
+					target = rel
+				}
+			}
+			rebased = append(rebased, target)
+		}
+		paths[key] = rebased
+	}
+	rel, err := filepath.Rel(root, base)
 	if err != nil {
 		return nil, ""
 	}
+	return paths, filepath.ToSlash(rel)
+}
 
-	var config tsConfig
-	if err := json.Unmarshal(data, &config); err != nil {
-		return nil, ""
+// readTSConfigChain returns the merged paths (child keys override parent keys),
+// the directory of the config that declared each key, and the effective baseUrl
+// as a directory ("" when no config in the chain sets one).
+func readTSConfigChain(configPath string, depth int) (map[string][]string, map[string]string, string) {
+	if depth > 32 {
+		return nil, nil, ""
 	}
-
-	paths := config.CompilerOptions.Paths
-	baseURL := config.CompilerOptions.BaseURL
-
-	// If this config extends another, merge paths from parent
-	if config.Extends != "" {
-		parentPath := config.Extends
-		// Resolve relative extends path
+	doc, ok := readJSWorkspaceManifest(configPath)
+	if !ok {
+		return nil, nil, ""
+	}
+	paths := map[string][]string{}
+	declaredIn := map[string]string{}
+	var baseURL string
+	extends := doc["extends"]
+	if single, ok := extends.(string); ok {
+		extends = []any{single}
+	}
+	parents, _ := extends.([]any)
+	for _, parent := range parents {
+		parentPath, _ := parent.(string)
+		if parentPath == "" {
+			continue
+		}
 		if !filepath.IsAbs(parentPath) {
 			parentPath = filepath.Join(filepath.Dir(configPath), parentPath)
 		}
-		// Add .json if not present
 		if !strings.HasSuffix(parentPath, ".json") {
 			parentPath += ".json"
 		}
-
-		parentPaths, parentBaseURL := readTSConfig(parentPath, root)
-		if parentPaths != nil {
-			// Child paths override parent paths
-			if paths == nil {
-				paths = parentPaths
-			} else {
-				for k, v := range parentPaths {
-					if _, exists := paths[k]; !exists {
-						paths[k] = v
-					}
-				}
-			}
+		parentPaths, parentDeclaredIn, parentBaseURL := readTSConfigChain(parentPath, depth+1)
+		for key, targets := range parentPaths {
+			paths[key], declaredIn[key] = targets, parentDeclaredIn[key]
 		}
-		// Child baseUrl overrides parent
-		if baseURL == "" {
+		if parentBaseURL != "" {
 			baseURL = parentBaseURL
 		}
 	}
-
-	return paths, baseURL
+	options, _ := doc["compilerOptions"].(map[string]any)
+	if value, _ := options["baseUrl"].(string); value != "" {
+		baseURL = filepath.Join(filepath.Dir(configPath), value)
+	}
+	declared, _ := options["paths"].(map[string]any)
+	for key, value := range declared {
+		items, _ := value.([]any)
+		var targets []string
+		for _, item := range items {
+			if target, ok := item.(string); ok {
+				targets = append(targets, target)
+			}
+		}
+		paths[key], declaredIn[key] = targets, filepath.Dir(configPath)
+	}
+	return paths, declaredIn, baseURL
 }
 
 // normalizeAliasTarget puts a substituted tsconfig alias target into the same
