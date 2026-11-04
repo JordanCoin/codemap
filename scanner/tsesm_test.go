@@ -68,11 +68,8 @@ func TestTypeScriptSourceCandidates(t *testing.T) {
 		// extension-appending search's job, not this one's.
 		{"extensionless is left alone", "src/helper", "typescript", nil},
 		{"a ts specifier is left alone", "src/helper.ts", "typescript", nil},
-		// mts and cts are not recognized source extensions, so mjs and cjs
-		// deliberately map to nothing rather than to files that can never be
-		// indexed.
-		{"mjs has no reachable counterpart", "src/mod.mjs", "typescript", nil},
-		{"cjs has no reachable counterpart", "src/mod.cjs", "typescript", nil},
+		{"mjs maps to mts", "src/mod.mjs", "typescript", []string{"src/mod.mts", "src/mod.d.mts"}},
+		{"cjs maps to cts", "src/mod.cjs", "javascript", []string{"src/mod.cts", "src/mod.d.cts"}},
 		// Only JS-family importers use TypeScript emit semantics.
 		{"go importers are left alone", "src/helper.js", "go", nil},
 		{"python importers are left alone", "src/helper.js", "python", nil},
