@@ -708,7 +708,7 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) bool {
 	var isConfigured bool
 	switch op {
 	case "CREATE", "WRITE":
-		info, err := os.Stat(fsEvent.Name)
+		info, err := os.Lstat(fsEvent.Name)
 		if err != nil {
 			// Event delivery can race file deletion (e.g., atomic saves or temp
 			// files); if the path disappeared, clear any stale tracked entry.
@@ -726,6 +726,13 @@ func (d *Daemon) handleEvent(fsEvent fsnotify.Event) bool {
 				d.reportPublicationError(d.writeState())
 			}
 			return wasConfigured
+		}
+
+		// A symlink is never followed: it can lead outside the root, which
+		// the initial walk never watches or reads either.
+		if info.Mode()&os.ModeSymlink != 0 {
+			d.graph.mu.Unlock()
+			return false
 		}
 
 		// If a new directory was created, add it to the watcher

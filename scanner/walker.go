@@ -508,6 +508,11 @@ func ScanFilesBounded(ctx context.Context, root string, cache *GitIgnoreCache, f
 			}
 			return nil
 		}
+		// A symlink can point outside root or back into it (a loop lists the
+		// repo twice); ast-grep and every reader follow an explicit path.
+		if info.Mode()&os.ModeSymlink != 0 && path != absRoot {
+			return nil
+		}
 
 		// For directories: load any .gitignore, then check if dir itself should be skipped
 		if info.IsDir() {

@@ -1067,3 +1067,67 @@ func TestCmdShimResolvesToNativeBinary(t *testing.T) {
 		}
 	}
 }
+
+// Symlinks are never scanned: ast-grep follows an explicit path, so a link
+// read files outside root, and a loop listed the repo twice. The result must
+// match main, which passed "." to ast-grep and saw only src/m.ts.
+func TestScanForDepsNeverFollowsSymlinks(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "repo")
+	outside := filepath.Join(base, "outside")
+	sibling := filepath.Join(base, "sibling")
+	for path, content := range map[string]string{
+		filepath.Join(root, "src", "m.ts"): "import { s } from './s';\nexport function m() { return s; }\n",
+		filepath.Join(outside, "leak.py"):  "import os\ndef leak():\n    return os\n",
+		filepath.Join(sibling, "s.ts"):     "import { x } from './x';\nexport const s = x;\n",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for link, target := range map[string]string{
+		"abs_link":    outside,
+		"rel_link":    filepath.Join("..", "sibling"),
+		"loop":        ".",
+		"leakfile.py": filepath.Join(outside, "leak.py"),
+	} {
+		if err := os.Symlink(target, filepath.Join(root, link)); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+	}
+
+	files, err := ScanFiles(context.Background(), root, NewGitIgnoreCache(root), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed []string
+	for _, f := range files {
+		listed = append(listed, filepath.ToSlash(f.Path))
+	}
+	if !reflect.DeepEqual(listed, []string{"src/m.ts"}) {
+		t.Fatalf("ScanFiles = %v, want [src/m.ts]", listed)
+	}
+
+	s, err := NewAstGrepScanner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	if !s.Available() {
+		t.Skip("ast-grep not available")
+	}
+	outcome, err := ScanForDeps(context.Background(), root, Filters{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var analysed []string
+	for _, a := range outcome.Analyses {
+		analysed = append(analysed, filepath.ToSlash(a.Path))
+	}
+	if !reflect.DeepEqual(analysed, []string{"src/m.ts"}) {
+		t.Fatalf("ScanForDeps analyses = %v, want [src/m.ts]", analysed)
+	}
+}
