@@ -409,13 +409,108 @@
      }
     },
     {
+     "sources": 52,
+     "n_truth": 134,
+     "n_codemap": 34,
+     "tp": 30,
+     "fn": 104,
+     "fp": 4,
+     "codemap_out_of_universe": 13,
+     "fp_workspace_package": 0,
+     "recall": [
+      0.22388059701492538,
+      0.1615640964661063,
+      0.30158726161893773
+     ],
+     "precision": [
+      0.8823529411764706,
+      0.7337915708710346,
+      0.9532855336760918
+     ],
+     "meta": {
+      "truth": {
+       "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+       "cargo": "cargo 1.97.0 (c980f4866 2026-06-30)",
+       "rust_analyzer": "rust-analyzer 1.97.0 (2d8144b 2026-07-07)",
+       "toolchain": "stable-x86_64-unknown-linux-gnu (default)",
+       "workspace_members": 10,
+       "workspace_crates": [
+        "base",
+        "benchmark",
+        "build_script_build",
+        "capture_mag",
+        "clipboard",
+        "config",
+        "dsl",
+        "dylib_virtual_display",
+        "enigo",
+        "ffplay",
+        "hbb_common",
+        "idd_controller",
+        "ipc",
+        "key",
+        "keyboard",
+        "librustdesk",
+        "list",
+        "mouse",
+        "naming",
+        "proxy_transport",
+        "record_screen",
+        "remote_printer",
+        "rustdesk",
+        "rustdesk_portable_packer",
+        "scrap",
+        "screenshot",
+        "service",
+        "system_message",
+        "timer",
+        "virtual_display",
+        "virtual_display_1",
+        "webrtc",
+        "webrtc_echo",
+        "websocket_proxy"
+       ],
+       "cargo_check_ok": false,
+       "source_files": 52,
+       "parse_errors": 0,
+       "references": 3740,
+       "rust_analyzer_ready": true,
+       "resolved": 1929,
+       "unresolved": 9,
+       "external": 1447,
+       "include": 10,
+       "errors": 0,
+       "skipped_no_module": 1801,
+       "edges": 134
+      },
+      "codemap": {
+       "codemap": "codemap 4.7.1",
+       "method": "daemon",
+       "edges": 1023,
+       "seconds": 36.1,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": "partial",
+        "notes": [
+         "1 of 10 Cargo manifests used fallback topology",
+         "Rust macro-generated, dynamically string-routed, inline #[path], and conditional path edges may be unresolved",
+         "Python: 2 of 2 project-relative imports did not resolve to a file; those edges are missing (res/msi/preprocess.py -> platform, build.py -> platform)"
+        ],
+        "issues": 2
+       },
+       "configured_file_count": 583,
+       "file_count": 975,
+       "generation": 1
+      }
+     },
      "lang": "rust",
      "repo": "rustdesk/rustdesk",
      "sha": "55786aaa5709ac0a450aabcf06f9d1fee3119908",
      "status": {
-      "status": "skipped",
-      "reason": "toolchain truth unavailable: cargo cannot fetch the git dependency webm (libs/scrap) from chromium.googlesource.com, which this environment's network policy blocks, so no crate was checked (see truth.edges.check.log)",
-      "finished_at": "2026-11-04T08:34:24Z"
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-04T09:54:08Z"
      }
     },
     {
@@ -562,18 +657,18 @@
      ]
     },
     "rust": {
-     "n_truth": 1908,
-     "n_codemap": 1127,
-     "tp": 1082,
+     "n_truth": 2042,
+     "n_codemap": 1161,
+     "tp": 1112,
      "recall": [
-      0.5670859538784067,
-      0.5447408063487995,
-      0.5891615100858472
+      0.544564152791381,
+      0.5229003726303039,
+      0.5660605775009546
      ],
      "precision": [
-      0.9600709849157054,
-      0.946990092380075,
-      0.9700261629541341
+      0.9577950043066322,
+      0.9446409482084785,
+      0.9679295925249329
      ]
     }
    }
@@ -658,26 +753,26 @@
    {
     "kind": "FP",
     "repo": "tauri-apps/tauri",
-    "source": "crates/tauri-cli/src/acl/permission/add.rs",
-    "target": "crates/tauri-cli/src/helpers/mod.rs"
+    "source": "crates/tauri/src/ipc/mod.rs",
+    "target": "crates/tauri-utils/src/acl/mod.rs"
+   },
+   {
+    "kind": "FN",
+    "repo": "tauri-apps/tauri",
+    "source": "crates/tauri/src/app.rs",
+    "target": "crates/tauri-utils/src/platform.rs"
+   },
+   {
+    "kind": "FP",
+    "repo": "tauri-apps/tauri",
+    "source": "crates/tauri-bundler/src/bundle/windows/util.rs",
+    "target": "crates/tauri-bundler/src/bundle.rs"
    },
    {
     "kind": "FN",
     "repo": "clash-verge-rev/clash-verge-rev",
     "source": "src-tauri/src/feat/core_upgrade.rs",
     "target": "src-tauri/src/core/mod.rs"
-   },
-   {
-    "kind": "FP",
-    "repo": "tauri-apps/tauri",
-    "source": "crates/tauri-cli/src/mobile/android/android_studio_script.rs",
-    "target": "crates/tauri-cli/src/helpers/mod.rs"
-   },
-   {
-    "kind": "FN",
-    "repo": "clash-verge-rev/clash-verge-rev",
-    "source": "src-tauri/src/feat/proxy.rs",
-    "target": "src-tauri/src/config/mod.rs"
    }
   ]
  }
