@@ -17,6 +17,11 @@ var codemapTestBinaryPath string
 
 // TestMain runs before all tests
 func TestMain(m *testing.M) {
+	// A stand-in daemon re-runs this binary; rebuilding codemap first can
+	// outlast `watch start`'s readiness deadline on a cold CI cache.
+	if os.Getenv("CODEMAP_MAIN_WATCH_HELPER") == "1" {
+		os.Exit(m.Run())
+	}
 	tmpDir, err := os.MkdirTemp("", "codemap-test-bin-*")
 	if err != nil {
 		os.Exit(1)
