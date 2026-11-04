@@ -1,4 +1,4 @@
-.PHONY: all build build-mcp run deps grammars coverage clean
+.PHONY: all build build-mcp run deps grammars coverage clean bench
 
 all: build
 
@@ -33,3 +33,6 @@ clean:
 	rm -f codemap codemap-mcp
 	rm -rf scanner/.grammar-build
 	rm -rf scanner/grammars
+
+bench: ## Import-accuracy benchmark, run directly on this machine (CI: .github/workflows/bench.yml; see bench/README.md)
+	bash bench/run.sh

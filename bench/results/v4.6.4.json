@@ -1,0 +1,1397 @@
+{
+ "codemap": "4.6.4",
+ "groups": {
+  "held_out": {
+   "repos": [
+    {
+     "sources": 490,
+     "n_truth": 6887,
+     "n_codemap": 6887,
+     "tp": 6887,
+     "fn": 0,
+     "fp": 0,
+     "codemap_out_of_universe": 343,
+     "fp_workspace_package": 0,
+     "recall": [
+      1.0,
+      0.9994425268809013,
+      0.9999999999999998
+     ],
+     "precision": [
+      1.0,
+      0.9994425268809013,
+      0.9999999999999998
+     ],
+     "meta": {
+      "truth": {
+       "packages_in_module": 95,
+       "source_files": 490,
+       "edges": 6887,
+       "parse_errors": 0,
+       "package_errors": [],
+       "go_version": "go version go1.24.7 linux/amd64"
+      },
+      "codemap": {
+       "codemap": "codemap 4.6.4",
+       "queried_files": 490,
+       "errors": 0,
+       "error_samples": {},
+       "not_indexed": 0,
+       "coverage_status_counts": {
+        "complete": 490
+       },
+       "edges": 7230,
+       "seconds": 1588.9,
+       "jobs": 4
+      }
+     },
+     "lang": "go",
+     "repo": "ollama/ollama",
+     "sha": "9a3e8177767245acc62b735eba7d5d8a553606d0",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-03T13:38:46Z"
+     }
+    },
+    {
+     "sources": 274,
+     "n_truth": 1849,
+     "n_codemap": 1849,
+     "tp": 1849,
+     "fn": 0,
+     "fp": 0,
+     "codemap_out_of_universe": 92,
+     "fp_workspace_package": 0,
+     "recall": [
+      1.0,
+      0.9979267201395549,
+      0.9999999999999999
+     ],
+     "precision": [
+      1.0,
+      0.9979267201395549,
+      0.9999999999999999
+     ],
+     "meta": {
+      "truth": {
+       "packages_in_module": 65,
+       "source_files": 274,
+       "edges": 1849,
+       "parse_errors": 0,
+       "package_errors": [],
+       "go_version": "go version go1.24.7 linux/amd64"
+      },
+      "codemap": {
+       "codemap": "codemap 4.6.4",
+       "queried_files": 274,
+       "errors": 0,
+       "error_samples": {},
+       "not_indexed": 1,
+       "coverage_status_counts": {
+        "complete": 273,
+        "partial": 1
+       },
+       "edges": 1941,
+       "seconds": 1455.3,
+       "jobs": 4
+      }
+     },
+     "lang": "go",
+     "repo": "JuliusBrussee/caveman",
+     "sha": "2e068f735253cce28256744804785f01887d9646",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-03T14:05:29Z"
+     }
+    },
+    {
+     "sources": 278,
+     "n_truth": 2945,
+     "n_codemap": 2945,
+     "tp": 2945,
+     "fn": 0,
+     "fp": 0,
+     "codemap_out_of_universe": 24,
+     "fp_workspace_package": 0,
+     "recall": [
+      1.0,
+      0.9986972989443951,
+      0.9999999999999999
+     ],
+     "precision": [
+      1.0,
+      0.9986972989443951,
+      0.9999999999999999
+     ],
+     "meta": {
+      "truth": {
+       "packages_in_module": 89,
+       "source_files": 278,
+       "edges": 2945,
+       "parse_errors": 0,
+       "package_errors": [
+        "github.com/fatedier/frp/web/frpc: pattern dist: no matching files found",
+        "github.com/fatedier/frp/web/frps: pattern dist: no matching files found"
+       ],
+       "go_version": "go version go1.24.7 linux/amd64"
+      },
+      "codemap": {
+       "codemap": "codemap 4.6.4",
+       "queried_files": 278,
+       "errors": 0,
+       "error_samples": {},
+       "not_indexed": 0,
+       "coverage_status_counts": {
+        "complete": 278
+       },
+       "edges": 2969,
+       "seconds": 406.0,
+       "jobs": 4
+      }
+     },
+     "lang": "go",
+     "repo": "fatedier/frp",
+     "sha": "e6e0aaf9d48d359c0abe3dd47e8d9a5e65b2d7d0",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-03T14:12:28Z"
+     }
+    },
+    {
+     "sources": 2605,
+     "n_truth": 6405,
+     "n_codemap": 6402,
+     "tp": 6396,
+     "fn": 9,
+     "fp": 6,
+     "codemap_out_of_universe": 1,
+     "fp_workspace_package": 0,
+     "recall": [
+      0.9985948477751756,
+      0.9973314277258003,
+      0.9992605524282681
+     ],
+     "precision": [
+      0.9990627928772259,
+      0.9979566281838924,
+      0.999570401015475
+     ],
+     "meta": {
+      "truth": {
+       "configs": 2,
+       "parsed_files": 2605,
+       "file_config_pairs": 2605,
+       "specifiers": 15458,
+       "resolved_in_repo": 6996,
+       "unresolved": 8371,
+       "config_errors": [],
+       "source_files": 2605,
+       "edges": 6729,
+       "dts_resolutions": 0,
+       "typescript": "5.9.3",
+       "node": "v22.22.0"
+      },
+      "codemap": {
+       "codemap": "codemap 4.6.4",
+       "method": "daemon",
+       "edges": 6438,
+       "seconds": 81.1,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": "partial",
+        "notes": [
+         "TypeScript: 52 of 6466 project-relative imports did not resolve to a file; those edges are missing (scripts/cso-eval.ts -> ../test/fixtures/cso-eval/materialize, browse/test/cookie-fixture-delete-lease.test.ts -> ./fixtures/native-cookie-delete-lease, test/helpers/overlay-case.ts -> ../fixtures/overlay-nudges)",
+         "Bash: source, . or load with a dynamic argument resolves only when its literal remainder names one shell file (first at careful/bin/check-careful.sh:23, 5 in total): search the file name before treating 0 importers as unused"
+        ],
+        "issues": 52
+       },
+       "configured_file_count": 2829,
+       "file_count": 4748,
+       "generation": 1
+      }
+     },
+     "lang": "typescript",
+     "repo": "garrytan/gstack",
+     "sha": "bf2bcf14b08d774291613c8073674a0e90eb4f9f",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-03T15:40:56Z"
+     }
+    },
+    {
+     "sources": 2430,
+     "n_truth": 9677,
+     "n_codemap": 9689,
+     "tp": 9662,
+     "fn": 15,
+     "fp": 27,
+     "codemap_out_of_universe": 0,
+     "fp_workspace_package": 0,
+     "recall": [
+      0.9984499328304226,
+      0.9974439036606688,
+      0.9990603817338359
+     ],
+     "precision": [
+      0.9972133347094644,
+      0.9959484958477036,
+      0.9980840632190398
+     ],
+     "meta": {
+      "truth": {
+       "configs": 16,
+       "parsed_files": 2430,
+       "file_config_pairs": 5894,
+       "specifiers": 31001,
+       "resolved_in_repo": 22351,
+       "unresolved": 6120,
+       "config_errors": [],
+       "source_files": 2430,
+       "edges": 9677,
+       "dts_resolutions": 0,
+       "typescript": "5.9.3",
+       "node": "v22.22.0"
+      },
+      "codemap": {
+       "codemap": "codemap 4.6.4",
+       "method": "daemon",
+       "edges": 9755,
+       "seconds": 45.1,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": "partial",
+        "notes": [
+         "1 of 1 Cargo manifests used fallback topology",
+         "Rust macro-generated, dynamically string-routed, inline #[path], and conditional path edges may be unresolved",
+         "TypeScript: 2 of 8568 project-relative imports did not resolve to a file; those edges are missing (packages/chord/test/examples/49-plugin-api/plugins/ancient/server.ts -> @acme/app/v1, packages/coding-agent/examples/extensions/with-deps/index.ts -> typebox)"
+        ],
+        "issues": 2
+       },
+       "configured_file_count": 2554,
+       "file_count": 3150,
+       "generation": 1
+      }
+     },
+     "lang": "typescript",
+     "repo": "earendil-works/pi",
+     "sha": "3551ec07eb87afebac20191958163ae58976f1d0",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-03T14:46:34Z"
+     }
+    },
+    {
+     "sources": 802,
+     "n_truth": 3073,
+     "n_codemap": 0,
+     "tp": 0,
+     "fn": 3073,
+     "fp": 0,
+     "codemap_out_of_universe": 0,
+     "fp_workspace_package": 0,
+     "recall": [
+      0.0,
+      0.0,
+      0.0012485072541543007
+     ],
+     "precision": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "meta": {
+      "truth": {
+       "configs": 9,
+       "parsed_files": 802,
+       "file_config_pairs": 802,
+       "specifiers": 4319,
+       "resolved_in_repo": 3188,
+       "unresolved": 858,
+       "config_errors": [],
+       "source_files": 802,
+       "edges": 3075,
+       "dts_resolutions": 42,
+       "typescript": "5.9.3",
+       "node": "v22.22.0"
+      }
+     },
+     "lang": "typescript",
+     "repo": "thedotmack/claude-mem",
+     "sha": "02584c4ac9d92fea45adf5c61e22c546b5738621",
+     "status": {
+      "status": "codemap_failed",
+      "reason": "codemap's dependency graph build failed in the daemon (graph.status=failed, coverage={})",
+      "finished_at": "2026-11-03T15:42:50Z"
+     }
+    },
+    {
+     "sources": 1071,
+     "n_truth": 1179,
+     "n_codemap": 1164,
+     "tp": 1164,
+     "fn": 15,
+     "fp": 0,
+     "codemap_out_of_universe": 0,
+     "fp_workspace_package": 0,
+     "recall": [
+      0.9872773536895675,
+      0.9791147705346385,
+      0.9922749211039162
+     ],
+     "precision": [
+      1.0,
+      0.9967106332352889,
+      1.0
+     ],
+     "meta": {
+      "truth": {
+       "source_files": 1071,
+       "parsed_files": 1071,
+       "specifiers": 4390,
+       "resolved_in_repo": 1314,
+       "unresolved": 58,
+       "parse_errors": 0,
+       "edges": 1179,
+       "typescript_parser": "5.9.3",
+       "node": "v22.22.0",
+       "import_meta_resolve": true
+      },
+      "codemap": {
+       "codemap": "codemap 4.6.4",
+       "method": "daemon",
+       "edges": 1389,
+       "seconds": 126.1,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": "partial",
+        "notes": [
+         "JavaScript: 30 of 1193 project-relative imports did not resolve to a file; those edges are missing (docker/context-profiles/complex-eval/reference4/recurring-incident/src/refunds.js -> ./charge.js, docker/context-profiles/complex-eval/reference4/recurring-incident/src/refunds.js -> ./store.js, docker/context-profiles/complex-eval/reference3/idempotent-webhooks/src/app.js -> ./store)"
+        ],
+        "issues": 30
+       },
+       "configured_file_count": 1312,
+       "file_count": 4699,
+       "generation": 1
+      }
+     },
+     "lang": "javascript",
+     "repo": "affaan-m/ECC",
+     "sha": "b38be6a7f6350964d59328b52f0624e1d1d552d1",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-03T15:45:22Z"
+     }
+    },
+    {
+     "sources": 1757,
+     "n_truth": 5089,
+     "n_codemap": 5089,
+     "tp": 5089,
+     "fn": 0,
+     "fp": 0,
+     "codemap_out_of_universe": 0,
+     "fp_workspace_package": 0,
+     "recall": [
+      1.0,
+      0.9992457140257925,
+      0.9999999999999999
+     ],
+     "precision": [
+      1.0,
+      0.9992457140257925,
+      0.9999999999999999
+     ],
+     "meta": {
+      "truth": {
+       "source_files": 1757,
+       "parsed_files": 1757,
+       "specifiers": 5895,
+       "resolved_in_repo": 5733,
+       "unresolved": 122,
+       "parse_errors": 0,
+       "edges": 5723,
+       "typescript_parser": "5.9.3",
+       "node": "v22.22.0",
+       "import_meta_resolve": true
+      },
+      "codemap": {
+       "codemap": "codemap 4.6.4",
+       "method": "daemon",
+       "edges": 5089,
+       "seconds": 51.1,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": "partial",
+        "notes": [
+         "JavaScript: 32 of 5054 project-relative imports did not resolve to a file; those edges are missing (editor/js/libs/codemirror/mode/glsl.js -> ../../lib/codemirror, editor/js/libs/codemirror/addon/dialog.js -> ../../lib/codemirror, editor/js/libs/codemirror/addon/show-hint.js -> ../../lib/codemirror)"
+        ],
+        "issues": 32
+       },
+       "configured_file_count": 3570,
+       "file_count": 6084,
+       "generation": 1
+      }
+     },
+     "lang": "javascript",
+     "repo": "mrdoob/three.js",
+     "sha": "601bc21631e24674aa68fe5875f98d631a41b551",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-03T15:17:48Z"
+     }
+    },
+    {
+     "sources": 249,
+     "n_truth": 379,
+     "n_codemap": 370,
+     "tp": 370,
+     "fn": 9,
+     "fp": 0,
+     "codemap_out_of_universe": 0,
+     "fp_workspace_package": 0,
+     "recall": [
+      0.9762532981530343,
+      0.9554915972534468,
+      0.9874574789904922
+     ],
+     "precision": [
+      1.0,
+      0.9897243636572802,
+      0.9999999999999999
+     ],
+     "meta": {
+      "truth": {
+       "source_files": 249,
+       "parsed_files": 249,
+       "specifiers": 799,
+       "resolved_in_repo": 380,
+       "unresolved": 205,
+       "parse_errors": 0,
+       "edges": 379,
+       "typescript_parser": "5.9.3",
+       "node": "v22.22.0",
+       "import_meta_resolve": true
+      },
+      "codemap": {
+       "codemap": "codemap 4.6.4",
+       "method": "daemon",
+       "edges": 371,
+       "seconds": 12.1,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": "partial",
+        "notes": [
+         "TypeScript: 1 of 1 project-relative imports did not resolve to a file; those edges are missing (tests/module/esm/tests/helpers/declaration-consumer.ts -> ./declarations/index.js)"
+        ],
+        "issues": 1
+       },
+       "configured_file_count": 298,
+       "file_count": 529,
+       "generation": 1
+      }
+     },
+     "lang": "javascript",
+     "repo": "axios/axios",
+     "sha": "fb88a1b133c1a2d774713070b8ca25f7bcd382ac",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-03T15:18:12Z"
+     }
+    },
+    {
+     "sources": 1124,
+     "n_truth": 3831,
+     "n_codemap": 3812,
+     "tp": 3788,
+     "fn": 43,
+     "fp": 24,
+     "codemap_out_of_universe": 0,
+     "fp_workspace_package": 0,
+     "recall": [
+      0.988775776559645,
+      0.9849161249454847,
+      0.9916561897526293
+     ],
+     "precision": [
+      0.993704092339979,
+      0.9906486958461632,
+      0.9957654517435811
+     ],
+     "meta": {
+      "truth": {
+       "source_files": 1124,
+       "parse_errors": 0,
+       "statements": 5903,
+       "resolved_in_repo": 9667,
+       "unresolved": 2074,
+       "edges": 3831,
+       "python": "3.13.16",
+       "executable": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/venv/yt-dlp__yt-dlp/bin/python",
+       "sys_path_head": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/yt-dlp__yt-dlp",
+       "resolution": "repo root on sys.path, then the virtualenv"
+      },
+      "codemap": {
+       "codemap": "codemap 4.6.4",
+       "method": "daemon",
+       "edges": 3812,
+       "seconds": 45.1,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": "partial",
+        "notes": [
+         "Python: 12 of 3826 project-relative imports did not resolve to a file; those edges are missing (yt_dlp/compat/_legacy.py -> .compat_expanduser, yt_dlp/compat/_legacy.py -> .compat_HTMLParseError, yt_dlp/extractor/youtube/jsc/_builtin/deno.py -> yt_dlp.extractor.youtube.jsc._builtin.vendor)"
+        ],
+        "issues": 12
+       },
+       "configured_file_count": 1148,
+       "file_count": 1193,
+       "generation": 1
+      }
+     },
+     "lang": "python",
+     "repo": "yt-dlp/yt-dlp",
+     "sha": "b77c9304e1c4220cca450c583491904daf8455af",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-03T15:52:07Z"
+     }
+    },
+    {
+     "sources": 213,
+     "n_truth": 864,
+     "n_codemap": 20104,
+     "tp": 864,
+     "fn": 0,
+     "fp": 19240,
+     "codemap_out_of_universe": 0,
+     "fp_workspace_package": 0,
+     "recall": [
+      1.0,
+      0.9955735476313291,
+      1.0
+     ],
+     "precision": [
+      0.04297652208515718,
+      0.04025934977736081,
+      0.04586831650759345
+     ],
+     "meta": {
+      "truth": {
+       "source_files": 213,
+       "parse_errors": 0,
+       "statements": 1464,
+       "resolved_in_repo": 1063,
+       "unresolved": 1029,
+       "edges": 864,
+       "python": "3.13.16",
+       "executable": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/venv/AUTOMATIC1111__stable-diffusion-webui/bin/python",
+       "sys_path_head": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/AUTOMATIC1111__stable-diffusion-webui",
+       "resolution": "repo root on sys.path, then the virtualenv"
+      },
+      "codemap": {
+       "codemap": "codemap 4.6.4",
+       "method": "daemon",
+       "edges": 20104,
+       "seconds": 12.3,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": "partial",
+        "notes": [
+         "Python: 12 of 421 project-relative imports did not resolve to a file; those edges are missing (modules/hypernetworks/hypernetwork.py -> html, modules/ui_extra_networks_user_metadata.py -> html, modules/shared_items.py -> html)"
+        ],
+        "issues": 12
+       },
+       "configured_file_count": 268,
+       "file_count": 306,
+       "generation": 1
+      }
+     },
+     "lang": "python",
+     "repo": "AUTOMATIC1111/stable-diffusion-webui",
+     "sha": "82a973c04367123ae98bd9abdf80d9eda9b910e2",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-03T15:52:25Z"
+     }
+    },
+    {
+     "sources": 673,
+     "n_truth": 2431,
+     "n_codemap": 2248,
+     "tp": 2171,
+     "fn": 260,
+     "fp": 77,
+     "codemap_out_of_universe": 0,
+     "fp_workspace_package": 0,
+     "recall": [
+      0.893048128342246,
+      0.8801367153974666,
+      0.904719314151998
+     ],
+     "precision": [
+      0.9657473309608541,
+      0.9573988586511406,
+      0.9725067489311485
+     ],
+     "meta": {
+      "truth": {
+       "source_files": 673,
+       "parse_errors": 0,
+       "statements": 9368,
+       "resolved_in_repo": 7034,
+       "unresolved": 4601,
+       "edges": 2431,
+       "python": "3.13.16",
+       "executable": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/venv/github__spec-kit/bin/python",
+       "sys_path_head": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/github__spec-kit",
+       "resolution": "repo root on sys.path, then the virtualenv"
+      },
+      "codemap": {
+       "codemap": "codemap 4.6.4",
+       "method": "daemon",
+       "edges": 2255,
+       "seconds": 27.1,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": "partial",
+        "notes": [
+         "Python: 303 of 2537 project-relative imports did not resolve to a file; those edges are missing (src/specify_cli/workflows/command_update.py -> .load_custom_steps, src/specify_cli/workflows/overlay/command_remove.py -> .overlay_app, src/specify_cli/selfs/command_check.py -> .self_app)",
+         "Bash: source, . or load with a dynamic argument resolves only when its literal remainder names one shell file (first at extensions/git/scripts/bash/create-new-feature-branch.sh:250, 1 in total): search the file name before treating 0 importers as unused"
+        ],
+        "issues": 303
+       },
+       "configured_file_count": 755,
+       "file_count": 1003,
+       "generation": 1
+      }
+     },
+     "lang": "python",
+     "repo": "github/spec-kit",
+     "sha": "ba8363f8ab56b2da456a81299cfdbfee1ef7b871",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-03T15:53:04Z"
+     }
+    }
+   ],
+   "pooled": {
+    "go": {
+     "n_truth": 11681,
+     "n_codemap": 11681,
+     "tp": 11681,
+     "recall": [
+      1.0,
+      0.9996712442445358,
+      1.0
+     ],
+     "precision": [
+      1.0,
+      0.9996712442445358,
+      1.0
+     ]
+    },
+    "typescript": {
+     "n_truth": 19155,
+     "n_codemap": 16091,
+     "tp": 16058,
+     "recall": [
+      0.8383189767684678,
+      0.8330375814382642,
+      0.843464702262809
+     ],
+     "precision": [
+      0.9979491641290162,
+      0.9971213673951376,
+      0.9985392634312222
+     ]
+    },
+    "javascript": {
+     "n_truth": 6647,
+     "n_codemap": 6623,
+     "tp": 6623,
+     "recall": [
+      0.996389348578306,
+      0.9946328948363252,
+      0.9975723833676726
+     ],
+     "precision": [
+      1.0,
+      0.9994203182760398,
+      1.0
+     ]
+    },
+    "python": {
+     "n_truth": 7126,
+     "n_codemap": 26164,
+     "tp": 6823,
+     "recall": [
+      0.9574796519786697,
+      0.9525431780625291,
+      0.9619231586157366
+     ],
+     "precision": [
+      0.26077816847576824,
+      0.2554934703744854,
+      0.26613310246798255
+     ]
+    }
+   }
+  },
+  "tuned": {
+   "repos": [
+    {
+     "sources": 52,
+     "n_truth": 93,
+     "n_codemap": 93,
+     "tp": 93,
+     "fn": 0,
+     "fp": 0,
+     "codemap_out_of_universe": 0,
+     "fp_workspace_package": 0,
+     "recall": [
+      1.0,
+      0.9603324967873037,
+      1.0
+     ],
+     "precision": [
+      1.0,
+      0.9603324967873037,
+      1.0
+     ],
+     "meta": {
+      "truth": {
+       "configs": 3,
+       "parsed_files": 52,
+       "file_config_pairs": 83,
+       "specifiers": 236,
+       "resolved_in_repo": 196,
+       "unresolved": 21,
+       "config_errors": [],
+       "source_files": 52,
+       "edges": 93,
+       "dts_resolutions": 0,
+       "typescript": "5.9.3",
+       "node": "v22.22.0"
+      },
+      "codemap": {
+       "codemap": "codemap 4.6.4",
+       "method": "daemon",
+       "edges": 182,
+       "seconds": 9.1,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": null,
+        "notes": null,
+        "issues": 0
+       },
+       "configured_file_count": 102,
+       "file_count": 116,
+       "generation": 1
+      }
+     },
+     "lang": "typescript",
+     "repo": "sindresorhus/ky",
+     "sha": "3541888878c4d303a8bc2ad61815f4e048f55a5d",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-03T15:29:43Z"
+     }
+    },
+    {
+     "sources": 680,
+     "n_truth": 3750,
+     "n_codemap": 3762,
+     "tp": 3749,
+     "fn": 1,
+     "fp": 13,
+     "codemap_out_of_universe": 1,
+     "fp_workspace_package": 0,
+     "recall": [
+      0.9997333333333334,
+      0.9984909464775913,
+      0.999952925234818
+     ],
+     "precision": [
+      0.9965443912812334,
+      0.994096389032509,
+      0.9979793637024028
+     ],
+     "meta": {
+      "truth": {
+       "configs": 12,
+       "parsed_files": 680,
+       "file_config_pairs": 1761,
+       "specifiers": 13539,
+       "resolved_in_repo": 11203,
+       "unresolved": 972,
+       "config_errors": [
+        "dev-docs/tsconfig.json: File '@tsconfig/docusaurus/tsconfig.json' not found."
+       ],
+       "source_files": 680,
+       "edges": 3755,
+       "dts_resolutions": 1,
+       "typescript": "5.9.3",
+       "node": "v22.22.0"
+      },
+      "codemap": {
+       "codemap": "codemap 4.6.4",
+       "method": "daemon",
+       "edges": 3772,
+       "seconds": 18.1,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": "partial",
+        "notes": [
+         "TypeScript: 10 of 2916 project-relative imports did not resolve to a file; those edges are missing (packages/math/global.d.ts -> @excalidraw/excalidraw/global, packages/math/global.d.ts -> @excalidraw/excalidraw/css, packages/element/global.d.ts -> @excalidraw/excalidraw/global)"
+        ],
+        "issues": 10
+       },
+       "configured_file_count": 832,
+       "file_count": 1328,
+       "generation": 1
+      }
+     },
+     "lang": "typescript",
+     "repo": "excalidraw/excalidraw",
+     "sha": "dd2f8fc32b92cbf56f4abee6a0cf3b14681b4b55",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-03T15:45:51Z"
+     }
+    },
+    {
+     "sources": 1246,
+     "n_truth": 2858,
+     "n_codemap": 2662,
+     "tp": 2502,
+     "fn": 356,
+     "fp": 160,
+     "codemap_out_of_universe": 0,
+     "fp_workspace_package": 0,
+     "recall": [
+      0.8754373687893632,
+      0.8628244210136056,
+      0.8870424150196101
+     ],
+     "precision": [
+      0.9398948159278738,
+      0.9302161983500828,
+      0.9483056628047085
+     ],
+     "meta": {
+      "truth": {
+       "configs": 65,
+       "parsed_files": 1246,
+       "file_config_pairs": 3334,
+       "specifiers": 13240,
+       "resolved_in_repo": 7957,
+       "unresolved": 1606,
+       "config_errors": [
+        "examples/nuxt/server/tsconfig.json: Cannot read file '/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/trpc__trpc/examples/nuxt/.nuxt/tsconfig.server.json'.",
+        "examples/nuxt/tsconfig.json: Cannot read file '/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/trpc__trpc/examples/nuxt/.nuxt/tsconfig.json'."
+       ],
+       "source_files": 1246,
+       "edges": 2863,
+       "dts_resolutions": 0,
+       "typescript": "5.9.3",
+       "node": "v22.22.0"
+      },
+      "codemap": {
+       "codemap": "codemap 4.6.4",
+       "method": "daemon",
+       "edges": 2662,
+       "seconds": 21.1,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": "partial",
+        "notes": [
+         "TypeScript: 27 of 1212 project-relative imports did not resolve to a file; those edges are missing (examples/next-prisma-websockets-starter/src/server/routers/post.ts -> ../../../generated/prisma, packages/server/src/unstable-core-do-not-import/stream/jsonl.ts -> @trpc/server/vendor/is-plain-object, packages/server/src/unstable-core-do-not-import/stream/sse.ts -> ../../vendor/unpromise)"
+        ],
+        "issues": 27
+       },
+       "configured_file_count": 1244,
+       "file_count": 1775,
+       "generation": 1
+      }
+     },
+     "lang": "typescript",
+     "repo": "trpc/trpc",
+     "sha": "70e1d688c790feb40d8d1cad976fb87ab1f796e6",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-03T15:46:42Z"
+     }
+    },
+    {
+     "sources": 142,
+     "n_truth": 154,
+     "n_codemap": 154,
+     "tp": 154,
+     "fn": 0,
+     "fp": 0,
+     "codemap_out_of_universe": 0,
+     "fp_workspace_package": 0,
+     "recall": [
+      1.0,
+      0.9756625483030732,
+      1.0
+     ],
+     "precision": [
+      1.0,
+      0.9756625483030732,
+      1.0
+     ],
+     "meta": {
+      "truth": {
+       "source_files": 142,
+       "parsed_files": 142,
+       "specifiers": 405,
+       "resolved_in_repo": 160,
+       "unresolved": 3,
+       "parse_errors": 0,
+       "edges": 154,
+       "typescript_parser": "5.9.3",
+       "node": "v22.22.0",
+       "import_meta_resolve": true
+      },
+      "codemap": {
+       "codemap": "codemap 4.6.4",
+       "method": "daemon",
+       "edges": 154,
+       "seconds": 9.0,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": null,
+        "notes": null,
+        "issues": 0
+       },
+       "configured_file_count": 173,
+       "file_count": 216,
+       "generation": 1
+      }
+     },
+     "lang": "javascript",
+     "repo": "expressjs/express",
+     "sha": "43fca52d28a422c8be48fd489cbd4f2d6152bab6",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-03T15:31:06Z"
+     }
+    },
+    {
+     "sources": 1456,
+     "n_truth": 1497,
+     "n_codemap": 1422,
+     "tp": 1422,
+     "fn": 75,
+     "fp": 0,
+     "codemap_out_of_universe": 0,
+     "fp_workspace_package": 0,
+     "recall": [
+      0.9498997995991983,
+      0.9376516513811483,
+      0.9598448776686509
+     ],
+     "precision": [
+      1.0,
+      0.9973058302819235,
+      1.0
+     ],
+     "meta": {
+      "truth": {
+       "source_files": 1456,
+       "parsed_files": 1456,
+       "specifiers": 2261,
+       "resolved_in_repo": 1733,
+       "unresolved": 56,
+       "parse_errors": 9,
+       "edges": 1497,
+       "typescript_parser": "5.9.3",
+       "node": "v22.22.0",
+       "import_meta_resolve": true
+      },
+      "codemap": {
+       "codemap": "codemap 4.6.4",
+       "method": "daemon",
+       "edges": 1422,
+       "seconds": 27.1,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": "partial",
+        "notes": [
+         "JavaScript: 89 of 1505 project-relative imports did not resolve to a file; those edges are missing (tests/lib/rules/arrow-parens.js -> ../../fixtures/fixture-parser, tests/lib/rules/prefer-const.js -> ../../fixtures/fixture-parser, tests/conf/eslint-all.js -> ../../packages/js)"
+        ],
+        "issues": 89
+       },
+       "configured_file_count": 935,
+       "file_count": 2302,
+       "generation": 1
+      }
+     },
+     "lang": "javascript",
+     "repo": "eslint/eslint",
+     "sha": "896b8ad4f260d060a1df1e6297f4d23b2999bb6f",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-03T15:32:29Z"
+     }
+    },
+    {
+     "sources": 946,
+     "n_truth": 3532,
+     "n_codemap": 3556,
+     "tp": 3532,
+     "fn": 0,
+     "fp": 24,
+     "codemap_out_of_universe": 0,
+     "fp_workspace_package": 0,
+     "recall": [
+      1.0,
+      0.9989135658580939,
+      1.0
+     ],
+     "precision": [
+      0.9932508436445444,
+      0.989976813844219,
+      0.9954603300622998
+     ],
+     "meta": {
+      "truth": {
+       "source_files": 946,
+       "parsed_files": 946,
+       "specifiers": 4927,
+       "resolved_in_repo": 3644,
+       "unresolved": 866,
+       "parse_errors": 0,
+       "edges": 3532,
+       "typescript_parser": "5.9.3",
+       "node": "v22.22.0",
+       "import_meta_resolve": true
+      },
+      "codemap": {
+       "codemap": "codemap 4.6.4",
+       "method": "daemon",
+       "edges": 3556,
+       "seconds": 87.1,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": "partial",
+        "notes": [
+         "JavaScript: 8 of 3535 project-relative imports did not resolve to a file; those edges are missing (src/install.js -> ../, src/install.js -> ../public/language/en-GB/${namespace}, install/web.js -> ../src/database/${dbName})"
+        ],
+        "issues": 8
+       },
+       "configured_file_count": 1617,
+       "file_count": 5784,
+       "generation": 1
+      }
+     },
+     "lang": "javascript",
+     "repo": "NodeBB/NodeBB",
+     "sha": "2f5e2f04508a54e7ad329ad4c881a98a036c808f",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-03T15:34:03Z"
+     }
+    },
+    {
+     "sources": 275,
+     "n_truth": 856,
+     "n_codemap": 850,
+     "tp": 822,
+     "fn": 34,
+     "fp": 28,
+     "codemap_out_of_universe": 0,
+     "fp_workspace_package": 0,
+     "recall": [
+      0.9602803738317757,
+      0.945009126030012,
+      0.9714388910558751
+     ],
+     "precision": [
+      0.9670588235294117,
+      0.9528028054507545,
+      0.9771122176968678
+     ],
+     "meta": {
+      "truth": {
+       "source_files": 275,
+       "parse_errors": 0,
+       "statements": 3281,
+       "resolved_in_repo": 1493,
+       "unresolved": 1787,
+       "edges": 856,
+       "python": "3.13.16",
+       "executable": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/venv/pytest-dev__pytest/bin/python",
+       "sys_path_head": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/pytest-dev__pytest",
+       "resolution": "repo root on sys.path, then the virtualenv"
+      },
+      "codemap": {
+       "codemap": "codemap 4.6.4",
+       "method": "daemon",
+       "edges": 850,
+       "seconds": 15.0,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": "partial",
+        "notes": [
+         "Python: 5 of 858 project-relative imports did not resolve to a file; those edges are missing (src/_pytest/assertion/rewrite.py -> _pytest._version, testing/_py/test_local.py -> py.path, testing/_py/test_local.py -> py._process.cmdexec)"
+        ],
+        "issues": 5
+       },
+       "configured_file_count": 579,
+       "file_count": 640,
+       "generation": 1
+      }
+     },
+     "lang": "python",
+     "repo": "pytest-dev/pytest",
+     "sha": "8b005ed7f972987033ec34dc1e68b0635fb8142b",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-03T15:53:26Z"
+     }
+    },
+    {
+     "sources": 142,
+     "n_truth": 400,
+     "n_codemap": 445,
+     "tp": 384,
+     "fn": 16,
+     "fp": 61,
+     "codemap_out_of_universe": 0,
+     "fp_workspace_package": 0,
+     "recall": [
+      0.96,
+      0.9360177520529738,
+      0.9752309370227283
+     ],
+     "precision": [
+      0.8629213483146068,
+      0.8278460498272076,
+      0.8917844424295762
+     ],
+     "meta": {
+      "truth": {
+       "source_files": 142,
+       "parse_errors": 0,
+       "statements": 1544,
+       "resolved_in_repo": 671,
+       "unresolved": 876,
+       "edges": 400,
+       "python": "3.13.16",
+       "executable": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/venv/pallets__werkzeug/bin/python",
+       "sys_path_head": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/pallets__werkzeug",
+       "resolution": "repo root on sys.path, then the virtualenv"
+      },
+      "codemap": {
+       "codemap": "codemap 4.6.4",
+       "method": "daemon",
+       "edges": 445,
+       "seconds": 9.1,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": "partial",
+        "notes": [
+         "Python: 2 of 430 project-relative imports did not resolve to a file; those edges are missing (src/werkzeug/middleware/http_proxy.py -> ..Request, src/werkzeug/middleware/http_proxy.py -> ..Response)"
+        ],
+        "issues": 2
+       },
+       "configured_file_count": 237,
+       "file_count": 295,
+       "generation": 1
+      }
+     },
+     "lang": "python",
+     "repo": "pallets/werkzeug",
+     "sha": "2adaad1ab68312fa46efb07ff072b15b720e2444",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-03T15:53:40Z"
+     }
+    }
+   ],
+   "pooled": {
+    "typescript": {
+     "n_truth": 6701,
+     "n_codemap": 6517,
+     "tp": 6344,
+     "recall": [
+      0.9467243694970899,
+      0.9410866977402442,
+      0.9518501504636104
+     ],
+     "precision": [
+      0.9734540432714439,
+      0.96926347892556,
+      0.9770867795361272
+     ]
+    },
+    "javascript": {
+     "n_truth": 5183,
+     "n_codemap": 5132,
+     "tp": 5108,
+     "recall": [
+      0.9855296160524792,
+      0.9819002806735637,
+      0.9884397692198299
+     ],
+     "precision": [
+      0.995323460639127,
+      0.9930506543139189,
+      0.9968552921027783
+     ]
+    },
+    "python": {
+     "n_truth": 1256,
+     "n_codemap": 1295,
+     "tp": 1206,
+     "recall": [
+      0.9601910828025477,
+      0.9479011703820097,
+      0.9696746022286928
+     ],
+     "precision": [
+      0.9312741312741313,
+      0.9161811612759458,
+      0.943816024956531
+     ]
+    }
+   }
+  }
+ },
+ "spot_check_samples": {
+  "go": [],
+  "typescript": [
+   {
+    "kind": "FN",
+    "repo": "thedotmack/claude-mem",
+    "source": "src/integrations/opencode-plugin/core.ts",
+    "target": "src/shared/SettingsDefaultsManager.ts"
+   },
+   {
+    "kind": "FP",
+    "repo": "earendil-works/pi",
+    "source": "packages/coding-agent/scripts/generate-references.ts",
+    "target": "packages/ai/src/providers/compat-schema.ts"
+   },
+   {
+    "kind": "FN",
+    "repo": "thedotmack/claude-mem",
+    "source": "src/sdk/prompts.ts",
+    "target": "src/shared/text-truncation.ts"
+   },
+   {
+    "kind": "FP",
+    "repo": "earendil-works/pi",
+    "source": "packages/coding-agent/scripts/generate-schemas.ts",
+    "target": "packages/ai/src/providers/compat-schema.ts"
+   },
+   {
+    "kind": "FN",
+    "repo": "thedotmack/claude-mem",
+    "source": "src/server/generation/providers/shared/error-classification.ts",
+    "target": "src/shared/period-rate-limit.ts"
+   }
+  ],
+  "javascript": [
+   {
+    "kind": "FN",
+    "repo": "affaan-m/ECC",
+    "source": "skills/ck/commands/save.mjs",
+    "target": "skills/ck/commands/shared.mjs"
+   },
+   {
+    "kind": "FN",
+    "repo": "affaan-m/ECC",
+    "source": "skills/ck/commands/resume.mjs",
+    "target": "skills/ck/commands/shared.mjs"
+   },
+   {
+    "kind": "FN",
+    "repo": "affaan-m/ECC",
+    "source": "examples/unified-memory/evidence.test.cjs",
+    "target": "examples/unified-memory/evidence.cjs"
+   },
+   {
+    "kind": "FN",
+    "repo": "affaan-m/ECC",
+    "source": "skills/ck/commands/forget.mjs",
+    "target": "skills/ck/commands/shared.mjs"
+   },
+   {
+    "kind": "FN",
+    "repo": "affaan-m/ECC",
+    "source": "tests/scripts/release-announce.test.js",
+    "target": "scripts/discord/announcement-core.mjs"
+   }
+  ],
+  "python": [
+   {
+    "kind": "FN",
+    "repo": "yt-dlp/yt-dlp",
+    "source": "test/test_websockets.py",
+    "target": "yt_dlp/socks.py"
+   },
+   {
+    "kind": "FP",
+    "repo": "AUTOMATIC1111/stable-diffusion-webui",
+    "source": "modules/interrogate.py",
+    "target": "modules/sd_hijack_open_clip.py"
+   },
+   {
+    "kind": "FN",
+    "repo": "github/spec-kit",
+    "source": "src/specify_cli/integrations/command_status.py",
+    "target": "src/specify_cli/__init__.py"
+   },
+   {
+    "kind": "FP",
+    "repo": "AUTOMATIC1111/stable-diffusion-webui",
+    "source": "modules/codeformer_model.py",
+    "target": "modules/shared_total_tqdm.py"
+   },
+   {
+    "kind": "FN",
+    "repo": "github/spec-kit",
+    "source": "src/specify_cli/integrations/command_uninstall.py",
+    "target": "src/specify_cli/integrations/__init__.py"
+   }
+  ]
+ }
+}

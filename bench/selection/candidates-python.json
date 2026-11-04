@@ -1,0 +1,1002 @@
+[
+  {
+    "full_name": "public-apis/public-apis",
+    "html_url": "https://github.com/public-apis/public-apis",
+    "stargazers_count": 495722,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-01T18:22:08Z",
+    "size": 14443
+  },
+  {
+    "full_name": "EbookFoundation/free-programming-books",
+    "html_url": "https://github.com/EbookFoundation/free-programming-books",
+    "stargazers_count": 400794,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-01T02:48:06Z",
+    "size": 22221
+  },
+  {
+    "full_name": "donnemartin/system-design-primer",
+    "html_url": "https://github.com/donnemartin/system-design-primer",
+    "stargazers_count": 376645,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-09-15T01:10:09Z",
+    "size": 11273
+  },
+  {
+    "full_name": "vinta/awesome-python",
+    "html_url": "https://github.com/vinta/awesome-python",
+    "stargazers_count": 332155,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T04:36:52Z",
+    "size": 6926
+  },
+  {
+    "full_name": "practical-tutorials/project-based-learning",
+    "html_url": "https://github.com/practical-tutorials/project-based-learning",
+    "stargazers_count": 288877,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T06:38:53Z",
+    "size": 473
+  },
+  {
+    "full_name": "NousResearch/hermes-agent",
+    "html_url": "https://github.com/NousResearch/hermes-agent",
+    "stargazers_count": 260073,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:18:19Z",
+    "size": 1385836
+  },
+  {
+    "full_name": "TheAlgorithms/Python",
+    "html_url": "https://github.com/TheAlgorithms/Python",
+    "stargazers_count": 225806,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T19:35:18Z",
+    "size": 18316
+  },
+  {
+    "full_name": "yt-dlp/yt-dlp",
+    "html_url": "https://github.com/yt-dlp/yt-dlp",
+    "stargazers_count": 204903,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-29T20:36:18Z",
+    "size": 65011
+  },
+  {
+    "full_name": "microsoft/markitdown",
+    "html_url": "https://github.com/microsoft/markitdown",
+    "stargazers_count": 193672,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-28T15:33:14Z",
+    "size": 6010
+  },
+  {
+    "full_name": "Significant-Gravitas/AutoGPT",
+    "html_url": "https://github.com/Significant-Gravitas/AutoGPT",
+    "stargazers_count": 187885,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:29:39Z",
+    "size": 626100
+  },
+  {
+    "full_name": "anthropics/skills",
+    "html_url": "https://github.com/anthropics/skills",
+    "stargazers_count": 186973,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-28T19:20:39Z",
+    "size": 5488
+  },
+  {
+    "full_name": "521xueweihan/HelloGitHub",
+    "html_url": "https://github.com/521xueweihan/HelloGitHub",
+    "stargazers_count": 186549,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-31T18:08:05Z",
+    "size": 12768
+  },
+  {
+    "full_name": "huggingface/transformers",
+    "html_url": "https://github.com/huggingface/transformers",
+    "stargazers_count": 168487,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:24:57Z",
+    "size": 551631
+  },
+  {
+    "full_name": "AUTOMATIC1111/stable-diffusion-webui",
+    "html_url": "https://github.com/AUTOMATIC1111/stable-diffusion-webui",
+    "stargazers_count": 165235,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-03-02T07:00:53Z",
+    "size": 36552
+  },
+  {
+    "full_name": "langgenius/dify",
+    "html_url": "https://github.com/langgenius/dify",
+    "stargazers_count": 160317,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T11:47:51Z",
+    "size": 682958
+  },
+  {
+    "full_name": "langflow-ai/langflow",
+    "html_url": "https://github.com/langflow-ai/langflow",
+    "stargazers_count": 156287,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:19:27Z",
+    "size": 1677242
+  },
+  {
+    "full_name": "langchain-ai/langchain",
+    "html_url": "https://github.com/langchain-ai/langchain",
+    "stargazers_count": 148940,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T08:27:25Z",
+    "size": 630489
+  },
+  {
+    "full_name": "github/spec-kit",
+    "html_url": "https://github.com/github/spec-kit",
+    "stargazers_count": 146178,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T23:40:27Z",
+    "size": 22366
+  },
+  {
+    "full_name": "Comfy-Org/ComfyUI",
+    "html_url": "https://github.com/Comfy-Org/ComfyUI",
+    "stargazers_count": 144790,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T10:18:52Z",
+    "size": 106030
+  },
+  {
+    "full_name": "nextlevelbuilder/ui-ux-pro-max-skill",
+    "html_url": "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill",
+    "stargazers_count": 144572,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T16:10:22Z",
+    "size": 8376
+  },
+  {
+    "full_name": "Shubhamsaboo/awesome-llm-apps",
+    "html_url": "https://github.com/Shubhamsaboo/awesome-llm-apps",
+    "stargazers_count": 143805,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-22T19:10:10Z",
+    "size": 222192
+  },
+  {
+    "full_name": "Graphify-Labs/graphify",
+    "html_url": "https://github.com/Graphify-Labs/graphify",
+    "stargazers_count": 141546,
+    "default_branch": "v8",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T19:38:53Z",
+    "size": 32511
+  },
+  {
+    "full_name": "ytdl-org/youtube-dl",
+    "html_url": "https://github.com/ytdl-org/youtube-dl",
+    "stargazers_count": 141449,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-30T13:24:03Z",
+    "size": 65485
+  },
+  {
+    "full_name": "harry0703/MoneyPrinterTurbo",
+    "html_url": "https://github.com/harry0703/MoneyPrinterTurbo",
+    "stargazers_count": 137982,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T23:29:07Z",
+    "size": 541281
+  },
+  {
+    "full_name": "TauricResearch/TradingAgents",
+    "html_url": "https://github.com/TauricResearch/TradingAgents",
+    "stargazers_count": 120153,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-27T08:43:04Z",
+    "size": 6566
+  },
+  {
+    "full_name": "browser-use/browser-use",
+    "html_url": "https://github.com/browser-use/browser-use",
+    "stargazers_count": 119924,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T01:31:56Z",
+    "size": 37886
+  },
+  {
+    "full_name": "openai/whisper",
+    "html_url": "https://github.com/openai/whisper",
+    "stargazers_count": 111853,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-08-31T17:19:19Z",
+    "size": 12797
+  },
+  {
+    "full_name": "Panniantong/Agent-Reach",
+    "html_url": "https://github.com/Panniantong/Agent-Reach",
+    "stargazers_count": 108271,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-01T07:23:13Z",
+    "size": 3269
+  },
+  {
+    "full_name": "pytorch/pytorch",
+    "html_url": "https://github.com/pytorch/pytorch",
+    "stargazers_count": 105101,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:33:25Z",
+    "size": 1697479
+  },
+  {
+    "full_name": "deepseek-ai/DeepSeek-V3",
+    "html_url": "https://github.com/deepseek-ai/DeepSeek-V3",
+    "stargazers_count": 104725,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2025-08-28T03:24:37Z",
+    "size": 1768
+  },
+  {
+    "full_name": "fastapi/fastapi",
+    "html_url": "https://github.com/fastapi/fastapi",
+    "stargazers_count": 104371,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T14:05:20Z",
+    "size": 57031
+  },
+  {
+    "full_name": "debpalash/VoiceStudio",
+    "html_url": "https://github.com/debpalash/VoiceStudio",
+    "stargazers_count": 99648,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T11:24:06Z",
+    "size": 191615
+  },
+  {
+    "full_name": "karpathy/autoresearch",
+    "html_url": "https://github.com/karpathy/autoresearch",
+    "stargazers_count": 99147,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-03-26T00:07:37Z",
+    "size": 530
+  },
+  {
+    "full_name": "nvbn/thefuck",
+    "html_url": "https://github.com/nvbn/thefuck",
+    "stargazers_count": 97939,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2024-07-19T14:56:13Z",
+    "size": 4043
+  },
+  {
+    "full_name": "hacksider/Deep-Live-Cam",
+    "html_url": "https://github.com/hacksider/Deep-Live-Cam",
+    "stargazers_count": 97573,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-27T06:43:25Z",
+    "size": 156316
+  },
+  {
+    "full_name": "vllm-project/vllm",
+    "html_url": "https://github.com/vllm-project/vllm",
+    "stargazers_count": 96210,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:30:09Z",
+    "size": 340113
+  },
+  {
+    "full_name": "3b1b/manim",
+    "html_url": "https://github.com/3b1b/manim",
+    "stargazers_count": 96068,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-09-09T16:23:48Z",
+    "size": 77331
+  },
+  {
+    "full_name": "sherlock-project/sherlock",
+    "html_url": "https://github.com/sherlock-project/sherlock",
+    "stargazers_count": 95466,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T05:14:04Z",
+    "size": 19099
+  },
+  {
+    "full_name": "odysseus-dev/odysseus",
+    "html_url": "https://github.com/odysseus-dev/odysseus",
+    "stargazers_count": 94989,
+    "default_branch": "dev",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T05:53:59Z",
+    "size": 49856
+  },
+  {
+    "full_name": "D4Vinci/Scrapling",
+    "html_url": "https://github.com/D4Vinci/Scrapling",
+    "stargazers_count": 93766,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T20:16:23Z",
+    "size": 16215
+  },
+  {
+    "full_name": "PaddlePaddle/PaddleOCR",
+    "html_url": "https://github.com/PaddlePaddle/PaddleOCR",
+    "stargazers_count": 92193,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-09-16T03:31:50Z",
+    "size": 1970859
+  },
+  {
+    "full_name": "home-assistant/core",
+    "html_url": "https://github.com/home-assistant/core",
+    "stargazers_count": 91930,
+    "default_branch": "dev",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:13:25Z",
+    "size": 931859
+  },
+  {
+    "full_name": "django/django",
+    "html_url": "https://github.com/django/django",
+    "stargazers_count": 91488,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T17:00:37Z",
+    "size": 283923
+  },
+  {
+    "full_name": "unclecode/crawl4ai",
+    "html_url": "https://github.com/unclecode/crawl4ai",
+    "stargazers_count": 86821,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T10:45:40Z",
+    "size": 151855
+  },
+  {
+    "full_name": "bregman-arie/devops-exercises",
+    "html_url": "https://github.com/bregman-arie/devops-exercises",
+    "stargazers_count": 86447,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2025-12-27T14:22:30Z",
+    "size": 8007
+  },
+  {
+    "full_name": "datawhalechina/hello-agents",
+    "html_url": "https://github.com/datawhalechina/hello-agents",
+    "stargazers_count": 85898,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-13T22:28:54Z",
+    "size": 314699
+  },
+  {
+    "full_name": "bytedance/deer-flow",
+    "html_url": "https://github.com/bytedance/deer-flow",
+    "stargazers_count": 84935,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T07:06:53Z",
+    "size": 97860
+  },
+  {
+    "full_name": "fighting41love/funNLP",
+    "html_url": "https://github.com/fighting41love/funNLP",
+    "stargazers_count": 84356,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2024-05-10T07:38:24Z",
+    "size": 174188
+  },
+  {
+    "full_name": "666ghj/MiroFish",
+    "html_url": "https://github.com/666ghj/MiroFish",
+    "stargazers_count": 83642,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-16T03:32:19Z",
+    "size": 16817
+  },
+  {
+    "full_name": "opendatalab/MinerU",
+    "html_url": "https://github.com/opendatalab/MinerU",
+    "stargazers_count": 83046,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:08:44Z",
+    "size": 189829
+  },
+  {
+    "full_name": "swisskyrepo/PayloadsAllTheThings",
+    "html_url": "https://github.com/swisskyrepo/PayloadsAllTheThings",
+    "stargazers_count": 82334,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-30T15:58:03Z",
+    "size": 23349
+  },
+  {
+    "full_name": "d2l-ai/d2l-zh",
+    "html_url": "https://github.com/d2l-ai/d2l-zh",
+    "stargazers_count": 82223,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2024-07-30T09:32:19Z",
+    "size": 316965
+  },
+  {
+    "full_name": "Z4nzu/hackingtool",
+    "html_url": "https://github.com/Z4nzu/hackingtool",
+    "stargazers_count": 81626,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-31T07:48:48Z",
+    "size": 6644
+  },
+  {
+    "full_name": "abi/screenshot-to-code",
+    "html_url": "https://github.com/abi/screenshot-to-code",
+    "stargazers_count": 80999,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-27T10:48:37Z",
+    "size": 11200
+  },
+  {
+    "full_name": "shareAI-lab/learn-claude-code",
+    "html_url": "https://github.com/shareAI-lab/learn-claude-code",
+    "stargazers_count": 79810,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-27T04:47:00Z",
+    "size": 6169
+  },
+  {
+    "full_name": "unslothai/unsloth",
+    "html_url": "https://github.com/unslothai/unsloth",
+    "stargazers_count": 79001,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:24:38Z",
+    "size": 648426
+  },
+  {
+    "full_name": "headroomlabs-ai/headroom",
+    "html_url": "https://github.com/headroomlabs-ai/headroom",
+    "stargazers_count": 78703,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T08:01:29Z",
+    "size": 99825
+  },
+  {
+    "full_name": "ComposioHQ/awesome-claude-skills",
+    "html_url": "https://github.com/ComposioHQ/awesome-claude-skills",
+    "stargazers_count": 78637,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-09-18T07:16:11Z",
+    "size": 3663
+  },
+  {
+    "full_name": "Asabeneh/30-Days-Of-Python",
+    "html_url": "https://github.com/Asabeneh/30-Days-Of-Python",
+    "stargazers_count": 78016,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-09-30T08:10:34Z",
+    "size": 31550
+  },
+  {
+    "full_name": "python/cpython",
+    "html_url": "https://github.com/python/cpython",
+    "stargazers_count": 77804,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T10:27:29Z",
+    "size": 910275
+  },
+  {
+    "full_name": "tensorflow/models",
+    "html_url": "https://github.com/tensorflow/models",
+    "stargazers_count": 77636,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T23:22:42Z",
+    "size": 660106
+  },
+  {
+    "full_name": "rohitg00/ai-engineering-from-scratch",
+    "html_url": "https://github.com/rohitg00/ai-engineering-from-scratch",
+    "stargazers_count": 76476,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T11:55:38Z",
+    "size": 158892
+  },
+  {
+    "full_name": "hiyouga/LlamaFactory",
+    "html_url": "https://github.com/hiyouga/LlamaFactory",
+    "stargazers_count": 75867,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-31T10:28:10Z",
+    "size": 14233
+  },
+  {
+    "full_name": "calesthio/OpenMontage",
+    "html_url": "https://github.com/calesthio/OpenMontage",
+    "stargazers_count": 75655,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-28T21:46:02Z",
+    "size": 77481
+  },
+  {
+    "full_name": "apache/superset",
+    "html_url": "https://github.com/apache/superset",
+    "stargazers_count": 75396,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T08:21:34Z",
+    "size": 1449812
+  },
+  {
+    "full_name": "openbq-org/OpenBB",
+    "html_url": "https://github.com/openbq-org/OpenBB",
+    "stargazers_count": 75046,
+    "default_branch": "develop",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T04:58:10Z",
+    "size": 2439218
+  },
+  {
+    "full_name": "pallets/flask",
+    "html_url": "https://github.com/pallets/flask",
+    "stargazers_count": 74940,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-30T15:05:22Z",
+    "size": 12227
+  },
+  {
+    "full_name": "josephmisiti/awesome-machine-learning",
+    "html_url": "https://github.com/josephmisiti/awesome-machine-learning",
+    "stargazers_count": 74744,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-01T16:30:10Z",
+    "size": 2953
+  },
+  {
+    "full_name": "usestrix/strix",
+    "html_url": "https://github.com/usestrix/strix",
+    "stargazers_count": 73514,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T06:59:27Z",
+    "size": 17099
+  },
+  {
+    "full_name": "hugohe3/ppt-master",
+    "html_url": "https://github.com/hugohe3/ppt-master",
+    "stargazers_count": 72944,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T05:47:01Z",
+    "size": 139362
+  },
+  {
+    "full_name": "binary-husky/gpt_academic",
+    "html_url": "https://github.com/binary-husky/gpt_academic",
+    "stargazers_count": 71600,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-01-25T12:33:10Z",
+    "size": 72756
+  },
+  {
+    "full_name": "ansible/ansible",
+    "html_url": "https://github.com/ansible/ansible",
+    "stargazers_count": 71226,
+    "default_branch": "devel",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T22:07:32Z",
+    "size": 266981
+  },
+  {
+    "full_name": "FoundationAgents/MetaGPT",
+    "html_url": "https://github.com/FoundationAgents/MetaGPT",
+    "stargazers_count": 71150,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-01-21T10:12:33Z",
+    "size": 184037
+  },
+  {
+    "full_name": "asgeirtj/system_prompts_leaks",
+    "html_url": "https://github.com/asgeirtj/system_prompts_leaks",
+    "stargazers_count": 70693,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T05:12:27Z",
+    "size": 21794
+  },
+  {
+    "full_name": "docling-project/docling",
+    "html_url": "https://github.com/docling-project/docling",
+    "stargazers_count": 70054,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:28:42Z",
+    "size": 478231
+  },
+  {
+    "full_name": "NanmiCoder/MediaCrawler",
+    "html_url": "https://github.com/NanmiCoder/MediaCrawler",
+    "stargazers_count": 70042,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-27T00:36:40Z",
+    "size": 30641
+  },
+  {
+    "full_name": "ai-job-search-dev/ai-job-search",
+    "html_url": "https://github.com/ai-job-search-dev/ai-job-search",
+    "stargazers_count": 69253,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T20:26:54Z",
+    "size": 5593
+  },
+  {
+    "full_name": "mem0ai/mem0",
+    "html_url": "https://github.com/mem0ai/mem0",
+    "stargazers_count": 68325,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-30T21:36:23Z",
+    "size": 69438
+  },
+  {
+    "full_name": "scikit-learn/scikit-learn",
+    "html_url": "https://github.com/scikit-learn/scikit-learn",
+    "stargazers_count": 67985,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:27:14Z",
+    "size": 187900
+  },
+  {
+    "full_name": "labmlai/annotated_deep_learning_paper_implementations",
+    "html_url": "https://github.com/labmlai/annotated_deep_learning_paper_implementations",
+    "stargazers_count": 67664,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T05:57:43Z",
+    "size": 156337
+  },
+  {
+    "full_name": "ZhuLinsen/daily_stock_analysis",
+    "html_url": "https://github.com/ZhuLinsen/daily_stock_analysis",
+    "stargazers_count": 67491,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T11:42:44Z",
+    "size": 120304
+  },
+  {
+    "full_name": "xtekky/gpt4free",
+    "html_url": "https://github.com/xtekky/gpt4free",
+    "stargazers_count": 66997,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T02:49:15Z",
+    "size": 247989
+  },
+  {
+    "full_name": "mvanhorn/last30days-skill",
+    "html_url": "https://github.com/mvanhorn/last30days-skill",
+    "stargazers_count": 66429,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-01T18:47:38Z",
+    "size": 53996
+  },
+  {
+    "full_name": "Alishahryar1/free-claude-code",
+    "html_url": "https://github.com/Alishahryar1/free-claude-code",
+    "stargazers_count": 66060,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T08:18:16Z",
+    "size": 16145
+  },
+  {
+    "full_name": "scrapy/scrapy",
+    "html_url": "https://github.com/scrapy/scrapy",
+    "stargazers_count": 65191,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T10:41:13Z",
+    "size": 33529
+  },
+  {
+    "full_name": "jingyaogong/minimind",
+    "html_url": "https://github.com/jingyaogong/minimind",
+    "stargazers_count": 64821,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-27T06:57:09Z",
+    "size": 39476
+  },
+  {
+    "full_name": "RVC-Boss/GPT-SoVITS",
+    "html_url": "https://github.com/RVC-Boss/GPT-SoVITS",
+    "stargazers_count": 64694,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-31T15:56:56Z",
+    "size": 14939
+  },
+  {
+    "full_name": "virattt/ai-hedge-fund",
+    "html_url": "https://github.com/virattt/ai-hedge-fund",
+    "stargazers_count": 64453,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-02T19:25:36Z",
+    "size": 4493
+  },
+  {
+    "full_name": "karpathy/nanoGPT",
+    "html_url": "https://github.com/karpathy/nanoGPT",
+    "stargazers_count": 64417,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2025-11-12T19:52:34Z",
+    "size": 981
+  },
+  {
+    "full_name": "keras-team/keras",
+    "html_url": "https://github.com/keras-team/keras",
+    "stargazers_count": 64413,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T11:15:12Z",
+    "size": 58232
+  },
+  {
+    "full_name": "blader/humanizer",
+    "html_url": "https://github.com/blader/humanizer",
+    "stargazers_count": 64213,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-28T07:17:33Z",
+    "size": 214
+  },
+  {
+    "full_name": "commaai/openpilot",
+    "html_url": "https://github.com/commaai/openpilot",
+    "stargazers_count": 64051,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T09:57:54Z",
+    "size": 1268937
+  },
+  {
+    "full_name": "sansan0/TrendRadar",
+    "html_url": "https://github.com/sansan0/TrendRadar",
+    "stargazers_count": 63389,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-29T11:41:00Z",
+    "size": 34052
+  },
+  {
+    "full_name": "ultralytics/ultralytics",
+    "html_url": "https://github.com/ultralytics/ultralytics",
+    "stargazers_count": 63077,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:15:31Z",
+    "size": 65872
+  },
+  {
+    "full_name": "BerriAI/litellm",
+    "html_url": "https://github.com/BerriAI/litellm",
+    "stargazers_count": 62623,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:33:56Z",
+    "size": 2791872
+  },
+  {
+    "full_name": "pathwaycom/pathway",
+    "html_url": "https://github.com/pathwaycom/pathway",
+    "stargazers_count": 62026,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T06:37:42Z",
+    "size": 183263
+  },
+  {
+    "full_name": "microsoft/autogen",
+    "html_url": "https://github.com/microsoft/autogen",
+    "stargazers_count": 61688,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-28T14:45:27Z",
+    "size": 148818
+  },
+  {
+    "full_name": "crewAIInc/crewAI",
+    "html_url": "https://github.com/crewAIInc/crewAI",
+    "stargazers_count": 60447,
+    "default_branch": "main",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-11-03T12:31:02Z",
+    "size": 305618
+  },
+  {
+    "full_name": "MemPalace/mempalace",
+    "html_url": "https://github.com/MemPalace/mempalace",
+    "stargazers_count": 60306,
+    "default_branch": "develop",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-10-31T05:41:28Z",
+    "size": 33003
+  },
+  {
+    "full_name": "CorentinJ/Real-Time-Voice-Cloning",
+    "html_url": "https://github.com/CorentinJ/Real-Time-Voice-Cloning",
+    "stargazers_count": 60225,
+    "default_branch": "master",
+    "fork": false,
+    "archived": false,
+    "pushed_at": "2026-03-09T10:31:58Z",
+    "size": 369730
+  }
+]

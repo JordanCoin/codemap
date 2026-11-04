@@ -1,0 +1,9 @@
+{
+  "name": "codemap-bench-tools",
+  "private": true,
+  "description": "Pinned toolchain for the import-accuracy benchmark truth generators.",
+  "type": "module",
+  "dependencies": {
+    "typescript": "5.9.3"
+  }
+}
