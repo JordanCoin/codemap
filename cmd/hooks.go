@@ -38,10 +38,12 @@ type hubInfo struct {
 const (
 	DefaultHookTimeout      = 8 * time.Second
 	daemonRestartStaleAfter = 2 * time.Hour
-	diffCaptureSlackBytes   = 4 * 1024
-	sessionLeaseTTL         = 24 * time.Hour
-	sessionLockStaleAfter   = 30 * time.Second
-	sessionLockWait         = time.Second
+	// daemonInitialBuildAllowance covers the first build on large repos.
+	daemonInitialBuildAllowance = 10 * time.Minute
+	diffCaptureSlackBytes       = 4 * 1024
+	sessionLeaseTTL             = 24 * time.Hour
+	sessionLockStaleAfter       = 30 * time.Second
+	sessionLockWait             = time.Second
 )
 
 var isOwnedDaemonProcess = watch.IsOwnedDaemon
@@ -285,7 +287,10 @@ func shouldRestartDaemon(root string, now time.Time) bool {
 
 	state := watch.ReadState(root)
 	if state == nil {
-		return true
+		// No state yet is a daemon still building its first graph, until it
+		// has had longer than any build should take (#270).
+		info, err := os.Stat(filepath.Join(projectpath.ProjectRuntimeDir(root), "watch.pid"))
+		return err != nil || now.Sub(info.ModTime()) > daemonInitialBuildAllowance
 	}
 
 	return now.Sub(state.UpdatedAt) > daemonRestartStaleAfter

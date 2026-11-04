@@ -300,6 +300,11 @@ func TestMainWatchHelperProcess(t *testing.T) {
 	if os.Getenv("CODEMAP_MAIN_WATCH_HELPER") != "1" {
 		return
 	}
+	// Stands in for a daemon whose initial build outlasts `watch start`.
+	if delay, err := time.ParseDuration(os.Getenv("CODEMAP_MAIN_WATCH_HELPER_PUBLISH_AFTER")); err == nil {
+		time.Sleep(delay)
+		_ = publishWatchReadiness(os.Getenv(watchReadinessEnv), nil)
+	}
 	time.Sleep(time.Minute)
 }
 

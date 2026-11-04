@@ -922,14 +922,18 @@ func runWatchSubcommand(subCmd, root string) error {
 		cmd.Stdout = nil
 		cmd.Stderr = nil
 		cmd.Stdin = nil
-		readyFile, err := os.CreateTemp("", "codemap-watch-ready-*")
+		readyDir, err := os.MkdirTemp("", "codemap-watch-ready-*")
 		if err != nil {
-			return fmt.Errorf("creating daemon readiness file: %w", err)
+			return fmt.Errorf("creating daemon readiness directory: %w", err)
 		}
-		readyPath := readyFile.Name()
-		_ = readyFile.Close()
-		_ = os.Remove(readyPath)
-		defer os.Remove(readyPath)
+		readyPath := filepath.Join(readyDir, "ready.json")
+		// A daemon still building publishes after start returns; with the
+		// directory gone that write fails instead of leaking a file. The
+		// retry covers a publish landing mid-removal.
+		defer func() {
+			for i := 0; i < 3 && os.RemoveAll(readyDir) != nil; i++ {
+			}
+		}()
 		if cmd.Env == nil {
 			cmd.Env = os.Environ()
 		}
@@ -1230,10 +1234,9 @@ func runDaemon(root string) (runErr error) {
 		return fmt.Errorf("starting watch: %w", err)
 	}
 	if readyPath != "" {
-		if err := publishWatchReadiness(readyPath, nil); err != nil {
-			daemon.Stop()
-			return fmt.Errorf("publishing daemon readiness: %w", err)
-		}
+		// Fails once a `watch start` that stopped waiting removed the file's
+		// directory; nobody is listening then, so keep running (#270).
+		_ = publishWatchReadiness(readyPath, nil)
 		readyPublished = true
 	}
 	// Wait for a stop signal, or for the daemon to become an orphan (#227,

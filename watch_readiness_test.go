@@ -69,13 +69,10 @@ func TestWaitWatchReadinessTimesOutWhenAbsent(t *testing.T) {
 	}
 }
 
-// stubStandInDaemon makes `watch start` spawn an sh script whose command line
-// ends in "watch daemon <root>", which is what the ownership check reads.
-func stubStandInDaemon(t *testing.T, script string) string {
+// stubStandInDaemon makes `watch start` spawn newChild(canonical root) and
+// returns the root plus the spawned command once start has run.
+func stubStandInDaemon(t *testing.T, newChild func(absRoot string) *exec.Cmd) (string, func() *exec.Cmd) {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("uses sh to stand in for the daemon process")
-	}
 	root := t.TempDir()
 	projectpath.ResetSetupRoot()
 	t.Cleanup(projectpath.ResetSetupRoot)
@@ -85,7 +82,7 @@ func stubStandInDaemon(t *testing.T, script string) string {
 	}
 	var child *exec.Cmd
 	withMainRuntimeStubs(t, nil, nil, func(string, ...string) *exec.Cmd {
-		child = exec.Command("sh", "-c", script, "watch", "daemon", absRoot)
+		child = newChild(absRoot)
 		return child
 	}, func() (string, error) { return "/tmp/codemap-test", nil }, nil, nil, nil)
 	t.Cleanup(func() {
@@ -95,16 +92,22 @@ func stubStandInDaemon(t *testing.T, script string) string {
 	})
 	previous := watchReadinessTimeout
 	t.Cleanup(func() { watchReadinessTimeout = previous })
-	return root
+	return root, func() *exec.Cmd { return child }
 }
 
 // #270: a daemon still building past the readiness deadline is alive, so
-// `watch start` keeps it and a second start finds it running.
+// `watch start` keeps it and a second start finds it running. Its late
+// readiness publish must not leave a file in $TMPDIR.
 func TestRunWatchStartKeepsDaemonStillBuilding(t *testing.T) {
-	// "; exit 0" stops sh from exec'ing sleep, which would drop the
-	// "watch daemon <root>" argv the ownership check needs.
-	root := stubStandInDaemon(t, "sleep 30; exit 0")
-	watchReadinessTimeout = 200 * time.Millisecond
+	const publishAfter = 400 * time.Millisecond
+	// The test binary itself is the stand-in: one process whose argv ends in
+	// "watch daemon <root>", so killing it leaves nothing behind.
+	root, child := stubStandInDaemon(t, func(absRoot string) *exec.Cmd {
+		cmd := exec.Command(os.Args[0], "-test.run=TestMainWatchHelperProcess", "--", "watch", "daemon", absRoot)
+		cmd.Env = append(os.Environ(), "CODEMAP_MAIN_WATCH_HELPER=1", "CODEMAP_MAIN_WATCH_HELPER_PUBLISH_AFTER="+publishAfter.String())
+		return cmd
+	})
+	watchReadinessTimeout = 100 * time.Millisecond
 
 	var err error
 	out, stderr := captureMainStreams(t, func() { err = runWatchSubcommand("start", root) })
@@ -118,12 +121,31 @@ func TestRunWatchStartKeepsDaemonStillBuilding(t *testing.T) {
 	if err != nil || !strings.Contains(out, "already running") {
 		t.Fatalf("second watch start = %v %q, want the kept daemon already running", err, out)
 	}
+
+	var readyPath string
+	for _, kv := range child().Env {
+		if v, ok := strings.CutPrefix(kv, watchReadinessEnv+"="); ok {
+			readyPath = v
+		}
+	}
+	if readyPath == "" {
+		t.Fatal("daemon was spawned without a readiness path")
+	}
+	time.Sleep(publishAfter + 300*time.Millisecond)
+	if _, statErr := os.Stat(filepath.Dir(readyPath)); !os.IsNotExist(statErr) {
+		t.Fatalf("slow start left its readiness directory behind: %v", statErr)
+	}
 }
 
 // A daemon that dies without publishing readiness is a failed start, reported
 // when it exits rather than at the deadline.
 func TestRunWatchStartReportsDaemonThatDies(t *testing.T) {
-	root := stubStandInDaemon(t, "exit 3")
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh to stand in for the daemon process")
+	}
+	root, _ := stubStandInDaemon(t, func(absRoot string) *exec.Cmd {
+		return exec.Command("sh", "-c", "exit 3", "watch", "daemon", absRoot)
+	})
 	watchReadinessTimeout = time.Minute
 
 	started := time.Now()
