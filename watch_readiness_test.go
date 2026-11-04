@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,58 +13,60 @@ import (
 	"codemap/internal/projectpath"
 )
 
-// A readiness file caught mid-write reads as zero or partial bytes. Treating
-// that as fatal reported a startup failure for a daemon that was starting
-// fine, and made TestRunWatchStartWaitsForChildReadinessFailure fail whenever
-// the machine was loaded enough to land in the window.
+// stubReadinessPipe hands runDaemon the write end of a pipe, as `watch start`
+// does, and returns the end start reads.
+func stubReadinessPipe(t *testing.T) *os.File {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := openWatchReadiness
+	openWatchReadiness = func() *os.File { return w }
+	t.Cleanup(func() {
+		openWatchReadiness = previous
+		_ = r.Close()
+		_ = w.Close()
+	})
+	return r
+}
+
+// A readiness value split across writes is still one value, not a failure.
 func TestWaitWatchReadinessWaitsThroughPartialWrite(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "ready.json")
-	if err := os.WriteFile(path, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	r, w := io.Pipe()
 	go func() {
+		_, _ = w.Write([]byte(`{"error":"claim`))
 		time.Sleep(50 * time.Millisecond)
-		_ = os.WriteFile(path, []byte(`{"error":"claim rejected"}`), 0o644)
+		_, _ = w.Write([]byte(` rejected"}`))
+		_ = w.Close()
 	}()
 
-	err := waitWatchReadiness(path, 5*time.Second, nil)
+	err := waitWatchReadiness(r, 5*time.Second, nil)
 	if err == nil || !strings.Contains(err.Error(), "claim rejected") {
-		t.Fatalf("waitWatchReadiness() = %v, want the daemon's own error once the file is complete", err)
+		t.Fatalf("waitWatchReadiness() = %v, want the daemon's own error once the value is complete", err)
 	}
 }
 
-func TestWaitWatchReadinessSucceedsAfterPartialWrite(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "ready.json")
-	if err := os.WriteFile(path, []byte(`{"err`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		time.Sleep(50 * time.Millisecond)
-		_ = os.WriteFile(path, []byte(`{}`), 0o644)
-	}()
-
-	if err := waitWatchReadiness(path, 5*time.Second, nil); err != nil {
-		t.Fatalf("waitWatchReadiness() = %v, want success once the file is complete", err)
-	}
-}
-
-// A file that never becomes valid still has to say why, rather than reporting
-// only that it timed out.
-func TestWaitWatchReadinessReportsPersistentGarbage(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "ready.json")
-	if err := os.WriteFile(path, []byte("not json at all"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	err := waitWatchReadiness(path, 200*time.Millisecond, nil)
+func TestWaitWatchReadinessReportsGarbage(t *testing.T) {
+	err := waitWatchReadiness(strings.NewReader("not json at all"), time.Second, nil)
 	if err == nil || !strings.Contains(err.Error(), "reading daemon readiness") {
 		t.Fatalf("waitWatchReadiness() = %v, want the parse failure surfaced", err)
 	}
 }
 
-// A missing file must still time out rather than hang.
-func TestWaitWatchReadinessTimesOutWhenAbsent(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "never-written.json")
-	err := waitWatchReadiness(path, 100*time.Millisecond, nil)
+// A pipe closed without a value is a daemon that died before reporting.
+func TestWaitWatchReadinessReportsSilentClose(t *testing.T) {
+	err := waitWatchReadiness(strings.NewReader(""), time.Second, nil)
+	if err == nil || !strings.Contains(err.Error(), "exited before reporting readiness") {
+		t.Fatalf("waitWatchReadiness() = %v, want a dead-daemon failure", err)
+	}
+}
+
+// Nothing written must still time out rather than hang.
+func TestWaitWatchReadinessTimesOutWhenSilent(t *testing.T) {
+	r, w := io.Pipe()
+	t.Cleanup(func() { _ = w.Close() })
+	err := waitWatchReadiness(r, 100*time.Millisecond, nil)
 	if err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("waitWatchReadiness() = %v, want a timeout", err)
 	}
@@ -95,18 +98,22 @@ func stubStandInDaemon(t *testing.T, newChild func(absRoot string) *exec.Cmd) (s
 	return root, func() *exec.Cmd { return child }
 }
 
-// #270: a daemon still building past the readiness deadline is alive, so
-// `watch start` keeps it and a second start finds it running. Its late
-// readiness publish must not leave a file in $TMPDIR.
-func TestRunWatchStartKeepsDaemonStillBuilding(t *testing.T) {
-	const publishAfter = 400 * time.Millisecond
-	// The test binary itself is the stand-in: one process whose argv ends in
-	// "watch daemon <root>", so killing it leaves nothing behind.
-	root, child := stubStandInDaemon(t, func(absRoot string) *exec.Cmd {
+// helperDaemon is the test binary as a stand-in daemon: one process whose
+// argv ends in "watch daemon <root>", so killing it leaves nothing behind.
+func helperDaemon(publishAfter time.Duration) func(string) *exec.Cmd {
+	return func(absRoot string) *exec.Cmd {
 		cmd := exec.Command(os.Args[0], "-test.run=TestMainWatchHelperProcess", "--", "watch", "daemon", absRoot)
 		cmd.Env = append(os.Environ(), "CODEMAP_MAIN_WATCH_HELPER=1", "CODEMAP_MAIN_WATCH_HELPER_PUBLISH_AFTER="+publishAfter.String())
 		return cmd
-	})
+	}
+}
+
+// #270: a daemon still building past the readiness deadline is alive, so
+// `watch start` keeps it. Its late publish hits a pipe nobody reads, and it
+// must survive that.
+func TestRunWatchStartKeepsDaemonStillBuilding(t *testing.T) {
+	const publishAfter = 400 * time.Millisecond
+	root, _ := stubStandInDaemon(t, helperDaemon(publishAfter))
 	watchReadinessTimeout = 100 * time.Millisecond
 
 	var err error
@@ -117,23 +124,37 @@ func TestRunWatchStartKeepsDaemonStillBuilding(t *testing.T) {
 	if !strings.Contains(out, "still building") {
 		t.Fatalf("watch start output = %q, want a still-building line", out)
 	}
+	time.Sleep(publishAfter + 300*time.Millisecond)
 	out, _ = captureMainStreams(t, func() { err = runWatchSubcommand("start", root) })
 	if err != nil || !strings.Contains(out, "already running") {
-		t.Fatalf("second watch start = %v %q, want the kept daemon already running", err, out)
+		t.Fatalf("second watch start = %v %q, want the kept daemon alive after its late publish", err, out)
 	}
+}
 
-	var readyPath string
-	for _, kv := range child().Env {
-		if v, ok := strings.CutPrefix(kv, watchReadinessEnv+"="); ok {
-			readyPath = v
+// Readiness travels over an inherited descriptor; no path the daemon writes
+// to may appear in its argv or env, where another local user could read it
+// and plant a symlink.
+func TestRunWatchStartPassesNoReadinessPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("readiness is a handle, not a descriptor, on Windows")
+	}
+	root, child := stubStandInDaemon(t, helperDaemon(0))
+	var err error
+	captureMainStreams(t, func() { err = runWatchSubcommand("start", root) })
+	if err != nil {
+		t.Fatalf("watch start = %v", err)
+	}
+	cmd := child()
+	if len(cmd.ExtraFiles) != 1 {
+		t.Fatalf("daemon got %d extra files, want the readiness pipe", len(cmd.ExtraFiles))
+	}
+	for _, value := range append(append([]string{}, cmd.Args...), cmd.Env...) {
+		if strings.Contains(value, "READINESS") && value != watchReadinessEnv+"=3" {
+			t.Fatalf("daemon readiness setting %q, want only %s=3", value, watchReadinessEnv)
 		}
-	}
-	if readyPath == "" {
-		t.Fatal("daemon was spawned without a readiness path")
-	}
-	time.Sleep(publishAfter + 300*time.Millisecond)
-	if _, statErr := os.Stat(filepath.Dir(readyPath)); !os.IsNotExist(statErr) {
-		t.Fatalf("slow start left its readiness directory behind: %v", statErr)
+		if strings.Contains(value, "codemap-watch-ready") {
+			t.Fatalf("daemon argv/env carries a readiness path: %q", value)
+		}
 	}
 }
 

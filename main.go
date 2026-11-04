@@ -6,10 +6,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -48,7 +50,9 @@ var (
 	writeWatchProcessPID   = watch.WriteProcessPID
 )
 
-const watchReadinessEnv = "CODEMAP_WATCH_READINESS_FILE"
+// watchReadinessEnv names the inherited descriptor (a handle on Windows) the
+// daemon writes its readiness JSON to.
+const watchReadinessEnv = "CODEMAP_WATCH_READINESS_FD"
 
 // watchReadinessTimeout bounds how long `watch start` waits for the initial
 // build; a daemon still alive at the deadline is kept, not killed.
@@ -922,26 +926,29 @@ func runWatchSubcommand(subCmd, root string) error {
 		cmd.Stdout = nil
 		cmd.Stderr = nil
 		cmd.Stdin = nil
-		readyDir, err := os.MkdirTemp("", "codemap-watch-ready-*")
+		// Readiness travels over an inherited pipe, not a file: a path in a
+		// shared temp dir could be swapped for a symlink the daemon writes
+		// through. Once start stops reading, a late write just gets EPIPE.
+		readyRead, readyWrite, err := os.Pipe()
 		if err != nil {
-			return fmt.Errorf("creating daemon readiness directory: %w", err)
+			return fmt.Errorf("creating daemon readiness pipe: %w", err)
 		}
-		readyPath := filepath.Join(readyDir, "ready.json")
-		// A daemon still building publishes after start returns; with the
-		// directory gone that write fails instead of leaking a file. The
-		// retry covers a publish landing mid-removal.
-		defer func() {
-			for i := 0; i < 3 && os.RemoveAll(readyDir) != nil; i++ {
-			}
-		}()
+		defer readyRead.Close()
+		// Detach from parent process group (Unix only)
+		setSysProcAttr(cmd)
+		readyFD, err := inheritReadinessPipe(cmd, readyWrite)
+		if err != nil {
+			_ = readyWrite.Close()
+			return fmt.Errorf("passing daemon readiness pipe: %w", err)
+		}
 		if cmd.Env == nil {
 			cmd.Env = os.Environ()
 		}
-		cmd.Env = append(cmd.Env, watchReadinessEnv+"="+readyPath)
-		// Detach from parent process group (Unix only)
-		setSysProcAttr(cmd)
-		if err := cmd.Start(); err != nil {
-			return fmt.Errorf("starting daemon: %w", err)
+		cmd.Env = append(cmd.Env, watchReadinessEnv+"="+readyFD)
+		startErr := cmd.Start()
+		_ = readyWrite.Close()
+		if startErr != nil {
+			return fmt.Errorf("starting daemon: %w", startErr)
 		}
 		pid := cmd.Process.Pid
 		if err := writeWatchProcessPID(absRoot, pid); err != nil {
@@ -957,7 +964,7 @@ func runWatchSubcommand(subCmd, root string) error {
 		transition = nil
 		exited := make(chan struct{})
 		go func() { _ = cmd.Wait(); close(exited) }()
-		err = waitWatchReadiness(readyPath, watchReadinessTimeout, exited)
+		err = waitWatchReadiness(readyRead, watchReadinessTimeout, exited)
 		if errors.Is(err, errWatchReadinessTimeout) {
 			fmt.Printf("Watch daemon started (pid %d), still building the initial graph\n", pid)
 			fmt.Println("  Next: `codemap watch status` shows when it is ready.")
@@ -1204,24 +1211,24 @@ func runHandoffSubcommand(args []string) {
 }
 
 func runDaemon(root string) (runErr error) {
-	readyPath := os.Getenv(watchReadinessEnv)
-	readyPublished := false
-	defer func() {
-		if readyPath != "" && !readyPublished {
-			_ = publishWatchReadiness(readyPath, runErr)
+	ready := openWatchReadiness()
+	publish := func(err error) {
+		if ready != nil {
+			// A `watch start` that stopped waiting makes this EPIPE; nobody
+			// is listening then, so the daemon keeps running (#270).
+			_ = publishWatchReadiness(ready, err)
+			ready = nil
 		}
-	}()
+	}
+	defer func() { publish(runErr) }()
 	claimed, err := claimWatchDaemonPID(root, os.Getpid())
 	if err != nil {
 		return fmt.Errorf("claiming daemon: %w", err)
 	}
 	if !claimed {
 		// Another daemon owns this root (#155 defect 1): exit 0 without output.
-		// A spawning `watch start` still learns why through the readiness file.
-		if readyPath != "" {
-			readyPublished = true
-			_ = publishWatchReadiness(readyPath, errDaemonAlreadyRunning)
-		}
+		// A spawning `watch start` still learns why through the readiness pipe.
+		publish(errDaemonAlreadyRunning)
 		return nil
 	}
 	daemon, err := newWatchProcess(root, false)
@@ -1233,12 +1240,7 @@ func runDaemon(root string) (runErr error) {
 		_ = watch.RemoveProcessPID(root, os.Getpid())
 		return fmt.Errorf("starting watch: %w", err)
 	}
-	if readyPath != "" {
-		// Fails once a `watch start` that stopped waiting removed the file's
-		// directory; nobody is listening then, so keep running (#270).
-		_ = publishWatchReadiness(readyPath, nil)
-		readyPublished = true
-	}
+	publish(nil)
 	// Wait for a stop signal, or for the daemon to become an orphan (#227,
 	// #155): a removed worktree or a session that never sent SessionEnd
 	// leaves nobody to stop it, so it must notice on its own.
@@ -1270,71 +1272,67 @@ func waitForDaemonExit(sig <-chan os.Signal, poll time.Duration, shouldExit func
 	}
 }
 
-func publishWatchReadiness(path string, readinessErr error) error {
+// openWatchReadiness adopts the readiness pipe `watch start` passed down, or
+// returns nil when the daemon was started some other way.
+var openWatchReadiness = func() *os.File {
+	fd, err := strconv.ParseUint(os.Getenv(watchReadinessEnv), 10, 64)
+	if err != nil {
+		return nil
+	}
+	_ = os.Unsetenv(watchReadinessEnv)
+	return adoptReadinessPipe(uintptr(fd))
+}
+
+// publishWatchReadiness writes one readiness JSON value and closes the pipe.
+func publishWatchReadiness(ready *os.File, readinessErr error) error {
 	status := watchReadiness{}
 	if readinessErr != nil {
 		status.Error = readinessErr.Error()
 	}
-	data, err := json.Marshal(status)
-	if err != nil {
-		return err
+	err := json.NewEncoder(ready).Encode(status)
+	if closeErr := ready.Close(); err == nil {
+		err = closeErr
 	}
-	tmp := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+	return err
 }
 
-// waitWatchReadiness returns the daemon's published readiness. exited closes
-// when the daemon process ends (nil: liveness unknown). A timeout wraps
+var errDaemonExitedUnready = errors.New("daemon exited before reporting readiness")
+
+// waitWatchReadiness returns the readiness the daemon writes to r. exited
+// closes when the daemon process ends (nil: liveness unknown). A timeout wraps
 // errWatchReadinessTimeout, so a caller can keep a daemon that is still
 // building instead of treating it as failed (#270).
-func waitWatchReadiness(path string, timeout time.Duration, exited <-chan struct{}) error {
-	deadline := time.Now().Add(timeout)
-	// A readiness file that does not parse is a file still being written, not
-	// a daemon that failed: publishWatchReadiness renames its payload into
-	// place atomically, but nothing guarantees every writer does, and treating
-	// the first unparseable read as fatal reported a startup failure for a
-	// daemon that was starting fine. Keep the last parse error so a file that
-	// never becomes valid says why, rather than only that it timed out.
-	var lastParseErr error
-	for {
-		// Checked before the read: the daemon publishes before it exits, so
-		// this read still sees anything it wrote.
-		gone := false
-		select {
-		case <-exited:
-			gone = true
+func waitWatchReadiness(r io.Reader, timeout time.Duration, exited <-chan struct{}) error {
+	result := make(chan error, 1)
+	go func() {
+		var status watchReadiness
+		switch err := json.NewDecoder(r).Decode(&status); {
+		case errors.Is(err, io.EOF):
+			result <- errDaemonExitedUnready
+		case err != nil:
+			result <- fmt.Errorf("reading daemon readiness: %w", err)
+		case status.Error != "":
+			result <- errors.New(status.Error)
 		default:
+			result <- nil
 		}
-		data, err := os.ReadFile(path)
-		if err == nil {
-			var status watchReadiness
-			if parseErr := json.Unmarshal(data, &status); parseErr != nil {
-				lastParseErr = parseErr
-			} else if status.Error != "" {
-				return errors.New(status.Error)
-			} else {
-				return nil
-			}
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("reading daemon readiness: %w", err)
+	}()
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	select {
+	case err := <-result:
+		return err
+	case <-exited:
+		// Anything written before exit is already in the pipe; the grace only
+		// covers a descendant still holding the write end open.
+		select {
+		case err := <-result:
+			return err
+		case <-time.After(time.Second):
+			return errDaemonExitedUnready
 		}
-		if gone {
-			return errors.New("daemon exited before reporting readiness")
-		}
-		if time.Now().After(deadline) {
-			if lastParseErr != nil {
-				return fmt.Errorf("reading daemon readiness: %w", lastParseErr)
-			}
-			return fmt.Errorf("%w after %s", errWatchReadinessTimeout, timeout)
-		}
-		time.Sleep(10 * time.Millisecond)
+	case <-deadline.C:
+		return fmt.Errorf("%w after %s", errWatchReadinessTimeout, timeout)
 	}
 }
 

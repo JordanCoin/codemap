@@ -303,7 +303,9 @@ func TestMainWatchHelperProcess(t *testing.T) {
 	// Stands in for a daemon whose initial build outlasts `watch start`.
 	if delay, err := time.ParseDuration(os.Getenv("CODEMAP_MAIN_WATCH_HELPER_PUBLISH_AFTER")); err == nil {
 		time.Sleep(delay)
-		_ = publishWatchReadiness(os.Getenv(watchReadinessEnv), nil)
+		if ready := openWatchReadiness(); ready != nil {
+			_ = publishWatchReadiness(ready, nil)
+		}
 	}
 	time.Sleep(time.Minute)
 }
@@ -314,7 +316,7 @@ func TestRunWatchStartWaitsForChildReadinessFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	withMainRuntimeStubs(t, nil, nil, func(string, ...string) *exec.Cmd {
-		return exec.Command("sh", "-c", `printf '{"error":"claim rejected"}' > "$CODEMAP_WATCH_READINESS_FILE"`)
+		return exec.Command("sh", "-c", `printf '{"error":"claim rejected"}' >&"$CODEMAP_WATCH_READINESS_FD"`)
 	}, func() (string, error) { return os.Args[0], nil }, nil, nil, nil)
 
 	err := runWatchSubcommand("start", root)
@@ -328,8 +330,7 @@ func TestRunWatchStartWaitsForChildReadinessFailure(t *testing.T) {
 
 func TestRunDaemonPublishesInitializationFailure(t *testing.T) {
 	root := t.TempDir()
-	readyPath := filepath.Join(t.TempDir(), "ready.json")
-	t.Setenv(watchReadinessEnv, readyPath)
+	ready := stubReadinessPipe(t)
 	withMainRuntimeStubs(t, func(string, bool) (watchProcess, error) {
 		return &fakeWatchProcess{startErr: fmt.Errorf("watch init rejected")}, nil
 	}, nil, nil, nil, nil, nil, nil)
@@ -337,15 +338,14 @@ func TestRunDaemonPublishesInitializationFailure(t *testing.T) {
 	if err := runDaemon(root); err == nil || !strings.Contains(err.Error(), "watch init rejected") {
 		t.Fatalf("runDaemon() error = %v, want initialization failure", err)
 	}
-	if err := waitWatchReadiness(readyPath, time.Second, nil); err == nil || !strings.Contains(err.Error(), "watch init rejected") {
+	if err := waitWatchReadiness(ready, time.Second, nil); err == nil || !strings.Contains(err.Error(), "watch init rejected") {
 		t.Fatalf("waitWatchReadiness() error = %v, want published initialization failure", err)
 	}
 }
 
 func TestRunDaemonPublishesClaimFailure(t *testing.T) {
 	root := t.TempDir()
-	readyPath := filepath.Join(t.TempDir(), "ready.json")
-	t.Setenv(watchReadinessEnv, readyPath)
+	ready := stubReadinessPipe(t)
 	previousClaim := claimWatchDaemonPID
 	claimWatchDaemonPID = func(string, int) (bool, error) { return false, errors.New("claim rejected") }
 	t.Cleanup(func() { claimWatchDaemonPID = previousClaim })
@@ -355,7 +355,7 @@ func TestRunDaemonPublishesClaimFailure(t *testing.T) {
 	if err := runDaemon(root); err == nil || !strings.Contains(err.Error(), "claim rejected") {
 		t.Fatalf("runDaemon() error = %v, want claim failure", err)
 	}
-	if err := waitWatchReadiness(readyPath, time.Second, nil); err == nil || !strings.Contains(err.Error(), "claim rejected") {
+	if err := waitWatchReadiness(ready, time.Second, nil); err == nil || !strings.Contains(err.Error(), "claim rejected") {
 		t.Fatalf("waitWatchReadiness() error = %v, want published claim failure", err)
 	}
 	if fake.started {
@@ -364,11 +364,10 @@ func TestRunDaemonPublishesClaimFailure(t *testing.T) {
 }
 
 // A daemon that loses the claim exits 0 and silently (#155 defect 1); the
-// spawning `watch start` still learns why through the readiness file.
+// spawning `watch start` still learns why through the readiness pipe.
 func TestRunDaemonExitsQuietlyWhenAnotherDaemonOwnsRoot(t *testing.T) {
 	root := t.TempDir()
-	readyPath := filepath.Join(t.TempDir(), "ready.json")
-	t.Setenv(watchReadinessEnv, readyPath)
+	ready := stubReadinessPipe(t)
 	previousClaim := claimWatchDaemonPID
 	claimWatchDaemonPID = func(string, int) (bool, error) { return false, nil }
 	t.Cleanup(func() { claimWatchDaemonPID = previousClaim })
@@ -386,7 +385,7 @@ func TestRunDaemonExitsQuietlyWhenAnotherDaemonOwnsRoot(t *testing.T) {
 	if fake.started {
 		t.Fatal("loser started a second watcher")
 	}
-	if err := waitWatchReadiness(readyPath, time.Second, nil); err == nil || !strings.Contains(err.Error(), "already running") {
+	if err := waitWatchReadiness(ready, time.Second, nil); err == nil || !strings.Contains(err.Error(), "already running") {
 		t.Fatalf("waitWatchReadiness() error = %v, want already-running readiness failure", err)
 	}
 }
@@ -594,7 +593,7 @@ func TestRunWatchStartPreservesSetupRoot(t *testing.T) {
 		nil,
 		func(_ string, args ...string) *exec.Cmd {
 			gotArgs = append([]string(nil), args...)
-			return exec.Command("sh", "-c", `printf '{}' > "$CODEMAP_WATCH_READINESS_FILE"`)
+			return exec.Command("sh", "-c", `printf '{}' >&"$CODEMAP_WATCH_READINESS_FD"`)
 		},
 		func() (string, error) { return "/tmp/codemap", nil },
 		func(string) bool { return false },
@@ -1156,7 +1155,7 @@ func TestRunWatchModeRunDaemonAndWatchStart(t *testing.T) {
 			func(name string, args ...string) *exec.Cmd {
 				gotName = name
 				gotArgs = append([]string(nil), args...)
-				return exec.Command("sh", "-c", `printf '{}' > "$CODEMAP_WATCH_READINESS_FILE"`)
+				return exec.Command("sh", "-c", `printf '{}' >&"$CODEMAP_WATCH_READINESS_FD"`)
 			},
 			func() (string, error) { return "/tmp/codemap-test", nil },
 			func(string) bool { return false },
