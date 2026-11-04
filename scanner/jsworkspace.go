@@ -18,6 +18,7 @@ type jsWorkspaceResolver struct {
 	denoScopes    []jsImportScope
 	workspaces    []jsPackageWorkspace
 	pathScopes    []jsPathAliasScope // deepest root first
+	notes         []string           // coverage notes from bounded tsconfig reading
 }
 
 // jsPathAliasScope is the paths one tsconfig/jsconfig gives the files under it.
@@ -33,15 +34,16 @@ type jsPackageWorkspace struct {
 }
 
 type jsWorkspacePackage struct {
-	root         string
-	name         string
-	dependencies map[string]bool // every package.json dependency field, by name
-	exports      jsSpecifierMap
-	hasExports   bool
-	entryTargets []string
-	main         string // package.json main, as a local target; "" when absent or invalid
-	sourceRoot   string
-	outDir       string
+	root          string
+	name          string
+	dependencies  map[string]bool // every package.json dependency field, by name
+	workspaceDeps map[string]bool // dependencies declared with the workspace: protocol
+	exports       jsSpecifierMap
+	hasExports    bool
+	entryTargets  []string
+	main          string // package.json main, as a local target; "" when absent or invalid
+	sourceRoot    string
+	outDir        string
 }
 
 type jsPackageScope struct {
@@ -89,6 +91,7 @@ func buildJSWorkspaceResolver(ctx context.Context, root string, files []FileInfo
 	pnpmWorkspaces := make(map[string][]string)
 	rushWorkspaces := make(map[string][]jsRushProject)
 	pathScopes := make(map[string]jsPathAliasScope)
+	tsReader := newTSConfigReader(root)
 	for _, file := range files {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -102,7 +105,7 @@ func buildJSWorkspaceResolver(ctx context.Context, root string, files []FileInfo
 		if name == "tsconfig.json" || name == "jsconfig.json" {
 			// tsconfig.json wins over a jsconfig.json beside it, as in detectPathAliases.
 			if _, taken := pathScopes[manifestRoot]; !taken || name == "tsconfig.json" {
-				if aliases, baseURL := readTSConfig(filepath.Join(root, file.Path), root); len(aliases) > 0 {
+				if aliases, baseURL := tsReader.pathAliases(filepath.Join(root, file.Path)); len(aliases) > 0 {
 					pathScopes[manifestRoot] = jsPathAliasScope{root: manifestRoot, aliases: aliases, baseURL: baseURL}
 				}
 			}
@@ -149,7 +152,7 @@ func buildJSWorkspaceResolver(ctx context.Context, root string, files []FileInfo
 		}
 	}
 
-	resolver := &jsWorkspaceResolver{}
+	resolver := &jsWorkspaceResolver{notes: tsReader.notes}
 	for _, scope := range pathScopes {
 		resolver.pathScopes = append(resolver.pathScopes, scope)
 	}
@@ -394,10 +397,10 @@ func (r *jsWorkspaceResolver) resolve(imp, fromFile string, idx *fileIndex, sour
 	return candidates[0].resolve(subpath, idx, sourceLanguage)
 }
 
-// directoryPackageMain resolves a directory import through the package.json in
-// that directory: main, which Node tries ahead of index.js, then a plain string
-// exports ".". Empty means fall back to index, as Node does when main names
-// nothing.
+// directoryPackageMain resolves a directory import through the package.json
+// main in that directory, which Node tries ahead of index.js. exports does not
+// apply to a relative require("./dir"). Empty means fall back to index, as Node
+// does when main names nothing.
 func (r *jsWorkspaceResolver) directoryPackageMain(dir string, idx *fileIndex, sourceLanguage string) []string {
 	if r == nil {
 		return nil
@@ -407,32 +410,41 @@ func (r *jsWorkspaceResolver) directoryPackageMain(dir string, idx *fileIndex, s
 		if r.packageScopes[i].root != dir || pkg == nil {
 			continue
 		}
-		if pkg.main != "" {
-			if files := pkg.resolveInferredTarget(pkg.main, idx, sourceLanguage); len(files) > 0 {
-				return files
-			}
+		if pkg.main == "" {
+			return nil
 		}
-		if target, ok := pkg.exports.exact["."]; ok && target.valid {
-			return pkg.resolveInferredTarget(target.target, idx, sourceLanguage)
-		}
-		return nil
+		return pkg.resolveInferredTarget(pkg.main, idx, sourceLanguage)
 	}
 	return nil
 }
 
-// pathAliases returns the paths of the nearest tsconfig/jsconfig above fromFile
-// that declares any, or the root ones when none does.
+// pathAliasScopes returns the tsconfig/jsconfig path scopes above fromFile that
+// declare paths, nearest first, ending with the root ones.
 // ponytail: a nearer config without paths defers to an outer one; TypeScript
 // would apply none, but that would drop edges codemap has always drawn.
-func (r *jsWorkspaceResolver) pathAliases(fromFile string, rootAliases map[string][]string, rootBaseURL string) (map[string][]string, string) {
+func (r *jsWorkspaceResolver) pathAliasScopes(fromFile string, rootAliases map[string][]string, rootBaseURL string) []jsPathAliasScope {
+	var scopes []jsPathAliasScope
 	if r != nil {
-		for i := range r.pathScopes {
-			if pathContains(r.pathScopes[i].root, fromFile) {
-				return r.pathScopes[i].aliases, r.pathScopes[i].baseURL
+		for _, scope := range r.pathScopes {
+			if pathContains(scope.root, fromFile) {
+				scopes = append(scopes, scope)
 			}
 		}
 	}
-	return rootAliases, rootBaseURL
+	if len(rootAliases) > 0 && (len(scopes) == 0 || scopes[len(scopes)-1].root != "") {
+		scopes = append(scopes, jsPathAliasScope{aliases: rootAliases, baseURL: rootBaseURL})
+	}
+	return scopes
+}
+
+// declaresWorkspaceDependency reports whether the package.json nearest to
+// fromFile declares the package imp names with the workspace: protocol.
+func (r *jsWorkspaceResolver) declaresWorkspaceDependency(fromFile, imp string) bool {
+	if r == nil {
+		return false
+	}
+	scope := r.nearestPackageScope(fromFile)
+	return scope != nil && scope.pkg != nil && scope.pkg.workspaceDeps[jsPackageName(imp)]
 }
 
 func (r *jsWorkspaceResolver) nearestPackageScope(fromFile string) *jsPackageScope {
@@ -454,12 +466,16 @@ func (r *jsWorkspaceResolver) declaresDependency(fromFile, imp string) bool {
 	if scope == nil || scope.pkg == nil {
 		return false
 	}
+	return scope.pkg.dependencies[jsPackageName(imp)]
+}
+
+// jsPackageName is the package a bare specifier names ("@scope/name/sub" -> "@scope/name").
+func jsPackageName(imp string) string {
 	parts := strings.SplitN(imp, "/", 3)
-	name := parts[0]
 	if strings.HasPrefix(imp, "@") && len(parts) > 1 {
-		name = parts[0] + "/" + parts[1]
+		return parts[0] + "/" + parts[1]
 	}
-	return scope.pkg.dependencies[name]
+	return parts[0]
 }
 
 func (r *jsWorkspaceResolver) nearestDenoScope(fromFile string) *jsImportScope {
@@ -596,11 +612,14 @@ func (m jsSpecifierMap) resolve(specifier string) (jsSpecifierTarget, bool) {
 
 func parsePackageManifest(root string, doc map[string]any) *jsWorkspaceManifest {
 	name, _ := doc["name"].(string)
-	pkg := &jsWorkspacePackage{root: root, name: name, dependencies: map[string]bool{}}
+	pkg := &jsWorkspacePackage{root: root, name: name, dependencies: map[string]bool{}, workspaceDeps: map[string]bool{}}
 	for _, field := range []string{"dependencies", "devDependencies", "peerDependencies", "optionalDependencies"} {
 		if deps, ok := doc[field].(map[string]any); ok {
-			for dep := range deps {
+			for dep, spec := range deps {
 				pkg.dependencies[dep] = true
+				if spec, _ := spec.(string); strings.HasPrefix(spec, "workspace:") {
+					pkg.workspaceDeps[dep] = true
+				}
 			}
 		}
 	}

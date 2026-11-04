@@ -306,6 +306,11 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 		if err != nil {
 			return nil, err
 		}
+		for _, note := range jsResolver.notes {
+			if !slices.Contains(fg.Coverage.Notes, note) {
+				fg.Coverage.Notes = append(fg.Coverage.Notes, note)
+			}
+		}
 	}
 
 	var dartResolver *dartWorkspaceResolver
@@ -357,7 +362,10 @@ func buildFileGraphFromAnalysesWithCargoMetadataAndFilters(ctx context.Context, 
 				// A package the nearest package.json declares is external even
 				// when a tsconfig alias would also match it.
 				if !jsResolver.declaresDependency(a.Path, strings.Trim(imp, "\"'`")) {
-					aliases, _ := jsResolver.pathAliases(a.Path, fg.PathAliases, fg.BaseURL)
+					var aliases map[string][]string
+					if scopes := jsResolver.pathAliasScopes(a.Path, fg.PathAliases, fg.BaseURL); len(scopes) > 0 {
+						aliases = scopes[0].aliases
+					}
 					unresolved.record(sourceLanguage, a.Path, imp, aliases, found)
 				}
 				// A Go import names a package, and a package is every non-test
@@ -894,16 +902,23 @@ func fuzzyResolveWithWorkspace(
 
 	// Strategy 3: TypeScript/JavaScript path alias resolution (@modules/auth, @shared/utils)
 	if isJavaScriptLanguage(sourceLanguage) {
-		pathAliases, baseURL = jsResolver.pathAliases(fromFile, pathAliases, baseURL)
-	}
-	if isJavaScriptLanguage(sourceLanguage) && len(pathAliases) > 0 {
-		if files := resolvePathAlias(imp, pathAliases, baseURL, idx, sourceLanguage); len(files) > 0 {
-			return files
+		scopes := jsResolver.pathAliasScopes(fromFile, pathAliases, baseURL)
+		if len(scopes) > 0 {
+			if files := resolvePathAlias(imp, scopes[0].aliases, scopes[0].baseURL, idx, sourceLanguage); len(files) > 0 {
+				return files
+			}
 		}
-	}
-	if isJavaScriptLanguage(sourceLanguage) {
 		if files := jsResolver.resolve(imp, fromFile, idx, sourceLanguage); len(files) > 0 {
 			return files
+		}
+		// A workspace: dependency links the local package, whose exports often
+		// name unbuilt dist files; an outer tsconfig's paths map it to source.
+		if len(scopes) > 1 && jsResolver.declaresWorkspaceDependency(fromFile, strings.Trim(imp, "\"'`")) {
+			for _, scope := range scopes[1:] {
+				if files := resolvePathAlias(imp, scope.aliases, scope.baseURL, idx, sourceLanguage); len(files) > 0 {
+					return files
+				}
+			}
 		}
 		return nil
 	}
@@ -1892,26 +1907,75 @@ func detectPathAliases(root string) (map[string][]string, string) {
 	return nil, ""
 }
 
-// readTSConfig reads a tsconfig/jsconfig file and returns its paths, following
-// extends, with the directory the targets resolve against relative to root.
-// TypeScript resolves a target against the effective baseUrl, or without one
-// against the config that declared the paths, so an inherited key whose
-// declaring config sits elsewhere is rebased onto the returned directory.
+// readTSConfig reads one tsconfig/jsconfig file; see tsConfigReader.pathAliases.
 func readTSConfig(configPath, root string) (map[string][]string, string) {
-	paths, declaredIn, baseURL := newTSConfigReader(root).read(configPath, 0)
-	if len(paths) == 0 {
+	return newTSConfigReader(root).pathAliases(configPath)
+}
+
+// Bounds on tsconfig reading, which runs on untrusted repositories: extends may
+// be an array, so a crafted repo can fan out reads without a cycle.
+const (
+	maxTSConfigReads   = 4096    // configs opened per scan
+	maxTSConfigExtends = 16      // extends entries followed per config, first ones win
+	maxTSConfigBytes   = 1 << 20 // larger configs are skipped
+)
+
+type tsConfigChain struct {
+	paths      map[string][]string
+	declaredIn map[string]string
+	baseURL    string
+}
+
+// tsConfigReader reads every config of one scan at most once (shared parents
+// and diamonds reuse the cached result, a cycle is skipped) and only inside
+// root. reads counts configs opened, each costing one EvalSymlinks and stat.
+type tsConfigReader struct {
+	root         string // symlinks resolved; "" when root cannot be resolved
+	rootSpelling string // root as given, the prefix configPath arguments share
+	done         map[string]tsConfigChain
+	active       map[string]bool
+	reads        int
+	maxReads     int
+	notes        []string
+}
+
+func newTSConfigReader(root string) *tsConfigReader {
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		resolved = ""
+	}
+	return &tsConfigReader{root: resolved, rootSpelling: root, done: map[string]tsConfigChain{}, active: map[string]bool{}, maxReads: maxTSConfigReads}
+}
+
+func (r *tsConfigReader) note(message string) {
+	if !slices.Contains(r.notes, message) {
+		r.notes = append(r.notes, message)
+	}
+}
+
+// pathAliases returns a config's paths, following extends, with the directory
+// the targets resolve against relative to root. TypeScript resolves a target
+// against the effective baseUrl, or without one against the config that
+// declared the paths, so an inherited key whose declaring config sits elsewhere
+// is rebased onto the returned directory.
+func (r *tsConfigReader) pathAliases(configPath string) (map[string][]string, string) {
+	chain, declaredIn, baseURL := r.read(configPath, 0)
+	if len(chain) == 0 {
 		return nil, ""
 	}
 	base := baseURL
 	if base == "" {
 		base = filepath.Dir(configPath)
 	}
-	for key, targets := range paths {
+	// A fresh map: chain is cached and shared with configs extending this one.
+	paths := make(map[string][]string, len(chain))
+	for key, targets := range chain {
 		keyBase := baseURL
 		if keyBase == "" {
 			keyBase = declaredIn[key]
 		}
 		if keyBase == base {
+			paths[key] = targets
 			continue
 		}
 		rebased := make([]string, 0, len(targets))
@@ -1925,64 +1989,46 @@ func readTSConfig(configPath, root string) (map[string][]string, string) {
 		}
 		paths[key] = rebased
 	}
-	rel, err := filepath.Rel(root, base)
+	rel, err := filepath.Rel(r.rootSpelling, base)
 	if err != nil {
 		return nil, ""
 	}
 	return paths, filepath.ToSlash(rel)
 }
 
-// maxTSConfigReads bounds one extends chain: array extends lets a crafted repo
-// fan out without a cycle, so depth alone does not bound the work.
-const maxTSConfigReads = 64
-
-type tsConfigChain struct {
-	paths      map[string][]string
-	declaredIn map[string]string
-	baseURL    string
-}
-
-// tsConfigReader walks one extends chain. It reads each config at most once
-// (a diamond reuses the result, a cycle is skipped) and only inside root.
-type tsConfigReader struct {
-	root   string // symlinks resolved; "" when root cannot be resolved
-	done   map[string]tsConfigChain
-	active map[string]bool
-	reads  int
-}
-
-func newTSConfigReader(root string) *tsConfigReader {
-	resolved, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		resolved = ""
-	}
-	return &tsConfigReader{root: resolved, done: map[string]tsConfigChain{}, active: map[string]bool{}}
-}
-
 // read returns the merged paths (child keys override parent keys), the
 // directory of the config that declared each key, and the effective baseUrl as
 // a directory ("" when no config in the chain sets one).
 func (r *tsConfigReader) read(configPath string, depth int) (map[string][]string, map[string]string, string) {
-	if depth > 32 || r.root == "" {
-		return nil, nil, ""
-	}
-	// The resolved path keys the visited sets, so a symlinked spelling of a
-	// config cannot dodge them or point outside the root.
-	resolved, err := filepath.EvalSymlinks(configPath)
-	if err != nil || !withinDir(r.root, resolved) {
-		return nil, nil, ""
-	}
-	if chain, ok := r.done[resolved]; ok {
+	key := filepath.Clean(configPath)
+	if chain, ok := r.done[key]; ok {
 		return chain.paths, chain.declaredIn, chain.baseURL
 	}
-	if r.active[resolved] || r.reads >= maxTSConfigReads {
+	if depth > 32 || r.root == "" || r.active[key] {
 		return nil, nil, ""
 	}
-	r.active[resolved] = true
-	defer delete(r.active, resolved)
+	if r.reads >= r.maxReads {
+		r.note(fmt.Sprintf("tsconfig: stopped after %d configs; later extends were not followed", r.maxReads))
+		return nil, nil, ""
+	}
 	r.reads++
-	paths, declaredIn, baseURL := r.parse(configPath, depth)
-	r.done[resolved] = tsConfigChain{paths: paths, declaredIn: declaredIn, baseURL: baseURL}
+	// Resolving symlinks first keeps a linked config from reading outside the root.
+	resolved, err := filepath.EvalSymlinks(key)
+	if err != nil || !withinDir(r.root, resolved) {
+		r.done[key] = tsConfigChain{}
+		return nil, nil, ""
+	}
+	if info, err := os.Stat(resolved); err != nil || info.Size() > maxTSConfigBytes {
+		if err == nil {
+			r.note(fmt.Sprintf("tsconfig: skipped %s, larger than %d bytes", filepath.Base(key), maxTSConfigBytes))
+		}
+		r.done[key] = tsConfigChain{}
+		return nil, nil, ""
+	}
+	r.active[key] = true
+	paths, declaredIn, baseURL := r.parse(key, depth)
+	delete(r.active, key)
+	r.done[key] = tsConfigChain{paths: paths, declaredIn: declaredIn, baseURL: baseURL}
 	return paths, declaredIn, baseURL
 }
 
@@ -2004,6 +2050,10 @@ func (r *tsConfigReader) parse(configPath string, depth int) (map[string][]strin
 		extends = []any{single}
 	}
 	parents, _ := extends.([]any)
+	if len(parents) > maxTSConfigExtends {
+		r.note(fmt.Sprintf("tsconfig: %s lists %d extends; followed the first %d", filepath.Base(configPath), len(parents), maxTSConfigExtends))
+		parents = parents[:maxTSConfigExtends]
+	}
 	for _, parent := range parents {
 		parentPath, _ := parent.(string)
 		if parentPath == "" {
