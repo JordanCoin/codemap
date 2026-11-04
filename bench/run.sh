@@ -11,6 +11,8 @@
 #   CODEMAP          path to a codemap binary (default: the verified release download)
 #   BENCH_CACHE      clone / venv / truth cache, gitignored (default bench/cache)
 #   JOBS             parallel codemap queries per repo (default: nproc)
+#   BENCH_RESULTS_STEM  results file stem (default v<version>); BENCH_SCORE_LANG
+#                    restricts scoring to one language or to c-cpp-rust
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -130,6 +132,13 @@ run_repo() { # group lang repo url sha slug
       else
         node --experimental-import-meta-resolve "$HERE/truth/js.mjs" "$dir" "$out/truth.edges" > "$out/truth.log" 2>&1 || ok=0
       fi ;;
+    c|cpp)
+      python3 -I "$HERE/truth/cc.py" "$dir" "$out/truth.edges" --build-dir "$BENCH_CACHE/build/$slug" --jobs "$JOBS" > "$out/truth.log" 2>&1 || ok=0 ;;
+    rust)
+      if [ ! -x "$HERE/truth/rustsyn/target/release/codemap-bench-rustsyn" ]; then
+        (cd "$HERE/truth/rustsyn" && cargo build --release -q)
+      fi
+      python3 -I "$HERE/truth/rust_la.py" "$dir" "$out/truth.edges" --rustsyn "$HERE/truth/rustsyn/target/release/codemap-bench-rustsyn" --target-dir "$BENCH_CACHE/cargo-target/$slug" --jobs "$JOBS" > "$out/truth.log" 2>&1 || ok=0 ;;
     python)
       local venv="$BENCH_CACHE/venv/$slug"
       [ -x "$venv/bin/python" ] || python3 -m venv "$venv"
@@ -165,7 +174,7 @@ run_repo() { # group lang repo url sha slug
 
 # ---------------------------------------------------------------- main
 for group in $BENCH_GROUPS; do
-  for lang in go typescript javascript python; do
+  for lang in go typescript javascript python c cpp rust; do
     [ -n "$ONLY_LANG" ] && [ "$ONLY_LANG" != "$lang" ] && continue
     python3 -c "
 import json,sys
@@ -180,5 +189,7 @@ for r in m['groups']['$group'].get('$lang',[]):
 done
 
 log "scoring"
-python3 -I "$HERE/score.py" "$MANIFEST" "$RESULTS/$VERSION" "$RESULTS/v$VERSION.json" "$RESULTS/v$VERSION.md" "$VERSION" > /dev/null
-log "wrote $RESULTS/v$VERSION.md and $RESULTS/v$VERSION.json"
+STEM="${BENCH_RESULTS_STEM:-v$VERSION}"
+# shellcheck disable=SC2086
+python3 -I "$HERE/score.py" "$MANIFEST" "$RESULTS/$VERSION" "$RESULTS/$STEM.json" "$RESULTS/$STEM.md" "$VERSION" ${BENCH_SCORE_LANG:+--lang $BENCH_SCORE_LANG} > /dev/null
+log "wrote $RESULTS/$STEM.md and $RESULTS/$STEM.json"

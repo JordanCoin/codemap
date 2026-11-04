@@ -27,7 +27,11 @@ TARGET_EXTS = {
     "typescript": (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"),
     "javascript": (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"),
     "python": (".py",),
+    "c": (".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inc", ".inl", ".ipp", ".tcc"),
+    "cpp": (".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inc", ".inl", ".ipp", ".tcc"),
+    "rust": (".rs",),
 }
+ALL_LANGS = ("go", "typescript", "javascript", "python", "c", "cpp", "rust")
 
 
 def wilson(k, n, z=1.959964):
@@ -130,7 +134,7 @@ def fmt_ci(t):
 def main(manifest_path, results_dir, out_json, out_md, version, only_lang=None):
     manifest = json.load(open(manifest_path))
     rng = random.Random(20261103)
-    langs = [l for l in ("go", "typescript", "javascript", "python") if only_lang in (None, l)]
+    langs = [l for l in ALL_LANGS if only_lang in (None, l) or (only_lang == "c-cpp-rust" and l in ("c", "cpp", "rust"))]
     report = {"codemap": version, "languages": langs, "groups": {}, "spot_check_samples": {}}
     md = [f"# codemap {version} import-accuracy benchmark results" + (f" ({only_lang} only)" if only_lang else ""), ""]
     md.append("Scope: in-repo source file to in-repo source file edges, as defined in bench/README.md. "
