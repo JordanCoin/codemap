@@ -5,12 +5,15 @@
    source tree, with the repository's default options and clang as the
    compiler, exporting compile_commands.json.
 2. For every translation unit in compile_commands.json, rerun its own
-   command with `-fsyntax-only -H -w` (plus `-MM`-style output suppressed):
-   clang prints to stderr one line per header it enters, prefixed by as
-   many dots as the include depth. Depth 1 lines are the unit's direct
-   includes; a depth-n line's parent is the nearest preceding depth n-1
-   line. That is exactly the include graph the compiler followed under this
-   configuration.
+   command with `-fsyntax-only -H -fshow-skipped-includes -w`: clang
+   prints to stderr one line per header it enters, or would have entered
+   had its include guard not already been satisfied, prefixed by as many
+   dots as the include depth. Depth 1 lines are the unit's direct includes;
+   a depth-n line's parent is the nearest preceding depth n-1 line. That is
+   exactly the include graph the compiler followed under this configuration.
+   (The first scored pass ran without -fshow-skipped-includes and missed a
+   header's includes whenever an earlier file in the unit had included the
+   same header; see bench/README.md for the disclosed before and after.)
 
 Scope (see bench/README.md):
   universe = in-repo translation units plus every in-repo file that appears
@@ -38,7 +41,7 @@ def configure(root, build_dir):
     os.makedirs(build_dir, exist_ok=True)
     env = dict(os.environ, CC="clang", CXX="clang++")
     cmd = ["cmake", "-S", root, "-B", build_dir, "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON", "-DCMAKE_BUILD_TYPE=Release"]
-    proc = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=1800)
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, timeout=1800)
     log = proc.stdout + proc.stderr
     return proc.returncode == 0 and os.path.exists(os.path.join(build_dir, "compile_commands.json")), log
 
@@ -48,6 +51,25 @@ def unit_args(entry):
         args = list(entry["arguments"])
     else:
         args = shlex.split(entry["command"])
+    # cmake's precompiled-header flags point at a .pch/.pc that only a full
+    # build produces; drop them (the plain `-include cmake_pch.hxx` stays, so
+    # the header is read as an ordinary include).
+    cleaned = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "-Xclang" and i + 1 < len(args) and args[i + 1] == "-include-pch":
+            i += 4 if i + 3 < len(args) and args[i + 2] == "-Xclang" else 3
+            continue
+        if a == "-include-pch":
+            i += 2
+            continue
+        if a in ("-Winvalid-pch", "-fpch-preprocess", "-fpch-instantiate-templates"):
+            i += 1
+            continue
+        cleaned.append(a)
+        i += 1
+    args = cleaned
     out, skip = [], False
     for a in args:
         if skip:
@@ -65,10 +87,14 @@ def unit_args(entry):
 
 
 def run_unit(entry, root, build_dir):
-    args = unit_args(entry) + ["-fsyntax-only", "-H", "-w", "-Wno-error"]
+    # -fshow-skipped-includes (clang 15+) also prints an include the
+    # preprocessor skipped because the header's include guard was already
+    # satisfied earlier in the unit; without it a header's direct includes
+    # are missing whenever an earlier file included the same header first.
+    args = unit_args(entry) + ["-fsyntax-only", "-H", "-fshow-skipped-includes", "-w", "-Wno-error"]
     cwd = entry.get("directory") or build_dir
     try:
-        proc = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=600)
+        proc = subprocess.run(args, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
     except (subprocess.TimeoutExpired, OSError) as e:
         return entry["file"], None, None, f"{type(e).__name__}"
     stack = []  # stack[d-1] = file at depth d

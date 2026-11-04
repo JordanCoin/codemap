@@ -13,24 +13,37 @@
    `include!`-family literals.
 4. rust-analyzer, started as a language server over stdio on the
    workspace, answers textDocument/definition for each reference. The edge
-   target is the file the definition lands in: for `mod name;` the module's
-   file; for `use` leaves and paths the file holding the definition of the
-   last named segment (the segment before `*` for a glob); for `include!`
-   literals the file named relative to the including file, kept only when
-   it is in the same crate's dep-info. Targets outside the repository
-   (registry crates, the standard library) are dropped.
+   target is the module file the path imports from, as for the other
+   languages in this benchmark (the file a specifier resolves to, not the
+   file that happens to define a re-exported name): for `mod name;` the
+   module's file; for `use` leaves and paths, the file of the deepest
+   segment that names a module or crate root (the last segment when it is
+   itself a module, otherwise the segment before it, which rust-analyzer
+   resolves to the module's file, a crate's lib.rs or main.rs, or the file
+   holding an inline `mod name { }`): the path is walked from its last
+   segment backwards and the first segment whose definition is a module
+   gives the target; for `include!` literals the file named relative to
+   the including file, kept only when it is in the same crate's dep-info.
+   A path none of whose segments names a module (`Foo::new()`) depends on
+   the `use` that brought `Foo` in, which is already an edge, so it yields
+   none. Targets outside the repository (registry crates, the standard
+   library) are dropped. The first scored pass used the file defining the
+   last segment instead; see bench/README.md for the disclosed before and
+   after.
 
 usage: rust_la.py <repo-root> <out-edges-file> --rustsyn <binary> [--target-dir <dir>] [--jobs N]
 """
 import glob
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
 import time
 
 RS_EXTS = (".rs",)
+MOD_ITEM = re.compile(r"^\s*(pub(\([^)]*\))?\s+)?(unsafe\s+)?mod\s+r?#?\w+\s*\{")
 
 
 def run(cmd, cwd, timeout=3600, env=None):
@@ -60,8 +73,8 @@ def dep_info_files(target_dir, root):
 
 
 class LSP:
-    def __init__(self, root):
-        self.proc = subprocess.Popen(["rust-analyzer"], cwd=root, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=open(os.devnull, "w"))
+    def __init__(self, root, stderr_path=None):
+        self.proc = subprocess.Popen(["rust-analyzer"], cwd=root, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=open(stderr_path or os.devnull, "w"))
         self.next_id = 1
         self.pending = {}
         self.lock = threading.Lock()
@@ -176,15 +189,32 @@ def main(argv):
     root = os.path.realpath(argv[1]); out_path = argv[2]
     target_dir = os.path.realpath(target_dir or os.path.join(root, "target"))
     env = dict(os.environ, CARGO_TARGET_DIR=target_dir, CARGO_NET_RETRY="3")
+    # A repository may pin its toolchain (rust-toolchain.toml); rustup's
+    # proxies resolve it from the working directory, so every tool below is
+    # run from the repository root, and the rust-analyzer component is added
+    # to whichever toolchain that resolves to.
+    run(["rustup", "component", "add", "rust-analyzer"], root, timeout=1800)
     meta = {"rustc": run(["rustc", "--version"], root).stdout.strip(), "cargo": run(["cargo", "--version"], root).stdout.strip(),
-            "rust_analyzer": run(["rust-analyzer", "--version"], root).stdout.strip()}
+            "rust_analyzer": run(["rust-analyzer", "--version"], root).stdout.strip(),
+            "toolchain": run(["rustup", "show", "active-toolchain"], root).stdout.strip().split("\n")[0]}
     md = run(["cargo", "metadata", "--format-version", "1", "--no-deps"], root, env=env)
     if md.returncode != 0:
         meta["error"] = "cargo metadata failed: " + md.stderr.strip()[-300:]
         json.dump(meta, open(out_path + ".meta.json", "w"), indent=1); print(json.dumps(meta)); sys.exit(1)
     metadata = json.loads(md.stdout)
     meta["workspace_members"] = len(metadata["workspace_members"])
-    chk = run(["cargo", "check", "--workspace", "--all-targets", "-j", str(jobs)], root, env=env, timeout=7200)
+    member_ids = set(metadata["workspace_members"])
+    crate_names = set()
+    for pkg in metadata["packages"]:
+        if pkg["id"] in member_ids:
+            crate_names.add(pkg["name"].replace("-", "_"))
+            for tgt in pkg.get("targets", []):
+                crate_names.add(tgt["name"].replace("-", "_"))
+    meta["workspace_crates"] = sorted(crate_names)
+    # --keep-going: a crate whose build script fails (a packaging-only
+    # prerequisite, say) must not stop rustc from checking the other crates,
+    # whose dep-info is the universe.
+    chk = run(["cargo", "check", "--workspace", "--all-targets", "--keep-going", "-j", str(jobs)], root, env=env, timeout=7200)
     with open(out_path + ".check.log", "w") as fh:
         fh.write(chk.stdout + chk.stderr)
     meta["cargo_check_ok"] = chk.returncode == 0
@@ -209,7 +239,7 @@ def main(argv):
     meta["parse_errors"] = parse_errors
     meta["references"] = sum(len(v) for v in refs.values())
 
-    lsp = LSP(root)
+    lsp = LSP(root, out_path + ".rust-analyzer.log")
     init = lsp.request("initialize", {
         "processId": os.getpid(), "rootUri": uri(root), "capabilities": {"textDocument": {"definition": {"linkSupport": False}}, "window": {"workDoneProgress": True}},
         "initializationOptions": {"cargo": {"buildScripts": {"enable": True}, "targetDir": target_dir, "allTargets": True}, "procMacro": {"enable": True},
@@ -217,7 +247,13 @@ def main(argv):
         "workspaceFolders": [{"uri": uri(root), "name": "repo"}]}, timeout=600)
     lsp.notify("initialized", {})
     meta["rust_analyzer_ready"] = lsp.wait_quiescent(timeout=3600)
-    edges, stats = set(), {"resolved": 0, "unresolved": 0, "external": 0, "include": 0, "errors": 0}
+    edges, stats = set(), {"resolved": 0, "unresolved": 0, "external": 0, "include": 0, "errors": 0, "skipped_no_module": 0}
+    _line_cache = {}
+
+    def file_lines(path):
+        if path not in _line_cache:
+            _line_cache[path] = open(path, encoding="utf-8", errors="replace").read().split("\n")
+        return _line_cache[path]
     for rel, items in refs.items():
         abs_path = os.path.join(root, rel)
         try:
@@ -235,32 +271,75 @@ def main(argv):
                 else:
                     stats["unresolved"] += 1
                 continue
-            seg = ref["segments"][-1]
-            if kind == "path" and len(ref["segments"]) < 2:
+            segs = ref["segments"]
+            if kind == "path" and len(segs) < 2:
                 continue
-            try:
-                resp = lsp.request("textDocument/definition", {"textDocument": {"uri": uri(abs_path)}, "position": seg["pos"]}, timeout=120)
-            except TimeoutError:
-                stats["errors"] += 1; continue
-            res = resp.get("result")
-            if not res:
-                stats["unresolved"] += 1; continue
-            locs = res if isinstance(res, list) else [res]
-            hit = False
-            for loc in locs:
+
+            def definition(seg):
+                try:
+                    resp = lsp.request("textDocument/definition", {"textDocument": {"uri": uri(abs_path)}, "position": seg["pos"]}, timeout=120)
+                except TimeoutError:
+                    return None
+                res = resp.get("result")
+                if not res:
+                    return []
+                return res if isinstance(res, list) else [res]
+
+            def located(loc):
                 u = loc.get("uri") or loc.get("targetUri") or ""
                 if not u.startswith("file://"):
-                    continue
+                    return None, None
                 path = os.path.realpath(u[len("file://"):])
-                if path.startswith(root + os.sep) and not path.startswith(target_dir + os.sep):
-                    trel = os.path.relpath(path, root).replace(os.sep, "/")
-                    if trel in universe:
-                        if trel != rel:
-                            edges.add((rel, trel))
+                rng = loc.get("range") or loc.get("targetSelectionRange") or {}
+                start = rng.get("start") or {}
+                return path, (start.get("line", -1), start.get("character", -1))
+
+            def names_module(path, start):
+                """A definition is a module when it is a file's start (a file
+                module or crate root) or an inline `mod name {` item."""
+                if start == (0, 0):
+                    return True
+                try:
+                    line = file_lines(path)[start[0]]
+                except (IndexError, OSError):
+                    return False
+                return MOD_ITEM.match(line) is not None
+
+            # Walk the path from its last segment backwards; the edge target is
+            # the deepest segment that names a module (or crate root). A path
+            # whose segments name no module at all (`Foo::new()`) depends on the
+            # `use` that brought `Foo` in, which is already an edge, so it is
+            # skipped. For `mod name;` the single segment is the module.
+            hit = False
+            errored = False
+            for seg in reversed(segs):
+                locs = definition(seg)
+                if locs is None:
+                    errored = True
+                    break
+                for loc in locs:
+                    path, start = located(loc)
+                    if path is None:
+                        continue
+                    if kind != "mod" and not names_module(path, start):
+                        continue
+                    if path.startswith(root + os.sep) and not path.startswith(target_dir + os.sep):
+                        trel = os.path.relpath(path, root).replace(os.sep, "/")
+                        if trel in universe:
+                            if trel != rel:
+                                edges.add((rel, trel))
+                            hit = True
+                    else:
+                        stats["external"] += 1
                         hit = True
-                else:
-                    stats["external"] += 1
-                    hit = True
+                if hit:
+                    break
+            if errored:
+                stats["errors"] += 1
+                continue
+            if not hit:
+                stats["skipped_no_module"] += 1
+                continue
             if hit:
                 stats["resolved"] += 1
             else:

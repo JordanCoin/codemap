@@ -21,10 +21,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from score import TARGET_EXTS, in_scope, read_edges, read_lines  # noqa: E402
 
 
-def stem_pattern(dst):
+def stem_pattern(dst, lang):
+    if lang in ("c", "cpp"):
+        return re.compile(r"^\s*#\s*include\b.*" + re.escape(os.path.basename(dst)))
     stem = os.path.splitext(os.path.basename(dst))[0]
-    if stem == "__init__":
+    if stem == "__init__" or (lang == "rust" and stem in ("mod", "lib", "main")):
         stem = os.path.basename(os.path.dirname(dst))
+    if lang == "rust":
+        return re.compile(r"^\s*(pub(\(\w+\))?\s+)?(mod|use)\b.*\b" + re.escape(stem) + r"\b|.*\b(crate|super|self|include\w*!)\b.*\b" + re.escape(stem) + r"\b")
     return re.compile(r"^\s*(from\s+\S*\b" + re.escape(stem) + r"\b|import\s+.*\b" + re.escape(stem) + r"\b|.*\b(require|import)\(.*\b" + re.escape(stem) + r"\b)")
 
 
@@ -44,7 +48,7 @@ def main(manifest_path, results_dir, repos_dir, lang, n=5, seed=20261103):
             print(f"## {repo['repo']} ({group}): {len(tp)} agreeing edges, sampling {len(sample)}")
             for src, dst in sample:
                 print(f"- `{src}` -> `{dst}`")
-                pat = stem_pattern(dst)
+                pat = stem_pattern(dst, lang)
                 try:
                     lines = [(i, l.rstrip()) for i, l in enumerate(open(os.path.join(repos_dir, slug, src), errors="replace"), 1) if pat.search(l)]
                 except OSError as e:

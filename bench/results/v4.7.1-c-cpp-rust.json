@@ -1,0 +1,684 @@
+{
+ "codemap": "4.7.1",
+ "languages": [
+  "c",
+  "cpp",
+  "rust"
+ ],
+ "groups": {
+  "held_out": {
+   "repos": [
+    {
+     "lang": "c",
+     "repo": "obsproject/obs-studio",
+     "sha": "7a25c3fd8b5eb87c2d2e0606cae36e32014bc6fa",
+     "status": {
+      "status": "skipped",
+      "reason": "toolchain truth unavailable: cmake configure requires FFmpeg >= 8.0 and this environment (Ubuntu 24.04) provides 6.1; ECM, SIMDe and the other documented dependencies were installed first (see truth.edges.configure.log)",
+      "finished_at": "2026-11-04T08:20:21Z"
+     }
+    },
+    {
+     "sources": 589,
+     "n_truth": 2047,
+     "n_codemap": 2417,
+     "tp": 2047,
+     "fn": 0,
+     "fp": 370,
+     "codemap_out_of_universe": 40,
+     "fp_workspace_package": 0,
+     "recall": [
+      1.0,
+      0.99812688647157,
+      1.0
+     ],
+     "precision": [
+      0.8469176665287547,
+      0.8320133416002471,
+      0.8607209941604121
+     ],
+     "meta": {
+      "truth": {
+       "configure_ok": true,
+       "build_dir": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/build/curl__curl",
+       "clang": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+       "cmake": "cmake version 3.28.3",
+       "translation_units": 519,
+       "units_with_errors": 6,
+       "error_samples": {
+        "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/build/curl__curl/src/tool_hugehelp.c": "clang: error: no such file or directory: '/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/build/curl__curl/src/tool_hugehelp.c'",
+        "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/build/curl__curl/tests/libtest/libtests.c": "clang: error: no such file or directory: '/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/build/curl__curl/tests/libtest/libtests.c'",
+        "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/build/curl__curl/tests/perf/perf.c": "clang: error: no such file or directory: '/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/build/curl__curl/tests/perf/perf.c'",
+        "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/build/curl__curl/tests/server/servers.c": "clang: error: no such file or directory: '/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/build/curl__curl/tests/server/servers.c'",
+        "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/build/curl__curl/tests/tunit/tunits.c": "clang: error: no such file or directory: '/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/build/curl__curl/tests/tunit/tunits.c'",
+        "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/build/curl__curl/tests/unit/units.c": "clang: error: no such file or directory: '/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/build/curl__curl/tests/unit/units.c'"
+       },
+       "source_files": 589,
+       "edges": 2047
+      },
+      "codemap": {
+       "codemap": "codemap 4.7.1",
+       "method": "daemon",
+       "edges": 3281,
+       "seconds": 84.1,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": null,
+        "notes": null,
+        "issues": 0
+       },
+       "configured_file_count": 1194,
+       "file_count": 4535,
+       "generation": 1
+      }
+     },
+     "lang": "c",
+     "repo": "curl/curl",
+     "sha": "41e2abc56c1fc2abcf76b6e5e77c2e3de4051888",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-04T08:08:24Z"
+     }
+    },
+    {
+     "sources": 314,
+     "n_truth": 446,
+     "n_codemap": 447,
+     "tp": 444,
+     "fn": 2,
+     "fp": 3,
+     "codemap_out_of_universe": 23,
+     "fp_workspace_package": 0,
+     "recall": [
+      0.9955156950672646,
+      0.9837990151926039,
+      0.9987693792350754
+     ],
+     "precision": [
+      0.9932885906040269,
+      0.9804559662415608,
+      0.9977149435374195
+     ],
+     "meta": {
+      "truth": {
+       "configure_ok": true,
+       "build_dir": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/build/raysan5__raylib",
+       "clang": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+       "cmake": "cmake version 3.28.3",
+       "translation_units": 256,
+       "units_with_errors": 0,
+       "error_samples": {},
+       "source_files": 314,
+       "edges": 446
+      },
+      "codemap": {
+       "codemap": "codemap 4.7.1",
+       "method": "daemon",
+       "edges": 531,
+       "seconds": 18.1,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": null,
+        "notes": null,
+        "issues": 0
+       },
+       "configured_file_count": 166,
+       "file_count": 311,
+       "generation": 1
+      }
+     },
+     "lang": "c",
+     "repo": "raysan5/raylib",
+     "sha": "3b12ba162bf58289fd2536604b6c805c128b0813",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-04T08:06:37Z"
+     }
+    },
+    {
+     "sources": 654,
+     "n_truth": 1732,
+     "n_codemap": 1802,
+     "tp": 1647,
+     "fn": 85,
+     "fp": 155,
+     "codemap_out_of_universe": 222,
+     "fp_workspace_package": 0,
+     "recall": [
+      0.9509237875288684,
+      0.9397144847642828,
+      0.9601372799277924
+     ],
+     "precision": [
+      0.913984461709212,
+      0.9001418534307379,
+      0.9260657810557811
+     ],
+     "meta": {
+      "truth": {
+       "configure_ok": true,
+       "build_dir": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/build/ggml-org__llama.cpp",
+       "clang": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+       "cmake": "cmake version 3.28.3",
+       "translation_units": 340,
+       "units_with_errors": 2,
+       "error_samples": {
+        "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/build/ggml-org__llama.cpp/tools/ui/ui.cpp": "clang++: error: no such file or directory: '/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/build/ggml-org__llama.cpp/tools/ui/ui.cpp'",
+        "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/ggml-org__llama.cpp/tools/server/server-http.cpp": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/ggml-org__llama.cpp/tools/server/server-http.cpp:5:10: fatal error: 'ui.h' file not found"
+       },
+       "source_files": 654,
+       "edges": 1732
+      },
+      "codemap": {
+       "codemap": "codemap 4.7.1",
+       "method": "daemon",
+       "edges": 3287,
+       "seconds": 105.1,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": "partial",
+        "notes": [
+         "TypeScript: 28 of 191 project-relative imports did not resolve to a file; those edges are missing (tools/ui/src/lib/types/agentic.d.ts -> ./api, tools/ui/src/lib/types/agentic.d.ts -> ./chat, tools/ui/src/lib/types/agentic.d.ts -> ./database)"
+        ],
+        "issues": 28
+       },
+       "configured_file_count": 2209,
+       "file_count": 3990,
+       "generation": 1
+      }
+     },
+     "lang": "cpp",
+     "repo": "ggml-org/llama.cpp",
+     "sha": "bee23322f1baa3d2dd16b8339bed6aff4a8eb663",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-04T07:25:14Z"
+     }
+    },
+    {
+     "sources": 854,
+     "n_truth": 5584,
+     "n_codemap": 6017,
+     "tp": 5436,
+     "fn": 148,
+     "fp": 581,
+     "codemap_out_of_universe": 196,
+     "fp_workspace_package": 0,
+     "recall": [
+      0.9734957020057307,
+      0.9689459887389849,
+      0.9773943895470296
+     ],
+     "precision": [
+      0.9034402526175835,
+      0.8957179189162028,
+      0.9106477748421717
+     ],
+     "meta": {
+      "truth": {
+       "configure_ok": true,
+       "build_dir": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/build/bitcoin__bitcoin",
+       "clang": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+       "cmake": "cmake version 3.28.3",
+       "translation_units": 453,
+       "units_with_errors": 22,
+       "error_samples": {
+        "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/bitcoin__bitcoin/src/clientversion.cpp": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/bitcoin__bitcoin/src/clientversion.cpp:25:10: fatal error: 'bitcoin-build-info.h' file not found",
+        "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/bitcoin__bitcoin/src/init.cpp": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/bitcoin__bitcoin/src/init.cpp:144:10: fatal error: 'node/data/ip_asn.dat.h' file not found",
+        "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/bitcoin__bitcoin/src/ipc/capnp/mining.cpp": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/bitcoin__bitcoin/src/ipc/capnp/mining-types.h:9:10: fatal error: 'ipc/capnp/common.capnp.proxy-types",
+        "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/bitcoin__bitcoin/src/ipc/capnp/protocol.cpp": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/bitcoin__bitcoin/src/ipc/capnp/protocol.cpp:7:10: fatal error: 'ipc/capnp/init.capnp.h' file not fou",
+        "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/bitcoin__bitcoin/src/ipc/interfaces.cpp": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/bitcoin__bitcoin/src/ipc/libmultiprocess/include/mp/proxy-io.h:11:10: fatal error: 'mp/proxy.capnp.h",
+        "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/bitcoin__bitcoin/src/ipc/libmultiprocess/src/mp/proxy.cpp": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/bitcoin__bitcoin/src/ipc/libmultiprocess/include/mp/proxy-io.h:11:10: fatal error: 'mp/proxy.capnp.h",
+        "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/bitcoin__bitcoin/src/ipc/libmultiprocess/test/mp/test/listen_tests.cpp": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/bitcoin__bitcoin/src/ipc/libmultiprocess/test/mp/test/listen_tests.cpp:7:10: fatal error: 'mp/test/f",
+        "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/bitcoin__bitcoin/src/ipc/libmultiprocess/test/mp/test/test.cpp": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/bitcoin__bitcoin/src/ipc/libmultiprocess/test/mp/test/test.cpp:5:10: fatal error: 'mp/test/foo.capnp"
+       },
+       "source_files": 854,
+       "edges": 5584
+      },
+      "codemap": {
+       "codemap": "codemap 4.7.1",
+       "method": "daemon",
+       "edges": 11463,
+       "seconds": 36.1,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": "partial",
+        "notes": [
+         "Python: 52 of 181 project-relative imports did not resolve to a file; those edges are missing (test/functional/p2p_net_deadlock.py -> random.randbytes, test/functional/p2p_invalid_messages.py -> random, contrib/seeds/makeseeds.py -> random)"
+        ],
+        "issues": 52
+       },
+       "configured_file_count": 2022,
+       "file_count": 3069,
+       "generation": 1
+      }
+     },
+     "lang": "cpp",
+     "repo": "bitcoin/bitcoin",
+     "sha": "ed3d34ba0c0b28bb281b265eaca62222aae3a796",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-04T08:18:25Z"
+     }
+    },
+    {
+     "sources": 496,
+     "n_truth": 2001,
+     "n_codemap": 1997,
+     "tp": 1995,
+     "fn": 6,
+     "fp": 2,
+     "codemap_out_of_universe": 0,
+     "fp_workspace_package": 0,
+     "recall": [
+      0.9970014992503748,
+      0.9934733402922433,
+      0.9986250579072156
+     ],
+     "precision": [
+      0.99899849774662,
+      0.9963556104480291,
+      0.9997253089838982
+     ],
+     "meta": {
+      "truth": {
+       "configure_ok": true,
+       "build_dir": "/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/build/tesseract-ocr__tesseract",
+       "clang": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+       "cmake": "cmake version 3.28.3",
+       "translation_units": 260,
+       "units_with_errors": 0,
+       "error_samples": {},
+       "source_files": 496,
+       "edges": 2001
+      },
+      "codemap": {
+       "codemap": "codemap 4.7.1",
+       "method": "daemon",
+       "edges": 2360,
+       "seconds": 21.1,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": null,
+        "notes": null,
+        "issues": 0
+       },
+       "configured_file_count": 639,
+       "file_count": 746,
+       "generation": 1
+      }
+     },
+     "lang": "cpp",
+     "repo": "tesseract-ocr/tesseract",
+     "sha": "c21194d06998e244754d65329d6c9f1e14fe392e",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-04T08:21:34Z"
+     }
+    },
+    {
+     "sources": 139,
+     "n_truth": 751,
+     "n_codemap": 32,
+     "tp": 32,
+     "fn": 719,
+     "fp": 0,
+     "codemap_out_of_universe": 1,
+     "fp_workspace_package": 0,
+     "recall": [
+      0.0426098535286285,
+      0.030342214052781688,
+      0.05953289559188417
+     ],
+     "precision": [
+      1.0,
+      0.8928208002353198,
+      1.0
+     ],
+     "meta": {
+      "truth": {
+       "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+       "cargo": "cargo 1.99.1 (5f94df478 2026-08-27)",
+       "rust_analyzer": "rust-analyzer 1.99.1 (58cf8f9 2026-10-13)",
+       "toolchain": "1.99.1-x86_64-unknown-linux-gnu (overridden by '/tmp/claude-0/-home-user/3091ee4f-92e7-56ba-be37-c513e3331835/scratchpad/wt-bench/bench/cache/repos/clash-verge-rev__clash-verge-rev/rust-toolchain.toml')",
+       "workspace_members": 8,
+       "workspace_crates": [
+        "app_lib",
+        "build_script_build",
+        "clash_verge",
+        "clash_verge_draft",
+        "clash_verge_i18n",
+        "clash_verge_limiter",
+        "clash_verge_logging",
+        "clash_verge_media_unlock",
+        "clash_verge_signal",
+        "draft_bench",
+        "frontend_contract",
+        "tauri_plugin_clash_verge_sysinfo",
+        "test_me"
+       ],
+       "cargo_check_ok": true,
+       "source_files": 139,
+       "parse_errors": 2,
+       "references": 8793,
+       "rust_analyzer_ready": true,
+       "resolved": 4766,
+       "unresolved": 6,
+       "external": 2773,
+       "include": 6,
+       "errors": 0,
+       "skipped_no_module": 4021,
+       "edges": 751
+      },
+      "codemap": {
+       "codemap": "codemap 4.7.1",
+       "method": "daemon",
+       "edges": 864,
+       "seconds": 12.0,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": "partial",
+        "notes": [
+         "Rust macro-generated, dynamically string-routed, inline #[path], and conditional path edges may be unresolved"
+        ],
+        "issues": 0
+       },
+       "configured_file_count": 455,
+       "file_count": 747,
+       "generation": 1
+      }
+     },
+     "lang": "rust",
+     "repo": "clash-verge-rev/clash-verge-rev",
+     "sha": "14abc4c4ee82deb48e13d054a2f336c9d7888cc5",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-04T08:39:53Z"
+     }
+    },
+    {
+     "lang": "rust",
+     "repo": "rustdesk/rustdesk",
+     "sha": "55786aaa5709ac0a450aabcf06f9d1fee3119908",
+     "status": {
+      "status": "skipped",
+      "reason": "toolchain truth unavailable: cargo cannot fetch the git dependency webm (libs/scrap) from chromium.googlesource.com, which this environment's network policy blocks, so no crate was checked (see truth.edges.check.log)",
+      "finished_at": "2026-11-04T08:34:24Z"
+     }
+    },
+    {
+     "sources": 275,
+     "n_truth": 1157,
+     "n_codemap": 1095,
+     "tp": 1050,
+     "fn": 107,
+     "fp": 45,
+     "codemap_out_of_universe": 38,
+     "fp_workspace_package": 0,
+     "recall": [
+      0.9075194468452895,
+      0.8894510441114962,
+      0.9228907212392776
+     ],
+     "precision": [
+      0.958904109589041,
+      0.9454534089199244,
+      0.9691462286139253
+     ],
+     "meta": {
+      "truth": {
+       "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+       "cargo": "cargo 1.97.0 (c980f4866 2026-06-30)",
+       "rust_analyzer": "rust-analyzer 1.97.0 (2d8144b 2026-07-07)",
+       "toolchain": "stable-x86_64-unknown-linux-gnu (default)",
+       "workspace_members": 25,
+       "workspace_crates": [
+        "acl_tests",
+        "api",
+        "api_lib",
+        "bench_cpu_intensive",
+        "bench_files_transfer",
+        "bench_helloworld",
+        "build_benchmark_jsons",
+        "build_script_build",
+        "cargo_tauri",
+        "commands",
+        "drag",
+        "helloworld",
+        "init",
+        "isolation",
+        "multiwebview",
+        "multiwindow",
+        "resources",
+        "restart",
+        "run_benchmark",
+        "run_return",
+        "splashscreen",
+        "state",
+        "streaming",
+        "tauri",
+        "tauri_bench",
+        "tauri_build",
+        "tauri_bundler",
+        "tauri_cli",
+        "tauri_cli_node",
+        "tauri_codegen",
+        "tauri_driver",
+        "tauri_file_associations_demo",
+        "tauri_macos_sign",
+        "tauri_macros",
+        "tauri_plugin",
+        "tauri_plugin_sample",
+        "tauri_runtime",
+        "tauri_runtime_wry",
+        "tauri_schema_generator",
+        "tauri_schema_worker",
+        "tauri_utils"
+       ],
+       "cargo_check_ok": true,
+       "source_files": 275,
+       "parse_errors": 8,
+       "references": 15026,
+       "rust_analyzer_ready": true,
+       "resolved": 8730,
+       "unresolved": 52,
+       "external": 4628,
+       "include": 52,
+       "errors": 0,
+       "skipped_no_module": 6244,
+       "edges": 1157
+      },
+      "codemap": {
+       "codemap": "codemap 4.7.1",
+       "method": "daemon",
+       "edges": 1447,
+       "seconds": 21.1,
+       "jobs": 4,
+       "graph_status": "available",
+       "coverage": {
+        "status": "partial",
+        "notes": [
+         "Rust macro-generated, dynamically string-routed, inline #[path], and conditional path edges may be unresolved",
+         "Kotlin (37 files): imports name modules, not files, and same-package files need no import: intra-project edges need symbol-reference resolution and are not represented"
+        ],
+        "issues": 0
+       },
+       "configured_file_count": 510,
+       "file_count": 1091,
+       "generation": 1
+      }
+     },
+     "lang": "rust",
+     "repo": "tauri-apps/tauri",
+     "sha": "eebf7c23c1b55629aac7c8f4913d845bdbb46da3",
+     "status": {
+      "status": "ok",
+      "reason": "",
+      "finished_at": "2026-11-04T09:25:31Z"
+     }
+    }
+   ],
+   "pooled": {
+    "c": {
+     "n_truth": 2493,
+     "n_codemap": 2864,
+     "tp": 2491,
+     "recall": [
+      0.9991977537103891,
+      0.9970794810656747,
+      0.9997799675575434
+     ],
+     "precision": [
+      0.8697625698324022,
+      0.8569393610447732,
+      0.8815951884997478
+     ]
+    },
+    "cpp": {
+     "n_truth": 9317,
+     "n_codemap": 9816,
+     "tp": 9078,
+     "recall": [
+      0.9743479660835033,
+      0.970937013389777,
+      0.9773679265658128
+     ],
+     "precision": [
+      0.9248166259168704,
+      0.9194324299132526,
+      0.9298684508516917
+     ]
+    },
+    "rust": {
+     "n_truth": 1908,
+     "n_codemap": 1127,
+     "tp": 1082,
+     "recall": [
+      0.5670859538784067,
+      0.5447408063487995,
+      0.5891615100858472
+     ],
+     "precision": [
+      0.9600709849157054,
+      0.946990092380075,
+      0.9700261629541341
+     ]
+    }
+   }
+  },
+  "tuned": {
+   "repos": [],
+   "pooled": {}
+  }
+ },
+ "spot_check_samples": {
+  "c": [
+   {
+    "kind": "FN",
+    "repo": "raysan5/raylib",
+    "source": "examples/others/raylib_opengl_interop.c",
+    "target": "examples/others/external/include/glad.h"
+   },
+   {
+    "kind": "FP",
+    "repo": "curl/curl",
+    "source": "lib/socks_sspi.c",
+    "target": "lib/cfilters.h"
+   },
+   {
+    "kind": "FN",
+    "repo": "raysan5/raylib",
+    "source": "examples/others/rlgl_standalone.c",
+    "target": "examples/others/external/include/GLFW/glfw3.h"
+   },
+   {
+    "kind": "FP",
+    "repo": "curl/curl",
+    "source": "lib/urldata.h",
+    "target": "lib/curl_sspi.h"
+   },
+   {
+    "kind": "FP",
+    "repo": "raysan5/raylib",
+    "source": "examples/others/rlgl_standalone.c",
+    "target": "src/external/glfw/include/GLFW/glfw3.h"
+   }
+  ],
+  "cpp": [
+   {
+    "kind": "FN",
+    "repo": "ggml-org/llama.cpp",
+    "source": "vendor/hash/hash.cpp",
+    "target": "vendor/hash/hash.h"
+   },
+   {
+    "kind": "FP",
+    "repo": "ggml-org/llama.cpp",
+    "source": "examples/passkey/passkey.cpp",
+    "target": "ggml/src/ggml-cpu/amx/common.h"
+   },
+   {
+    "kind": "FN",
+    "repo": "bitcoin/bitcoin",
+    "source": "src/test/util/validation.cpp",
+    "target": "src/util/time.h"
+   },
+   {
+    "kind": "FP",
+    "repo": "bitcoin/bitcoin",
+    "source": "src/test/coinstatsindex_tests.cpp",
+    "target": "src/kernel/chain.h"
+   },
+   {
+    "kind": "FN",
+    "repo": "bitcoin/bitcoin",
+    "source": "src/test/util/setup_common.h",
+    "target": "src/random.h"
+   }
+  ],
+  "rust": [
+   {
+    "kind": "FN",
+    "repo": "clash-verge-rev/clash-verge-rev",
+    "source": "src-tauri/src/utils/resolve/scheme.rs",
+    "target": "src-tauri/src/core/notify/handle.rs"
+   },
+   {
+    "kind": "FP",
+    "repo": "tauri-apps/tauri",
+    "source": "crates/tauri-cli/src/acl/permission/add.rs",
+    "target": "crates/tauri-cli/src/helpers/mod.rs"
+   },
+   {
+    "kind": "FN",
+    "repo": "clash-verge-rev/clash-verge-rev",
+    "source": "src-tauri/src/feat/core_upgrade.rs",
+    "target": "src-tauri/src/core/mod.rs"
+   },
+   {
+    "kind": "FP",
+    "repo": "tauri-apps/tauri",
+    "source": "crates/tauri-cli/src/mobile/android/android_studio_script.rs",
+    "target": "crates/tauri-cli/src/helpers/mod.rs"
+   },
+   {
+    "kind": "FN",
+    "repo": "clash-verge-rev/clash-verge-rev",
+    "source": "src-tauri/src/feat/proxy.rs",
+    "target": "src-tauri/src/config/mod.rs"
+   }
+  ]
+ }
+}
