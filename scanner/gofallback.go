@@ -26,8 +26,7 @@ func buildGoFallbackOutcome(ctx context.Context, root string, files []FileInfo) 
 	fset := token.NewFileSet()
 
 	// Unlike ScanFiles, the ast-grep primary excludes hidden directories and
-	// nested git repos (its own ignore behavior, plus findNestedGitRepos'
-	// --globs excludes); mirror that here so the fallback doesn't contribute
+	// nested git repos; mirror that here so the fallback doesn't contribute
 	// phantom importers from files the primary would never have seen.
 	nestedRepos := findNestedGitRepos(root)
 	for _, file := range files {

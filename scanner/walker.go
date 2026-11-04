@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"codemap/config"
 	"codemap/internal/projectpath"
@@ -25,6 +27,12 @@ type GitIgnoreCache struct {
 	cache    map[string]*ignore.GitIgnore // abs dir path -> compiled gitignore (only dirs WITH gitignores)
 	patterns map[string][]string          // abs dir path -> raw pattern lines
 	visited  map[string]struct{}          // tracks visited dirs to avoid re-checking for .gitignore
+	combined map[string]*ignore.GitIgnore // abs dir path -> root-to-leaf matcher, reset when a file loads
+
+	// repoExcludes holds core.excludesFile and .git/info/exclude, matched
+	// relative to repoTop like git does.
+	repoExcludes *ignore.GitIgnore
+	repoTop      string
 }
 
 // NewGitIgnoreCache creates a cache that supports nested .gitignore files.
@@ -36,26 +44,103 @@ func NewGitIgnoreCache(root string) *GitIgnoreCache {
 		cache:    make(map[string]*ignore.GitIgnore),
 		patterns: make(map[string][]string),
 		visited:  make(map[string]struct{}),
+		combined: make(map[string]*ignore.GitIgnore),
 	}
+	c.repoTop, c.repoExcludes = loadRepoExcludes(absRoot)
 	c.tryLoadGitignore(absRoot)
 	return c
 }
 
-// tryLoadGitignore attempts to load a .gitignore from dir if not already visited.
-// Only adds to cache if a valid .gitignore exists.
-func (c *GitIgnoreCache) tryLoadGitignore(dir string) {
-	if _, seen := c.visited[dir]; seen {
-		return
+// loadRepoExcludes compiles the repository-wide ignore sources git applies
+// beneath every .gitignore: the user's core.excludesFile, then the repo's
+// .git/info/exclude (a linked worktree reads its common dir's). It returns
+// the directory those patterns are relative to.
+//
+// ponytail: matched apart from .gitignore, so a .gitignore "!pattern" cannot
+// re-include a path these exclude; merge into one ordered list if that bites.
+func loadRepoExcludes(root string) (string, *ignore.GitIgnore) {
+	top, commonDir := findGitDirs(root)
+	if top == "" {
+		return "", nil
 	}
-	c.visited[dir] = struct{}{}
+	lines := readIgnoreLines(globalExcludesFile(top))
+	lines = append(lines, readIgnoreLines(filepath.Join(commonDir, "info", "exclude"))...)
+	if len(lines) == 0 {
+		return "", nil
+	}
+	return top, ignore.CompileIgnoreLines(lines...)
+}
 
-	gitignorePath := filepath.Join(dir, ".gitignore")
-	f, err := os.Open(gitignorePath)
+// findGitDirs walks up from dir to the nearest .git and returns the worktree
+// top and the git common dir.
+func findGitDirs(dir string) (string, string) {
+	for {
+		dotGit := filepath.Join(dir, ".git")
+		if info, err := os.Stat(dotGit); err == nil {
+			gitDir := dotGit
+			if !info.IsDir() {
+				data, err := os.ReadFile(dotGit)
+				pointer, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "gitdir:")
+				if err != nil || !ok {
+					return "", ""
+				}
+				gitDir = strings.TrimSpace(pointer)
+				if !filepath.IsAbs(gitDir) {
+					gitDir = filepath.Join(dir, gitDir)
+				}
+			}
+			commonDir := gitDir
+			if data, err := os.ReadFile(filepath.Join(gitDir, "commondir")); err == nil {
+				commonDir = strings.TrimSpace(string(data))
+				if !filepath.IsAbs(commonDir) {
+					commonDir = filepath.Join(gitDir, commonDir)
+				}
+			}
+			return dir, commonDir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", ""
+		}
+		dir = parent
+	}
+}
+
+var globalExcludes sync.Map // repo top -> excludes file path
+
+// globalExcludesFile is core.excludesFile, else $XDG_CONFIG_HOME/git/ignore
+// (default ~/.config/git/ignore). git is asked once per repo per process.
+func globalExcludesFile(top string) string {
+	if cached, ok := globalExcludes.Load(top); ok {
+		return cached.(string)
+	}
+	path := ""
+	cmd := exec.Command("git", "config", "--path", "--get", "core.excludesFile")
+	cmd.Dir = top
+	if out, err := cmd.Output(); err == nil {
+		path = strings.TrimSpace(string(out))
+	}
+	if path == "" {
+		if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+			path = filepath.Join(xdg, "git", "ignore")
+		} else if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, ".config", "git", "ignore")
+		}
+	}
+	globalExcludes.Store(top, path)
+	return path
+}
+
+// readIgnoreLines returns a gitignore-format file's patterns.
+func readIgnoreLines(path string) []string {
+	if path == "" {
+		return nil
+	}
+	f, err := os.Open(path)
 	if err != nil {
-		return
+		return nil
 	}
 	defer f.Close()
-
 	var lines []string
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -64,11 +149,50 @@ func (c *GitIgnoreCache) tryLoadGitignore(dir string) {
 			lines = append(lines, line)
 		}
 	}
+	return lines
+}
 
-	if len(lines) > 0 {
-		c.patterns[dir] = lines
-		c.cache[dir] = ignore.CompileIgnoreLines(lines...)
+// tryLoadGitignore attempts to load dir's .gitignore and .ignore if not
+// already visited. .ignore (ripgrep's and ast-grep's) comes second, so its
+// rules win, as they do in those tools. Only adds to cache if a pattern exists.
+func (c *GitIgnoreCache) tryLoadGitignore(dir string) {
+	if _, seen := c.visited[dir]; seen {
+		return
 	}
+	c.visited[dir] = struct{}{}
+
+	lines := append(readIgnoreLines(filepath.Join(dir, ".gitignore")), readIgnoreLines(filepath.Join(dir, ".ignore"))...)
+	if len(lines) > 0 {
+		c.patterns[dir] = rootRelativePatterns(c.root, dir, lines)
+		c.cache[dir] = ignore.CompileIgnoreLines(lines...)
+		clear(c.combined)
+	}
+}
+
+// rootRelativePatterns rewrites a nested ignore file's patterns to match
+// from root, since ShouldIgnore combines every level into one matcher: a
+// pattern with a slash is anchored at its own directory, one without
+// matches at any depth below it. "/x" in sub/.gitignore means sub/x, not x.
+func rootRelativePatterns(root, dir string, lines []string) []string {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || rel == "." {
+		return lines
+	}
+	prefix := filepath.ToSlash(rel) + "/"
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		negate := ""
+		if strings.HasPrefix(line, "!") {
+			negate, line = "!", line[1:]
+		}
+		if strings.Contains(strings.TrimSuffix(line, "/"), "/") {
+			line = prefix + strings.TrimPrefix(line, "/")
+		} else {
+			line = prefix + "**/" + line
+		}
+		out = append(out, negate+line)
+	}
+	return out
 }
 
 // EnsureDir loads a .gitignore for dir if present.
@@ -83,10 +207,23 @@ func (c *GitIgnoreCache) EnsureDir(dir string) {
 // ShouldIgnore checks if a path should be ignored based on all applicable .gitignore files.
 // Git evaluates rules from root to leaf, with later rules overriding earlier ones.
 func (c *GitIgnoreCache) ShouldIgnore(absPath string) bool {
+	absPath = projectpath.CanonicalPath(absPath)
+	if c.repoExcludes != nil {
+		if rel, err := filepath.Rel(c.repoTop, absPath); err == nil && c.repoExcludes.MatchesPath(filepath.ToSlash(rel)) {
+			return true
+		}
+	}
 	if len(c.cache) == 0 {
 		return false
 	}
-	absPath = projectpath.CanonicalPath(absPath)
+
+	relPath, _ := filepath.Rel(c.root, absPath)
+	// go-gitignore matches against forward-slash paths on every OS.
+	relPath = filepath.ToSlash(relPath)
+	parent := filepath.Dir(absPath)
+	if combined, ok := c.combined[parent]; ok {
+		return combined != nil && combined.MatchesPath(relPath)
+	}
 
 	// Collect directories from leaf to root
 	var dirs []string
@@ -106,14 +243,12 @@ func (c *GitIgnoreCache) ShouldIgnore(absPath string) bool {
 		}
 	}
 
-	if len(allPatterns) == 0 {
-		return false
+	var combined *ignore.GitIgnore
+	if len(allPatterns) > 0 {
+		combined = ignore.CompileIgnoreLines(allPatterns...)
 	}
-
-	combined := ignore.CompileIgnoreLines(allPatterns...)
-	relPath, _ := filepath.Rel(c.root, absPath)
-	// go-gitignore matches against forward-slash paths on every OS.
-	return combined.MatchesPath(filepath.ToSlash(relPath))
+	c.combined[parent] = combined
+	return combined != nil && combined.MatchesPath(relPath)
 }
 
 // IgnoredDirs are directories to skip during scanning
@@ -373,6 +508,9 @@ func ScanFilesBounded(ctx context.Context, root string, cache *GitIgnoreCache, f
 			}
 			return nil
 		}
+		if info.Mode()&os.ModeSymlink != 0 && path != absRoot && !filters.IncludeSymlinks {
+			return nil
+		}
 
 		// For directories: load any .gitignore, then check if dir itself should be skipped
 		if info.IsDir() {
@@ -461,6 +599,10 @@ type Filters struct {
 	// MaxFiles bounds the scan: 0 = limits.DefaultMaxScanFiles, negative =
 	// unbounded (see limits.ScanFileBound).
 	MaxFiles int
+	// IncludeSymlinks lists symlinks as entries (never descended into) for
+	// views that show the tree and read no content. Content readers keep the
+	// default: a link can lead outside root or loop back into it.
+	IncludeSymlinks bool
 }
 
 // ConfiguredFilters returns the project's configured dependency filters.

@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -84,6 +87,7 @@ func TestAstGrepAnalyzer(t *testing.T) {
 import (
 	"fmt"
 	"os"
+	"os/exec"
 )
 
 func main() {
@@ -338,6 +342,9 @@ func TestAstGrepScanDirectoryRustStaysAuthoritative(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(rootDir, "src"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(rootDir, "src", "lib.rs"), []byte("use std::collections::HashMap;\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	fakeBinary := filepath.Join(tmpDir, "fake-sg.sh")
 	// Emit a successful scan whose only analysis is a Rust file.
 	match := `[{"file":"` + filepath.Join(rootDir, "src", "lib.rs") +
@@ -576,23 +583,22 @@ class App extends StatelessWidget {
 	}
 }
 
-// TestScanDirectoryInvokesAstGrepWithHiddenDirsEnabled locks in the exact
-// invocation shape the hidden-directory fix depends on: --no-ignore hidden
-// (so ast-grep stops skipping dot-directories by default), --globs excludes
-// for the directories codemap has always treated as never-source (so
-// relaxing that default doesn't newly index .git, vendor, node_modules,
-// etc.), a "." scan path, and cmd.Dir set to root. The last two matter
-// together: ast-grep's --globs match the literal walked path with no
-// awareness of where root begins, so an absolute root under a directory
-// that happens to share a name with one of those excludes (this repo's own
-// scanner tests build fixtures under ../testdata/) would otherwise be
-// wrongly excluded in its entirety. See TestScanDirectoryDoesNotExcludeRootsNestedUnderAnIgnoredDirName.
-func TestScanDirectoryInvokesAstGrepWithHiddenDirsEnabled(t *testing.T) {
+// ast-grep scans the file walker's inventory, passed after "--" as paths
+// relative to cmd.Dir=root: hidden directories in, never-source ones out.
+func TestScanDirectoryPassesWalkerInventoryAsRootRelativePaths(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires shell script execution")
 	}
 
 	tmpDir := t.TempDir()
+	for _, name := range []string{".agents/a.js", "node_modules/pkg/dep.js"} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(tmpDir, name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, name), []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	capturedArgs := filepath.Join(tmpDir, "args.txt")
 	capturedPwd := filepath.Join(tmpDir, "pwd.txt")
 	fakeBinary := filepath.Join(tmpDir, "fake-sg.sh")
@@ -614,16 +620,18 @@ func TestScanDirectoryInvokesAstGrepWithHiddenDirsEnabled(t *testing.T) {
 	}
 	argLines := strings.Split(strings.TrimRight(string(args), "\n"), "\n")
 
-	if !strings.Contains(string(args), "--no-ignore\nhidden\n") {
-		t.Fatalf("expected --no-ignore hidden in args, got: %s", args)
+	sep := slices.Index(argLines, "--")
+	if sep < 0 {
+		t.Fatalf("expected -- before the scan paths, got: %s", args)
 	}
-	for _, want := range []string{"!**/.git/**", "!**/node_modules/**", "!**/vendor/**", "!**/testdata/**"} {
-		if !strings.Contains(string(args), want) {
-			t.Errorf("expected a --globs exclude for %q, got: %s", want, args)
+	paths := argLines[sep+1:]
+	if !slices.Contains(paths, filepath.Join(".agents", "a.js")) {
+		t.Errorf("scan paths = %v, want the hidden-directory file root-relative (via cmd.Dir)", paths)
+	}
+	for _, path := range paths {
+		if strings.Contains(path, "node_modules") {
+			t.Errorf("scan paths = %v, include a never-source directory", paths)
 		}
-	}
-	if got := argLines[len(argLines)-1]; got != "." {
-		t.Fatalf("scan path argument = %q, want %q (root-relative, via cmd.Dir)", got, ".")
 	}
 
 	pwdBytes, err := os.ReadFile(capturedPwd)
@@ -804,13 +812,11 @@ func TestScanDirectoryExcludesNestedWorktreesByPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"--globs\n!.claude/worktrees/agent-x/**\n", "--globs\n!tools/sub-clone/**\n"} {
-		if !strings.Contains(string(args), want) {
-			t.Errorf("expected %q in ast-grep args, got:\n%s", want, args)
-		}
+	if strings.Contains(string(args), "agent-x") || strings.Contains(string(args), "sub-clone") {
+		t.Errorf("nested repositories must not be scanned, got:\n%s", args)
 	}
-	if strings.Contains(string(args), "!lib/**") {
-		t.Errorf("plain source directory must not be excluded, got:\n%s", args)
+	if !strings.Contains(string(args), "--\nlib/lib.go\nlib/util.go\nmain.go\n") {
+		t.Errorf("project files must be scanned, got:\n%s", args)
 	}
 }
 
@@ -843,5 +849,285 @@ func TestScanDirectoryRealAstGrepSkipsNestedWorktree(t *testing.T) {
 	sort.Strings(paths)
 	if !reflect.DeepEqual(paths, []string{"a.js"}) {
 		t.Fatalf("analyses = %v, want only a.js (nested worktree and clone excluded)", paths)
+	}
+}
+
+// A batch that times out costs only its own files (#269): the rest of the
+// graph survives, coverage reads partial, and the detail names what was skipped.
+func TestScanDirectoryTimedOutBatchYieldsPartialGraph(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires shell script execution")
+	}
+	root := t.TempDir()
+	for _, name := range []string{"fast.go", "slow.go"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("package p\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fakeBinary := filepath.Join(t.TempDir(), "fake-sg.sh")
+	script := `#!/bin/sh
+for a in "$@"; do [ "$a" = slow.go ] && sleep 30; done
+printf '%s\n' '[{"file":"fast.go","ruleId":"go-imports","range":{"start":{"line":1,"column":1}},"text":"import \"fmt\"","metaVariables":{"single":{"PATH":{"text":"fmt"}}}}]'
+`
+	if err := os.WriteFile(fakeBinary, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prevTimeout, prevBatch := astGrepScanTimeout, astGrepBatchArgBytes
+	astGrepScanTimeout, astGrepBatchArgBytes = 2*time.Second, 1
+	t.Cleanup(func() { astGrepScanTimeout, astGrepBatchArgBytes = prevTimeout, prevBatch })
+
+	scanner := &AstGrepScanner{rulesDir: t.TempDir(), binary: fakeBinary}
+	outcome, err := scanner.ScanDirectory(context.Background(), root)
+	if err != nil {
+		t.Fatalf("ScanDirectory() error = %v", err)
+	}
+	if len(outcome.Analyses) != 1 || outcome.Analyses[0].Path != "fast.go" {
+		t.Fatalf("analyses = %#v, want fast.go kept (sources %#v)", outcome.Analyses, outcome.Sources)
+	}
+	source := outcome.Sources[0]
+	if source.Status != ScanSourceMixed || !strings.Contains(source.Detail, "timed out") || !strings.Contains(source.Detail, "slow.go") {
+		t.Fatalf("source = %#v, want mixed with a timeout detail naming slow.go", source)
+	}
+	if got := CoverageFromSources(outcome.Sources).Status; got != analysis.CoveragePartial {
+		t.Fatalf("coverage = %q, want partial", got)
+	}
+}
+
+// A file with a 16 KiB line keeps its edges: it is scanned alone with the
+// import rules only, since ast-grep's JSON repeats the whole line for every
+// match on it (#269). Coverage stays authoritative; the note says why its
+// functions are missing.
+func TestScanDirectoryScansLongLineFilesForImportsOnly(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "core-enums.ts"), []byte("import { a } from './a';\nexport const x = '"+strings.Repeat("x", astGrepMaxLineBytes)+"';\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "app.ts"), []byte("import { b } from './b';\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	calls := recordAstGrepCommands(t)
+	s, err := NewAstGrepScanner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.binary = "ast-grep-fake"
+	outcome, err := s.ScanDirectory(context.Background(), root)
+	if err != nil {
+		t.Fatalf("ScanDirectory() error = %v", err)
+	}
+	full, importsOnly := s.inlineRules, importRulesOnly(s.inlineRules)
+	if importsOnly == "" || strings.Contains(importsOnly, "-functions") {
+		t.Fatalf("importRulesOnly kept non-import rules or nothing:\n%s", importsOnly)
+	}
+	seen := map[string]string{}
+	for _, call := range *calls {
+		rules := call[slices.Index(call, "--inline-rules")+1]
+		for _, arg := range call[slices.Index(call, "--")+1:] {
+			seen[arg] = rules
+		}
+	}
+	if seen["app.ts"] != full || seen["core-enums.ts"] != importsOnly {
+		t.Fatalf("app.ts must get every rule and core-enums.ts only the import rules; calls = %d", len(*calls))
+	}
+	source := outcome.Sources[0]
+	if source.Status != ScanSourceAuthoritative || !strings.Contains(source.Detail, "core-enums.ts") {
+		t.Fatalf("source = %#v, want authoritative with a note naming core-enums.ts", source)
+	}
+}
+
+// recordAstGrepCommands swaps the exec seam for one that records every argv
+// and runs a harmless command printing "[]" in its place.
+func recordAstGrepCommands(t *testing.T) *[][]string {
+	t.Helper()
+	var calls [][]string
+	var mu sync.Mutex
+	prev := execCommandContext
+	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		if slices.Contains(args, "--version") {
+			return exec.CommandContext(ctx, name, args...)
+		}
+		mu.Lock()
+		calls = append(calls, append([]string{name}, args...))
+		mu.Unlock()
+		if runtime.GOOS == "windows" {
+			return exec.CommandContext(ctx, "cmd.exe", "/c", "echo []")
+		}
+		return exec.CommandContext(ctx, "sh", "-c", "echo '[]'")
+	}
+	t.Cleanup(func() { execCommandContext = prev })
+	return &calls
+}
+
+// hostileScanRoot holds files whose names cmd.exe would execute or expand.
+func hostileScanRoot(t *testing.T) (string, []string) {
+	t.Helper()
+	names := []string{"x&calc.ts", "y%PATH%.ts", "z^w.ts", "-dash.ts"}
+	if runtime.GOOS != "windows" {
+		names = append(names, `q"r.ts`)
+	}
+	root := t.TempDir()
+	for _, name := range names {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("export {};\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root, names
+}
+
+// A cmd shim with no resolvable native ast-grep scans "." in one pass: no
+// repository path may reach the cmd.exe command line.
+func TestCmdShimScanKeepsRepoPathsOffCmdLine(t *testing.T) {
+	prevGOOS := goos
+	goos = "windows"
+	t.Cleanup(func() { goos = prevGOOS })
+	calls := recordAstGrepCommands(t)
+	root, names := hostileScanRoot(t)
+	shim := filepath.Join(t.TempDir(), "ast-grep.cmd")
+	if err := os.WriteFile(shim, []byte("@echo off\r\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := &AstGrepScanner{binary: shim}
+	t.Cleanup(s.Close)
+
+	outcome, err := s.ScanDirectory(context.Background(), root)
+	if err != nil {
+		t.Fatalf("ScanDirectory() error = %v", err)
+	}
+	if len(*calls) == 0 {
+		t.Fatal("ast-grep was never invoked")
+	}
+	for _, call := range *calls {
+		if call[0] != "cmd.exe" {
+			t.Fatalf("argv %q: want every call through cmd.exe for an unresolved shim", call)
+		}
+		for _, arg := range call {
+			for _, name := range names {
+				if strings.Contains(arg, strings.TrimSuffix(name, ".ts")) {
+					t.Fatalf("repo path %q reached the cmd.exe line: %q", name, call)
+				}
+			}
+		}
+	}
+	if detail := outcome.Sources[0].Detail; !strings.Contains(detail, "cmd.exe shim") {
+		t.Fatalf("detail = %q, want the one-pass shim note", detail)
+	}
+}
+
+// A cmd shim whose native target resolves runs that binary directly, so the
+// batched paths go to it after "--" and never through cmd.exe.
+func TestCmdShimResolvesToNativeBinary(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake native binary is a shell script")
+	}
+	prevGOOS := goos
+	goos = "windows"
+	t.Cleanup(func() { goos = prevGOOS })
+	binDir := t.TempDir()
+	native := filepath.Join(binDir, "node_modules", "@ast-grep", "cli-win32-x64-msvc", "ast-grep.exe")
+	if err := os.MkdirAll(filepath.Dir(native), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(native, []byte("#!/bin/sh\necho ast-grep 0.42.0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	shim := filepath.Join(binDir, "ast-grep.cmd")
+	if err := os.WriteFile(shim, []byte("@ECHO off\r\n\"%dp0%\\node_modules\\@ast-grep\\cli-win32-x64-msvc\\ast-grep.exe\" %*\r\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveCmdShimTarget(shim); got != native {
+		t.Fatalf("resolveCmdShimTarget = %q, want %q", got, native)
+	}
+
+	calls := recordAstGrepCommands(t)
+	root, names := hostileScanRoot(t)
+	s := &AstGrepScanner{binary: shim}
+	t.Cleanup(s.Close)
+	if _, err := s.ScanDirectory(context.Background(), root); err != nil {
+		t.Fatalf("ScanDirectory() error = %v", err)
+	}
+	var scan []string
+	for _, call := range *calls {
+		if call[0] == "cmd.exe" {
+			t.Fatalf("argv %q went through cmd.exe", call)
+		}
+		if slices.Contains(call, "scan") {
+			scan = call
+		}
+	}
+	if scan == nil || scan[0] != native {
+		t.Fatalf("scan argv = %q, want the native binary", scan)
+	}
+	sep := slices.Index(scan, "--")
+	if sep < 0 {
+		t.Fatalf("scan argv = %q, want -- before the paths", scan)
+	}
+	for _, name := range names {
+		if i := slices.Index(scan, name); i <= sep {
+			t.Fatalf("path %q at argv index %d, want it after -- (index %d)", name, i, sep)
+		}
+	}
+}
+
+// Symlinks are never scanned: ast-grep follows an explicit path, so a link
+// read files outside root, and a loop listed the repo twice. The result must
+// match main, which passed "." to ast-grep and saw only src/m.ts.
+func TestScanForDepsNeverFollowsSymlinks(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "repo")
+	outside := filepath.Join(base, "outside")
+	sibling := filepath.Join(base, "sibling")
+	for path, content := range map[string]string{
+		filepath.Join(root, "src", "m.ts"): "import { s } from './s';\nexport function m() { return s; }\n",
+		filepath.Join(outside, "leak.py"):  "import os\ndef leak():\n    return os\n",
+		filepath.Join(sibling, "s.ts"):     "import { x } from './x';\nexport const s = x;\n",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for link, target := range map[string]string{
+		"abs_link":    outside,
+		"rel_link":    filepath.Join("..", "sibling"),
+		"loop":        ".",
+		"leakfile.py": filepath.Join(outside, "leak.py"),
+	} {
+		if err := os.Symlink(target, filepath.Join(root, link)); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+	}
+
+	files, err := ScanFiles(context.Background(), root, NewGitIgnoreCache(root), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed []string
+	for _, f := range files {
+		listed = append(listed, filepath.ToSlash(f.Path))
+	}
+	if !reflect.DeepEqual(listed, []string{"src/m.ts"}) {
+		t.Fatalf("ScanFiles = %v, want [src/m.ts]", listed)
+	}
+
+	s, err := NewAstGrepScanner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	if !s.Available() {
+		t.Skip("ast-grep not available")
+	}
+	outcome, err := ScanForDeps(context.Background(), root, Filters{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var analysed []string
+	for _, a := range outcome.Analyses {
+		analysed = append(analysed, filepath.ToSlash(a.Path))
+	}
+	if !reflect.DeepEqual(analysed, []string{"src/m.ts"}) {
+		t.Fatalf("ScanForDeps analyses = %v, want [src/m.ts]", analysed)
 	}
 }
