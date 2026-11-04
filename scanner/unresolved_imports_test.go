@@ -41,9 +41,9 @@ func TestUnresolvedProjectImportsAreDeclared(t *testing.T) {
 			},
 			note: "TypeScript: 2 of 2 project-relative imports did not resolve to a file",
 		},
-		"javascript emitted mts": {
+		"javascript mjs": {
 			files: map[string]string{
-				"a.mjs":      "import { h } from './helper.mjs';\nimport _ from 'lodash';\n",
+				"a.mjs":      "import { h } from './gone.mjs';\nimport _ from 'lodash';\n",
 				"helper.mts": "export const h = 1;\n",
 			},
 			note: "JavaScript: 1 of 1 project-relative imports did not resolve to a file",

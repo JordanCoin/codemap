@@ -1588,14 +1588,11 @@ func isRegularFile(absRoot, relPath string) bool {
 
 // typescriptEmitExtensions maps an emitted JavaScript extension to the
 // TypeScript sources that produce it, in the order the compiler prefers.
-//
-// ".mjs" and ".cjs" are deliberately absent: they emit from ".mts" and
-// ".cts", which are not recognized source extensions here, so the scanner
-// never indexes such a file and a mapping for them would be unreachable code
-// that looks like support. Adding those extensions is a separate change.
 var typescriptEmitExtensions = map[string][]string{
 	".js":  {".ts", ".tsx", ".d.ts"},
 	".jsx": {".tsx", ".d.ts"},
+	".mjs": {".mts", ".d.mts"},
+	".cjs": {".cts", ".d.cts"},
 }
 
 // typescriptSourceCandidates returns the TypeScript files a JavaScript
