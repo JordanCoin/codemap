@@ -332,7 +332,7 @@ func TestRunDaemonPublishesInitializationFailure(t *testing.T) {
 	if err := runDaemon(root); err == nil || !strings.Contains(err.Error(), "watch init rejected") {
 		t.Fatalf("runDaemon() error = %v, want initialization failure", err)
 	}
-	if err := waitWatchReadiness(readyPath, time.Second); err == nil || !strings.Contains(err.Error(), "watch init rejected") {
+	if err := waitWatchReadiness(readyPath, time.Second, nil); err == nil || !strings.Contains(err.Error(), "watch init rejected") {
 		t.Fatalf("waitWatchReadiness() error = %v, want published initialization failure", err)
 	}
 }
@@ -350,7 +350,7 @@ func TestRunDaemonPublishesClaimFailure(t *testing.T) {
 	if err := runDaemon(root); err == nil || !strings.Contains(err.Error(), "claim rejected") {
 		t.Fatalf("runDaemon() error = %v, want claim failure", err)
 	}
-	if err := waitWatchReadiness(readyPath, time.Second); err == nil || !strings.Contains(err.Error(), "claim rejected") {
+	if err := waitWatchReadiness(readyPath, time.Second, nil); err == nil || !strings.Contains(err.Error(), "claim rejected") {
 		t.Fatalf("waitWatchReadiness() error = %v, want published claim failure", err)
 	}
 	if fake.started {
@@ -381,7 +381,7 @@ func TestRunDaemonExitsQuietlyWhenAnotherDaemonOwnsRoot(t *testing.T) {
 	if fake.started {
 		t.Fatal("loser started a second watcher")
 	}
-	if err := waitWatchReadiness(readyPath, time.Second); err == nil || !strings.Contains(err.Error(), "already running") {
+	if err := waitWatchReadiness(readyPath, time.Second, nil); err == nil || !strings.Contains(err.Error(), "already running") {
 		t.Fatalf("waitWatchReadiness() error = %v, want already-running readiness failure", err)
 	}
 }
