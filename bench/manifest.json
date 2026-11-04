@@ -996,5 +996,11 @@
     ]
    }
   }
- }
+ },
+ "languages_since": {
+  "c": "4.7.1",
+  "cpp": "4.7.1",
+  "rust": "4.7.1"
+ },
+ "languages_since_note": "A language is benchmarked only against codemap releases at or above its version here, so a rerun of an earlier release reproduces the report that release had (go, typescript, javascript and python have no entry and are always run)."
 }

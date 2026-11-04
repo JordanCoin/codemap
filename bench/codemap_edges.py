@@ -108,7 +108,9 @@ def collect_daemon(binary, root, timeout_s=3600):
                 # terminal state; waiting longer cannot change it.
                 failed_state = st
                 break
-            if not st.get("imports") or status != "available":
+            # An available graph with no edges is a valid, finished graph
+            # (`imports` is an empty map); only a missing map means not yet.
+            if st.get("imports") is None or status != "available":
                 continue
             gen = st.get("generation")
             stable = stable + 1 if gen == last_gen else 0

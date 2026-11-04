@@ -9,6 +9,8 @@ bench/run.sh --repo expressjs__express
 CODEMAP=./codemap bench/run.sh      # score a local build against the same truth
 ```
 
+**Run it in a disposable environment.** Building toolchain truth means running each pinned repository's own build machinery: `pip install -e .`, cmake configure, cargo build scripts and proc macros, package-manager installs (with scripts disabled where the manager allows it). That executes code from the cloned repositories as the current user. The pins are exact commits, but a container or throwaway VM is the intended place for `make bench`; do not run it on a machine whose credentials or files you would not expose to those repositories.
+
 Results land in `bench/results/v<version>.md` and `.json` (committed). Clones, virtualenvs, the downloaded binary and per-repo edge files live in `bench/cache/` and `bench/results/<version>/` (gitignored).
 
 ## What is measured

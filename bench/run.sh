@@ -57,7 +57,8 @@ if [ -z "${CODEMAP:-}" ]; then
 fi
 CODEMAP="$(cd "$(dirname "$CODEMAP")" && pwd)/$(basename "$CODEMAP")"
 VERSION="$("$CODEMAP" --version | awk '{print $2}')"
-log "codemap $VERSION at $CODEMAP"
+CODEMAP_SHA256="$(sha256sum "$CODEMAP" | cut -c1-64)"
+log "codemap $VERSION at $CODEMAP (sha256 ${CODEMAP_SHA256:0:12})"
 
 # ------------------------------------------------------------ tool setup
 if [ ! -d "$HERE/tools/node_modules/typescript" ]; then
@@ -101,19 +102,27 @@ install_node_deps() { # repo-dir -> 0 on success
   fi
 }
 
-write_status() { # dir status reason
-  printf '{"status":"%s","reason":"%s","finished_at":"%s"}\n' "$2" "$3" "$(date -u +%FT%TZ)" > "$1/status.json"
+write_status() { # dir status reason [repo-sha]
+  printf '{"status":"%s","reason":"%s","finished_at":"%s","codemap_sha256":"%s","repo_sha":"%s"}\n' "$2" "$3" "$(date -u +%FT%TZ)" "$CODEMAP_SHA256" "${4:-}" > "$1/status.json"
+}
+
+cache_hit() { # out-dir repo-sha: a result is reused only for the same binary and the same pinned commit
+  [ -f "$1/status.json" ] && [ -f "$1/codemap.edges" ] || return 1
+  python3 -I -c "
+import json,sys
+s=json.load(open(sys.argv[1]))
+sys.exit(0 if s.get('codemap_sha256')==sys.argv[2] and s.get('repo_sha')==sys.argv[3] else 1)" "$1/status.json" "$CODEMAP_SHA256" "$2"
 }
 
 run_repo() { # group lang repo url sha slug
   local group="$1" lang="$2" repo="$3" url="$4" sha="$5" slug="$6"
   local dir="$BENCH_CACHE/repos/$slug" out="$RESULTS/$VERSION/$slug"
   mkdir -p "$out"
-  if [ -f "$out/status.json" ] && [ -f "$out/codemap.edges" ] && [ -z "$ONLY_REPO" ]; then
-    log "$repo: cached result, skipping (delete $out to redo)"; return 0
+  if [ -z "$ONLY_REPO" ] && cache_hit "$out" "$sha"; then
+    log "$repo: cached result for this binary and commit, skipping (delete $out to redo)"; return 0
   fi
   log "$repo ($lang, $group): clone at $sha"
-  if ! clone_at "$url" "$sha" "$dir"; then write_status "$out" skipped "clone failed"; return 0; fi
+  if ! clone_at "$url" "$sha" "$dir"; then write_status "$out" skipped "clone failed" "$sha"; return 0; fi
 
   log "$repo: toolchain truth"
   local t0=$SECONDS ok=1
@@ -156,7 +165,7 @@ run_repo() { # group lang repo url sha slug
       "$venv/bin/python" -I "$HERE/truth/py_walk.py" "$dir" "$out/truth.edges" > "$out/truth.log" 2>&1 || ok=0 ;;
   esac
   if [ $ok != 1 ] || [ ! -s "$out/truth.edges.files" ]; then
-    write_status "$out" skipped "toolchain truth unavailable (see truth.log)"; return 0
+    write_status "$out" skipped "toolchain truth unavailable (see truth.log)" "$sha"; return 0
   fi
   log "$repo: truth $(wc -l < "$out/truth.edges") edges over $(wc -l < "$out/truth.edges.files") files in $((SECONDS - t0))s"
 
@@ -166,22 +175,28 @@ run_repo() { # group lang repo url sha slug
     # codemap produced no graph: scored as zero edges, with the reason.
     : > "$out/codemap.edges"
     reason="$(grep -o 'RuntimeError: .*' "$out/codemap.log" | tail -1 | cut -c15- | tr -d '"' | cut -c1-300)"
-    write_status "$out" codemap_failed "${reason:-see codemap.log}"; return 0
+    write_status "$out" codemap_failed "${reason:-see codemap.log}" "$sha"; return 0
   fi
   log "$repo: codemap $(wc -l < "$out/codemap.edges") edges in $((SECONDS - t0))s"
-  write_status "$out" ok ""
+  write_status "$out" ok "" "$sha"
 }
 
 # ---------------------------------------------------------------- main
 for group in $BENCH_GROUPS; do
   for lang in go typescript javascript python c cpp rust; do
     [ -n "$ONLY_LANG" ] && [ "$ONLY_LANG" != "$lang" ] && continue
-    python3 -c "
+    # A language joins the benchmark at the release named in the manifest's
+    # languages_since; an older release reruns only the languages it had.
+    python3 -I -c "
 import json,sys
-m=json.load(open('$MANIFEST'))
-for r in m['groups']['$group'].get('$lang',[]):
+m=json.load(open(sys.argv[1])); group, lang, version = sys.argv[2:5]
+def tup(v): return tuple(int(x) for x in v.split('.') if x.isdigit())
+since = (m.get('languages_since') or {}).get(lang)
+if since and version != 'dev' and tup(version) < tup(since):
+    sys.exit(0)
+for r in m['groups'][group].get(lang, []):
     print(r['repo'], r['url'], r['sha'], r['slug'])
-" | while read -r repo url sha slug; do
+" "$MANIFEST" "$group" "$lang" "$VERSION" | while read -r repo url sha slug; do
       [ -n "$ONLY_REPO" ] && [ "$ONLY_REPO" != "$slug" ] && continue
       run_repo "$group" "$lang" "$repo" "$url" "$sha" "$slug"
     done

@@ -36,8 +36,10 @@ usage: rust_la.py <repo-root> <out-edges-file> --rustsyn <binary> [--target-dir 
 import glob
 import json
 import os
+import pathlib
 import re
 import subprocess
+import urllib.parse
 import sys
 import threading
 import time
@@ -173,7 +175,15 @@ class LSP:
 
 
 def uri(path):
-    return "file://" + path
+    return pathlib.Path(path).as_uri()
+
+
+def uri_to_path(u):
+    """The filesystem path of a file URI, or None for any other scheme."""
+    parsed = urllib.parse.urlparse(u)
+    if parsed.scheme != "file":
+        return None
+    return urllib.parse.unquote(parsed.path)
 
 
 def main(argv):
@@ -286,10 +296,10 @@ def main(argv):
                 return res if isinstance(res, list) else [res]
 
             def located(loc):
-                u = loc.get("uri") or loc.get("targetUri") or ""
-                if not u.startswith("file://"):
+                raw = uri_to_path(loc.get("uri") or loc.get("targetUri") or "")
+                if raw is None:
                     return None, None
-                path = os.path.realpath(u[len("file://"):])
+                path = os.path.realpath(raw)
                 rng = loc.get("range") or loc.get("targetSelectionRange") or {}
                 start = rng.get("start") or {}
                 return path, (start.get("line", -1), start.get("character", -1))

@@ -1,4 +1,4 @@
-.PHONY: all build build-mcp run deps grammars coverage clean
+.PHONY: all build build-mcp run deps grammars coverage clean bench
 
 all: build
 

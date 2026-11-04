@@ -134,7 +134,11 @@ def fmt_ci(t):
 def main(manifest_path, results_dir, out_json, out_md, version, only_lang=None):
     manifest = json.load(open(manifest_path))
     rng = random.Random(20261103)
-    langs = [l for l in ALL_LANGS if only_lang in (None, l) or (only_lang == "c-cpp-rust" and l in ("c", "cpp", "rust"))]
+    def tup(v):
+        return tuple(int(x) for x in str(v).split(".") if x.isdigit())
+    since = manifest.get("languages_since") or {}
+    langs = [l for l in ALL_LANGS if (only_lang in (None, l) or (only_lang == "c-cpp-rust" and l in ("c", "cpp", "rust")))
+             and (l not in since or not tup(version) or tup(version) >= tup(since[l]))]
     report = {"codemap": version, "languages": langs, "groups": {}, "spot_check_samples": {}}
     md = [f"# codemap {version} import-accuracy benchmark results" + (f" ({only_lang} only)" if only_lang else ""), ""]
     md.append("Scope: in-repo source file to in-repo source file edges, as defined in bench/README.md. "
