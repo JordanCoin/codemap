@@ -531,7 +531,7 @@ func TestMergedTSOutputDirsChildOverridesParent(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceFile(t, root, "tsconfig.base.json", `{"compilerOptions":{"rootDir":"lib","outDir":"build"}}`)
 	writeWorkspaceFile(t, root, "tsconfig.json", `{"extends":"./tsconfig.base.json","compilerOptions":{"outDir":"dist"}}`)
-	rootDir, outDir := mergedTSOutputDirs(filepath.Join(root, "tsconfig.json"))
+	rootDir, outDir := newTSConfigReader(root).outputDirs(filepath.Join(root, "tsconfig.json"))
 	if rootDir != "lib" || outDir != "dist" {
 		t.Fatalf("merged dirs = (%q, %q), want (lib, dist)", rootDir, outDir)
 	}
@@ -541,7 +541,7 @@ func TestMergedTSOutputDirsExtendsWithoutExtension(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceFile(t, root, "tsconfig.base.json", `{"compilerOptions":{"rootDir":"src","outDir":"dist"}}`)
 	writeWorkspaceFile(t, root, "tsconfig.json", `{"extends":"./tsconfig.base"}`)
-	rootDir, outDir := mergedTSOutputDirs(filepath.Join(root, "tsconfig.json"))
+	rootDir, outDir := newTSConfigReader(root).outputDirs(filepath.Join(root, "tsconfig.json"))
 	if rootDir != "src" || outDir != "dist" {
 		t.Fatalf("merged dirs = (%q, %q), want (src, dist)", rootDir, outDir)
 	}
@@ -551,7 +551,7 @@ func TestMergedTSOutputDirsCycleGuardTerminates(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceFile(t, root, "a.json", `{"extends":"./b.json"}`)
 	writeWorkspaceFile(t, root, "b.json", `{"extends":"./a.json"}`)
-	rootDir, outDir := mergedTSOutputDirs(filepath.Join(root, "a.json"))
+	rootDir, outDir := newTSConfigReader(root).outputDirs(filepath.Join(root, "a.json"))
 	if rootDir != "" || outDir != "" {
 		t.Fatalf("cyclic extends must yield empty dirs, got (%q, %q)", rootDir, outDir)
 	}

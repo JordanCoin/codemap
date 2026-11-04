@@ -17,6 +17,15 @@ type jsWorkspaceResolver struct {
 	packageScopes []jsPackageScope
 	denoScopes    []jsImportScope
 	workspaces    []jsPackageWorkspace
+	pathScopes    []jsPathAliasScope // deepest root first
+	notes         []string           // coverage notes from bounded tsconfig reading
+}
+
+// jsPathAliasScope is the paths one tsconfig/jsconfig gives the files under it.
+type jsPathAliasScope struct {
+	root    string
+	aliases map[string][]string
+	baseURL string
 }
 
 type jsPackageWorkspace struct {
@@ -25,15 +34,16 @@ type jsPackageWorkspace struct {
 }
 
 type jsWorkspacePackage struct {
-	root         string
-	name         string
-	dependencies map[string]bool // every package.json dependency field, by name
-	exports      jsSpecifierMap
-	hasExports   bool
-	entryTargets []string
-	main         string // package.json main, as a local target; "" when absent or invalid
-	sourceRoot   string
-	outDir       string
+	root          string
+	name          string
+	dependencies  map[string]bool // every package.json dependency field, by name
+	workspaceDeps map[string]bool // dependencies declared with the workspace: protocol
+	exports       jsSpecifierMap
+	hasExports    bool
+	entryTargets  []string
+	main          string // package.json main, as a local target; "" when absent or invalid
+	sourceRoot    string
+	outDir        string
 }
 
 type jsPackageScope struct {
@@ -77,9 +87,11 @@ func buildJSWorkspaceResolver(ctx context.Context, root string, files []FileInfo
 	}
 	packages := make(map[string]*jsWorkspaceManifest)
 	denoConfigs := make(map[string]*jsWorkspaceManifest)
-	tsConfigs := make(map[string]map[string]any)
+	tsConfigs := make(map[string]bool)
 	pnpmWorkspaces := make(map[string][]string)
 	rushWorkspaces := make(map[string][]jsRushProject)
+	pathScopes := make(map[string]jsPathAliasScope)
+	tsReader := newTSConfigReader(root)
 	for _, file := range files {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -90,9 +102,15 @@ func buildJSWorkspaceResolver(ctx context.Context, root string, files []FileInfo
 			pnpmWorkspaces[manifestRoot] = readPnpmWorkspace(filepath.Join(root, file.Path))
 			continue
 		}
-		if name == "tsconfig.json" {
-			if doc, ok := readJSWorkspaceManifest(filepath.Join(root, file.Path)); ok {
-				tsConfigs[manifestRoot] = doc
+		if name == "tsconfig.json" || name == "jsconfig.json" {
+			// tsconfig.json wins over a jsconfig.json beside it, as in detectPathAliases.
+			if _, taken := pathScopes[manifestRoot]; !taken || name == "tsconfig.json" {
+				if aliases, baseURL := tsReader.pathAliases(filepath.Join(root, file.Path)); len(aliases) > 0 {
+					pathScopes[manifestRoot] = jsPathAliasScope{root: manifestRoot, aliases: aliases, baseURL: baseURL}
+				}
+			}
+			if name == "tsconfig.json" {
+				tsConfigs[manifestRoot] = true
 			}
 			continue
 		}
@@ -127,11 +145,17 @@ func buildJSWorkspaceResolver(ctx context.Context, root string, files []FileInfo
 			// rootDir/outDir via extends would otherwise leave both empty and
 			// drop their workspace exports from the graph.
 			configPath := filepath.Join(root, filepath.FromSlash(manifestRoot), "tsconfig.json")
-			manifest.pkg.sourceRoot, manifest.pkg.outDir = mergedTSOutputDirs(configPath)
+			manifest.pkg.sourceRoot, manifest.pkg.outDir = tsReader.outputDirs(configPath)
 		}
 	}
 
-	resolver := &jsWorkspaceResolver{}
+	resolver := &jsWorkspaceResolver{notes: tsReader.notes}
+	for _, scope := range pathScopes {
+		resolver.pathScopes = append(resolver.pathScopes, scope)
+	}
+	sort.Slice(resolver.pathScopes, func(i, j int) bool {
+		return len(resolver.pathScopes[i].root) > len(resolver.pathScopes[j].root)
+	})
 	for _, manifest := range packages {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -370,19 +394,54 @@ func (r *jsWorkspaceResolver) resolve(imp, fromFile string, idx *fileIndex, sour
 	return candidates[0].resolve(subpath, idx, sourceLanguage)
 }
 
-// rootPackageMain resolves a directory import of the scan root through
-// package.json main, which Node tries ahead of index.js. Empty means fall back to
-// index, as Node does when main names nothing.
-func (r *jsWorkspaceResolver) rootPackageMain(idx *fileIndex, sourceLanguage string) []string {
+// directoryPackageMain resolves a directory import through the package.json
+// main in that directory, which Node tries ahead of index.js. exports does not
+// apply to a relative require("./dir"). Empty means fall back to index, as Node
+// does when main names nothing.
+func (r *jsWorkspaceResolver) directoryPackageMain(dir string, idx *fileIndex, sourceLanguage string) []string {
 	if r == nil {
 		return nil
 	}
 	for i := range r.packageScopes {
-		if pkg := r.packageScopes[i].pkg; r.packageScopes[i].root == "" && pkg != nil && pkg.main != "" {
-			return pkg.resolveInferredTarget(pkg.main, idx, sourceLanguage)
+		pkg := r.packageScopes[i].pkg
+		if r.packageScopes[i].root != dir || pkg == nil {
+			continue
 		}
+		if pkg.main == "" {
+			return nil
+		}
+		return pkg.resolveInferredTarget(pkg.main, idx, sourceLanguage)
 	}
 	return nil
+}
+
+// pathAliasScopes returns the tsconfig/jsconfig path scopes above fromFile that
+// declare paths, nearest first, ending with the root ones.
+// ponytail: a nearer config without paths defers to an outer one; TypeScript
+// would apply none, but that would drop edges codemap has always drawn.
+func (r *jsWorkspaceResolver) pathAliasScopes(fromFile string, rootAliases map[string][]string, rootBaseURL string) []jsPathAliasScope {
+	var scopes []jsPathAliasScope
+	if r != nil {
+		for _, scope := range r.pathScopes {
+			if pathContains(scope.root, fromFile) {
+				scopes = append(scopes, scope)
+			}
+		}
+	}
+	if len(rootAliases) > 0 && (len(scopes) == 0 || scopes[len(scopes)-1].root != "") {
+		scopes = append(scopes, jsPathAliasScope{aliases: rootAliases, baseURL: rootBaseURL})
+	}
+	return scopes
+}
+
+// declaresWorkspaceDependency reports whether the package.json nearest to
+// fromFile declares the package imp names with the workspace: protocol.
+func (r *jsWorkspaceResolver) declaresWorkspaceDependency(fromFile, imp string) bool {
+	if r == nil {
+		return false
+	}
+	scope := r.nearestPackageScope(fromFile)
+	return scope != nil && scope.pkg != nil && scope.pkg.workspaceDeps[jsPackageName(imp)]
 }
 
 func (r *jsWorkspaceResolver) nearestPackageScope(fromFile string) *jsPackageScope {
@@ -404,12 +463,16 @@ func (r *jsWorkspaceResolver) declaresDependency(fromFile, imp string) bool {
 	if scope == nil || scope.pkg == nil {
 		return false
 	}
+	return scope.pkg.dependencies[jsPackageName(imp)]
+}
+
+// jsPackageName is the package a bare specifier names ("@scope/name/sub" -> "@scope/name").
+func jsPackageName(imp string) string {
 	parts := strings.SplitN(imp, "/", 3)
-	name := parts[0]
 	if strings.HasPrefix(imp, "@") && len(parts) > 1 {
-		name = parts[0] + "/" + parts[1]
+		return parts[0] + "/" + parts[1]
 	}
-	return scope.pkg.dependencies[name]
+	return parts[0]
 }
 
 func (r *jsWorkspaceResolver) nearestDenoScope(fromFile string) *jsImportScope {
@@ -546,11 +609,14 @@ func (m jsSpecifierMap) resolve(specifier string) (jsSpecifierTarget, bool) {
 
 func parsePackageManifest(root string, doc map[string]any) *jsWorkspaceManifest {
 	name, _ := doc["name"].(string)
-	pkg := &jsWorkspacePackage{root: root, name: name, dependencies: map[string]bool{}}
+	pkg := &jsWorkspacePackage{root: root, name: name, dependencies: map[string]bool{}, workspaceDeps: map[string]bool{}}
 	for _, field := range []string{"dependencies", "devDependencies", "peerDependencies", "optionalDependencies"} {
 		if deps, ok := doc[field].(map[string]any); ok {
-			for dep := range deps {
+			for dep, spec := range deps {
 				pkg.dependencies[dep] = true
+				if spec, _ := spec.(string); strings.HasPrefix(spec, "workspace:") {
+					pkg.workspaceDeps[dep] = true
+				}
 			}
 		}
 	}
@@ -830,57 +896,6 @@ func parseTSOutputDirs(doc map[string]any) (string, string) {
 	rootDir = cleanManifestDir(rootDir)
 	outDir = cleanManifestDir(outDir)
 	return rootDir, outDir
-}
-
-// mergedTSOutputDirs reads a tsconfig.json, follows extends chains, and returns
-// the effective compilerOptions.rootDir/outDir (child values override parents),
-// matching the older path-alias loader which already follows extends.
-func mergedTSOutputDirs(configPath string) (string, string) {
-	options := mergedTSCompilerOptions(configPath)
-	return parseTSOutputDirs(map[string]any{"compilerOptions": options})
-}
-
-func mergedTSCompilerOptions(configPath string) map[string]any {
-	return mergedTSCompilerOptionsDepth(configPath, 0)
-}
-
-func mergedTSCompilerOptionsDepth(configPath string, depth int) map[string]any {
-	// Guard against cyclic extends chains (a misconfiguration that would
-	// otherwise recurse without bound).
-	if depth > 32 {
-		return nil
-	}
-	doc, ok := readJSWorkspaceManifest(configPath)
-	if !ok {
-		return nil
-	}
-	extends, _ := doc["extends"].(string)
-	var merged map[string]any
-	if extends != "" {
-		parentPath := extends
-		if !filepath.IsAbs(parentPath) {
-			parentPath = filepath.Join(filepath.Dir(configPath), parentPath)
-		}
-		if !strings.HasSuffix(parentPath, ".json") {
-			parentPath += ".json"
-		}
-		merged = mergedTSCompilerOptionsDepth(parentPath, depth+1)
-	}
-	child, _ := doc["compilerOptions"].(map[string]any)
-	if merged == nil {
-		return child
-	}
-	if child == nil {
-		return merged
-	}
-	out := make(map[string]any, len(merged)+len(child))
-	for key, value := range merged {
-		out[key] = value
-	}
-	for key, value := range child {
-		out[key] = value
-	}
-	return out
 }
 
 func cleanManifestDir(value string) string {
