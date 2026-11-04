@@ -229,14 +229,18 @@ func initProjectConfig(root string) (configInitResult, error) {
 		entries = append(entries, extEntry{Ext: ext, Count: count})
 	}
 	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Count > entries[j].Count
+		if entries[i].Count != entries[j].Count {
+			return entries[i].Count > entries[j].Count
+		}
+		return entries[i].Ext < entries[j].Ext
 	})
 
+	// The top-5 cap trims only extensions codemap does not parse: dropping a
+	// parseable one (.mjs behind many .js, #268) unindexes its files and edges.
 	for i, e := range entries {
-		if i >= 5 {
-			break
+		if i < 5 || scanner.IsSourceExt("."+e.Ext) {
+			result.TopExts = append(result.TopExts, e.Ext)
 		}
-		result.TopExts = append(result.TopExts, e.Ext)
 	}
 
 	// Mode is written explicitly: an init that looked for noise is a

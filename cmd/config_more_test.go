@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -259,5 +260,34 @@ func TestEnsureProjectConfigKeepsFreshCloneClean(t *testing.T) {
 	}
 	if !gitIgnoresCodemap(t, clone) {
 		t.Fatal("git does not ignore .codemap after auto-init")
+	}
+}
+
+// ECC shape (#268): .mjs ranked below the top-5 cut behind many .js and
+// unparsed data extensions, and was dropped from `only`.
+func TestInitProjectConfigKeepsLowCountSourceExtensions(t *testing.T) {
+	root := t.TempDir()
+	counts := map[string]int{"js": 20, "yaml": 10, "toml": 8, "cjs": 6, "html": 5, "css": 4, "py": 3, "mjs": 2}
+	for ext, n := range counts {
+		for i := 0; i < n; i++ {
+			mustWriteConfigFixture(t, filepath.Join(root, ext, fmt.Sprintf("f%d.%s", i, ext)), "x\n")
+		}
+	}
+
+	result, err := initProjectConfig(root)
+	if err != nil {
+		t.Fatalf("initProjectConfig returned error: %v", err)
+	}
+	got := map[string]bool{}
+	for _, ext := range result.TopExts {
+		got[ext] = true
+	}
+	for _, want := range []string{"js", "mjs", "cjs", "py"} {
+		if !got[want] {
+			t.Errorf("TopExts = %v, missing %q", result.TopExts, want)
+		}
+	}
+	if got["css"] {
+		t.Errorf("TopExts = %v, unparsed css below the cut should stay out", result.TopExts)
 	}
 }
