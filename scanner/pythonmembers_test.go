@@ -62,3 +62,38 @@ func TestPythonFromImportMemberRegressions(t *testing.T) {
 		assertImports(t, graph, "app/u.py")
 	})
 }
+
+// A namespace package below the repo root resolves against the same import
+// roots as a regular one: src/, and the importing script's directory.
+func TestPythonNestedNamespacePackages(t *testing.T) {
+	t.Run("edges", func(t *testing.T) {
+		graph := falseEdgeGraph(t, map[string]string{
+			"backend/app/models.py":  "",
+			"backend/app/api/x.py":   "from app import models\n",
+			"backend/main.py":        "from app import models\n",
+			"src/nspkg/m.py":         "",
+			"src/tool.py":            "from nspkg import m\n",
+			"tests/test_m.py":        "from nspkg import m\n",
+			"other/json/decoder.py":  "",
+			"backend/uses_stdlib.py": "from json import decoder\n",
+		})
+		assertImports(t, graph, "backend/main.py", "backend/app/models.py")
+		assertImports(t, graph, "backend/app/api/x.py", "backend/app/models.py")
+		assertImports(t, graph, "src/tool.py", "src/nspkg/m.py")
+		assertImports(t, graph, "tests/test_m.py", "src/nspkg/m.py")
+		assertImports(t, graph, "backend/uses_stdlib.py")
+	})
+
+	t.Run("a missing member is reported", func(t *testing.T) {
+		g, err := BuildFileGraph(context.Background(), writeRepo(t, map[string]string{
+			"backend/app/models.py": "",
+			"backend/main.py":       "from app import models, gone\nimport app.missing\n",
+		}), Filters{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if note := "Python: 2 of 3 project-relative imports did not resolve to a file"; !hasNotePrefix(g.Coverage.Notes, note) {
+			t.Fatalf("notes = %v, want one starting %q", g.Coverage.Notes, note)
+		}
+	})
+}
