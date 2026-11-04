@@ -508,9 +508,7 @@ func ScanFilesBounded(ctx context.Context, root string, cache *GitIgnoreCache, f
 			}
 			return nil
 		}
-		// A symlink can point outside root or back into it (a loop lists the
-		// repo twice); ast-grep and every reader follow an explicit path.
-		if info.Mode()&os.ModeSymlink != 0 && path != absRoot {
+		if info.Mode()&os.ModeSymlink != 0 && path != absRoot && !filters.IncludeSymlinks {
 			return nil
 		}
 
@@ -601,6 +599,10 @@ type Filters struct {
 	// MaxFiles bounds the scan: 0 = limits.DefaultMaxScanFiles, negative =
 	// unbounded (see limits.ScanFileBound).
 	MaxFiles int
+	// IncludeSymlinks lists symlinks as entries (never descended into) for
+	// views that show the tree and read no content. Content readers keep the
+	// default: a link can lead outside root or loop back into it.
+	IncludeSymlinks bool
 }
 
 // ConfiguredFilters returns the project's configured dependency filters.

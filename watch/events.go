@@ -346,6 +346,7 @@ func (d *Daemon) eventLoop() {
 			if !ok {
 				return
 			}
+			rawName := event.Name
 			event.Name = projectpath.CanonicalPath(event.Name)
 			now := time.Now()
 			if filepath.Clean(filepath.Dir(event.Name)) == filepath.Clean(d.publisher.flushDir) {
@@ -358,6 +359,9 @@ func (d *Daemon) eventLoop() {
 				// reset the ignore cache if any event in it was a .gitignore.
 				controlResetIgnoreCache = controlResetIgnoreCache || resetIgnoreCache
 				armControlTimer()
+				continue
+			}
+			if d.isLinkedEvent(rawName) {
 				continue
 			}
 			for _, pending := range debouncer.takeDueBeforeEvent(event, now) {
@@ -661,8 +665,22 @@ func (d *Daemon) handleBurst(events []fsnotify.Event) {
 	}
 }
 
+// isLinkedEvent reports whether an event path, before canonicalization
+// resolves it, is a symlink or lands outside the root. Neither is read or
+// recorded, as the initial walk never follows one either.
+func (d *Daemon) isLinkedEvent(raw string) bool {
+	if info, err := os.Lstat(raw); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return true
+	}
+	rel, err := filepath.Rel(projectpath.CanonicalPath(d.root), projectpath.CanonicalPath(raw))
+	return err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 // handleEvent processes a single file event
 func (d *Daemon) handleEvent(fsEvent fsnotify.Event) bool {
+	if d.isLinkedEvent(fsEvent.Name) {
+		return false
+	}
 	fsEvent.Name = projectpath.CanonicalPath(fsEvent.Name)
 	absPath := fsEvent.Name
 	if d.gitCache != nil {

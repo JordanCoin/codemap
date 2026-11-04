@@ -349,3 +349,43 @@ func TestHandleEventCreateDirectoryReturnsWithoutTrackingFile(t *testing.T) {
 		t.Fatalf("expected no tracked files for directory create, got %d", len(d.graph.Files))
 	}
 }
+
+// A symlink in the watched tree, or any event that resolves outside root,
+// is never read or recorded: canonicalizing first used to hand the link's
+// target to Lstat, so the daemon counted the lines of a file outside root.
+func TestHandleEventIgnoresSymlinksAndPathsOutsideRoot(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "repo")
+	outside := filepath.Join(base, "outside")
+	for _, dir := range []string{root, outside} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	leak := filepath.Join(outside, "leak.py")
+	if err := os.WriteFile(leak, []byte("import os\nx = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "live_leak.py")
+	if err := os.Symlink(leak, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	real := filepath.Join(root, "real.py")
+	if err := os.WriteFile(real, []byte("x = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d := &Daemon{root: root, graph: &Graph{
+		Files: map[string]*scanner.FileInfo{},
+		State: map[string]*FileState{},
+	}}
+
+	d.handleEvent(fsnotify.Event{Name: link, Op: fsnotify.Create})
+	d.handleEvent(fsnotify.Event{Name: leak, Op: fsnotify.Write})
+	if events := d.GetEvents(0); len(events) != 0 {
+		t.Fatalf("events = %#v, want none for a symlink or a path outside root", events)
+	}
+	d.handleEvent(fsnotify.Event{Name: real, Op: fsnotify.Create})
+	if events := d.GetEvents(0); len(events) != 1 || events[0].Path != "real.py" {
+		t.Fatalf("events = %#v, want only real.py", events)
+	}
+}

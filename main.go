@@ -543,7 +543,9 @@ func main() {
 	}
 
 	// Scan files, keeping at most the bound and counting the rest (#186).
-	files, totalFiles, err := scanner.ScanFilesBounded(context.Background(), root, gitCache, filters)
+	treeFilters := filters
+	treeFilters.IncludeSymlinks = true
+	files, totalFiles, err := scanner.ScanFilesBounded(context.Background(), root, gitCache, treeFilters)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error walking tree: %v\n", err)
 		os.Exit(1)

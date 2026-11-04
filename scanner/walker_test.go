@@ -1114,3 +1114,59 @@ func TestScanFilesAnchorsNestedGitignoreAtItsDirectory(t *testing.T) {
 		t.Fatalf("files = %v, want %v", got, want)
 	}
 }
+
+// The tree view lists symlinks the way main always has: as entries, never
+// descended into. Content readers (deps, importers, fallbacks) never see one.
+func TestScanFilesListsSymlinksOnlyForTheTree(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "repo")
+	outside := filepath.Join(base, "outside")
+	for path, content := range map[string]string{
+		filepath.Join(root, "src", "m.ts"):     "export const m = 1;\n",
+		filepath.Join(root, "README.md"):       "# r\n",
+		filepath.Join(root, "docs", "x.md"):    "# x\n",
+		filepath.Join(outside, "leak.py"):      "x = 1\n",
+		filepath.Join(base, "sibling", "s.ts"): "export const s = 1;\n",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for link, target := range map[string]string{
+		"abs_link":       outside,
+		"rel_link":       filepath.Join("..", "sibling"),
+		"loop":           ".",
+		"filelink.ts":    filepath.Join("src", "m.ts"),
+		"leakfile.py":    filepath.Join(outside, "leak.py"),
+		"docs/README.md": filepath.Join("..", "README.md"),
+	} {
+		if err := os.Symlink(target, filepath.Join(root, link)); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+	}
+	paths := func(filters Filters) []string {
+		t.Helper()
+		files, _, err := ScanFilesBounded(context.Background(), root, NewGitIgnoreCache(root), filters)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, f := range files {
+			out = append(out, filepath.ToSlash(f.Path))
+		}
+		sort.Strings(out)
+		return out
+	}
+	tree := paths(Filters{MaxFiles: -1, IncludeSymlinks: true})
+	wantTree := []string{"README.md", "abs_link", "docs/README.md", "docs/x.md", "filelink.ts", "leakfile.py", "loop", "rel_link", "src/m.ts"}
+	if !reflect.DeepEqual(tree, wantTree) {
+		t.Fatalf("tree = %v, want %v", tree, wantTree)
+	}
+	content := paths(Filters{MaxFiles: -1})
+	if !reflect.DeepEqual(content, []string{"README.md", "docs/x.md", "src/m.ts"}) {
+		t.Fatalf("content inventory = %v, want no symlinks", content)
+	}
+}
