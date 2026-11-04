@@ -87,7 +87,7 @@ func buildJSWorkspaceResolver(ctx context.Context, root string, files []FileInfo
 	}
 	packages := make(map[string]*jsWorkspaceManifest)
 	denoConfigs := make(map[string]*jsWorkspaceManifest)
-	tsConfigs := make(map[string]map[string]any)
+	tsConfigs := make(map[string]bool)
 	pnpmWorkspaces := make(map[string][]string)
 	rushWorkspaces := make(map[string][]jsRushProject)
 	pathScopes := make(map[string]jsPathAliasScope)
@@ -109,11 +109,8 @@ func buildJSWorkspaceResolver(ctx context.Context, root string, files []FileInfo
 					pathScopes[manifestRoot] = jsPathAliasScope{root: manifestRoot, aliases: aliases, baseURL: baseURL}
 				}
 			}
-			if name == "jsconfig.json" {
-				continue
-			}
-			if doc, ok := readJSWorkspaceManifest(filepath.Join(root, file.Path)); ok {
-				tsConfigs[manifestRoot] = doc
+			if name == "tsconfig.json" {
+				tsConfigs[manifestRoot] = true
 			}
 			continue
 		}
@@ -148,7 +145,7 @@ func buildJSWorkspaceResolver(ctx context.Context, root string, files []FileInfo
 			// rootDir/outDir via extends would otherwise leave both empty and
 			// drop their workspace exports from the graph.
 			configPath := filepath.Join(root, filepath.FromSlash(manifestRoot), "tsconfig.json")
-			manifest.pkg.sourceRoot, manifest.pkg.outDir = mergedTSOutputDirs(configPath)
+			manifest.pkg.sourceRoot, manifest.pkg.outDir = tsReader.outputDirs(configPath)
 		}
 	}
 
@@ -899,57 +896,6 @@ func parseTSOutputDirs(doc map[string]any) (string, string) {
 	rootDir = cleanManifestDir(rootDir)
 	outDir = cleanManifestDir(outDir)
 	return rootDir, outDir
-}
-
-// mergedTSOutputDirs reads a tsconfig.json, follows extends chains, and returns
-// the effective compilerOptions.rootDir/outDir (child values override parents),
-// matching the older path-alias loader which already follows extends.
-func mergedTSOutputDirs(configPath string) (string, string) {
-	options := mergedTSCompilerOptions(configPath)
-	return parseTSOutputDirs(map[string]any{"compilerOptions": options})
-}
-
-func mergedTSCompilerOptions(configPath string) map[string]any {
-	return mergedTSCompilerOptionsDepth(configPath, 0)
-}
-
-func mergedTSCompilerOptionsDepth(configPath string, depth int) map[string]any {
-	// Guard against cyclic extends chains (a misconfiguration that would
-	// otherwise recurse without bound).
-	if depth > 32 {
-		return nil
-	}
-	doc, ok := readJSWorkspaceManifest(configPath)
-	if !ok {
-		return nil
-	}
-	extends, _ := doc["extends"].(string)
-	var merged map[string]any
-	if extends != "" {
-		parentPath := extends
-		if !filepath.IsAbs(parentPath) {
-			parentPath = filepath.Join(filepath.Dir(configPath), parentPath)
-		}
-		if !strings.HasSuffix(parentPath, ".json") {
-			parentPath += ".json"
-		}
-		merged = mergedTSCompilerOptionsDepth(parentPath, depth+1)
-	}
-	child, _ := doc["compilerOptions"].(map[string]any)
-	if merged == nil {
-		return child
-	}
-	if child == nil {
-		return merged
-	}
-	out := make(map[string]any, len(merged)+len(child))
-	for key, value := range merged {
-		out[key] = value
-	}
-	for key, value := range child {
-		out[key] = value
-	}
-	return out
 }
 
 func cleanManifestDir(value string) string {

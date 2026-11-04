@@ -102,8 +102,7 @@ func TestWorkspaceDependencyFallsBackToOuterTSConfigPaths(t *testing.T) {
 func readTSConfigCounting(t *testing.T, root, config string) (map[string][]string, int) {
 	t.Helper()
 	reader := newTSConfigReader(root)
-	paths, _, _ := reader.read(filepath.Join(root, config), 0)
-	return paths, reader.reads
+	return reader.read(filepath.Join(root, config), 0).paths, reader.reads
 }
 
 // The verifier's repro: one base config listing a huge extends array, shared
@@ -202,5 +201,27 @@ func TestTSConfigExtendsStaysInsideRoot(t *testing.T) {
 	}
 	if paths, _ := readTSConfigCounting(t, root, "pkg.json"); len(paths) != 1 {
 		t.Fatalf("pkg.json paths = %v, want the node_modules base inside the root", paths)
+	}
+}
+
+// Workspace rootDir/outDir go through the same reader, so string extends to a
+// relative or absolute config outside the root is refused there too.
+func TestTSConfigOutputDirsExtendsStaysInsideRoot(t *testing.T) {
+	parent := t.TempDir()
+	writeWorkspaceFile(t, parent, "outside/tsconfig.json", `{"compilerOptions":{"rootDir":"src","outDir":"build"}}`)
+	root := filepath.Join(parent, "repo")
+	outside := filepath.Join(parent, "outside", "tsconfig.json")
+	writeWorkspaceFile(t, root, "rel/tsconfig.json", `{"extends":"../../outside/tsconfig.json"}`)
+	writeWorkspaceFile(t, root, "abs/tsconfig.json", fmt.Sprintf(`{"extends":%q}`, filepath.ToSlash(outside)))
+	writeWorkspaceFile(t, root, "inside/base.json", `{"compilerOptions":{"rootDir":"src","outDir":"build"}}`)
+	writeWorkspaceFile(t, root, "inside/tsconfig.json", `{"extends":"./base.json"}`)
+	reader := newTSConfigReader(root)
+	for _, config := range []string{"rel/tsconfig.json", "abs/tsconfig.json"} {
+		if rootDir, outDir := reader.outputDirs(filepath.Join(root, config)); rootDir != "" || outDir != "" {
+			t.Fatalf("%s inherited (%q, %q) from outside the root", config, rootDir, outDir)
+		}
+	}
+	if rootDir, outDir := reader.outputDirs(filepath.Join(root, "inside/tsconfig.json")); rootDir != "src" || outDir != "build" {
+		t.Fatalf("inside base = (%q, %q), want (src, build)", rootDir, outDir)
 	}
 }

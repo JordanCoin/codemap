@@ -1924,6 +1924,7 @@ type tsConfigChain struct {
 	paths      map[string][]string
 	declaredIn map[string]string
 	baseURL    string
+	options    map[string]any // merged compilerOptions, child keys winning
 }
 
 // tsConfigReader reads every config of one scan at most once (shared parents
@@ -1959,7 +1960,8 @@ func (r *tsConfigReader) note(message string) {
 // declared the paths, so an inherited key whose declaring config sits elsewhere
 // is rebased onto the returned directory.
 func (r *tsConfigReader) pathAliases(configPath string) (map[string][]string, string) {
-	chain, declaredIn, baseURL := r.read(configPath, 0)
+	merged := r.read(configPath, 0)
+	chain, declaredIn, baseURL := merged.paths, merged.declaredIn, merged.baseURL
 	if len(chain) == 0 {
 		return nil, ""
 	}
@@ -1996,40 +1998,47 @@ func (r *tsConfigReader) pathAliases(configPath string) (map[string][]string, st
 	return paths, filepath.ToSlash(rel)
 }
 
-// read returns the merged paths (child keys override parent keys), the
-// directory of the config that declared each key, and the effective baseUrl as
-// a directory ("" when no config in the chain sets one).
-func (r *tsConfigReader) read(configPath string, depth int) (map[string][]string, map[string]string, string) {
+// outputDirs returns the effective compilerOptions.rootDir/outDir of a config,
+// following extends (child values override parents).
+func (r *tsConfigReader) outputDirs(configPath string) (string, string) {
+	return parseTSOutputDirs(map[string]any{"compilerOptions": r.read(configPath, 0).options})
+}
+
+// read returns a config merged with its extends chain: paths (child keys
+// override parent keys), the directory of the config that declared each key,
+// the effective baseUrl as a directory ("" when no config in the chain sets
+// one), and compilerOptions.
+func (r *tsConfigReader) read(configPath string, depth int) tsConfigChain {
 	key := filepath.Clean(configPath)
 	if chain, ok := r.done[key]; ok {
-		return chain.paths, chain.declaredIn, chain.baseURL
+		return chain
 	}
 	if depth > 32 || r.root == "" || r.active[key] {
-		return nil, nil, ""
+		return tsConfigChain{}
 	}
 	if r.reads >= r.maxReads {
 		r.note(fmt.Sprintf("tsconfig: stopped after %d configs; later extends were not followed", r.maxReads))
-		return nil, nil, ""
+		return tsConfigChain{}
 	}
 	r.reads++
 	// Resolving symlinks first keeps a linked config from reading outside the root.
 	resolved, err := filepath.EvalSymlinks(key)
 	if err != nil || !withinDir(r.root, resolved) {
 		r.done[key] = tsConfigChain{}
-		return nil, nil, ""
+		return tsConfigChain{}
 	}
 	if info, err := os.Stat(resolved); err != nil || info.Size() > maxTSConfigBytes {
 		if err == nil {
 			r.note(fmt.Sprintf("tsconfig: skipped %s, larger than %d bytes", filepath.Base(key), maxTSConfigBytes))
 		}
 		r.done[key] = tsConfigChain{}
-		return nil, nil, ""
+		return tsConfigChain{}
 	}
 	r.active[key] = true
-	paths, declaredIn, baseURL := r.parse(key, depth)
+	chain := r.parse(key, depth)
 	delete(r.active, key)
-	r.done[key] = tsConfigChain{paths: paths, declaredIn: declaredIn, baseURL: baseURL}
-	return paths, declaredIn, baseURL
+	r.done[key] = chain
+	return chain
 }
 
 func withinDir(dir, file string) bool {
@@ -2037,13 +2046,14 @@ func withinDir(dir, file string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
-func (r *tsConfigReader) parse(configPath string, depth int) (map[string][]string, map[string]string, string) {
+func (r *tsConfigReader) parse(configPath string, depth int) tsConfigChain {
 	doc, ok := readJSWorkspaceManifest(configPath)
 	if !ok {
-		return nil, nil, ""
+		return tsConfigChain{}
 	}
 	paths := map[string][]string{}
 	declaredIn := map[string]string{}
+	merged := map[string]any{}
 	var baseURL string
 	extends := doc["extends"]
 	if single, ok := extends.(string); ok {
@@ -2065,15 +2075,21 @@ func (r *tsConfigReader) parse(configPath string, depth int) (map[string][]strin
 		if !strings.HasSuffix(parentPath, ".json") {
 			parentPath += ".json"
 		}
-		parentPaths, parentDeclaredIn, parentBaseURL := r.read(parentPath, depth+1)
-		for key, targets := range parentPaths {
-			paths[key], declaredIn[key] = targets, parentDeclaredIn[key]
+		parentChain := r.read(parentPath, depth+1)
+		for key, targets := range parentChain.paths {
+			paths[key], declaredIn[key] = targets, parentChain.declaredIn[key]
 		}
-		if parentBaseURL != "" {
-			baseURL = parentBaseURL
+		if parentChain.baseURL != "" {
+			baseURL = parentChain.baseURL
+		}
+		for key, value := range parentChain.options {
+			merged[key] = value
 		}
 	}
 	options, _ := doc["compilerOptions"].(map[string]any)
+	for key, value := range options {
+		merged[key] = value
+	}
 	if value, _ := options["baseUrl"].(string); value != "" {
 		baseURL = filepath.Join(filepath.Dir(configPath), value)
 	}
@@ -2088,7 +2104,7 @@ func (r *tsConfigReader) parse(configPath string, depth int) (map[string][]strin
 		}
 		paths[key], declaredIn[key] = targets, filepath.Dir(configPath)
 	}
-	return paths, declaredIn, baseURL
+	return tsConfigChain{paths: paths, declaredIn: declaredIn, baseURL: baseURL, options: merged}
 }
 
 // normalizeAliasTarget puts a substituted tsconfig alias target into the same
