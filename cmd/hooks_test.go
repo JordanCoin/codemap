@@ -271,7 +271,9 @@ func TestShouldRestartDaemon(t *testing.T) {
 		}
 	})
 
-	t.Run("running without state returns true", func(t *testing.T) {
+	// #270: a session-start hook seconds after another must not kill a daemon
+	// still building its first graph, or a large repo never finishes one.
+	t.Run("running without state returns true only past the build allowance", func(t *testing.T) {
 		withOwnedDaemonProcess(t, func(string) bool { return true })
 		root := t.TempDir()
 		codemapDir := projectpath.ProjectRuntimeDir(root)
@@ -280,8 +282,11 @@ func TestShouldRestartDaemon(t *testing.T) {
 		}
 		writeOwnedWatchPID(t, root)
 
-		if !shouldRestartDaemon(root, time.Now()) {
-			t.Fatal("expected true when daemon pid exists but state is missing")
+		if shouldRestartDaemon(root, time.Now().Add(3*time.Second)) {
+			t.Fatal("expected false for a young daemon still building")
+		}
+		if !shouldRestartDaemon(root, time.Now().Add(daemonInitialBuildAllowance+time.Minute)) {
+			t.Fatal("expected true when daemon pid exists but state is missing past the allowance")
 		}
 	})
 
