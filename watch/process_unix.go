@@ -3,6 +3,7 @@
 package watch
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"strconv"
@@ -35,13 +36,18 @@ func processAlive(pid int) bool {
 	return proc.Signal(syscall.Signal(0)) == nil
 }
 
-// terminateDaemon stops the daemon on Unix with SIGTERM so it can shut down
-// gracefully. This matches long-standing behavior and does not gate on
-// ownership (unlike Windows, where the kill is destructive): the root argument
-// is accepted only to share a signature with the Windows implementation.
+// terminateDaemon requests graceful shutdown of an owned Unix daemon.
+// Resume it before SIGTERM so a suspended daemon can run its shutdown handler.
 func terminateDaemon(root string, proc *os.Process) error {
 	if daemonOwnershipForPID(root, proc.Pid) != ownershipOwned {
 		return ErrDaemonOwnershipUnknown
 	}
-	return proc.Signal(syscall.SIGTERM)
+	if err := proc.Signal(syscall.SIGCONT); err != nil {
+		return err
+	}
+	err := proc.Signal(syscall.SIGTERM)
+	if errors.Is(err, os.ErrProcessDone) {
+		return nil
+	}
+	return err
 }
