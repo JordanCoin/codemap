@@ -304,10 +304,26 @@ func TestMainWatchHelperProcess(t *testing.T) {
 	if delay, err := time.ParseDuration(os.Getenv("CODEMAP_MAIN_WATCH_HELPER_PUBLISH_AFTER")); err == nil {
 		time.Sleep(delay)
 		if ready := openWatchReadiness(); ready != nil {
-			_ = publishWatchReadiness(ready, nil)
+			var readinessErr error
+			if text := os.Getenv("CODEMAP_MAIN_WATCH_HELPER_ERROR"); text != "" {
+				readinessErr = errors.New(text)
+			}
+			_ = publishWatchReadiness(ready, readinessErr)
 		}
 	}
+	if os.Getenv("CODEMAP_MAIN_WATCH_HELPER_EXIT") == "1" {
+		return
+	}
 	time.Sleep(time.Minute)
+}
+
+// readinessStandIn reports readiness (errText, or ready when empty) through
+// the real inherited pipe, which sh cannot reach on Windows, then exits.
+func readinessStandIn(errText string) *exec.Cmd {
+	cmd := exec.Command(os.Args[0], "-test.run=TestMainWatchHelperProcess", "--")
+	cmd.Env = append(os.Environ(), "CODEMAP_MAIN_WATCH_HELPER=1", "CODEMAP_MAIN_WATCH_HELPER_PUBLISH_AFTER=0s",
+		"CODEMAP_MAIN_WATCH_HELPER_EXIT=1", "CODEMAP_MAIN_WATCH_HELPER_ERROR="+errText)
+	return cmd
 }
 
 func TestRunWatchStartWaitsForChildReadinessFailure(t *testing.T) {
@@ -316,7 +332,7 @@ func TestRunWatchStartWaitsForChildReadinessFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	withMainRuntimeStubs(t, nil, nil, func(string, ...string) *exec.Cmd {
-		return exec.Command("sh", "-c", `printf '{"error":"claim rejected"}' >&"$CODEMAP_WATCH_READINESS_FD"`)
+		return readinessStandIn("claim rejected")
 	}, func() (string, error) { return os.Args[0], nil }, nil, nil, nil)
 
 	err := runWatchSubcommand("start", root)
@@ -593,7 +609,7 @@ func TestRunWatchStartPreservesSetupRoot(t *testing.T) {
 		nil,
 		func(_ string, args ...string) *exec.Cmd {
 			gotArgs = append([]string(nil), args...)
-			return exec.Command("sh", "-c", `printf '{}' >&"$CODEMAP_WATCH_READINESS_FD"`)
+			return readinessStandIn("")
 		},
 		func() (string, error) { return "/tmp/codemap", nil },
 		func(string) bool { return false },
@@ -1155,7 +1171,7 @@ func TestRunWatchModeRunDaemonAndWatchStart(t *testing.T) {
 			func(name string, args ...string) *exec.Cmd {
 				gotName = name
 				gotArgs = append([]string(nil), args...)
-				return exec.Command("sh", "-c", `printf '{}' >&"$CODEMAP_WATCH_READINESS_FD"`)
+				return readinessStandIn("")
 			},
 			func() (string, error) { return "/tmp/codemap-test", nil },
 			func(string) bool { return false },
