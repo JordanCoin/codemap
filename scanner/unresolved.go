@@ -17,10 +17,12 @@ import (
 // ponytail: "project-looking" is a shape test, not a resolution. Relative
 // specifiers and tsconfig-alias matches are certain; a Python absolute import
 // counts only when its first segment is a top-level directory or module (or
-// one under src/). An src-layout package imported through another root, or
+// one under src/), or names a directory under one of the importer's Python
+// import roots. An src-layout package imported through another root, or
 // a TS baseUrl absolute import, is a known false negative: it stays silent
 // rather than flagging clean repos.
 type unresolvedImportTally struct {
+	idx      *fileIndex
 	topLevel map[string]bool
 	seen     map[string]int      // display language -> project-looking imports
 	missing  map[string]int      // display language -> those that resolved to nothing
@@ -37,7 +39,7 @@ type unresolvedImportTally struct {
 var aboveRootLanguages = map[string]bool{"bash": true, "c": true, "cpp": true, "dart": true, "lua": true, "php": true, "ruby": true, "solidity": true}
 
 func newUnresolvedImportTally(idx *fileIndex) *unresolvedImportTally {
-	t := &unresolvedImportTally{topLevel: map[string]bool{}, seen: map[string]int{}, missing: map[string]int{}, examples: map[string][]string{}}
+	t := &unresolvedImportTally{idx: idx, topLevel: map[string]bool{}, seen: map[string]int{}, missing: map[string]int{}, examples: map[string][]string{}}
 	for dir := range idx.byDir {
 		if dir == "" {
 			continue
@@ -74,7 +76,7 @@ func (t *unresolvedImportTally) record(language, from, imp string, aliases map[s
 			t.phpUnresolvedUse = use
 		}
 	}
-	if !t.projectLooking(language, imp, aliases) {
+	if !t.projectLooking(language, from, imp, aliases) {
 		return
 	}
 	display := LangDisplay[language]
@@ -90,14 +92,14 @@ func (t *unresolvedImportTally) record(language, from, imp string, aliases map[s
 	}
 }
 
-func (t *unresolvedImportTally) projectLooking(language, imp string, aliases map[string][]string) bool {
+func (t *unresolvedImportTally) projectLooking(language, from, imp string, aliases map[string][]string) bool {
 	switch {
 	case language == "python":
 		if strings.HasPrefix(imp, ".") {
 			return true
 		}
 		first, _, _ := strings.Cut(imp, ".")
-		return t.topLevel[first]
+		return t.topLevel[first] || t.idx.pythonNamespacePackage(first, pythonFromDir(from))
 	case isJavaScriptLanguage(language):
 		// A stylesheet, image or JSON import is not a dependency edge the
 		// graph would ever hold, so its absence is not a missing edge.

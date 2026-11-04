@@ -1338,8 +1338,42 @@ func resolvePythonModule(module, fromDir string, idx *fileIndex) []string {
 // pythonNamespacePackage reports whether module names a project directory
 // that holds Python code but no __init__.py: it resolves, with no file edge.
 func (idx *fileIndex) pythonNamespacePackage(module, fromDir string) bool {
+	return idx.pythonNamespaceDir(module, fromDir) != ""
+}
+
+// pythonNamespaceDir returns the project directory module names, or "". An
+// absolute module is looked for under each import root in turn (#273).
+func (idx *fileIndex) pythonNamespaceDir(module, fromDir string) string {
 	path, ok := pythonModulePath(module, fromDir)
-	return ok && idx.pythonDir(path)
+	if !ok {
+		return ""
+	}
+	if strings.HasPrefix(module, ".") {
+		if idx.pythonDir(path) {
+			return path
+		}
+		return ""
+	}
+	for _, root := range idx.pythonImportRoots(fromDir) {
+		if candidate := filepath.Join(root, path); idx.pythonDir(candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+// pythonImportRoots lists where an absolute import from fromDir can start:
+// the repo root, src/, then the importing script's directory and each one
+// above it. A directory holding __init__.py is a package, not on sys.path
+// (see importableFiles), so it is skipped.
+func (idx *fileIndex) pythonImportRoots(fromDir string) []string {
+	roots := []string{"", "src"}
+	for dir := fromDir; dir != "" && dir != "."; dir = filepath.Dir(dir) {
+		if idx.exact(filepath.Join(dir, "__init__.py")) == 0 {
+			roots = append(roots, dir)
+		}
+	}
+	return roots
 }
 
 // pythonDir reports whether path is a project directory with Python code at
@@ -1370,10 +1404,9 @@ type pythonRoot struct {
 }
 
 func (idx *fileIndex) pythonFromRoot(parent, fromDir string) pythonRoot {
-	key := parent
-	if strings.HasPrefix(parent, ".") {
-		key = fromDir + "\x00" + parent
-	}
+	// A namespace package resolves against the importer's directory, so
+	// the key carries it for absolute imports too.
+	key := fromDir + "\x00" + parent
 	if root, ok := idx.pythonRoots[key]; ok {
 		return root
 	}
@@ -1383,8 +1416,8 @@ func (idx *fileIndex) pythonFromRoot(parent, fromDir string) pythonRoot {
 	} else {
 		root.files = resolvePythonModule(parent, fromDir, idx)
 	}
-	if len(root.files) == 0 && idx.pythonNamespacePackage(parent, fromDir) {
-		root.namespace, _ = pythonModulePath(parent, fromDir)
+	if len(root.files) == 0 {
+		root.namespace = idx.pythonNamespaceDir(parent, fromDir)
 	}
 	if idx.pythonRoots == nil {
 		idx.pythonRoots = map[string]pythonRoot{}
