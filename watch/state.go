@@ -376,9 +376,8 @@ func Stop(root string) error {
 	if err != nil {
 		return err
 	}
-	// terminateDaemon is platform-specific: SIGTERM on Unix; on Windows it
-	// verifies the PID belongs to this repo's daemon (guarding against a reused
-	// stale PID) before killing, returning ErrForeignDaemonPID otherwise.
+	// terminateDaemon verifies ownership on both platforms. Unix resumes the
+	// daemon before requesting graceful shutdown; Windows terminates it.
 	if err := terminateDaemon(active.CanonicalRoot, proc); err != nil {
 		// Never remove the pid file on ErrForeignDaemonPID: the PID is alive
 		// and unverified, so clearing it could orphan a real daemon.
