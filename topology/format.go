@@ -8,10 +8,12 @@ import (
 	"strings"
 )
 
+const noModulesHint = "No modules found: topology reads multi-module manifests (Gradle, Maven, sbt, SwiftPM, Python). For a single-module project use 'codemap --deps'.\n"
+
 func FormatGraph(graph *Graph, ecosystem string) string {
 	graph = FilterGraph(graph, ecosystem)
 	if graph == nil {
-		return "PROJECT TOPOLOGY\nCoverage: unavailable\nModules: 0\n"
+		return "PROJECT TOPOLOGY\nCoverage: unavailable\nModules: 0\n" + noModulesHint
 	}
 
 	var builder strings.Builder
@@ -21,6 +23,9 @@ func FormatGraph(graph *Graph, ecosystem string) string {
 	_, _ = fmt.Fprintf(&builder, "Hubs: %d\n", len(graph.HubNodes()))
 	if len(graph.Coverage.Issues) > 0 {
 		_, _ = fmt.Fprintf(&builder, "Coverage notes: %d\n", len(graph.Coverage.Issues))
+	}
+	if len(graph.Nodes) == 0 {
+		builder.WriteString(noModulesHint)
 	}
 	builder.WriteString("\n")
 

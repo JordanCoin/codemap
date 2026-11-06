@@ -22,6 +22,7 @@ import (
 	"codemap/internal/buildinfo"
 	"codemap/internal/projectpath"
 	"codemap/limits"
+	codemapmcp "codemap/mcp"
 	"codemap/render"
 	"codemap/scanner"
 	"codemap/watch"
@@ -77,6 +78,14 @@ func main() {
 
 	if len(os.Args) >= 2 && (os.Args[1] == "version" || os.Args[1] == "--version" || os.Args[1] == "-version") {
 		fmt.Printf("codemap %s\n", buildinfo.Current())
+		return
+	}
+
+	if len(os.Args) >= 2 && os.Args[1] == "status" {
+		if err := runStatusSubcommand(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 		return
 	}
 
@@ -267,6 +276,8 @@ func main() {
 	watchMode := flag.Bool("watch", false, "Live file watcher daemon (experimental)")
 	stdinMode := flag.Bool("stdin", false, "Read file manifest from stdin (use with --deps)")
 	importersMode := flag.String("importers", "", "Check file impact: who imports it, is it a hub?")
+	hubsMode := flag.Bool("hubs", false, "List hub files (3+ importers)")
+	fileMode := flag.String("file", "", "Show imports, importers, and hub status for one file")
 	topologyMode := flag.Bool("topology", false, "Show project/module dependency topology")
 	moduleMode := flag.String("module", "", "Show context for one exact module ID or unique name")
 	moduleFileMode := flag.String("module-file", "", "Show context for the module owning a repository-relative file")
@@ -275,6 +286,9 @@ func main() {
 	flag.BoolVar(helpMode, "h", false, "Show help (shorthand)")
 	// Short flag aliases
 	flag.IntVar(depthLimit, "d", 0, "Limit tree depth (shorthand)")
+	flag.Usage = func() {
+		fmt.Fprintln(flag.CommandLine.Output(), "Run 'codemap --help' for usage.")
+	}
 	flag.Parse()
 	refExplicit := false
 	flag.Visit(func(f *flag.Flag) {
@@ -305,6 +319,8 @@ func main() {
 		fmt.Println("  --exclude <patterns> Exclude paths matching patterns (e.g., '.xcassets,Fonts')")
 		fmt.Println("  --stdin             Read JSON file manifest from stdin (use with --deps)")
 		fmt.Println("  --importers <file>  Check file impact (who imports it, hub status)")
+		fmt.Println("  --hubs              List hub files (3+ importers)")
+		fmt.Println("  --file <file>       Imports, importers, and hub status for one file")
 		fmt.Println("  --json              Output machine-readable JSON")
 		fmt.Println("  --debug             Show scanner and path diagnostics")
 		fmt.Println("  --watch             Run the live file watcher daemon")
@@ -347,7 +363,7 @@ func main() {
 		fmt.Println("  codemap handoff [path]          # Build handoff artifact for agent switching")
 		fmt.Println("  codemap blast-radius [path]     # Compact bounded blast-radius bundle")
 		fmt.Println("  codemap collide                 # Rank open PRs by shared-file merge-order hazard")
-		fmt.Println("  codemap find <query>            # Rank files by path and symbol match, with importer counts")
+		fmt.Println("  codemap find <query>            # Where is X defined: rank by path, symbol names, then body text")
 		fmt.Println()
 		fmt.Println("Project config:")
 		fmt.Println("  codemap config init             # Create .codemap/config.json (auto-detects extensions)")
@@ -367,6 +383,7 @@ func main() {
 		fmt.Println("  codemap context                 # Print machine-readable project context JSON")
 		fmt.Println("  codemap serve                   # Serve project intelligence over HTTP")
 		fmt.Println("  codemap version                 # Show build version")
+		fmt.Println("  codemap status                  # Version, project root, config, watch daemon")
 		fmt.Println()
 		fmt.Println("Recommended onboarding:")
 		fmt.Println("  codemap setup                   # Configure project and agent hooks")
@@ -374,12 +391,16 @@ func main() {
 		os.Exit(0)
 	}
 
-	root, importer, err := resolveImportersInvocation(flag.Arg(0), *importersMode, projectRootExplicit)
+	fileTarget := importersMode
+	if *fileTarget == "" {
+		fileTarget = fileMode
+	}
+	root, importer, err := resolveImportersInvocation(flag.Arg(0), *fileTarget, projectRootExplicit)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(2)
 	}
-	*importersMode = importer
+	*fileTarget = importer
 	if root == "" {
 		root = "."
 	}
@@ -480,6 +501,18 @@ func main() {
 	// Importers mode - check file impact
 	if *importersMode != "" {
 		runImportersMode(absRoot, *importersMode, *jsonMode, filters)
+		return
+	}
+	if *hubsMode || *fileMode != "" {
+		text, err := codemapmcp.HubsText(context.Background(), absRoot, filters)
+		if *fileMode != "" {
+			text, err = codemapmcp.FileContextText(context.Background(), absRoot, *fileMode, filters)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error building file graph: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Print(text)
 		return
 	}
 
@@ -646,6 +679,17 @@ func applyGlobalRootOptions(args []string) ([]string, bool, error) {
 }
 
 func resolveImportersInvocation(root, importer string, projectRootExplicit bool) (string, string, error) {
+	// A relative file names a path from the working directory, so from a
+	// subdirectory the project is still the enclosing repository.
+	if root == "" && !projectRootExplicit && importer != "" && !filepath.IsAbs(importer) {
+		if abs, err := filepath.Abs(importer); err == nil {
+			if _, err := os.Stat(abs); err == nil {
+				if inferredRoot, file, err := resolveImportersInvocation("", abs, false); err == nil {
+					return inferredRoot, file, nil
+				}
+			}
+		}
+	}
 	if root != "" || projectRootExplicit || importer == "" || !filepath.IsAbs(importer) {
 		// Canonicalize the importer so the relative path matches the
 		// canonicalized project root (e.g. macOS /tmp -> /private/tmp).
@@ -865,6 +909,31 @@ func buildImportersReport(root, file string, filters scanner.Filters) (scanner.I
 		return scanner.ImportersReport{}, err
 	}
 	return buildImportersReportFromGraph(root, file, fg)
+}
+
+// runStatusSubcommand is the CLI side of the MCP status tool.
+func runStatusSubcommand() error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	root, found, err := cmd.ResolveNearestGitRoot(cwd)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("codemap %s\n", buildinfo.Current())
+	if !found {
+		fmt.Printf("Project root: %s (no enclosing repository)\n", cwd)
+		return nil
+	}
+	fmt.Printf("Project root: %s\n", root)
+	configPath := config.ConfigPath(root)
+	if _, err := os.Stat(configPath); err == nil {
+		fmt.Printf("Config: %s\n", configPath)
+	} else {
+		fmt.Println("Config: none (run 'codemap config init')")
+	}
+	return runWatchSubcommand("status", root)
 }
 
 func runImportersMode(root, file string, jsonMode bool, filters scanner.Filters) {

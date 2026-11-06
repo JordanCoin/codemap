@@ -101,8 +101,58 @@ func TestCodexPostEditAlwaysEmitsOneJSONEnvelope(t *testing.T) {
 	})
 }
 
-// Claude mode is unchanged: a pathless payload prints nothing, a file path
-// prints the plain context with no envelope.
+// TestClaudePostEditEmitsEnvelope is #287: Claude Code only hands a tool
+// hook's stdout to the model as additionalContext, so post-edit must answer
+// with the envelope even without CODEX.
+func TestClaudePostEditEmitsEnvelope(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: hub lookup by native path, tracked in #214")
+	}
+	t.Setenv("CODEX", "")
+	root := t.TempDir()
+	target := filepath.Join(root, "pkg", "types.go")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("package pkg\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeWatchState(t, root, watch.State{
+		UpdatedAt: time.Now(),
+		FileCount: 4,
+		Importers: map[string][]string{"pkg/types.go": {"cmd/a.go", "cmd/b.go", "cmd/c.go"}},
+		Imports: map[string][]string{
+			"cmd/a.go": {"pkg/types.go"},
+			"cmd/b.go": {"pkg/types.go"},
+			"cmd/c.go": {"pkg/types.go"},
+		},
+	})
+	payload, _ := json.Marshal(map[string]any{
+		"tool_name":  "Edit",
+		"tool_input": map[string]any{"file_path": target},
+	})
+	for _, hook := range []struct{ name, event, want string }{
+		{"post-edit", "PostToolUse", "After editing: pkg/types.go still fans out to 3 importers."},
+		{"pre-edit", "PreToolUse", "pkg/types.go"},
+	} {
+		var hookErr error
+		var stdout string
+		withStdinInput(t, string(payload), func() {
+			stdout = captureOutput(func() { hookErr = RunHook(hook.name, root) })
+		})
+		if hookErr != nil {
+			t.Fatalf("RunHook(%s) = %v", hook.name, hookErr)
+		}
+		envelope := decodeSingleHookEnvelope(t, stdout)
+		specific, _ := envelope["hookSpecificOutput"].(map[string]any)
+		context, _ := specific["additionalContext"].(string)
+		if specific["hookEventName"] != hook.event || !strings.Contains(context, hook.want) {
+			t.Fatalf("%s envelope lacks context %q: %v", hook.name, hook.want, envelope)
+		}
+	}
+}
+
+// With nothing to say, Claude-mode post-edit prints nothing at all.
 func TestClaudePostEditKeepsPlainOutput(t *testing.T) {
 	t.Setenv("CODEX", "")
 	root := t.TempDir()

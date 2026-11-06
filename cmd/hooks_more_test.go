@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1000,6 +1001,39 @@ func TestDaemonCommandHelpersAndMultiRepoShellout(t *testing.T) {
 		}
 	})
 
+	t.Run("multi repo start stays under the total cap", func(t *testing.T) {
+		root := t.TempDir()
+		repos := []string{"svc-a", "svc-b", "svc-c", "svc-d", "svc-e", "svc-f"}
+		for _, repo := range repos {
+			if err := os.MkdirAll(filepath.Join(root, repo, ".git"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		withHookRuntimeStubs(
+			t,
+			func() (string, error) { return "/tmp/codemap-hook", nil },
+			func(name string, args ...string) *exec.Cmd {
+				return exec.Command("sh", "-c", "yes 'src/some/file.go' | head -c 20000")
+			},
+			nil,
+			nil,
+		)
+		for _, capBytes := range []int{50, 3000, limits.MaxHookOutputBytes} {
+			t.Setenv("CODEMAP_HOOK_OUTPUT_CAP", strconv.Itoa(capBytes))
+			out := captureOutput(func() {
+				if err := hookSessionStartMultiRepo(root, repos); err != nil {
+					t.Fatalf("hookSessionStartMultiRepo() error: %v", err)
+				}
+			})
+			if len(out) > capBytes {
+				t.Fatalf("cap %d: output is %d bytes", capBytes, len(out))
+			}
+			if capBytes == limits.MaxHookOutputBytes && !strings.Contains(out, "more repos (output budget reached)") {
+				t.Fatalf("missing budget notice:\n%s", out)
+			}
+		}
+	})
+
 	t.Run("multi repo start emits setup hints for child repos needing config", func(t *testing.T) {
 		root := t.TempDir()
 		for _, repo := range []string{"svc-a", "svc-b"} {
@@ -1116,4 +1150,65 @@ func TestAutomaticLinkedWorktreeUsesLocalHookState(t *testing.T) {
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("linked session lease entries = %d, err = %v", len(entries), err)
 	}
+}
+
+func TestFitSessionStartStaysUnderHookCap(t *testing.T) {
+	const capBytes = limits.MaxHookOutputBytes
+	header := "📍 Project Context:\n\n"
+	trailer := "⚠️  High-impact files (hubs):\nNext codemap: codemap --deps\n"
+	// Each extra level of depth multiplies the tree by ten, like a wide repo.
+	synthetic := func(lineLen int) func(int) string {
+		return func(depth int) string {
+			n := 1
+			for i := 0; i < depth; i++ {
+				n *= 10
+			}
+			return strings.Repeat(strings.Repeat("x", lineLen-1)+"\n", n)
+		}
+	}
+
+	t.Run("small tree is untouched", func(t *testing.T) {
+		got := fitSessionStart(header, trailer, 2, limits.MaxStructureOutputBytes, capBytes, synthetic(20))
+		if want := header + synthetic(20)(2) + trailer; got != want {
+			t.Fatalf("small output changed:\n%s", got)
+		}
+	})
+
+	for name, lineLen := range map[string]int{"depth reduced": 50, "depth 1 still too big": 2000} {
+		t.Run(name, func(t *testing.T) {
+			got := fitSessionStart(header, trailer, 4, limits.MaxStructureOutputBytes, capBytes, synthetic(lineLen))
+			if len(got) > capBytes {
+				t.Fatalf("output is %d bytes, cap %d", len(got), capBytes)
+			}
+			if !strings.HasPrefix(got, header) || !strings.HasSuffix(got, trailer) {
+				t.Fatalf("header or trailer lost:\n%s", got)
+			}
+			if !strings.Contains(got, "tree limited to depth") {
+				t.Fatalf("missing depth notice:\n%s", got)
+			}
+			tree := strings.TrimSuffix(strings.TrimPrefix(got, header), trailer)
+			for _, line := range strings.Split(tree, "\n") {
+				if strings.HasPrefix(line, "x") && len(line) != lineLen-1 {
+					t.Fatalf("tree cut mid-line: %d-byte line", len(line))
+				}
+			}
+		})
+	}
+
+	t.Run("tiny cap is a hard ceiling", func(t *testing.T) {
+		for _, tiny := range []int{1, 40, 120} {
+			got := fitSessionStart(header, trailer, 4, limits.MaxStructureOutputBytes, tiny, synthetic(50))
+			if len(got) > tiny {
+				t.Fatalf("cap %d: output is %d bytes", tiny, len(got))
+			}
+		}
+	})
+
+	t.Run("oversized trailer is capped", func(t *testing.T) {
+		big := strings.Repeat("diff line\n", 3000)
+		got := fitSessionStart(header, big, 2, limits.MaxStructureOutputBytes, capBytes, synthetic(20))
+		if len(got) > capBytes {
+			t.Fatalf("output is %d bytes, cap %d", len(got), capBytes)
+		}
+	})
 }

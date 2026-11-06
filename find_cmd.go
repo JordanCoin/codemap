@@ -24,9 +24,10 @@ func runFindSubcommand(args []string, launchDir string) int {
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: codemap find [options] <query>")
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "Rank files by how well their path and function names match the query,")
+		fmt.Fprintln(os.Stderr, "Rank files by how well their path and function/type names match the query,")
 		fmt.Fprintln(os.Stderr, "annotated with importer counts so a hit also says how risky it is to edit.")
-		fmt.Fprintln(os.Stderr, "Lexical only: the query must share words with the code it is looking for.")
+		fmt.Fprintln(os.Stderr, "Good for \"where is X defined\". Also scores file contents; hits that matched")
+		fmt.Fprintln(os.Stderr, "only in a body are tagged \"(body)\". For a free-text symptom, grep as well.")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Options:")
 		fs.PrintDefaults()
