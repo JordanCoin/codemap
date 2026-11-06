@@ -3,6 +3,11 @@ package limits
 // Context output budgets for hook and MCP text responses.
 const (
 	MaxContextOutputBytes = 60000 // ~15k tokens, <10% of a 200k context window
+
+	// MaxHookOutputBytes is Claude Code's cap on hook stdout/additionalContext
+	// (10,000 characters); text past it is cut by the host. Bytes overcount
+	// characters, so a byte budget stays under the cap.
+	MaxHookOutputBytes = 10000
 )
 
 // Watch daemon retention limits to keep long-running sessions bounded.

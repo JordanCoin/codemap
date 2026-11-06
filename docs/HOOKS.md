@@ -204,7 +204,7 @@ All fields are optional. When set:
 - `exclude` — hides matching paths from the tree
 - `depth` — overrides the adaptive depth calculation
 - `mode` — optional hook orchestration hint (`auto`, `structured`, `ad-hoc`)
-- `budgets` — optional hook budgets (`session_start_bytes`, `diff_bytes`, `max_hubs`)
+- `budgets` — optional hook budgets (`session_start_bytes`, `diff_bytes`, `max_hubs`). Whatever these say, the whole session-start output is held to 10,000 bytes, Claude Code's hook output cap: the tree drops depth until it fits and says so. Set `CODEMAP_HOOK_OUTPUT_CAP` to change the cap for another host.
 - `routing` — prompt-submit routing hints (keyword `strategy`, `top_k`, subsystem definitions)
   - `subsystems[].instructions` — markdown instructions injected when this subsystem matches (e.g., domain-specific guidance for Claude)
 - `drift` — documentation drift detection
