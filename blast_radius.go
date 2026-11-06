@@ -1468,7 +1468,17 @@ func pluralFiles(n int, noun string) string {
 }
 
 func renderImportersReport(w io.Writer, report scanner.ImportersReport) {
-	if scanner.CountHubImporters(report.Importers) >= scanner.HubThreshold {
+	if report.Package != "" && report.PackageSiblings > 0 && len(report.Importers) > 0 {
+		fmt.Fprintf(w, "📍 File: %s\n", report.File)
+		fmt.Fprintf(w, "   Package %s is imported by %s (Go imports name packages, not files)\n", report.Package, pluralFiles(len(report.Importers), "file"))
+		for i, imp := range report.Importers {
+			if i >= 5 {
+				fmt.Fprintf(w, "   ... and %d more\n", len(report.Importers)-5)
+				break
+			}
+			fmt.Fprintf(w, "   • %s\n", imp)
+		}
+	} else if scanner.CountHubImporters(report.Importers) >= scanner.HubThreshold {
 		fmt.Fprintf(w, "⚠️  HUB FILE: %s\n", report.File)
 		fmt.Fprintf(w, "   Imported by %d files%s - changes have wide impact!\n", len(report.Importers), importersGranularity(report))
 		fmt.Fprintln(w)
@@ -1494,7 +1504,8 @@ func renderImportersReport(w io.Writer, report scanner.ImportersReport) {
 		}
 		// Every non-test file of a hub Go package is a hub, so list the
 		// package once with its file count rather than each file.
-		fmt.Fprintf(w, "   Imports %d hub(s): %s\n", len(report.HubImports), strings.Join(scanner.CollapseGoPackageFiles(report.HubImports), ", "))
+		hubs := scanner.CollapseGoPackageFiles(report.HubImports)
+		fmt.Fprintf(w, "   Imports %d hub(s): %s\n", len(hubs), strings.Join(hubs, ", "))
 	}
 
 	renderCoverage(w, report.CoverageStatus, report.CoverageNotes)
@@ -1554,7 +1565,7 @@ func buildImportersReportFromGraph(root, file string, fg *scanner.FileGraph) (sc
 		Importers:      importers,
 		Imports:        imports,
 		ImporterCount:  len(importers),
-		IsHub:          fg.IsHub(file),
+		IsHub:          fg.IsFileHub(file),
 		NotIndexed:     !fg.Indexed(file),
 		CoverageStatus: string(coverage.EffectiveStatus()),
 		CoverageNotes:  append([]string(nil), coverage.Notes...),

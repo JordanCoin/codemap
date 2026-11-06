@@ -527,12 +527,13 @@ func handleGetStructure(ctx context.Context, req *mcp.CallToolRequest, input Str
 			}
 			return hubs[i] < hubs[j]
 		})
-		for i, hub := range hubs {
+		entries := scanner.CollapseGoPackageHubs(hubs, importers)
+		for i, entry := range entries {
 			if i >= 5 {
-				output += fmt.Sprintf("   ... and %d more hubs\n", len(hubs)-5)
+				output += fmt.Sprintf("   ... and %d more hubs\n", len(entries)-5)
 				break
 			}
-			output += fmt.Sprintf("   %s (%d importers)\n", hub, len(importers[hub]))
+			output += "   " + entry.String() + "\n"
 		}
 	}
 
@@ -973,13 +974,14 @@ func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input Imp
 		return textResult(empty + mcpCoverageText(fg.FileCoverage(file))), structured, nil
 	}
 
-	isHub := scanner.CountHubImporters(importers) >= scanner.HubThreshold
-	hubNote := ""
-	if isHub {
-		hubNote = " ⚠️ HUB FILE"
+	header := fmt.Sprintf("%d files import '%s'%s:", len(importers), file, granularity)
+	if pkg, shared := fg.SharedGoPackage(file); shared {
+		header = fmt.Sprintf("Package %s (of '%s') is imported by %d file(s); Go imports name packages, not files:", pkg, file, len(importers))
+	} else if scanner.CountHubImporters(importers) >= scanner.HubThreshold {
+		header += " ⚠️ HUB FILE"
 	}
 
-	return textResult(fmt.Sprintf("%d files import '%s'%s:%s\n%s%s", len(importers), file, granularity, hubNote, strings.Join(importers, "\n"), mcpCoverageText(fg.FileCoverage(file)))), structured, nil
+	return textResult(header + "\n" + strings.Join(importers, "\n") + mcpCoverageText(fg.FileCoverage(file))), structured, nil
 }
 
 func handleFind(ctx context.Context, req *mcp.CallToolRequest, input FindQueryInput) (*mcp.CallToolResult, any, error) {
@@ -1441,15 +1443,17 @@ func handleGetHubs(ctx context.Context, req *mcp.CallToolRequest, input PathInpu
 		}
 		return hubs[i] < hubs[j]
 	})
+	entries := scanner.CollapseGoPackageHubs(hubs, fg.Importers)
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("=== Hub Files (%d total) ===\n", len(hubs)))
-	sb.WriteString("These files are imported by 3+ other files. Changes here have wide impact.\n\n")
+	sb.WriteString(fmt.Sprintf("=== Hub Files (%d total) ===\n", len(entries)))
+	sb.WriteString("These files are imported by 3+ other files. Changes here have wide impact.\n")
+	sb.WriteString("A Go package is listed once: Go imports name packages, not files.\n\n")
 
-	for _, hub := range hubs {
-		importers := append([]string(nil), fg.Importers[hub]...)
+	for _, entry := range entries {
+		importers := append([]string(nil), fg.Importers[entry.Files[0]]...)
 		sort.Strings(importers)
-		sb.WriteString(fmt.Sprintf("  %s (%d importers)\n", hub, len(importers)))
+		sb.WriteString("  " + entry.String() + "\n")
 		// Show first few importers
 		for i, imp := range importers {
 			if i >= 3 {
@@ -1483,7 +1487,7 @@ func handleGetFileContext(ctx context.Context, req *mcp.CallToolRequest, input I
 	file := normalizeImporterFile(absRoot, input.File)
 	imports := append([]string(nil), fg.Imports[file]...)
 	importers := append([]string(nil), fg.Importers[file]...)
-	isHub := fg.IsHub(file)
+	isHub := fg.IsFileHub(file)
 	connected := fg.ConnectedFiles(file)
 	sort.Strings(imports)
 	sort.Strings(importers)
@@ -1506,6 +1510,8 @@ func handleGetFileContext(ctx context.Context, req *mcp.CallToolRequest, input I
 	if isHub {
 		sb.WriteString(fmt.Sprintf("⚠️  HUB FILE - %d files depend on this\n", len(importers)))
 		sb.WriteString("    Changes here affect many parts of the codebase.\n\n")
+	} else if pkg, shared := fg.SharedGoPackage(file); shared && fg.IsHub(file) {
+		sb.WriteString(fmt.Sprintf("📦 HUB PACKAGE %s - %d files import the package, not necessarily this file\n\n", pkg, len(importers)))
 	}
 
 	// What this file imports

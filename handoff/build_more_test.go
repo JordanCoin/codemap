@@ -3,6 +3,7 @@ package handoff
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -134,6 +135,26 @@ func TestSummarizeHubsFiltersSortsAndCaps(t *testing.T) {
 	}
 	if got := summarizeHubs(nil, 0); len(got) != 0 {
 		t.Fatalf("nil importers = %v, want empty", got)
+	}
+}
+
+// Every file of a Go package carries the package's importers (#285), so the
+// prefix lists the package once instead of one identical row per file.
+func TestSummarizeHubsListsGoPackageOnce(t *testing.T) {
+	pkg := []string{"cmd/a.go", "cmd/b.go", "main.go"}
+	importers := map[string][]string{
+		"scanner/filegraph.go": pkg,
+		"scanner/types.go":     pkg,
+		"scanner/walker.go":    pkg,
+		"web/app.ts":           pkg,
+	}
+	got := summarizeHubs(importers, 0)
+	want := []HubSummary{{Path: "scanner/", Importers: 3, Files: 3}, {Path: "web/app.ts", Importers: 3}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("summarizeHubs = %v, want %v", got, want)
+	}
+	if out := RenderPrefixMarkdown(PrefixSnapshot{Hubs: got}); !strings.Contains(out, "- `scanner/` (package, 3 files, 3 importers)\n") {
+		t.Fatalf("prefix markdown missing the package row:\n%s", out)
 	}
 }
 

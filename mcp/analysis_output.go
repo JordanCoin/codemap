@@ -101,7 +101,7 @@ func newImportersOutput(root, file string, graph *scanner.FileGraph) ImportersOu
 	return ImportersOutput{
 		Kind: kind, Root: root, Mode: "importers", File: file,
 		Importers: boundedImporters, Imports: boundedImports, HubImports: boundedHubs,
-		ImporterCount: len(importers), IsHub: graph.IsHub(file),
+		ImporterCount: len(importers), IsHub: graph.IsFileHub(file),
 		CoverageStatus: string(coverage.EffectiveStatus()), CoverageNotes: nonNilCopy(coverage.Notes),
 		Truncated: omittedCount > 0, OmittedCount: omittedCount,
 	}

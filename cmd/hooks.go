@@ -478,13 +478,17 @@ func hookSessionStart(root string) error {
 	info := getHubInfo(root)
 	if info != nil && len(info.Hubs) > 0 {
 		fmt.Println("⚠️  High-impact files (hubs):")
-		for i, hub := range info.Hubs {
+		entries := scanner.CollapseGoPackageHubs(info.Hubs, info.Importers)
+		for i, entry := range entries {
 			if i >= maxHubs {
-				fmt.Printf("   ... and %d more\n", len(info.Hubs)-maxHubs)
+				fmt.Printf("   ... and %d more\n", len(entries)-maxHubs)
 				break
 			}
-			importers := len(info.Importers[hub])
-			fmt.Printf("   ⚠️  HUB FILE: %s (imported by %s)\n", hub, filesText(importers))
+			if entry.IsPackage() {
+				fmt.Printf("   ⚠️  HUB PACKAGE: %s (%d files, imported by %s)\n", entry.Path, len(entry.Files), filesText(entry.Importers))
+				continue
+			}
+			fmt.Printf("   ⚠️  HUB FILE: %s (imported by %s)\n", entry.Path, filesText(entry.Importers))
 		}
 	} else if shouldSkipHubAnalysis(fileCount, fileCountKnown) {
 		fmt.Printf("ℹ️  Hub analysis skipped for large repo (%d files)\n", fileCount)
@@ -2274,7 +2278,8 @@ func checkFileImportersWithPhase(root, filePath, phase string) error {
 		}
 	}
 	if len(hubImports) > 0 {
-		fmt.Printf("   Imports %d hub(s): %s\n", len(hubImports), strings.Join(scanner.CollapseGoPackageFiles(hubImports), ", "))
+		hubs := scanner.CollapseGoPackageFiles(hubImports)
+		fmt.Printf("   Imports %d hub(s): %s\n", len(hubs), strings.Join(hubs, ", "))
 		fmt.Println()
 	}
 
