@@ -504,9 +504,9 @@ func main() {
 		return
 	}
 	if *hubsMode || *fileMode != "" {
-		text, err := codemapmcp.HubsText(context.Background(), absRoot)
+		text, err := codemapmcp.HubsText(context.Background(), absRoot, filters)
 		if *fileMode != "" {
-			text, err = codemapmcp.FileContextText(context.Background(), absRoot, *fileMode)
+			text, err = codemapmcp.FileContextText(context.Background(), absRoot, *fileMode, filters)
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error building file graph: %v\n", err)

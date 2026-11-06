@@ -64,6 +64,17 @@ func TestHubsAndFileFlagsMatchMCPOutput(t *testing.T) {
 	}
 }
 
+func TestHubsHonoursExcludeFlag(t *testing.T) {
+	repo := makeMainGitRepo(t, "main")
+	hubs, stderr, err := runCodemapIn(t, repo, "--hubs", "--exclude", "a,b")
+	if err != nil {
+		t.Fatalf("--hubs --exclude failed: %v\n%s", err, stderr)
+	}
+	if !strings.Contains(hubs, "No hub files found") {
+		t.Fatalf("--exclude must drop importers below the hub threshold:\n%s", hubs)
+	}
+}
+
 func TestStatusSubcommand(t *testing.T) {
 	repo := makeMainGitRepo(t, "main")
 	stdout, stderr, err := runCodemapIn(t, repo, "status")

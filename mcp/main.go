@@ -1421,7 +1421,7 @@ func handleGetHubs(ctx context.Context, req *mcp.CallToolRequest, input PathInpu
 	if invalid != nil {
 		return invalid, nil, nil
 	}
-	text, err := HubsText(ctx, absRoot)
+	text, err := HubsText(ctx, absRoot, scanner.ConfiguredFilters(absRoot))
 	if err != nil {
 		if cancelled := cancellationResult(ctx, "Hub analysis"); cancelled != nil {
 			return cancelled, nil, nil
@@ -1432,8 +1432,8 @@ func handleGetHubs(ctx context.Context, req *mcp.CallToolRequest, input PathInpu
 }
 
 // HubsText renders the get_hubs report; the CLI --hubs flag prints it too.
-func HubsText(ctx context.Context, absRoot string) (string, error) {
-	fg, err := scanner.BuildFileGraph(ctx, absRoot, scanner.ConfiguredFilters(absRoot))
+func HubsText(ctx context.Context, absRoot string, filters scanner.Filters) (string, error) {
+	fg, err := scanner.BuildFileGraph(ctx, absRoot, filters)
 	if err != nil {
 		return "", err
 	}
@@ -1480,7 +1480,7 @@ func handleGetFileContext(ctx context.Context, req *mcp.CallToolRequest, input I
 	if invalid != nil {
 		return invalid, nil, nil
 	}
-	text, err := FileContextText(ctx, absRoot, input.File)
+	text, err := FileContextText(ctx, absRoot, input.File, scanner.ConfiguredFilters(absRoot))
 	if err != nil {
 		if cancelled := cancellationResult(ctx, "File context analysis"); cancelled != nil {
 			return cancelled, nil, nil
@@ -1492,8 +1492,7 @@ func handleGetFileContext(ctx context.Context, req *mcp.CallToolRequest, input I
 
 // FileContextText renders the get_file_context report; the CLI --file flag
 // prints it too.
-func FileContextText(ctx context.Context, absRoot, file string) (string, error) {
-	filters := scanner.ConfiguredFilters(absRoot)
+func FileContextText(ctx context.Context, absRoot, file string, filters scanner.Filters) (string, error) {
 	fg, err := scanner.BuildFileGraph(ctx, absRoot, filters)
 	if err != nil {
 		return "", err
