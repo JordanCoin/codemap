@@ -340,6 +340,14 @@ func RunHook(hookName, root string) error {
 
 func runHookOutput(hookName string, fn func() error) error {
 	if os.Getenv("CODEX") != "1" {
+		// Claude Code shows a tool hook's plain stdout to the user only; the
+		// model sees it solely as additionalContext in the envelope (#287).
+		switch hookName {
+		case "pre-edit":
+			return emitToolHookContext("PreToolUse", fn)
+		case "post-edit":
+			return emitToolHookContext("PostToolUse", fn)
+		}
 		return fn()
 	}
 	if hookName == "session-stop" {
@@ -366,7 +374,16 @@ func runHookOutput(hookName string, fn func() error) error {
 	default:
 		return fn()
 	}
-	return emitCodexHookContext(event, fn, alwaysEmit)
+	return emitHookContext(event, fn, alwaysEmit)
+}
+
+// emitToolHookContext envelopes a tool hook's output, except for a human
+// running the hook by hand at a terminal. An empty capture stays empty.
+func emitToolHookContext(event string, fn func() error) error {
+	if info, err := os.Stdout.Stat(); err == nil && info.Mode()&os.ModeCharDevice != 0 {
+		return fn()
+	}
+	return emitHookContext(event, fn, false)
 }
 
 func runHookWithoutStdout(fn func() error) error {
@@ -844,16 +861,12 @@ func hookPostEdit(root string) error {
 	return nil
 }
 
-// emitCodexHookContext runs fn with stdout captured and re-emits whatever it
-// printed as one Codex hook JSON envelope. With alwaysEmit, an empty capture
+// emitHookContext runs fn with stdout captured and re-emits whatever it
+// printed as one hook JSON envelope. With alwaysEmit, an empty capture
 // still produces exactly one envelope, the no-op {"continue": true}, which
 // carries no context and is valid under the common hook-output schema;
-// without it, an empty capture stays silent (session-start, prompt-submit,
-// pre-compact and pre-edit keep that behaviour).
-func emitCodexHookContext(event string, fn func() error, alwaysEmit bool) error {
-	if os.Getenv("CODEX") != "1" {
-		return fn()
-	}
+// without it, an empty capture stays silent.
+func emitHookContext(event string, fn func() error, alwaysEmit bool) error {
 	original := os.Stdout
 	reader, writer, err := os.Pipe()
 	if err != nil {
