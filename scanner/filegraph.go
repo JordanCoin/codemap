@@ -1870,9 +1870,9 @@ func CollapseGoPackageFiles(paths []string) []string {
 // HubEntry is one row of a hub list: a file, or a multi-file Go package
 // whose files share one importer set because Go imports name packages.
 type HubEntry struct {
-	Path      string   // the file, or "dir/" for a package
-	Files     []string // the hub files behind this row; more than one means a package
-	Importers int
+	Path      string   `json:"path"`  // the file, or "dir/" for a package
+	Files     []string `json:"files"` // the hub files behind this row; more than one means a package
+	Importers int      `json:"importer_count"`
 }
 
 // IsPackage reports whether the entry stands for a multi-file Go package.

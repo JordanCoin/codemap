@@ -519,15 +519,15 @@ func handleGetStructure(ctx context.Context, req *mcp.CallToolRequest, input Str
 		output += "\nℹ️  Hub analysis skipped for large repo (request get_hubs for explicit analysis)\n"
 	}
 
+	sort.Slice(hubs, func(i, j int) bool {
+		if len(importers[hubs[i]]) != len(importers[hubs[j]]) {
+			return len(importers[hubs[i]]) > len(importers[hubs[j]])
+		}
+		return hubs[i] < hubs[j]
+	})
+	entries := scanner.CollapseGoPackageHubs(hubs, importers)
 	if len(hubs) > 0 {
 		output += "\n⚠️  HUB FILES (high-impact, 3+ dependents):\n"
-		sort.Slice(hubs, func(i, j int) bool {
-			if len(importers[hubs[i]]) != len(importers[hubs[j]]) {
-				return len(importers[hubs[i]]) > len(importers[hubs[j]])
-			}
-			return hubs[i] < hubs[j]
-		})
-		entries := scanner.CollapseGoPackageHubs(hubs, importers)
 		for i, entry := range entries {
 			if i >= 5 {
 				output += fmt.Sprintf("   ... and %d more hubs\n", len(entries)-5)
@@ -537,7 +537,7 @@ func handleGetStructure(ctx context.Context, req *mcp.CallToolRequest, input Str
 		}
 	}
 
-	return textResult(output), newStructureOutput(project, hubs), nil
+	return textResult(output), newStructureOutput(project, hubs, entries), nil
 }
 
 func handleGetDependencies(ctx context.Context, req *mcp.CallToolRequest, input PathInput) (*mcp.CallToolResult, any, error) {
