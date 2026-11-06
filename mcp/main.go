@@ -1421,17 +1421,26 @@ func handleGetHubs(ctx context.Context, req *mcp.CallToolRequest, input PathInpu
 	if invalid != nil {
 		return invalid, nil, nil
 	}
-	fg, err := scanner.BuildFileGraph(ctx, absRoot, scanner.ConfiguredFilters(absRoot))
+	text, err := HubsText(ctx, absRoot)
 	if err != nil {
 		if cancelled := cancellationResult(ctx, "Hub analysis"); cancelled != nil {
 			return cancelled, nil, nil
 		}
 		return errorResult("Failed to build file graph: " + err.Error()), nil, nil
 	}
+	return textResult(text), nil, nil
+}
+
+// HubsText renders the get_hubs report; the CLI --hubs flag prints it too.
+func HubsText(ctx context.Context, absRoot string) (string, error) {
+	fg, err := scanner.BuildFileGraph(ctx, absRoot, scanner.ConfiguredFilters(absRoot))
+	if err != nil {
+		return "", err
+	}
 
 	hubs := fg.HubFiles()
 	if len(hubs) == 0 {
-		return textResult("No hub files found (no files with 3+ importers)." + mcpCoverageText(fg.Coverage)), nil, nil
+		return "No hub files found (no files with 3+ importers)." + mcpCoverageText(fg.Coverage), nil
 	}
 
 	// Sort by importer count
@@ -1460,7 +1469,7 @@ func handleGetHubs(ctx context.Context, req *mcp.CallToolRequest, input PathInpu
 		}
 	}
 
-	return textResult(sb.String() + mcpCoverageText(fg.Coverage)), nil, nil
+	return sb.String() + mcpCoverageText(fg.Coverage), nil
 }
 
 func handleGetFileContext(ctx context.Context, req *mcp.CallToolRequest, input ImportersInput) (*mcp.CallToolResult, any, error) {
@@ -1471,16 +1480,26 @@ func handleGetFileContext(ctx context.Context, req *mcp.CallToolRequest, input I
 	if invalid != nil {
 		return invalid, nil, nil
 	}
-	filters := scanner.ConfiguredFilters(absRoot)
-	fg, err := scanner.BuildFileGraph(ctx, absRoot, filters)
+	text, err := FileContextText(ctx, absRoot, input.File)
 	if err != nil {
 		if cancelled := cancellationResult(ctx, "File context analysis"); cancelled != nil {
 			return cancelled, nil, nil
 		}
 		return errorResult("Failed to build file graph: " + err.Error()), nil, nil
 	}
+	return textResult(text), nil, nil
+}
 
-	file := normalizeImporterFile(absRoot, input.File)
+// FileContextText renders the get_file_context report; the CLI --file flag
+// prints it too.
+func FileContextText(ctx context.Context, absRoot, file string) (string, error) {
+	filters := scanner.ConfiguredFilters(absRoot)
+	fg, err := scanner.BuildFileGraph(ctx, absRoot, filters)
+	if err != nil {
+		return "", err
+	}
+
+	file = normalizeImporterFile(absRoot, file)
 	imports := append([]string(nil), fg.Imports[file]...)
 	importers := append([]string(nil), fg.Importers[file]...)
 	isHub := fg.IsHub(file)
@@ -1498,7 +1517,7 @@ func handleGetFileContext(ctx context.Context, req *mcp.CallToolRequest, input I
 	if len(imports) == 0 && len(importers) == 0 {
 		if why, unindexed := fg.ExplainUnindexed(file, filters); unindexed {
 			sb.WriteString(notIndexedText(file, why, fg))
-			return textResult(sb.String()), nil, nil
+			return sb.String(), nil
 		}
 	}
 
@@ -1534,7 +1553,7 @@ func handleGetFileContext(ctx context.Context, req *mcp.CallToolRequest, input I
 	sb.WriteString(fmt.Sprintf("CONNECTED: %d files in dependency graph\n", len(connected)))
 	sb.WriteString(mcpCoverageText(fg.FileCoverage(file)))
 
-	return textResult(sb.String()), nil, nil
+	return sb.String(), nil
 }
 
 // handleGetWorkingSet returns the current session's working set
