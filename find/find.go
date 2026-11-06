@@ -1,9 +1,9 @@
 // Package find ranks project files against a natural-language query using
-// only what the dependency scanner already extracts: file paths and the
-// function names inside them. It is lexical (BM25 over split identifiers),
-// not semantic; a query has to share vocabulary with the code it wants.
-// Run also scores file contents, so a pasted symptom can reach a file whose
-// names miss it; hits that matched only in a body are tagged "(body)".
+// what the dependency scanner already extracts (file paths and the
+// function/type names inside them) plus the words in each file's body. It is
+// lexical (BM25 over split identifiers), not semantic; a query has to share
+// vocabulary with the code it wants. Hits that matched only in a body are
+// tagged "(body)".
 package find
 
 import (
@@ -57,7 +57,11 @@ func Run(ctx context.Context, root string, filters scanner.Filters, query string
 	if err != nil {
 		return Report{}, err
 	}
-	hits := mergeBody(rankAll(outcome.Analyses, query), bodyHits(ctx, root, outcome.Analyses, query))
+	body, err := bodyHits(ctx, root, outcome.Analyses, query)
+	if err != nil {
+		return Report{}, err
+	}
+	hits := mergeBody(rankAll(outcome.Analyses, query), body)
 	report := Report{Schema: Schema, Query: query, Hits: truncate(hits, limit)}
 	sources := outcome.Sources
 	if fg, graphErr := scanner.BuildFileGraphFromOutcome(ctx, root, outcome, filters); graphErr == nil {
@@ -151,17 +155,17 @@ func truncate(hits []Hit, limit int) []Hit {
 // A file needs two distinct query tokens (one for a one-word query).
 // ponytail: reads every indexed file under 1 MB on each query; add a
 // content index if find on large repos gets slow.
-func bodyHits(ctx context.Context, root string, analyses []scanner.FileAnalysis, query string) []Hit {
+func bodyHits(ctx context.Context, root string, analyses []scanner.FileAnalysis, query string) ([]Hit, error) {
 	queryTokens := unique(tokenize(query))
 	need := min(2, len(queryTokens))
 	if need == 0 {
-		return nil
+		return nil, ctx.Err()
 	}
 	found := make([][]string, len(analyses))
 	df := make(map[string]int)
 	for i, a := range analyses {
-		if ctx.Err() != nil {
-			return nil
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
 		path := a.Path
 		if !filepath.IsAbs(path) {
@@ -198,7 +202,7 @@ func bodyHits(ctx context.Context, root string, analyses []scanner.FileAnalysis,
 		}
 		hits = append(hits, Hit{Path: a.Path, Score: round(score), Matched: []string{bodyTag}})
 	}
-	return hits
+	return hits, nil
 }
 
 // mergeBody adds body scores to name hits and appends body-only files.

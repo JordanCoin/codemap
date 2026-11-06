@@ -92,3 +92,19 @@ func TestRunFallsBackToBodyText(t *testing.T) {
 		t.Fatalf("matched = %q, want Match", got)
 	}
 }
+
+func TestBodyHitsHonorsCancellation(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package a\n// converter values\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	hits, err := bodyHits(ctx, root, []scanner.FileAnalysis{{Path: "a.go"}}, "converter values")
+	if err == nil || len(hits) != 0 {
+		t.Fatalf("cancelled ctx: hits=%+v err=%v, want no hits and an error", hits, err)
+	}
+	if _, err := Run(ctx, root, scanner.Filters{}, "converter values", 5); err == nil {
+		t.Fatal("Run with cancelled ctx returned no error")
+	}
+}
