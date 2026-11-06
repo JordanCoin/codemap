@@ -17,6 +17,7 @@ codemap --deps                  # Dependency flow (imports/functions/hubs)
 codemap --diff                  # Changes vs main branch
 codemap --diff --ref <branch>   # Changes vs specific branch
 codemap --importers <file>      # Who imports this file? Is it a hub?
+codemap find "<query>"          # Where is X defined (path + symbol names); grep bodies for bug symptoms
 codemap handoff .               # Build + save handoff artifact
 codemap handoff --latest .      # Read latest saved handoff
 codemap handoff --json .        # Machine-readable handoff payload

@@ -28,7 +28,8 @@ description: Systematic codebase exploration using codemap's analysis tools. Use
 
 | Question | Command |
 |----------|---------|
-| Where is X defined? | `codemap --deps .` → find the file |
+| Where is X defined? | `codemap find "<words from its name>"` |
+| Where is this bug? | grep the symptom's words in file bodies; `codemap find` matches names, not text |
 | Who uses X? | `codemap --importers <file>` |
 | What's the architecture? | `codemap --deps .` → look at hub files |
 | What changed recently? | `codemap --diff` |

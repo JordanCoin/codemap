@@ -49,7 +49,7 @@ codemap
 Coverage: complete
 ```
 
-**Where is the code that does X.** `codemap find "hub importers"`
+**Where is X defined.** `codemap find "hub importers"` ranks files by path and function/type names. For a bug symptom, grep the body text too.
 
 ```
 main.go
@@ -214,7 +214,7 @@ codemap --deps .       # dependency flow
 codemap --importers f  # who imports a file
 codemap blast-radius   # review bundle: diff + deps + importers
 codemap collide        # rank open PRs by shared-file merge-order hazard
-codemap find "<query>" # rank files by path and symbol match, with importer counts
+codemap find "<query>" # where is X defined: rank files by path and symbol names, with importer counts
 codemap handoff .      # save layered handoff for cross-agent continuation
 codemap context        # machine-readable project context JSON
 codemap doctor         # validate agent integrations
