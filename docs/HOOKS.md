@@ -250,6 +250,9 @@ myproject
 ```
 
 ### Before/After Editing a File
+
+Claude Code passes tool-hook stdout to the model only as JSON, so `pre-edit` and `post-edit` print this text inside a `{"hookSpecificOutput":{"hookEventName":"PreToolUse"|"PostToolUse","additionalContext":"..."}}` envelope, and print nothing when there is nothing to say. Run by hand at a terminal, they print the plain text.
+
 ```
 📍 Before editing: cmd/hooks.go
    Imported by 1 file(s): main.go
