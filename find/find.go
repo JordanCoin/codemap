@@ -1,7 +1,9 @@
 // Package find ranks project files against a natural-language query using
-// only what the dependency scanner already extracts: file paths and the
-// function names inside them. It is lexical (BM25 over split identifiers),
-// not semantic; a query has to share vocabulary with the code it wants.
+// what the dependency scanner already extracts (file paths and the
+// function/type names inside them) plus the words in each file's body. It is
+// lexical (BM25 over split identifiers), not semantic; a query has to share
+// vocabulary with the code it wants. Hits that matched only in a body are
+// tagged "(body)".
 package find
 
 import (
@@ -9,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"unicode"
@@ -26,7 +30,9 @@ const (
 	// exactBonus is added once per query word that is a whole word of a
 	// symbol or the file basename, so "theme" pulls loadTheme ahead of a file
 	// whose path merely shares a directory token.
-	exactBonus = 1.0
+	exactBonus  = 1.0
+	bodyTag     = "(body)"
+	maxBodySize = 1 << 20
 )
 
 type Hit struct {
@@ -51,7 +57,12 @@ func Run(ctx context.Context, root string, filters scanner.Filters, query string
 	if err != nil {
 		return Report{}, err
 	}
-	report := Report{Schema: Schema, Query: query, Hits: Rank(outcome.Analyses, query, limit)}
+	body, err := bodyHits(ctx, root, outcome.Analyses, query)
+	if err != nil {
+		return Report{}, err
+	}
+	hits := mergeBody(rankAll(outcome.Analyses, query), body)
+	report := Report{Schema: Schema, Query: query, Hits: truncate(hits, limit)}
 	sources := outcome.Sources
 	if fg, graphErr := scanner.BuildFileGraphFromOutcome(ctx, root, outcome, filters); graphErr == nil {
 		sources = fg.Coverage.Sources
@@ -68,9 +79,10 @@ func Run(ctx context.Context, root string, filters scanner.Filters, query string
 // Rank scores every analysis against query and returns the top limit hits
 // with a positive score. Importer fields are left zero; Run fills them.
 func Rank(analyses []scanner.FileAnalysis, query string, limit int) []Hit {
-	if limit <= 0 {
-		limit = DefaultLimit
-	}
+	return truncate(rankAll(analyses, query), limit)
+}
+
+func rankAll(analyses []scanner.FileAnalysis, query string) []Hit {
 	queryTokens := tokenize(query)
 	if len(queryTokens) == 0 {
 		return nil
@@ -115,15 +127,98 @@ func Rank(analyses []scanner.FileAnalysis, query string, limit int) []Hit {
 		}
 		hits = append(hits, Hit{Path: a.Path, Score: round(score), Matched: matched})
 	}
+	sortHits(hits)
+	return hits
+}
+
+func sortHits(hits []Hit) {
 	sort.SliceStable(hits, func(i, j int) bool {
 		if hits[i].Score != hits[j].Score {
 			return hits[i].Score > hits[j].Score
 		}
 		return hits[i].Path < hits[j].Path
 	})
-	if len(hits) > limit {
-		hits = hits[:limit]
+}
+
+func truncate(hits []Hit, limit int) []Hit {
+	if limit <= 0 {
+		limit = DefaultLimit
 	}
+	if len(hits) > limit {
+		return hits[:limit]
+	}
+	return hits
+}
+
+// bodyHits scores the indexed source files by which query tokens their
+// contents contain, each token weighted by its rarity across those files.
+// A file needs two distinct query tokens (one for a one-word query).
+// ponytail: reads every indexed file under 1 MB on each query; add a
+// content index if find on large repos gets slow.
+func bodyHits(ctx context.Context, root string, analyses []scanner.FileAnalysis, query string) ([]Hit, error) {
+	queryTokens := unique(tokenize(query))
+	need := min(2, len(queryTokens))
+	if need == 0 {
+		return nil, ctx.Err()
+	}
+	found := make([][]string, len(analyses))
+	df := make(map[string]int)
+	for i, a := range analyses {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		path := a.Path
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(root, path)
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.Size() > maxBodySize {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		words := make(map[string]struct{})
+		for _, w := range tokenize(string(data)) {
+			words[w] = struct{}{}
+		}
+		for _, q := range queryTokens {
+			if _, ok := words[q]; ok {
+				found[i] = append(found[i], q)
+				df[q]++
+			}
+		}
+	}
+	n := float64(len(analyses))
+	var hits []Hit
+	for i, a := range analyses {
+		if len(found[i]) < need {
+			continue
+		}
+		score := 0.0
+		for _, q := range found[i] {
+			score += math.Log((n-float64(df[q])+0.5)/(float64(df[q])+0.5) + 1)
+		}
+		hits = append(hits, Hit{Path: a.Path, Score: round(score), Matched: []string{bodyTag}})
+	}
+	return hits, nil
+}
+
+// mergeBody adds body scores to name hits and appends body-only files.
+func mergeBody(hits, body []Hit) []Hit {
+	at := make(map[string]int, len(hits))
+	for i, h := range hits {
+		at[h.Path] = i
+	}
+	for _, b := range body {
+		if i, ok := at[b.Path]; ok {
+			hits[i].Score = round(hits[i].Score + b.Score)
+			continue
+		}
+		hits = append(hits, b)
+	}
+	sortHits(hits)
 	return hits
 }
 

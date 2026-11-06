@@ -274,7 +274,7 @@ func NewServer(options RuntimeOptions) *mcp.Server {
 	// Tool: find - Rank files against a query using paths and function names
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "find",
-		Description: "Rank project files by how well their path and function names match a query (lexical BM25 over split identifiers). Each hit reports importer count and hub status, so it says where the code is and how risky it is to edit. Use before grep when you know what the code does but not where it lives.",
+		Description: "Rank project files by how well their path and function/type names match a query (lexical BM25 over split identifiers). Good for \"where is X defined\" when the query uses words from the code's names. Each hit reports importer count and hub status, so it also says how risky the file is to edit. Also scores file contents; hits that matched only in a body are tagged \"(body)\". For a free-text symptom, grep the body text too.",
 	}, handleFind)
 
 	// Tool: status - Verify MCP connection

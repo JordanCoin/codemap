@@ -31,7 +31,8 @@ languages: ["go", "typescript", "python", "java", "rust", "ruby", "swift"]
 
 | Question | Command |
 |----------|---------|
-| Where is X defined? | `codemap --deps .` → find the file |
+| Where is X defined? | `codemap find "<words from its name>"` |
+| Where is this bug? | `codemap find "<symptom words>"` scores names first, then body text (`(body)` hits); grep for the exact symptom text |
 | Who uses X? | `codemap --importers <file>` |
 | What's the architecture? | `codemap --deps .` → look at hub files |
 | What changed recently? | `codemap --diff` |
