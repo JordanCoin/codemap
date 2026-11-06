@@ -404,18 +404,6 @@ func hookSessionStart(root string) error {
 
 	ensureSessionDaemon(root, hookSessionIDFromStdin())
 
-	fmt.Println("📍 Project Context:")
-	fmt.Println()
-
-	// IMPORTANT: Hook output goes directly into Claude's "Messages" context, not system prompt.
-	// This means hook output competes with conversation history for the ~200k token limit.
-	// A 1.3MB output (like a full tree of a 10k file repo) = ~500k tokens = instant context overflow.
-	//
-	// We enforce two limits:
-	// 1. Adaptive depth: larger repos get shallower trees (depth 2-4 based on file count)
-	// 2. Hard cap: 60KB max output (~15k tokens, <10% of context window)
-	//
-	// Future: Consider structured output that Claude Code can format/truncate intelligently.
 	fileCount := 0
 	fileCountKnown := false
 	state := watch.ReadState(root)
@@ -428,19 +416,69 @@ func hookSessionStart(root string) error {
 	structureBudget := projCfg.SessionStartOutputBytes()
 	maxHubs := projCfg.HubDisplayLimit()
 
-	showConfigSetupHint(root)
-	if line := integrationDriftLine(hostCodemapMCPEntries(root, detectAgentID())); line != "" {
-		fmt.Println(line)
+	header, err := captureStdout(func() error {
+		fmt.Println("📍 Project Context:")
 		fmt.Println()
+		showConfigSetupHint(root)
+		if line := integrationDriftLine(hostCodemapMCPEntries(root, detectAgentID())); line != "" {
+			fmt.Println(line)
+			fmt.Println()
+		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
-	exe, err := os.Executable()
-	if err == nil {
-		depth := limits.AdaptiveDepth(fileCount)
-		if projCfg.Depth > 0 {
-			depth = projCfg.Depth
+	trailer, err := captureStdout(func() error {
+		// Show hub files (from daemon if running, otherwise fresh scan)
+		info := getHubInfo(root)
+		if info != nil && len(info.Hubs) > 0 {
+			fmt.Println("⚠️  High-impact files (hubs):")
+			for i, hub := range info.Hubs {
+				if i >= maxHubs {
+					fmt.Printf("   ... and %d more\n", len(info.Hubs)-maxHubs)
+					break
+				}
+				importers := len(info.Importers[hub])
+				fmt.Printf("   ⚠️  HUB FILE: %s (imported by %s)\n", hub, filesText(importers))
+			}
+		} else if shouldSkipHubAnalysis(fileCount, fileCountKnown) {
+			fmt.Printf("ℹ️  Hub analysis skipped for large repo (%d files)\n", fileCount)
 		}
 
+		currentBranch, branchKnown := gitCurrentBranch(root)
+		recentHandoff := getRecentHandoff(root)
+		recentHandoffMatchesBranch := handoffMatchesBranch(recentHandoff, currentBranch, branchKnown)
+		hasRecentHandoffChanges := recentHandoffMatchesBranch && handoffHasChangedFiles(recentHandoff)
+
+		// Show diff vs main only when we do not already have a recent structured handoff.
+		if !hasRecentHandoffChanges {
+			showDiffVsMain(root, fileCount, fileCountKnown, projCfg)
+		}
+
+		// Show last session context only when recent handoff is unavailable/incomplete.
+		if len(lastSessionEvents) > 0 && !hasRecentHandoffChanges {
+			showLastSessionContext(root, lastSessionEvents)
+		}
+		if recentHandoffMatchesBranch {
+			showRecentHandoffSummary(recentHandoff)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	depth := limits.AdaptiveDepth(fileCount)
+	if projCfg.Depth > 0 {
+		depth = projCfg.Depth
+	}
+	exe, exeErr := os.Executable()
+	renderTree := func(depth int) string {
+		if exeErr != nil {
+			return ""
+		}
 		args := projectpath.PrependSetupRootArgs("--depth", strconv.Itoa(depth))
 		if len(projCfg.Only) > 0 {
 			args = append(args, "--only", strings.Join(projCfg.Only, ","))
@@ -450,65 +488,65 @@ func hookSessionStart(root string) error {
 		}
 		args = append(args, root)
 		cmd := exec.Command(exe, args...)
-
-		// Capture output to enforce size limit
 		var buf strings.Builder
 		cmd.Stdout = &buf
 		cmd.Stderr = os.Stderr
 		cmd.Run()
-
-		output := buf.String()
-		if len(output) > structureBudget {
-			repoSummary := "repo size unknown"
-			if fileCountKnown {
-				repoSummary = fmt.Sprintf("repo has %d files", fileCount)
-			}
-			output = limits.TruncateAtLineBoundary(
-				output,
-				structureBudget,
-				"\n\n... (truncated - "+repoSummary+", use `codemap .` for full tree)\n",
-			)
-		}
-
-		fmt.Print(output)
-		fmt.Println()
+		return buf.String() + "\n"
 	}
 
-	// Show hub files (from daemon if running, otherwise fresh scan)
-	info := getHubInfo(root)
-	if info != nil && len(info.Hubs) > 0 {
-		fmt.Println("⚠️  High-impact files (hubs):")
-		for i, hub := range info.Hubs {
-			if i >= maxHubs {
-				fmt.Printf("   ... and %d more\n", len(info.Hubs)-maxHubs)
-				break
-			}
-			importers := len(info.Importers[hub])
-			fmt.Printf("   ⚠️  HUB FILE: %s (imported by %s)\n", hub, filesText(importers))
-		}
-	} else if shouldSkipHubAnalysis(fileCount, fileCountKnown) {
-		fmt.Printf("ℹ️  Hub analysis skipped for large repo (%d files)\n", fileCount)
-	}
-
-	currentBranch, branchKnown := gitCurrentBranch(root)
-	recentHandoff := getRecentHandoff(root)
-	recentHandoffMatchesBranch := handoffMatchesBranch(recentHandoff, currentBranch, branchKnown)
-	hasRecentHandoffChanges := recentHandoffMatchesBranch && handoffHasChangedFiles(recentHandoff)
-
-	// Show diff vs main only when we do not already have a recent structured handoff.
-	if !hasRecentHandoffChanges {
-		showDiffVsMain(root, fileCount, fileCountKnown, projCfg)
-	}
-
-	// Show last session context only when recent handoff is unavailable/incomplete.
-	if len(lastSessionEvents) > 0 && !hasRecentHandoffChanges {
-		showLastSessionContext(root, lastSessionEvents)
-	}
-	if recentHandoffMatchesBranch {
-		showRecentHandoffSummary(recentHandoff)
-	}
+	fmt.Print(fitSessionStart(header, trailer, depth, structureBudget, sessionStartOutputCap(), renderTree))
 
 	return nil
+}
+
+// sessionStartOutputCap is the whole session-start budget; CODEMAP_HOOK_OUTPUT_CAP
+// overrides it for hosts with a different limit.
+func sessionStartOutputCap() int {
+	if n, err := strconv.Atoi(os.Getenv("CODEMAP_HOOK_OUTPUT_CAP")); err == nil && n > 0 {
+		return n
+	}
+	return limits.MaxHookOutputBytes
+}
+
+// fitSessionStart assembles header, tree and trailer within maxBytes. The
+// trailer (hubs, diff, handoff) is reserved first, capped at half the budget;
+// the tree then drops depth until it fits, and is cut at a line as a last resort.
+func fitSessionStart(header, trailer string, depth, structureBudget, maxBytes int, renderTree func(depth int) string) string {
+	trailer = cutAtLine(trailer, maxBytes/2, "... (truncated to fit the hook output cap)\n")
+	treeBudget := maxBytes - len(header) - len(trailer)
+	if structureBudget < treeBudget {
+		treeBudget = structureBudget
+	}
+	notice := func(depth int) string {
+		return fmt.Sprintf("(tree limited to depth %d to fit the %d-char hook cap; run `codemap .` for the full tree)\n\n", depth, maxBytes)
+	}
+
+	tree := renderTree(depth)
+	if len(tree) <= treeBudget {
+		return header + tree + trailer
+	}
+	for depth > 1 {
+		depth--
+		tree = renderTree(depth)
+		if len(tree)+len(notice(depth)) <= treeBudget {
+			return header + tree + notice(depth) + trailer
+		}
+	}
+	return header + cutAtLine(tree, treeBudget-len(notice(depth)), "") + notice(depth) + trailer
+}
+
+// cutAtLine returns s if it fits in maxBytes, otherwise its longest prefix
+// of whole lines that leaves room for suffix, followed by suffix.
+func cutAtLine(s string, maxBytes int, suffix string) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	limit := maxBytes - len(suffix)
+	if limit <= 0 {
+		return ""
+	}
+	return s[:strings.LastIndex(s[:limit], "\n")+1] + suffix
 }
 
 // showDiffVsMain shows files changed on this branch vs main.
@@ -854,10 +892,30 @@ func emitCodexHookContext(event string, fn func() error, alwaysEmit bool) error 
 	if os.Getenv("CODEX") != "1" {
 		return fn()
 	}
+	output, err := captureStdout(fn)
+	if err != nil {
+		return err
+	}
+	if len(strings.TrimSpace(output)) == 0 {
+		if !alwaysEmit {
+			return nil
+		}
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{"continue": true})
+	}
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{
+		"hookSpecificOutput": map[string]any{
+			"hookEventName":     event,
+			"additionalContext": output,
+		},
+	})
+}
+
+// captureStdout runs fn with os.Stdout redirected and returns what it printed.
+func captureStdout(fn func() error) (string, error) {
 	original := os.Stdout
 	reader, writer, err := os.Pipe()
 	if err != nil {
-		return err
+		return "", err
 	}
 	type readResult struct {
 		output []byte
@@ -875,26 +933,12 @@ func emitCodexHookContext(event string, fn func() error, alwaysEmit bool) error 
 	result := <-readDone
 	_ = reader.Close()
 	if callErr != nil {
-		return callErr
+		return "", callErr
 	}
 	if closeErr != nil {
-		return closeErr
+		return "", closeErr
 	}
-	if result.err != nil {
-		return result.err
-	}
-	if len(strings.TrimSpace(string(result.output))) == 0 {
-		if !alwaysEmit {
-			return nil
-		}
-		return json.NewEncoder(original).Encode(map[string]any{"continue": true})
-	}
-	return json.NewEncoder(original).Encode(map[string]any{
-		"hookSpecificOutput": map[string]any{
-			"hookEventName":     event,
-			"additionalContext": string(result.output),
-		},
-	})
+	return string(result.output), result.err
 }
 
 // hookPromptSubmit analyzes user prompt with code intelligence and shows context
@@ -2373,7 +2417,7 @@ func findChildRepos(root string) []string {
 }
 
 // hookSessionStartMultiRepo handles meta-repos containing multiple child repos.
-// Output is capped to MaxContextOutputBytes to prevent context blowup.
+// Output is capped to sessionStartOutputCap to fit the host hook limit.
 func hookSessionStartMultiRepo(root string, childRepos []string) error {
 	fmt.Println("📍 Multi-Repo Project Context:")
 	fmt.Printf("   %d repositories in %s\n", len(childRepos), filepath.Base(root))
@@ -2385,7 +2429,7 @@ func hookSessionStartMultiRepo(root string, childRepos []string) error {
 	}
 
 	// Budget: divide total budget across repos, with a per-repo cap
-	totalBudget := limits.MaxContextOutputBytes
+	totalBudget := sessionStartOutputCap()
 	perRepoBudget := totalBudget / len(childRepos)
 	if perRepoBudget < 2000 {
 		perRepoBudget = 2000 // minimum useful output per repo

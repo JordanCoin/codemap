@@ -1117,3 +1117,55 @@ func TestAutomaticLinkedWorktreeUsesLocalHookState(t *testing.T) {
 		t.Fatalf("linked session lease entries = %d, err = %v", len(entries), err)
 	}
 }
+
+func TestFitSessionStartStaysUnderHookCap(t *testing.T) {
+	const capBytes = limits.MaxHookOutputBytes
+	header := "📍 Project Context:\n\n"
+	trailer := "⚠️  High-impact files (hubs):\nNext codemap: codemap --deps\n"
+	// Each extra level of depth multiplies the tree by ten, like a wide repo.
+	synthetic := func(lineLen int) func(int) string {
+		return func(depth int) string {
+			n := 1
+			for i := 0; i < depth; i++ {
+				n *= 10
+			}
+			return strings.Repeat(strings.Repeat("x", lineLen-1)+"\n", n)
+		}
+	}
+
+	t.Run("small tree is untouched", func(t *testing.T) {
+		got := fitSessionStart(header, trailer, 2, limits.MaxStructureOutputBytes, capBytes, synthetic(20))
+		if want := header + synthetic(20)(2) + trailer; got != want {
+			t.Fatalf("small output changed:\n%s", got)
+		}
+	})
+
+	for name, lineLen := range map[string]int{"depth reduced": 50, "depth 1 still too big": 2000} {
+		t.Run(name, func(t *testing.T) {
+			got := fitSessionStart(header, trailer, 4, limits.MaxStructureOutputBytes, capBytes, synthetic(lineLen))
+			if len(got) > capBytes {
+				t.Fatalf("output is %d bytes, cap %d", len(got), capBytes)
+			}
+			if !strings.HasPrefix(got, header) || !strings.HasSuffix(got, trailer) {
+				t.Fatalf("header or trailer lost:\n%s", got)
+			}
+			if !strings.Contains(got, "tree limited to depth") {
+				t.Fatalf("missing depth notice:\n%s", got)
+			}
+			tree := strings.TrimSuffix(strings.TrimPrefix(got, header), trailer)
+			for _, line := range strings.Split(tree, "\n") {
+				if strings.HasPrefix(line, "x") && len(line) != lineLen-1 {
+					t.Fatalf("tree cut mid-line: %d-byte line", len(line))
+				}
+			}
+		})
+	}
+
+	t.Run("oversized trailer is capped", func(t *testing.T) {
+		big := strings.Repeat("diff line\n", 3000)
+		got := fitSessionStart(header, big, 2, limits.MaxStructureOutputBytes, capBytes, synthetic(20))
+		if len(got) > capBytes {
+			t.Fatalf("output is %d bytes, cap %d", len(got), capBytes)
+		}
+	})
+}
