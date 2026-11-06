@@ -1787,6 +1787,24 @@ func (fg *FileGraph) IsHub(path string) bool {
 	return CountHubImporters(fg.Importers[path]) >= HubThreshold
 }
 
+// IsFileHub is IsHub for a claim about path itself. A file of a multi-file
+// Go package shares the package's importers, so the count says nothing about
+// the file and it never qualifies; CollapseGoPackageHubs lists the package.
+func (fg *FileGraph) IsFileHub(path string) bool {
+	if _, shared := fg.SharedGoPackage(path); shared {
+		return false
+	}
+	return fg.IsHub(path)
+}
+
+// SharedGoPackage returns the import path of path's Go package when that
+// package has two or more files, so path's importer count is the package's
+// rather than its own.
+func (fg *FileGraph) SharedGoPackage(path string) (string, bool) {
+	pkg, files, ok := fg.GoPackage(path)
+	return pkg, ok && len(files) > 1
+}
+
 // GoPackage reports the Go package that path belongs to when this graph
 // resolved Go imports at package granularity: the package's import path and
 // its non-test files, which include path itself unless path is a _test.go
@@ -1845,6 +1863,69 @@ func CollapseGoPackageFiles(paths []string) []string {
 			dir = ""
 		}
 		out = append(out, fmt.Sprintf("%s/ (%d files)", dir, perDir[pathpkg.Dir(filepath.ToSlash(path))]))
+	}
+	return out
+}
+
+// HubEntry is one row of a hub list: a file, or a multi-file Go package
+// whose files share one importer set because Go imports name packages.
+type HubEntry struct {
+	Path      string   `json:"path"`  // the file, or "dir/" for a package
+	Files     []string `json:"files"` // the hub files behind this row; more than one means a package
+	Importers int      `json:"importer_count"`
+}
+
+// IsPackage reports whether the entry stands for a multi-file Go package.
+func (e HubEntry) IsPackage() bool { return len(e.Files) > 1 }
+
+// String is "path (N importers)", or "dir/ (package, F files, N importers)".
+func (e HubEntry) String() string {
+	if e.IsPackage() {
+		return fmt.Sprintf("%s (package, %d files, %d importers)", e.Path, len(e.Files), e.Importers)
+	}
+	return fmt.Sprintf("%s (%d importers)", e.Path, e.Importers)
+}
+
+// CollapseGoPackageHubs turns a ranked hub list into one entry per file,
+// except that two or more .go files of one directory with the same importer
+// set become a single package entry at the first one's position. The same set
+// is the signature of a package-level edge, and needs no go.mod lookup, so
+// this also works on importer maps read back from the daemon state. Every
+// other path passes through unchanged.
+func CollapseGoPackageHubs(hubs []string, importers map[string][]string) []HubEntry {
+	groupKey := func(path string) string {
+		if !strings.EqualFold(filepath.Ext(path), ".go") {
+			return ""
+		}
+		set := append([]string(nil), importers[path]...)
+		sort.Strings(set)
+		return pathpkg.Dir(filepath.ToSlash(path)) + "\x00" + strings.Join(set, "\x00")
+	}
+	groups := make(map[string][]string, len(hubs))
+	for _, path := range hubs {
+		if key := groupKey(path); key != "" {
+			groups[key] = append(groups[key], path)
+		}
+	}
+	out := make([]HubEntry, 0, len(hubs))
+	emitted := make(map[string]bool, len(groups))
+	for _, path := range hubs {
+		key := groupKey(path)
+		files := groups[key]
+		if len(files) < 2 {
+			out = append(out, HubEntry{Path: path, Files: []string{path}, Importers: len(importers[path])})
+			continue
+		}
+		if emitted[key] {
+			continue
+		}
+		emitted[key] = true
+		dir := pathpkg.Dir(filepath.ToSlash(path))
+		entry := HubEntry{Path: dir + "/", Files: files, Importers: len(importers[path])}
+		if dir == "." {
+			entry.Path = "/"
+		}
+		out = append(out, entry)
 	}
 	return out
 }

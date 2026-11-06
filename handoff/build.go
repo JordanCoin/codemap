@@ -364,23 +364,28 @@ func summarizeHubs(importersByFile map[string][]string, maxHubs int) []HubSummar
 		return []HubSummary{}
 	}
 
-	hubs := make([]HubSummary, 0, len(importersByFile))
+	paths := make([]string, 0, len(importersByFile))
 	for path, importers := range importersByFile {
-		if len(importers) < 3 {
-			continue
+		if len(importers) >= 3 {
+			paths = append(paths, path)
 		}
-		hubs = append(hubs, HubSummary{
-			Path:      path,
-			Importers: len(importers),
-		})
 	}
-
-	sort.Slice(hubs, func(i, j int) bool {
-		if hubs[i].Importers != hubs[j].Importers {
-			return hubs[i].Importers > hubs[j].Importers
+	sort.Slice(paths, func(i, j int) bool {
+		if len(importersByFile[paths[i]]) != len(importersByFile[paths[j]]) {
+			return len(importersByFile[paths[i]]) > len(importersByFile[paths[j]])
 		}
-		return hubs[i].Path < hubs[j].Path
+		return paths[i] < paths[j]
 	})
+
+	entries := scanner.CollapseGoPackageHubs(paths, importersByFile)
+	hubs := make([]HubSummary, 0, len(entries))
+	for _, entry := range entries {
+		hub := HubSummary{Path: entry.Path, Importers: entry.Importers}
+		if entry.IsPackage() {
+			hub.Files = len(entry.Files)
+		}
+		hubs = append(hubs, hub)
+	}
 
 	if maxHubs > 0 && len(hubs) > maxHubs {
 		hubs = hubs[:maxHubs]

@@ -30,7 +30,7 @@ func RenderMarkdown(a *Artifact) string {
 				b.WriteString(fmt.Sprintf("- ... and %d more\n", len(a.Prefix.Hubs)-15))
 				break
 			}
-			b.WriteString(fmt.Sprintf("- `%s` (%d importers)\n", hub.Path, hub.Importers))
+			b.WriteString("- " + hub.String() + "\n")
 		}
 	}
 
@@ -113,7 +113,7 @@ func RenderPrefixMarkdown(p PrefixSnapshot) string {
 	}
 	b.WriteString(fmt.Sprintf("- Hub files: %d\n", len(p.Hubs)))
 	for _, hub := range p.Hubs {
-		b.WriteString(fmt.Sprintf("- `%s` (%d importers)\n", hub.Path, hub.Importers))
+		b.WriteString("- " + hub.String() + "\n")
 	}
 	return b.String()
 }

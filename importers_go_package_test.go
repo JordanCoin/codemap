@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -40,7 +41,7 @@ func TestImportersCLIReportsGoPackageGranularity(t *testing.T) {
 	if report.Package != "example.com/demo/multi" || report.PackageSiblings != 1 {
 		t.Fatalf("report package = %q siblings = %d, want example.com/demo/multi with 1 sibling", report.Package, report.PackageSiblings)
 	}
-	want := "   Imported by 1 file(s) (package example.com/demo/multi: Go imports name packages, not files)\n   • app/main.go\n"
+	want := "   Package example.com/demo/multi is imported by 1 file (Go imports name packages, not files)\n   • app/main.go\n"
 	if !strings.Contains(out, want) {
 		t.Fatalf("--importers multi/a.go output:\n%q\nwant it to contain:\n%q", out, want)
 	}
@@ -59,6 +60,57 @@ func TestImportersCLIReportsGoPackageGranularity(t *testing.T) {
 	}
 	if !strings.Contains(out, "No files import orphan/orphan.go.\n") || strings.Contains(out, "Same-package") {
 		t.Fatalf("--importers orphan/orphan.go output:\n%q\nwant a plain zero with no same-package caveat", out)
+	}
+}
+
+// Three importers of a two-file package make the package a hub, not the file:
+// --importers names the package as the thing imported and raises no HUB FILE
+// warning, while a one-file package at the same count still does (#285).
+func TestImportersCLIGoPackageHubIsNotAFileHub(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod":           "module example.com/hub\n\ngo 1.21\n",
+		"multi/a.go":       "package multi\n\nfunc A() {}\n",
+		"multi/b.go":       "package multi\n\nfunc B() {}\n",
+		"single/single.go": "package single\n\nfunc S() {}\n",
+	}
+	for _, user := range []string{"u1", "u2", "u3"} {
+		files[user+"/"+user+".go"] = "package " + user + "\n\nimport (\n\t\"example.com/hub/multi\"\n\t\"example.com/hub/single\"\n)\n\nfunc F() { multi.A(); single.S() }\n"
+	}
+	for rel, body := range files {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fg, err := scanner.BuildFileGraph(context.Background(), root, scanner.Filters{})
+	if err != nil {
+		t.Fatalf("BuildFileGraph: %v", err)
+	}
+	render := func(file string) (scanner.ImportersReport, string) {
+		t.Helper()
+		report, err := buildImportersReportFromGraph(root, file, fg)
+		if err != nil {
+			t.Fatalf("buildImportersReportFromGraph(%s): %v", file, err)
+		}
+		var buf strings.Builder
+		renderImportersReportCLI(&buf, report)
+		return report, buf.String()
+	}
+
+	report, out := render("multi/a.go")
+	if report.IsHub || strings.Contains(out, "HUB") {
+		t.Fatalf("multi/a.go flagged as a hub file (is_hub=%v):\n%s", report.IsHub, out)
+	}
+	if !strings.Contains(out, "Package example.com/hub/multi is imported by 3 files") {
+		t.Fatalf("--importers multi/a.go must name the package as imported:\n%s", out)
+	}
+	report, out = render("single/single.go")
+	if !report.IsHub || !strings.Contains(out, "HUB FILE: single/single.go") {
+		t.Fatalf("one-file package lost its hub warning (is_hub=%v):\n%s", report.IsHub, out)
 	}
 }
 

@@ -10,11 +10,14 @@ import (
 const maxStructuredItems = 500
 
 type StructureOutput struct {
-	Kind         string          `json:"kind"`
-	Project      scanner.Project `json:"project"`
-	Hubs         []string        `json:"hubs"`
-	Truncated    bool            `json:"truncated"`
-	OmittedCount int             `json:"omitted_count"`
+	Kind    string          `json:"kind"`
+	Project scanner.Project `json:"project"`
+	Hubs    []string        `json:"hubs"`
+	// HubEntries is Hubs as the text output lists them: a multi-file Go
+	// package is one entry whose files share one importer set.
+	HubEntries   []scanner.HubEntry `json:"hub_entries"`
+	Truncated    bool               `json:"truncated"`
+	OmittedCount int                `json:"omitted_count"`
 }
 
 type DiffOutput struct {
@@ -35,6 +38,12 @@ type ImportersOutput struct {
 	HubImports    []string `json:"hub_imports"`
 	ImporterCount int      `json:"importer_count"`
 	IsHub         bool     `json:"is_hub"`
+	// Granularity is "package" when importer_count counts importers of the
+	// Go package (Package) that File belongs to, else "file". PackageHub is
+	// true when that package is a hub though File itself is not claimed one.
+	Granularity string `json:"granularity"`
+	Package     string `json:"package,omitempty"`
+	PackageHub  bool   `json:"package_hub,omitempty"`
 	// NotIndexed mirrors scanner.ImportersReport.NotIndexed: true when the
 	// queried file was never part of the scanned set, so importer_count 0 is
 	// a coverage gap, not a confirmed zero. NotIndexedReason names the one
@@ -67,10 +76,11 @@ func boundedProject(project scanner.Project) (scanner.Project, int) {
 	return bounded, omittedCount
 }
 
-func newStructureOutput(project scanner.Project, hubs []string) StructureOutput {
+func newStructureOutput(project scanner.Project, hubs []string, entries []scanner.HubEntry) StructureOutput {
 	bounded, omittedCount := boundedProject(project)
 	boundedHubs, omittedCount := addBounded(hubs, omittedCount)
-	return StructureOutput{Kind: "structure", Project: bounded, Hubs: boundedHubs, Truncated: omittedCount > 0, OmittedCount: omittedCount}
+	boundedEntries, omittedCount := addMirrorBounded(entries, len(hubs), omittedCount)
+	return StructureOutput{Kind: "structure", Project: bounded, Hubs: boundedHubs, HubEntries: boundedEntries, Truncated: omittedCount > 0, OmittedCount: omittedCount}
 }
 
 func newDiffOutput(kind, ref string, project scanner.Project) DiffOutput {
@@ -98,10 +108,16 @@ func newImportersOutput(root, file string, graph *scanner.FileGraph) ImportersOu
 		kind = "empty"
 	}
 	coverage := graph.FileCoverage(file)
+	granularity, pkg, packageHub := "file", "", false
+	if goPkg, pkgFiles, ok := graph.GoPackage(file); ok {
+		granularity, pkg = "package", goPkg
+		packageHub = len(pkgFiles) > 1 && graph.IsHub(file)
+	}
 	return ImportersOutput{
 		Kind: kind, Root: root, Mode: "importers", File: file,
 		Importers: boundedImporters, Imports: boundedImports, HubImports: boundedHubs,
-		ImporterCount: len(importers), IsHub: graph.IsHub(file),
+		ImporterCount: len(importers), IsHub: graph.IsFileHub(file),
+		Granularity: granularity, Package: pkg, PackageHub: packageHub,
 		CoverageStatus: string(coverage.EffectiveStatus()), CoverageNotes: nonNilCopy(coverage.Notes),
 		Truncated: omittedCount > 0, OmittedCount: omittedCount,
 	}

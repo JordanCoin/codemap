@@ -2,6 +2,7 @@ package handoff
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"codemap/watch"
@@ -17,6 +18,16 @@ const (
 type HubSummary struct {
 	Path      string `json:"path"`
 	Importers int    `json:"importers"`
+	// Files is set when Path is a multi-file Go package directory listed once.
+	Files int `json:"files,omitempty"`
+}
+
+// String is the markdown list form of the hub.
+func (h HubSummary) String() string {
+	if h.Files > 0 {
+		return fmt.Sprintf("`%s` (package, %d files, %d importers)", h.Path, h.Files, h.Importers)
+	}
+	return fmt.Sprintf("`%s` (%d importers)", h.Path, h.Importers)
 }
 
 // FileStub is a lightweight file descriptor for lazy detail loading.

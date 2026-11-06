@@ -41,6 +41,9 @@ type Hit struct {
 	Matched   []string `json:"matched"`
 	Importers int      `json:"importers"`
 	Hub       bool     `json:"hub"`
+	// Package is set when Importers counts the importers of the file's
+	// multi-file Go package rather than of the file itself.
+	Package string `json:"package,omitempty"`
 }
 
 type Report struct {
@@ -69,7 +72,10 @@ func Run(ctx context.Context, root string, filters scanner.Filters, query string
 		for i := range report.Hits {
 			importers := fg.Importers[report.Hits[i].Path]
 			report.Hits[i].Importers = len(importers)
-			report.Hits[i].Hub = scanner.CountHubImporters(importers) >= scanner.HubThreshold
+			report.Hits[i].Hub = fg.IsFileHub(report.Hits[i].Path)
+			if pkg, shared := fg.SharedGoPackage(report.Hits[i].Path); shared {
+				report.Hits[i].Package = pkg
+			}
 		}
 	}
 	report.Coverage = scanner.CoverageFromSources(sources)
@@ -233,7 +239,9 @@ func Render(w io.Writer, r Report) {
 			fmt.Fprintf(w, "  matched: %s\n", strings.Join(h.Matched, ", "))
 		}
 		hub := ""
-		if h.Hub {
+		if h.Package != "" {
+			hub = " (of package " + h.Package + ")"
+		} else if h.Hub {
 			hub = " (hub)"
 		}
 		fmt.Fprintf(w, "  importers: %d%s\n", h.Importers, hub)

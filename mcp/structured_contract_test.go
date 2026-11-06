@@ -294,3 +294,36 @@ func TestNewImportersOutputSortsDeterministically(t *testing.T) {
 		t.Fatalf("hub_imports = %v, want %v", out.HubImports, wantHubs)
 	}
 }
+
+// #292: the structured answers carry the package granularity the text states.
+func TestStructuredOutputsCarryGoPackageGranularity(t *testing.T) {
+	importers := []string{"a.go", "b.go", "c.go"}
+	graph := &scanner.FileGraph{
+		Module:   "example.com/m",
+		Packages: map[string][]string{"example.com/m/pkg": {"pkg/x.go", "pkg/y.go"}, "example.com/m/solo": {"solo/z.go"}},
+		Importers: map[string][]string{
+			"pkg/x.go": importers, "pkg/y.go": importers, "solo/z.go": importers,
+		},
+		Imports: map[string][]string{},
+	}
+	out := newImportersOutput("/repo", "pkg/x.go", graph)
+	if out.Granularity != "package" || out.Package != "example.com/m/pkg" || out.IsHub || !out.PackageHub {
+		t.Fatalf("multi-file package: granularity=%q package=%q is_hub=%v package_hub=%v", out.Granularity, out.Package, out.IsHub, out.PackageHub)
+	}
+	out = newImportersOutput("/repo", "solo/z.go", graph)
+	if out.Granularity != "package" || !out.IsHub || out.PackageHub {
+		t.Fatalf("single-file package: granularity=%q is_hub=%v package_hub=%v", out.Granularity, out.IsHub, out.PackageHub)
+	}
+	if out := newImportersOutput("/repo", "web/app.ts", graph); out.Granularity != "file" || out.Package != "" {
+		t.Fatalf("non-Go file: granularity=%q package=%q, want file and none", out.Granularity, out.Package)
+	}
+
+	hubs := []string{"pkg/x.go", "pkg/y.go", "solo/z.go"}
+	structure := newStructureOutput(scanner.Project{}, hubs, scanner.CollapseGoPackageHubs(hubs, graph.Importers))
+	if len(structure.HubEntries) != 2 || structure.HubEntries[0].Path != "pkg/" || len(structure.HubEntries[0].Files) != 2 || structure.HubEntries[1].Path != "solo/z.go" {
+		t.Fatalf("hub_entries = %+v, want pkg/ (2 files) then solo/z.go", structure.HubEntries)
+	}
+	if !slices.Equal(structure.Hubs, hubs) {
+		t.Fatalf("hubs = %v, want the file list unchanged", structure.Hubs)
+	}
+}

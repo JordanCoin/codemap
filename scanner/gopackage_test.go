@@ -101,6 +101,59 @@ func TestCollapseGoPackageFiles(t *testing.T) {
 	}
 }
 
+// writeGoHubFixture writes a module where three packages import a two-file
+// package hub/multi and a one-file package hub/single, so both are hubs.
+func writeGoHubFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod":           "module example.com/hub\n\ngo 1.21\n",
+		"multi/a.go":       "package multi\n\nfunc A() {}\n",
+		"multi/b.go":       "package multi\n\nfunc B() {}\n",
+		"single/single.go": "package single\n\nfunc S() {}\n",
+	}
+	for _, user := range []string{"u1", "u2", "u3"} {
+		files[user+"/"+user+".go"] = "package " + user + "\n\nimport (\n\t\"example.com/hub/multi\"\n\t\"example.com/hub/single\"\n)\n\nfunc F() { multi.A(); single.S() }\n"
+	}
+	for rel, body := range files {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+// A multi-file Go package is one hub, not one per file, and none of its files
+// is a hub on its own: the count belongs to the package (#285). A one-file
+// package is the file, so it keeps the file-level flag.
+func TestGoPackageHubsListedOncePerPackage(t *testing.T) {
+	fg, err := BuildFileGraph(context.Background(), writeGoHubFixture(t), Filters{})
+	if err != nil {
+		t.Fatalf("BuildFileGraph: %v", err)
+	}
+	got := CollapseGoPackageHubs(fg.HubFiles(), fg.Importers)
+	want := []HubEntry{
+		{Path: "multi/", Files: []string{"multi/a.go", "multi/b.go"}, Importers: 3},
+		{Path: "single/single.go", Files: []string{"single/single.go"}, Importers: 3},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("CollapseGoPackageHubs(HubFiles) = %+v, want %+v", got, want)
+	}
+	if got[0].String() != "multi/ (package, 2 files, 3 importers)" {
+		t.Fatalf("package entry text = %q", got[0].String())
+	}
+	if fg.IsFileHub("multi/a.go") || !fg.IsHub("multi/a.go") {
+		t.Fatalf("multi/a.go: IsFileHub=%v IsHub=%v, want false/true", fg.IsFileHub("multi/a.go"), fg.IsHub("multi/a.go"))
+	}
+	if !fg.IsFileHub("single/single.go") {
+		t.Fatalf("single/single.go lost its file-level hub flag")
+	}
+}
+
 // goListPackage is the subset of `go list -json` this oracle reads.
 type goListPackage struct {
 	ImportPath string
