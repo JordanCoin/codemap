@@ -522,18 +522,27 @@ func fitSessionStart(header, trailer string, depth, structureBudget, maxBytes in
 		return fmt.Sprintf("(tree limited to depth %d to fit the %d-char hook cap; run `codemap .` for the full tree)\n\n", depth, maxBytes)
 	}
 
+	// Header and notice are uncapped, so a tiny cap can still overflow; the
+	// final cut makes maxBytes a hard ceiling.
+	fit := func(tree, notice string) string {
+		return cutAtLine(header+tree+notice+trailer, maxBytes, "")
+	}
 	tree := renderTree(depth)
 	if len(tree) <= treeBudget {
-		return header + tree + trailer
+		return fit(tree, "")
 	}
 	for depth > 1 {
 		depth--
 		tree = renderTree(depth)
 		if len(tree)+len(notice(depth)) <= treeBudget {
-			return header + tree + notice(depth) + trailer
+			return fit(tree, notice(depth))
 		}
 	}
-	return header + cutAtLine(tree, treeBudget-len(notice(depth)), "") + notice(depth) + trailer
+	n := notice(depth)
+	if len(n) > treeBudget {
+		n = ""
+	}
+	return fit(cutAtLine(tree, treeBudget-len(n), ""), n)
 }
 
 // cutAtLine returns s if it fits in maxBytes, otherwise its longest prefix
@@ -2417,34 +2426,49 @@ func findChildRepos(root string) []string {
 }
 
 // hookSessionStartMultiRepo handles meta-repos containing multiple child repos.
-// Output is capped to sessionStartOutputCap to fit the host hook limit.
+// Every emitted byte counts against sessionStartOutputCap, the host hook limit.
 func hookSessionStartMultiRepo(root string, childRepos []string) error {
-	fmt.Println("📍 Multi-Repo Project Context:")
-	fmt.Printf("   %d repositories in %s\n", len(childRepos), filepath.Base(root))
-	fmt.Println()
-
 	exe, err := hookExecutablePath()
 	if err != nil {
 		return err
 	}
 
-	// Budget: divide total budget across repos, with a per-repo cap
 	totalBudget := sessionStartOutputCap()
 	perRepoBudget := totalBudget / len(childRepos)
 	if perRepoBudget < 2000 {
 		perRepoBudget = 2000 // minimum useful output per repo
 	}
-	totalUsed := 0
+	const truncated = "\n   ... (repo output truncated)\n"
+	more := func(n int) string {
+		return fmt.Sprintf("   ... and %d more repos (output budget reached)\n", n)
+	}
 
-	for _, repo := range childRepos {
-		if totalUsed >= totalBudget {
-			fmt.Printf("   ... and %d more repos (output budget reached)\n", len(childRepos)-indexOf(childRepos, repo))
-			break
-		}
+	var out strings.Builder
+	fmt.Fprintf(&out, "📍 Multi-Repo Project Context:\n   %d repositories in %s\n\n", len(childRepos), filepath.Base(root))
 
+	for i, repo := range childRepos {
 		repoPath := filepath.Join(root, repo)
 		projCfg := config.Load(repoPath)
-		showConfigSetupHint(repoPath)
+		hint, err := captureStdout(func() error {
+			showConfigSetupHint(repoPath)
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+
+		reserve := 0
+		if rest := len(childRepos) - i - 1; rest > 0 {
+			reserve = len(more(rest))
+		}
+		budget := totalBudget - out.Len() - len(hint) - 1 - reserve - len(truncated)
+		if budget > perRepoBudget {
+			budget = perRepoBudget
+		}
+		if budget <= 0 {
+			out.WriteString(more(len(childRepos) - i))
+			break
+		}
 
 		depth := 2
 		if projCfg.Depth > 0 {
@@ -2461,32 +2485,20 @@ func hookSessionStartMultiRepo(root string, childRepos []string) error {
 		args = append(args, repoPath)
 		cmd := hookExecCommand(exe, args...)
 
-		// Capture and budget output instead of piping directly to stdout
-		buf := newCappedStringWriter(perRepoBudget + diffCaptureSlackBytes)
+		buf := newCappedStringWriter(budget + diffCaptureSlackBytes)
 		cmd.Stdout = buf
 		cmd.Stderr = os.Stderr
 		cmd.Run()
 
 		output := buf.String()
-		if len(output) > perRepoBudget || buf.Truncated() {
-			output = limits.TruncateAtLineBoundary(output, perRepoBudget,
-				"\n   ... (repo output truncated)\n")
+		if len(output) > budget || buf.Truncated() {
+			output = limits.TruncateAtLineBoundary(output, budget, truncated)
 		}
-		fmt.Print(output)
-		fmt.Println()
-		totalUsed += len(output)
+		out.WriteString(hint + output + "\n")
 	}
 
+	fmt.Print(cutAtLine(out.String(), totalBudget, ""))
 	return nil
-}
-
-func indexOf(slice []string, val string) int {
-	for i, s := range slice {
-		if s == val {
-			return i
-		}
-	}
-	return len(slice)
 }
 
 // filesText and importersNoun keep counts grammatical: "1 file", "2 files".

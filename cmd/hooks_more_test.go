@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1000,6 +1001,39 @@ func TestDaemonCommandHelpersAndMultiRepoShellout(t *testing.T) {
 		}
 	})
 
+	t.Run("multi repo start stays under the total cap", func(t *testing.T) {
+		root := t.TempDir()
+		repos := []string{"svc-a", "svc-b", "svc-c", "svc-d", "svc-e", "svc-f"}
+		for _, repo := range repos {
+			if err := os.MkdirAll(filepath.Join(root, repo, ".git"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		withHookRuntimeStubs(
+			t,
+			func() (string, error) { return "/tmp/codemap-hook", nil },
+			func(name string, args ...string) *exec.Cmd {
+				return exec.Command("sh", "-c", "yes 'src/some/file.go' | head -c 20000")
+			},
+			nil,
+			nil,
+		)
+		for _, capBytes := range []int{50, 3000, limits.MaxHookOutputBytes} {
+			t.Setenv("CODEMAP_HOOK_OUTPUT_CAP", strconv.Itoa(capBytes))
+			out := captureOutput(func() {
+				if err := hookSessionStartMultiRepo(root, repos); err != nil {
+					t.Fatalf("hookSessionStartMultiRepo() error: %v", err)
+				}
+			})
+			if len(out) > capBytes {
+				t.Fatalf("cap %d: output is %d bytes", capBytes, len(out))
+			}
+			if capBytes == limits.MaxHookOutputBytes && !strings.Contains(out, "more repos (output budget reached)") {
+				t.Fatalf("missing budget notice:\n%s", out)
+			}
+		}
+	})
+
 	t.Run("multi repo start emits setup hints for child repos needing config", func(t *testing.T) {
 		root := t.TempDir()
 		for _, repo := range []string{"svc-a", "svc-b"} {
@@ -1160,6 +1194,15 @@ func TestFitSessionStartStaysUnderHookCap(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("tiny cap is a hard ceiling", func(t *testing.T) {
+		for _, tiny := range []int{1, 40, 120} {
+			got := fitSessionStart(header, trailer, 4, limits.MaxStructureOutputBytes, tiny, synthetic(50))
+			if len(got) > tiny {
+				t.Fatalf("cap %d: output is %d bytes", tiny, len(got))
+			}
+		}
+	})
 
 	t.Run("oversized trailer is capped", func(t *testing.T) {
 		big := strings.Repeat("diff line\n", 3000)
