@@ -549,8 +549,8 @@ func hookSessionStart(root string) error {
 	return nil
 }
 
-// TreeLeanEnv tells a tree render to shed extras: "1" drops hub symbol lines
-// and the long hub list, "2" also drops line counts.
+// TreeLeanEnv tells a tree render to shed extras: "1" cuts the hub list to
+// three, "2" also drops line counts.
 const TreeLeanEnv = "CODEMAP_TREE_LEAN"
 
 // Markers of the tree's own hub trailer (render/tree_compact.go).

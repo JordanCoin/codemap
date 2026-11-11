@@ -43,16 +43,10 @@ type Project struct {
 	Hubs          []HubEntry      `json:"-"`
 	HubNote       string          `json:"-"` // why Hubs is empty or partial
 	UntrackedDirs map[string]bool `json:"-"` // slash paths of wholly untracked dirs
-	// Physical line counts per file, and up to three exported symbols for
-	// each of the top hub files.
-	LineCounts map[string]int      `json:"-"`
-	HubSymbols map[string][]Symbol `json:"-"`
-}
-
-// Symbol is a declaration at a 1-based line of a file.
-type Symbol struct {
-	Name string
-	Line int
+	// LineCounts holds physical line counts per file; HubListMax caps the
+	// hub list under the tree (0 = the default of 10).
+	LineCounts map[string]int `json:"-"`
+	HubListMax int            `json:"-"`
 }
 
 // ScanBound records a walk that stopped keeping files at Limit.
@@ -86,9 +80,6 @@ type FileAnalysis struct {
 	Types      []string          `json:"types,omitempty"`
 	Imports    []string          `json:"imports"`
 	References []ImportReference `json:"-"`
-	// SymbolLines maps each function and type name to the 0-based line of its
-	// first ast-grep match, as ast-grep reports it.
-	SymbolLines map[string]int `json:"-"`
 }
 
 // ImportReference preserves language-specific import semantics for graph resolution.

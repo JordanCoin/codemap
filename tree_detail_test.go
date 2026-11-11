@@ -49,24 +49,3 @@ func TestCountLinesSkipsSymlinkOutsideRoot(t *testing.T) {
 		t.Fatalf("symlink counted: %v", got)
 	}
 }
-
-func TestExportedTopLevel(t *testing.T) {
-	cases := []struct {
-		lang, name, text string
-		want             bool
-	}{
-		{"go", "Load", "func Load(root string) Config {", true},
-		{"go", "load", "func load() {", false},
-		{"go", "String", "func (c Config) String() string {", false},
-		{"python", "run", "def run():", true},
-		{"python", "_private", "def _private():", false},
-		{"python", "method", "    def method(self):", false},
-		{"typescript", "debug", "export function debug() {", true},
-		{"typescript", "helper", "function helper() {", false},
-	}
-	for _, c := range cases {
-		if got := exportedTopLevel(c.lang, c.name, c.text); got != c.want {
-			t.Errorf("exportedTopLevel(%q, %q, %q) = %v, want %v", c.lang, c.name, c.text, got, c.want)
-		}
-	}
-}

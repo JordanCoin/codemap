@@ -511,8 +511,8 @@ func runKey(name string) (string, bool) {
 	return runStars.ReplaceAllString(key, "*") + ext, varied
 }
 
-// printHubTrailer prints the hub legend, the top three hubs and the next
-// commands: at most three lines, all from this run's graph.
+// printHubTrailer prints the hub legend, the hubs one per line with their
+// importer counts, and the next commands, all from this run's graph.
 func printHubTrailer(w io.Writer, project scanner.Project) {
 	if project.Hubs == nil {
 		if project.HubNote != "" {
@@ -531,62 +531,24 @@ func printHubTrailer(w io.Writer, project scanner.Project) {
 	if len(project.Hubs) == 0 {
 		return
 	}
-	// The long hub list rides with the symbol lines; a lean render keeps three.
-	detail := project.HubSymbols != nil
-	limit := 3
-	if detail {
+	limit := project.HubListMax
+	if limit <= 0 {
 		limit = maxTrailerHubs
 	}
-	var top []string
-	for i, h := range project.Hubs {
-		if i == limit {
-			break
-		}
-		top = append(top, fmt.Sprintf("%s ←%d%s", h.Path, h.Importers, locLabel(project.LineCounts, h.Path)))
-	}
-	if !detail {
-		fmt.Fprintf(w, "Top hubs: %s\n", strings.Join(top, ", "))
+	shown := project.Hubs[:min(limit, len(project.Hubs))]
+	if len(shown) < len(project.Hubs) {
+		fmt.Fprintf(w, "Hubs (top %d of %d, by importers):\n", len(shown), len(project.Hubs))
 	} else {
-		label := fmt.Sprintf("Hubs (%d): ", len(top))
-		if len(project.Hubs) > len(top) {
-			label = fmt.Sprintf("Hubs (top %d of %d): ", len(top), len(project.Hubs))
-		}
-		for _, line := range wrapList(label, top, maxTrailerLine) {
-			fmt.Fprintln(w, line)
-		}
-		for _, h := range project.Hubs {
-			if syms := project.HubSymbols[h.Path]; len(syms) > 0 {
-				parts := make([]string, len(syms))
-				for i, s := range syms {
-					parts[i] = fmt.Sprintf("%s:%d %s", h.Path, s.Line, s.Name)
-				}
-				fmt.Fprintf(w, "  %s\n", strings.Join(parts, "  "))
-			}
-		}
+		fmt.Fprintf(w, "Hubs (%d, by importers):\n", len(shown))
+	}
+	width := 0
+	for _, h := range shown {
+		width = max(width, len(fmt.Sprint(h.Importers)))
+	}
+	for _, h := range shown {
+		fmt.Fprintf(w, "  ←%*d  %s%s\n", width, h.Importers, h.Path, strings.Replace(locLabel(project.LineCounts, h.Path), " ", "  ", 1))
 	}
 	fmt.Fprintf(w, "Next: codemap --deps · codemap --importers %s\n", project.Hubs[0].Files[0])
 }
 
-const (
-	maxTrailerHubs = 10
-	maxTrailerLine = 400
-)
-
-// wrapList joins items after label with ", ", starting an indented line
-// before any item that would take a line past maxWidth runes.
-func wrapList(label string, items []string, maxWidth int) []string {
-	var lines []string
-	line := label
-	for i, item := range items {
-		sep := ", "
-		if i == 0 {
-			sep = ""
-		}
-		if i > 0 && len([]rune(line+sep+item))+1 > maxWidth {
-			lines = append(lines, line+",")
-			line, sep = "  ", ""
-		}
-		line += sep + item
-	}
-	return append(lines, line)
-}
+const maxTrailerHubs = 10

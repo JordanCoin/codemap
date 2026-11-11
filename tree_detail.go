@@ -2,23 +2,13 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
-	"sort"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"codemap/render"
 	"codemap/scanner"
-)
-
-const (
-	maxSymbolFiles    = 5
-	maxSymbolsPerFile = 3
 )
 
 // countLines returns physical line counts for files that are not assets,
@@ -63,83 +53,4 @@ func readRegularFile(path string) ([]byte, bool) {
 		return nil, false
 	}
 	return data, true
-}
-
-// hubSymbols lists up to maxSymbolsPerFile exported top-level symbols for
-// the first maxSymbolFiles single-file hubs. A multi-file Go package is
-// skipped: its importers name the package, not one file.
-func hubSymbols(root string, hubs []scanner.HubEntry) map[string][]scanner.Symbol {
-	sg, err := scanner.NewAstGrepScanner()
-	if err != nil || !sg.Available() {
-		return nil
-	}
-	defer sg.Close()
-	out := map[string][]scanner.Symbol{}
-	picked := 0
-	for _, h := range hubs {
-		if h.IsPackage() {
-			continue
-		}
-		if picked == maxSymbolFiles {
-			break
-		}
-		picked++
-		if syms := fileSymbols(sg, root, h.Path); len(syms) > 0 {
-			out[h.Path] = syms
-		}
-	}
-	return out
-}
-
-// fileSymbols keeps a symbol only when the source line ast-grep reported
-// names it, so a wrong line number drops the symbol instead of printing it.
-func fileSymbols(sg *scanner.AstGrepScanner, root, rel string) []scanner.Symbol {
-	outcome, err := sg.ScanDirectory(context.Background(), filepath.Join(root, filepath.Dir(rel)))
-	if err != nil {
-		return nil
-	}
-	var analysis *scanner.FileAnalysis
-	for i := range outcome.Analyses {
-		if filepath.ToSlash(outcome.Analyses[i].Path) == pathBase(rel) {
-			analysis = &outcome.Analyses[i]
-		}
-	}
-	src, ok := readRegularFile(filepath.Join(root, rel))
-	if analysis == nil || !ok {
-		return nil
-	}
-	lines := strings.Split(string(src), "\n")
-	var syms []scanner.Symbol
-	for name, line := range analysis.SymbolLines {
-		if line < 0 || line >= len(lines) {
-			continue
-		}
-		text := lines[line]
-		if !regexp.MustCompile(`\b`+regexp.QuoteMeta(name)+`\b`).MatchString(text) || !exportedTopLevel(analysis.Language, name, text) {
-			continue
-		}
-		syms = append(syms, scanner.Symbol{Name: name, Line: line + 1})
-	}
-	sort.Slice(syms, func(i, j int) bool { return syms[i].Line < syms[j].Line })
-	return syms[:min(len(syms), maxSymbolsPerFile)]
-}
-
-func pathBase(rel string) string { return filepath.Base(filepath.FromSlash(rel)) }
-
-// exportedTopLevel: the declaration starts its line (no indentation) and is
-// visible outside the file by the language's rule.
-func exportedTopLevel(language, name, text string) bool {
-	if text == "" || text[0] == ' ' || text[0] == '\t' {
-		return false
-	}
-	switch language {
-	case "go":
-		r, _ := utf8.DecodeRuneInString(name)
-		return unicode.IsUpper(r) && !strings.HasPrefix(text, "func (")
-	case "python":
-		return !strings.HasPrefix(name, "_")
-	case "typescript", "javascript":
-		return strings.HasPrefix(text, "export ")
-	}
-	return true
 }

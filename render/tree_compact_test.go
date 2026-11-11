@@ -81,7 +81,7 @@ func TestTreeStarsHubsWithCountsAndLegend(t *testing.T) {
 		"⭐️ scanner/ ←73",
 		"⭐️ types.ts ←41",
 		"⭐️ ←N = imported by N files, 3+ of them non-test",
-		"Top hubs: scanner/ ←73, web/types.ts ←41",
+		"Hubs (2, by importers):\n  ←73  scanner/\n  ←41  web/types.ts\n",
 		"Next: codemap --deps · codemap --importers scanner/a.go",
 	} {
 		if !strings.Contains(out, want) {
@@ -95,7 +95,7 @@ func TestTreeStarsHubsWithCountsAndLegend(t *testing.T) {
 
 func TestTreeSaysWhyHubStarsAreMissing(t *testing.T) {
 	out := renderCompactTree(t, scanner.Project{Files: goFiles("a.go"), HubNote: "dependency graph unavailable: no ast-grep"})
-	if !strings.Contains(out, "No ⭐️ hub marks: dependency graph unavailable: no ast-grep") || strings.Contains(out, "Top hubs") {
+	if !strings.Contains(out, "No ⭐️ hub marks: dependency graph unavailable: no ast-grep") || strings.Contains(out, "Hubs (") {
 		t.Fatalf("unexpected hub legend:\n%s", out)
 	}
 	if plain := renderCompactTree(t, scanner.Project{Files: goFiles("a.go")}); strings.Contains(plain, "⭐") {
@@ -160,43 +160,43 @@ func TestTreeLongNameDoesNotForceSingleColumn(t *testing.T) {
 	t.Fatalf("long name forced one column:\n%s", out)
 }
 
-func TestDetailTreeShowsLinesFullHubPathsAndSymbols(t *testing.T) {
+func TestDetailTreeShowsLinesAndHubRows(t *testing.T) {
 	out := renderCompactTree(t, scanner.Project{
-		Files:      goFiles("cmd/hooks.go", "cmd/hooks_test.go", "cmd/x.go"),
-		Hubs:       []scanner.HubEntry{{Path: "cmd/hooks.go", Files: []string{"cmd/hooks.go"}, Importers: 5}},
+		Files: goFiles("cmd/hooks.go", "cmd/hooks_test.go", "cmd/x.go", "scanner/a.go", "scanner/b.go"),
+		Hubs: []scanner.HubEntry{
+			{Path: "scanner/", Files: []string{"scanner/a.go", "scanner/b.go"}, Importers: 73},
+			{Path: "cmd/hooks.go", Files: []string{"cmd/hooks.go"}, Importers: 5},
+		},
 		LineCounts: map[string]int{"cmd/hooks.go": 2535, "cmd/hooks_test.go": 900, "cmd/x.go": 12},
-		HubSymbols: map[string][]scanner.Symbol{"cmd/hooks.go": {{Name: "Run", Line: 41}}},
 	})
-	for _, want := range []string{
-		"⭐️ hooks.go 2535L ←5 (+1 test)", "x.go ", "shown at 100+",
-		"Hubs (1): cmd/hooks.go ←5 2535L", "  cmd/hooks.go:41 Run",
-	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("missing %q in:\n%s", want, out)
+	want := "Hubs (2, by importers):\n  ←73  scanner/\n  ← 5  cmd/hooks.go  2535L\nNext: codemap --deps · codemap --importers scanner/a.go\n"
+	for _, w := range []string{"⭐️ hooks.go 2535L ←5 (+1 test)", "shown at 100+", want} {
+		if !strings.Contains(out, w) {
+			t.Fatalf("missing %q in:\n%s", w, out)
 		}
+	}
+	if strings.Contains(out, "x.go 12L") {
+		t.Fatalf("line count under the floor shown:\n%s", out)
 	}
 }
 
-func TestDetailTreeHidesShortLineCountsAndCapsHubList(t *testing.T) {
+func TestHubListCapsAtTenAndLeanCap(t *testing.T) {
 	var hubs []scanner.HubEntry
 	var paths []string
 	for i := 0; i < 30; i++ {
-		p := fmt.Sprintf("src/some/deeply/nested/module_%02d/implementation.ts", i)
+		p := fmt.Sprintf("src/module_%02d/implementation.ts", i)
 		paths = append(paths, p)
 		hubs = append(hubs, scanner.HubEntry{Path: p, Files: []string{p}, Importers: 100 - i})
 	}
-	out := renderCompactTree(t, scanner.Project{Files: goFiles(paths...), Hubs: hubs, LineCounts: map[string]int{paths[0]: 12}, HubSymbols: map[string][]scanner.Symbol{}})
-	if strings.Contains(out, "12L") {
-		t.Fatalf("line count under the floor shown:\n%s", out)
+	trailerOf := func(out string) string { return out[strings.Index(out, "⭐️ ←N"):] }
+	full := trailerOf(renderCompactTree(t, scanner.Project{Files: goFiles(paths...), Hubs: hubs}))
+	if !strings.Contains(full, "Hubs (top 10 of 30, by importers):\n  ←100  src/module_00/") ||
+		!strings.Contains(full, "\n  ← 91  src/module_09/") || strings.Contains(full, "module_10/") {
+		t.Fatalf("hub list not capped at 10:\n%s", full)
 	}
-	trailer := out[strings.Index(out, "⭐️ ←N"):]
-	if !strings.Contains(trailer, "Hubs (top 10 of 30): ") || !strings.Contains(trailer, "module_09/") || strings.Contains(trailer, "module_10/") {
-		t.Fatalf("hub list not capped:\n%s", out)
-	}
-	for _, line := range strings.Split(out, "\n") {
-		if n := len([]rune(line)); n > maxTrailerLine {
-			t.Fatalf("line of %d runes:\n%s", n, line)
-		}
+	lean := trailerOf(renderCompactTree(t, scanner.Project{Files: goFiles(paths...), Hubs: hubs, HubListMax: 3}))
+	if !strings.Contains(lean, "Hubs (top 3 of 30, by importers):") || strings.Contains(lean, "module_03/") {
+		t.Fatalf("lean hub list not capped at 3:\n%s", lean)
 	}
 }
 
@@ -230,7 +230,7 @@ func TestDiffTreeKeepsTestsAndStars(t *testing.T) {
 	out := renderCompactTree(t, scanner.Project{DiffRef: "main", Files: []scanner.FileInfo{
 		{Path: "a.go", Ext: ".go", Size: 1, Added: 1}, {Path: "a_test.go", Ext: ".go", Size: 1, Added: 1},
 	}})
-	if !strings.Contains(out, "a_test.go") || strings.Contains(out, "+1 test") || strings.Contains(out, "Top hubs") {
+	if !strings.Contains(out, "a_test.go") || strings.Contains(out, "+1 test") || strings.Contains(out, "Hubs (") {
 		t.Fatalf("diff render changed:\n%s", out)
 	}
 }
