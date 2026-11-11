@@ -38,10 +38,15 @@ type Project struct {
 	// ScanBound is set when the walk kept fewer files than matched, so Files
 	// is a prefix of the repository, not the repository (#186).
 	ScanBound *ScanBound `json:"scan_bound,omitempty"`
-	// Hubs and HubNote are set by the CLI tree path and never serialized.
-	// The tree prints a hub legend only when Hubs is non-nil or HubNote is set.
-	Hubs    []HubEntry `json:"-"`
-	HubNote string     `json:"-"` // why Hubs is empty or partial
+	// Tree-only annotations set by the CLI tree path; never serialized. The
+	// tree prints a hub legend only when Hubs is non-nil or HubNote is set.
+	Hubs          []HubEntry      `json:"-"`
+	HubNote       string          `json:"-"` // why Hubs is empty or partial
+	UntrackedDirs map[string]bool `json:"-"` // slash paths of wholly untracked dirs
+	// LineCounts holds physical line counts per file; HubListMax caps the
+	// hub list under the tree (0 = the default of 10).
+	LineCounts map[string]int `json:"-"`
+	HubListMax int            `json:"-"`
 }
 
 // ScanBound records a walk that stopped keeping files at Limit.

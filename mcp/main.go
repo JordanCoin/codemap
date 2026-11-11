@@ -239,7 +239,7 @@ func NewServer(options RuntimeOptions) *mcp.Server {
 	// Tool: get_structure - Get project tree view
 	mcp.AddTool(server, &mcp.Tool{
 		Name:         "get_structure",
-		Description:  "Get the project structure as a tree view. Shows files organized by directory with language detection, and file sizes. Use this to understand how a codebase is organized.",
+		Description:  "Get the project structure as a tree view. Shows files organized by directory with language detection and file sizes; tests are folded into their same-directory source file and numbered sibling runs collapse to one pattern line. Hub counts are in the HUB FILES list below the tree. Use this to understand how a codebase is organized.",
 		OutputSchema: mustSchemaFor[StructureOutput](),
 	}, handleGetStructure)
 

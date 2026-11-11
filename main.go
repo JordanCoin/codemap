@@ -624,6 +624,14 @@ func main() {
 	} else {
 		if diffInfo == nil {
 			project.Hubs, project.HubNote = treeHubs(absRoot, len(files), filters)
+			project.UntrackedDirs = untrackedDirs(root)
+			lean := os.Getenv(cmd.TreeLeanEnv)
+			if lean != "2" {
+				project.LineCounts = countLines(absRoot, files)
+			}
+			if lean != "" {
+				project.HubListMax = 3
+			}
 		}
 		render.Tree(os.Stdout, project)
 	}
