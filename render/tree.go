@@ -13,6 +13,7 @@ import (
 // treeNode represents a node in the file tree
 type treeNode struct {
 	name       string
+	path       string // slash path from the project root
 	isFile     bool
 	file       *scanner.FileInfo
 	children   map[string]*treeNode
@@ -21,36 +22,23 @@ type treeNode struct {
 	statsReady bool
 }
 
-// getTopLargeFiles returns paths of top 5 largest source code files
-func getTopLargeFiles(files []scanner.FileInfo) map[string]bool {
-	// Filter out assets and binaries (no extension = likely binary)
-	var largest []scanner.FileInfo
-	for _, f := range files {
-		ext := strings.ToLower(f.Ext)
-		// Skip if no extension (likely binary) or if it's an asset
-		if ext == "" || IsAssetExtension(ext) {
-			continue
-		}
-		position := sort.Search(len(largest), func(i int) bool {
-			return largest[i].Size < f.Size || largest[i].Size == f.Size && largest[i].Path > f.Path
-		})
-		if position >= 5 {
-			continue
-		}
-		largest = append(largest, scanner.FileInfo{})
-		copy(largest[position+1:], largest[position:])
-		largest[position] = f
-		if len(largest) > 5 {
-			largest = largest[:5]
-		}
-	}
+// hubMarks maps tree paths to importer counts: single-file hubs by file
+// path, multi-file Go packages by directory path.
+type hubMarks struct {
+	files map[string]int
+	dirs  map[string]int
+}
 
-	// Return top 5 as set
-	result := make(map[string]bool)
-	for _, file := range largest {
-		result[file.Path] = true
+func newHubMarks(hubs []scanner.HubEntry) hubMarks {
+	m := hubMarks{files: map[string]int{}, dirs: map[string]int{}}
+	for _, h := range hubs {
+		if h.IsPackage() {
+			m.dirs[strings.TrimSuffix(h.Path, "/")] = h.Importers
+		} else {
+			m.files[h.Path] = h.Importers
+		}
 	}
-	return result
+	return m
 }
 
 // getDirStats recursively calculates file count and total size
@@ -99,6 +87,7 @@ func buildTreeStructure(files []scanner.FileInfo) *treeNode {
 				// File
 				current.children[remaining] = &treeNode{
 					name:   remaining,
+					path:   filepath.ToSlash(f.Path),
 					isFile: true,
 					file:   f,
 				}
@@ -106,7 +95,7 @@ func buildTreeStructure(files []scanner.FileInfo) *treeNode {
 			}
 			part := remaining[:separator]
 			if current.children[part] == nil {
-				current.children[part] = &treeNode{name: part, children: make(map[string]*treeNode)}
+				current.children[part] = &treeNode{name: part, path: strings.TrimPrefix(current.path+"/"+part, "/"), children: make(map[string]*treeNode)}
 			}
 			current = current.children[part]
 			remaining = remaining[separator+1:]
@@ -172,9 +161,6 @@ func Tree(w io.Writer, project scanner.Project) {
 		exts = exts[:5]
 	}
 
-	// Get top large files
-	topLarge := getTopLargeFiles(files)
-
 	// Build extension line first to calculate width
 	var extLine string
 	if len(exts) > 0 {
@@ -238,7 +224,10 @@ func Tree(w io.Writer, project scanner.Project) {
 	// Build and render tree
 	root := buildTreeStructure(files)
 	fmt.Fprintf(w, "%s%s%s\n", Bold, projectName, Reset)
-	printTreeNode(w, root, "", true, topLarge, 1, maxDepth)
+	printTreeNode(w, root, "", true, newHubMarks(project.Hubs), 1, maxDepth)
+	if !isDiffMode {
+		printHubLegend(w, project)
+	}
 
 	// Print impact footer for diff mode
 	if isDiffMode && len(project.Impact) > 0 {
@@ -255,7 +244,7 @@ func Tree(w io.Writer, project scanner.Project) {
 
 // printTreeNode recursively prints tree nodes
 // currentDepth starts at 1 for the root level, maxDepth 0 means unlimited
-func printTreeNode(w io.Writer, node *treeNode, prefix string, isLast bool, topLarge map[string]bool, currentDepth, maxDepth int) {
+func printTreeNode(w io.Writer, node *treeNode, prefix string, isLast bool, hubs hubMarks, currentDepth, maxDepth int) {
 	// Check if we've exceeded depth limit
 	if maxDepth > 0 && currentDepth > maxDepth {
 		return
@@ -334,8 +323,9 @@ func printTreeNode(w io.Writer, node *treeNode, prefix string, isLast bool, topL
 			connector = "└── "
 		}
 
-		fmt.Fprintf(w, "%s%s%s  %s/%s %s(%s)%s\n",
-			prefix, connector, BoldBlue, mergedName, Reset, Dim, strings.Join(statsParts, ", "), Reset)
+		star, count := hubMark(hubs.dirs[current.path])
+		fmt.Fprintf(w, "%s%s%s  %s%s/%s%s %s(%s)%s\n",
+			prefix, connector, BoldBlue, star, mergedName, Reset, count, Dim, strings.Join(statsParts, ", "), Reset)
 
 		newPrefix := prefix + "│   "
 		if isLastDir {
@@ -373,7 +363,7 @@ func printTreeNode(w io.Writer, node *treeNode, prefix string, isLast bool, topL
 				fmt.Fprintf(w, "%s└── %s... %s%s\n", newPrefix, Dim, strings.Join(parts, ", "), Reset)
 			}
 		} else {
-			printTreeNode(w, current, newPrefix, isLastDir, topLarge, currentDepth+1, maxDepth)
+			printTreeNode(w, current, newPrefix, isLastDir, hubs, currentDepth+1, maxDepth)
 		}
 	}
 
@@ -411,7 +401,7 @@ func printTreeNode(w io.Writer, node *treeNode, prefix string, isLast bool, topL
 				prefix = "✎ "
 				prefixWidth = 3
 				color = Bold + Yellow
-			} else if topLarge[f.file.Path] {
+			} else if hubs.files[f.path] > 0 {
 				prefix = "⭐️ "
 				prefixWidth = 3
 				color = Bold + color
@@ -432,6 +422,10 @@ func printTreeNode(w io.Writer, node *treeNode, prefix string, isLast bool, topL
 					suffix = fmt.Sprintf(" (+%d)", f.file.Added)
 				}
 				suffixWidth = len(suffix)
+			}
+			if _, count := hubMark(hubs.files[f.path]); count != "" {
+				suffix += count
+				suffixWidth += len([]rune(count))
 			}
 
 			display := prefix + displayName + suffix
@@ -480,5 +474,27 @@ func printTreeNode(w io.Writer, node *treeNode, prefix string, isLast bool, topL
 			}
 			fmt.Fprintln(w)
 		}
+	}
+}
+
+func hubMark(importers int) (star, count string) {
+	if importers > 0 {
+		return "⭐️ ", fmt.Sprintf(" ←%d", importers)
+	}
+	return "", ""
+}
+
+// printHubLegend says what the star means, or why there are no stars. It
+// prints nothing when the caller computed no hub data.
+func printHubLegend(w io.Writer, project scanner.Project) {
+	switch {
+	case project.Hubs == nil && project.HubNote != "":
+		fmt.Fprintf(w, "%sNo ⭐️ hub marks: %s%s\n", Dim, project.HubNote, Reset)
+	case project.Hubs != nil:
+		legend := fmt.Sprintf("⭐️ ←N = imported by N files, %d+ of them non-test (Go: package count, on its dir)", scanner.HubThreshold)
+		if project.HubNote != "" {
+			legend += "; " + project.HubNote
+		}
+		fmt.Fprintf(w, "%s%s%s\n", Dim, legend, Reset)
 	}
 }

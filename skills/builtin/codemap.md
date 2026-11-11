@@ -124,7 +124,7 @@ Skills matched: hub-safety, refactor - run `codemap skill show <name>` for guida
 ## Output Interpretation
 
 ### Tree View (`codemap .`)
-- Stars (⭐) indicate top 5 largest source files
+- `⭐️ name ←N` marks a hub: N files import it (a Go package is marked on its directory); the legend under the tree says so
 - Directories flattened when containing single subdirectory
 
 ### Dependency Flow (`codemap --deps`)

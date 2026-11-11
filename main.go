@@ -622,6 +622,9 @@ func main() {
 	} else if *skylineMode {
 		render.Skyline(os.Stdout, project, *animateMode)
 	} else {
+		if diffInfo == nil {
+			project.Hubs, project.HubNote = treeHubs(absRoot, len(files), filters)
+		}
 		render.Tree(os.Stdout, project)
 	}
 	if !*jsonMode && scanBound != nil {

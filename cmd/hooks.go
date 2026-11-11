@@ -447,7 +447,7 @@ func hookSessionStart(root string) error {
 		return err
 	}
 
-	trailer, err := captureStdout(func() error {
+	hubBlock, err := captureStdout(func() error {
 		// Show hub files (from daemon if running, otherwise fresh scan)
 		info := getHubInfo(root)
 		if info != nil && len(info.Hubs) > 0 {
@@ -467,6 +467,13 @@ func hookSessionStart(root string) error {
 		} else if shouldSkipHubAnalysis(fileCount, fileCountKnown) {
 			fmt.Printf("ℹ️  Hub analysis skipped for large repo (%d files)\n", fileCount)
 		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	trailer, err := captureStdout(func() error {
 
 		currentBranch, branchKnown := gitCurrentBranch(root)
 		recentHandoff := getRecentHandoff(root)
@@ -496,7 +503,11 @@ func hookSessionStart(root string) error {
 		depth = projCfg.Depth
 	}
 	exe, exeErr := os.Executable()
+	rendered := map[int]string{}
 	renderTree := func(depth int) string {
+		if out, ok := rendered[depth]; ok {
+			return out
+		}
 		if exeErr != nil {
 			return ""
 		}
@@ -513,12 +524,29 @@ func hookSessionStart(root string) error {
 		cmd.Stdout = &buf
 		cmd.Stderr = os.Stderr
 		cmd.Run()
-		return buf.String() + "\n"
+		rendered[depth] = buf.String() + "\n"
+		return rendered[depth]
+	}
+
+	// A tree with its own hub legend already marks every hub with its count;
+	// the hook's hub list would state them twice.
+	if !treeStatesHubs(renderTree(depth)) {
+		trailer = hubBlock + trailer
 	}
 
 	fmt.Print(fitSessionStart(header, trailer, depth, structureBudget, sessionStartOutputCap(), renderTree))
 
 	return nil
+}
+
+// Markers of the tree's hub legend (render.printHubLegend).
+const (
+	treeHubLegend   = "⭐️ ←N = "
+	treeNoHubLegend = "No ⭐️ hub marks:"
+)
+
+func treeStatesHubs(tree string) bool {
+	return strings.Contains(tree, treeHubLegend) || strings.Contains(tree, treeNoHubLegend)
 }
 
 // sessionStartOutputCap is the whole session-start budget; CODEMAP_HOOK_OUTPUT_CAP
