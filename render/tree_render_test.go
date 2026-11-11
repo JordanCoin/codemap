@@ -68,7 +68,7 @@ func TestPrintTreeNodeFlattensDirsAndSummarizesHiddenContent(t *testing.T) {
 	}}
 
 	var buf bytes.Buffer
-	printTreeNode(&buf, root, "", true, nil, 1, 1)
+	printTreeNode(&buf, root, "", true, hubMarks{}, 1, 1)
 	out := stripTreeANSI(buf.String())
 
 	if !strings.Contains(out, "pkg/feature/") {
@@ -81,17 +81,17 @@ func TestPrintTreeNodeFlattensDirsAndSummarizesHiddenContent(t *testing.T) {
 
 func TestPrintTreeNodeMarksLargeAndChangedFiles(t *testing.T) {
 	root := &treeNode{children: map[string]*treeNode{
-		"big.go":  {name: "big.go", isFile: true, file: &scanner.FileInfo{Path: "big.go", Ext: ".go", Size: 1000}},
+		"big.go":  {name: "big.go", path: "big.go", isFile: true, file: &scanner.FileInfo{Path: "big.go", Ext: ".go", Size: 1000}},
 		"edit.go": {name: "edit.go", isFile: true, file: &scanner.FileInfo{Path: "edit.go", Ext: ".go", Size: 100, Added: 3, Removed: 1}},
 		"new.go":  {name: "new.go", isFile: true, file: &scanner.FileInfo{Path: "new.go", Ext: ".go", Size: 50, Added: 5, IsNew: true}},
 	}}
 
 	var buf bytes.Buffer
-	printTreeNode(&buf, root, "", true, map[string]bool{"big.go": true}, 1, 0)
+	printTreeNode(&buf, root, "", true, hubMarks{files: map[string]int{"big.go": 7}}, 1, 0)
 	out := stripTreeANSI(buf.String())
 
 	checks := []string{
-		"⭐️ big.go",
+		"⭐️ big.go ←7",
 		"✎ edit.go (+3 -1)",
 		"(new) new.go (+5)",
 	}
