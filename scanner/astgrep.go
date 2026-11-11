@@ -798,12 +798,14 @@ func analysesFromMatches(root string, matches []ScanMatch) []FileAnalysis {
 		} else if strings.HasSuffix(m.RuleID, "-types") {
 			if name := extractTypeName(m.Text); name != "" {
 				fileMap[relPath].Types = append(fileMap[relPath].Types, name)
+				fileMap[relPath].recordSymbolLine(name, m.Range.Start.Line)
 			}
 		} else if strings.HasSuffix(m.RuleID, "-functions") {
 			// Extract function name from text
 			name := extractFunctionName(m.Text, fileMap[relPath].Language)
 			if name != "" {
 				fileMap[relPath].Functions = append(fileMap[relPath].Functions, name)
+				fileMap[relPath].recordSymbolLine(name, m.Range.Start.Line)
 			}
 		}
 	}
@@ -819,6 +821,15 @@ func analysesFromMatches(root string, matches []ScanMatch) []FileAnalysis {
 	}
 
 	return results
+}
+
+func (a *FileAnalysis) recordSymbolLine(name string, line int) {
+	if a.SymbolLines == nil {
+		a.SymbolLines = map[string]int{}
+	}
+	if prev, ok := a.SymbolLines[name]; !ok || line < prev {
+		a.SymbolLines[name] = line
+	}
 }
 
 func dedupeImportReferences(refs []ImportReference) []ImportReference {

@@ -111,7 +111,7 @@ and managed MCP definitions created while it is active retain it automatically.
 
 | Tool | Description |
 |------|-------------|
-| `get_structure` | Project tree view with file sizes and language detection |
+| `get_structure` | Project tree view with file sizes and language detection, tests folded into their source, plus the hub list |
 | `get_dependencies` | Dependency flow with imports, functions, and hub files |
 | `get_diff` | Changed files with line counts and impact analysis |
 | `find_file` | Find files by name pattern |

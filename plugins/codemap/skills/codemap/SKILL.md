@@ -123,7 +123,11 @@ Skills matched: hub-safety, refactor - run `codemap skill show <name>` for guida
 
 ### Tree View (`codemap .`)
 - `⭐️ name ←N` marks a hub: N files import it (a Go package is marked on its directory); the legend under the tree says so
-- Directories flattened when containing single subdirectory
+- `hooks.go 2535L` is the file's line count, shown at 100+ lines; read a range instead of the whole file
+- `x.go (+3 tests)` folds same-directory tests into their source; `+N other tests` counts tests with no source beside them (a `tests/` dir lists its files)
+- `page-*.yml ×9` collapses 4+ siblings that differ only in numbers or hashes; `dir/ (untracked, N files, SIZE)` is a wholly untracked directory
+- Directories flattened when containing single subdirectory; a directory holding one file prints as `dir/FILE`
+- After the tree: the legend, `Hubs (top 10 of N)` with full paths, importer counts and line counts, `path:line Name` for exported symbols of the top hub files, and the next commands
 
 ### Dependency Flow (`codemap --deps`)
 - External dependencies grouped by language

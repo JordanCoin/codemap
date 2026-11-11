@@ -68,7 +68,7 @@ func TestPrintTreeNodeFlattensDirsAndSummarizesHiddenContent(t *testing.T) {
 	}}
 
 	var buf bytes.Buffer
-	printTreeNode(&buf, root, "", true, hubMarks{}, 1, 1)
+	printTreeNode(&buf, root, "", true, nil, 1, 1)
 	out := stripTreeANSI(buf.String())
 
 	if !strings.Contains(out, "pkg/feature/") {
@@ -87,7 +87,7 @@ func TestPrintTreeNodeMarksLargeAndChangedFiles(t *testing.T) {
 	}}
 
 	var buf bytes.Buffer
-	printTreeNode(&buf, root, "", true, hubMarks{files: map[string]int{"big.go": 7}}, 1, 0)
+	printTreeNode(&buf, root, "", true, &treeMarks{hubFiles: map[string]int{"big.go": 7}}, 1, 0)
 	out := stripTreeANSI(buf.String())
 
 	checks := []string{

@@ -21,6 +21,9 @@ func TestStructureDepthPrecedence(t *testing.T) {
 	for path, body := range map[string]string{
 		"a/one/b/c.go": "package b\n",
 		"a/two/d/e.go": "package d\n",
+		// A second file keeps a/two/ from being a one-line single-file chain,
+		// which the tree prints whatever the depth.
+		"a/two/d/f.go": "package d\n",
 	} {
 		full := filepath.Join(root, path)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {

@@ -503,9 +503,10 @@ func hookSessionStart(root string) error {
 		depth = projCfg.Depth
 	}
 	exe, exeErr := os.Executable()
-	rendered := map[int]string{}
-	renderTree := func(depth int) string {
-		if out, ok := rendered[depth]; ok {
+	rendered := map[string]string{}
+	renderTreeAt := func(depth int, lean string) string {
+		key := strconv.Itoa(depth) + "/" + lean
+		if out, ok := rendered[key]; ok {
 			return out
 		}
 		if exeErr != nil {
@@ -520,26 +521,39 @@ func hookSessionStart(root string) error {
 		}
 		args = append(args, root)
 		cmd := exec.Command(exe, args...)
+		if lean != "" {
+			cmd.Env = append(os.Environ(), TreeLeanEnv+"="+lean)
+		}
 		var buf strings.Builder
 		cmd.Stdout = &buf
 		cmd.Stderr = os.Stderr
 		cmd.Run()
-		rendered[depth] = buf.String() + "\n"
-		return rendered[depth]
+		rendered[key] = buf.String() + "\n"
+		return rendered[key]
 	}
 
 	// A tree with its own hub legend already marks every hub with its count;
 	// the hook's hub list would state them twice.
-	if !treeStatesHubs(renderTree(depth)) {
+	if !treeStatesHubs(renderTreeAt(depth, "")) {
 		trailer = hubBlock + trailer
 	}
+	// Spend the budget on file names first: shed the tree's extras at full
+	// depth before fitSessionStart gives up depth.
+	maxBytes := sessionStartOutputCap()
+	treeBudget := min(structureBudget, maxBytes-len(header)-len(cutAtLine(trailer, maxBytes/2, "... (truncated to fit the hook output cap)\n")))
+	lean := pickTreeLean(func(level string) string { return renderTreeAt(depth, level) }, treeBudget)
+	renderTree := func(depth int) string { return renderTreeAt(depth, lean) }
 
-	fmt.Print(fitSessionStart(header, trailer, depth, structureBudget, sessionStartOutputCap(), renderTree))
+	fmt.Print(fitSessionStart(header, trailer, depth, structureBudget, maxBytes, renderTree))
 
 	return nil
 }
 
-// Markers of the tree's hub legend (render.printHubLegend).
+// TreeLeanEnv tells a tree render to shed extras: "1" drops hub symbol lines
+// and the long hub list, "2" also drops line counts.
+const TreeLeanEnv = "CODEMAP_TREE_LEAN"
+
+// Markers of the tree's own hub trailer (render/tree_compact.go).
 const (
 	treeHubLegend   = "⭐️ ←N = "
 	treeNoHubLegend = "No ⭐️ hub marks:"
@@ -547,6 +561,17 @@ const (
 
 func treeStatesHubs(tree string) bool {
 	return strings.Contains(tree, treeHubLegend) || strings.Contains(tree, treeNoHubLegend)
+}
+
+// pickTreeLean returns the richest lean level whose render fits budget, or
+// the leanest when none does (depth is cut after that).
+func pickTreeLean(render func(lean string) string, budget int) string {
+	for _, level := range []string{"", "1"} {
+		if len(render(level)) <= budget {
+			return level
+		}
+	}
+	return "2"
 }
 
 // sessionStartOutputCap is the whole session-start budget; CODEMAP_HOOK_OUTPUT_CAP

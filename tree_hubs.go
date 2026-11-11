@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"slices"
 	"sort"
 	"strings"
@@ -45,4 +46,22 @@ func treeHubs(root string, fileCount int, filters scanner.Filters) ([]scanner.Hu
 		return hubs, "graph coverage partial, counts are lower bounds (codemap --deps lists the gaps)"
 	}
 	return hubs, ""
+}
+
+// untrackedDirs returns the directories under root that git reports as
+// wholly untracked, as slash paths relative to root. Not a git repo: nil.
+func untrackedDirs(root string) map[string]bool {
+	cmd := exec.Command("git", "ls-files", "--others", "--exclude-standard", "--directory", "-z")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	dirs := map[string]bool{}
+	for _, entry := range strings.Split(string(out), "\x00") {
+		if dir, ok := strings.CutSuffix(entry, "/"); ok && dir != "" && dir != "." {
+			dirs[dir] = true
+		}
+	}
+	return dirs
 }
