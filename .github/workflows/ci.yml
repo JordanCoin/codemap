@@ -24,6 +24,13 @@ jobs:
           - os: windows-latest
             go-version: '1.26'
             experimental: true
+          # Exactly one job enforces the coverage floor, updates the badge and
+          # uploads. The steps key off this flag, not a Go version: when they
+          # named 1.23 and the matrix moved on, they silently stopped running.
+          # If this version leaves the matrix, the entry still adds its own job.
+          - os: ubuntu-latest
+            go-version: '1.26'
+            coverage: true
 
     steps:
       - uses: actions/checkout@v4
@@ -60,7 +67,7 @@ jobs:
         shell: bash
 
       - name: Enforce coverage floor
-        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.24'
+        if: matrix.coverage
         run: |
           total=$(go tool cover -func=coverage.out | awk '/^total:/ {gsub("%","",$3); print $3}')
           # Current enforced coverage floor (total was 80.8% on 2026-11-12). Raise it as coverage grows toward 90%.
@@ -76,7 +83,7 @@ jobs:
           echo "COVERAGE=$(printf '%.0f' "$total")" >> "$GITHUB_ENV"
 
       - name: Update coverage badge
-        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.24' && github.ref == 'refs/heads/main'
+        if: matrix.coverage && github.ref == 'refs/heads/main'
         # Cosmetic gist badge update; a bad/expired GIST_TOKEN must not red-fail
         # the whole main build. Rotate GIST_TOKEN (PAT with gist scope) to restore.
         continue-on-error: true
@@ -92,7 +99,7 @@ jobs:
           maxColorRange: 90
 
       - name: Upload coverage
-        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.24'
+        if: matrix.coverage
         uses: codecov/codecov-action@v4
         with:
           files: coverage.out
