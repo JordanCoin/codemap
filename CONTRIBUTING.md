@@ -10,64 +10,42 @@ Thanks for your interest in contributing! Here's how to get involved.
 
 ## Adding a New Language
 
-Want to add support for a language like Clojure, Zig, Haskell, etc.? Here's what's needed:
+Want to add support for a language like Clojure, Zig, Haskell, etc.? `--deps` runs [ast-grep](https://ast-grep.github.io/) with YAML rules that are embedded in the binary (`//go:embed sg-rules/*.yml` in `scanner/astgrep.go`), so there is no grammar to build or ship. The language must be one ast-grep can parse. Here's what's needed:
 
-### 1. Add grammar to `release.yml`
+### 1. Add a rule file
 
-In `.github/workflows/release.yml`, add a line to the `GRAMMARS` env var:
+Create `scanner/sg-rules/<lang>.yml` with an imports rule and a functions rule. Rule IDs start with a prefix followed by `-`, for example `lua-imports` and `lua-functions`:
 
 ```yaml
-env:
-  GRAMMARS: |
-    go:tree-sitter/tree-sitter-go:master:src
-    # ... existing grammars ...
-    clojure:sogaiu/tree-sitter-clojure:main:src   # <- add yours
+id: lua-imports
+language: lua
+rule:
+  any:
+    - kind: function_call
+      pattern: require($$$)
+---
+id: lua-functions
+language: lua
+rule:
+  kind: function_declaration
 ```
 
-Format: `name:github_org/repo:branch:src_dir`
+Use the existing files in `scanner/sg-rules/` as examples, and the [ast-grep playground](https://ast-grep.github.io/playground.html) to find node kinds.
 
-Most grammars use `src` as the source directory, but check the repo structure.
+### 2. Map the rule prefix and the extensions
 
-### 2. Create a query file
+- `scanner/astgrep.go`: add the rule-ID prefix to `ruleIDToLang`.
+- `scanner/types.go`: add each file extension to `extToLang`, the language to `resolverLanguageFamilies` (imports only resolve between languages in the same family), and its display name to `LangDisplay`.
 
-Create `scanner/queries/<lang>.scm` to define what to capture:
+### 3. Add a conformance case
 
-```scm
-; Functions - capture function/method definitions
-(function_definition
-  name: (identifier) @function)
+`scanner/conformance_test.go` fails for any language in `extToLang` without an entry in `conformanceCases`: a two-file fixture, the edge that must (or must not) exist, and the expected coverage status. Run `go test ./scanner/` with ast-grep installed.
 
-; Imports - capture import/require statements
-(import_clause
-  (identifier) @import)
-```
-
-**Finding the right node types:**
-- Use [tree-sitter playground](https://tree-sitter.github.io/tree-sitter/7-playground.html)
-- Check the grammar repo's `grammar.js` for node names
-- Look at existing queries in `scanner/queries/` for examples
-
-### 3. Add extension mapping
-
-In `scanner/grammar.go`, add to the `extToLang` map:
-
-```go
-var extToLang = map[string]string{
-    // ... existing mappings ...
-    ".clj":  "clojure",
-    ".cljs": "clojure",
-    ".cljc": "clojure",
-}
-```
+If suffix and directory matching cannot resolve the language's imports, add a resolver in `scanner/filegraph.go` (see `resolveLuaModule`) with tests.
 
 ### 4. Open a PR
 
-That's it from your side! Open a PR with these 3 changes.
-
-**What happens next:**
-- Maintainer reviews the PR
-- Maintainer updates the Homebrew formula (`codemap.rb`) with the new grammar
-- On next release, all platforms get the new language automatically
+Release packaging copies `scanner/sg-rules/*`, so nothing else changes for a release.
 
 ## Development Setup
 
@@ -78,12 +56,13 @@ cd codemap
 # Build the binary
 go build -o codemap .
 
-# Build grammars for --deps mode (requires clang/gcc)
-make deps
+# --deps mode needs ast-grep on PATH (as ast-grep or sg)
+brew install ast-grep        # or: pip install ast-grep-cli
 
 # Test it
 ./codemap .
 ./codemap --deps .
+go test ./...
 ```
 
 ## Code Style

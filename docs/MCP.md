@@ -1,5 +1,7 @@
 # Codemap MCP Server
 
+This doc answers: how do I run codemap as an MCP server, what tools does it expose, and how do I wire up and upgrade Codex?
+
 Run codemap as an MCP server for Claude Code, Codex, or another MCP client.
 
 ## Setup
@@ -12,17 +14,35 @@ codemap setup --agent claude  # Configure only Claude Code
 codemap setup --agent codex   # Configure only Codex
 ```
 
-Setup writes a managed, versioned absolute executable path. After upgrading or
-moving Codemap, Codex plugin users should run `codemap plugin install` first,
-then rerun setup in each configured project. Claude users skip plugin
-installation but still rerun setup. Use `codemap doctor` for strict validation;
-it reports Codex CLI and Desktop runtimes independently. Agent integrations do
-not automatically refresh the generated local plugin or per-project setup.
-For a manual, PATH-dependent Claude definition:
+Setup writes a managed, versioned absolute executable path, so after upgrading
+or moving Codemap you rerun it in each configured project; the steps, including
+the Codex plugin refresh, are under [Codex](#codex). Use `codemap doctor` for
+strict validation. For a manual, PATH-dependent Claude definition:
 
 ```bash
 claude mcp add --transport stdio codemap -- codemap mcp
 ```
+
+### Codex
+
+`codemap setup` configures Codex when it detects it. Codex asks you to trust the hooks once from `/hooks`, even at user scope. The plugin is an optional extra that adds the skills to Codex:
+
+```bash
+codemap setup --agent codex          # user-scope hooks + MCP in ~/.codex
+codemap plugin install               # optional global plugin (MCP + skills), activated by default
+codemap doctor --agent codex         # validate; reports CLI and Desktop runtimes separately
+```
+
+**After upgrading the codemap binary**, agent integrations do not update themselves:
+
+```bash
+codemap plugin install   # Codex only, once per Codex environment
+cd /path/to/project && codemap setup && codemap doctor   # both agents, per project
+```
+
+`codemap plugin install` refreshes the plugin for CLI and Desktop sharing a Codex environment, and migrates the current project when run inside one, but it does not discover every configured project. Start a new task or session afterward, and re-check hook trust if Codex asks.
+
+> `codemap doctor` probes executables recorded in project-local config (`.codex/config.toml`, `.mcp.json`), so running it inside an untrusted repo executes a repo-chosen path. Doctor bounds this by requiring absolute paths and a recognized argument shape, but treat it like any command that honors project-local config.
 
 ### Build
 
@@ -105,7 +125,11 @@ Both values may be repository roots or subdirectories. An explicit
 `--setup-root` preserves the existing shared policy-and-runtime-state behavior,
 and managed MCP definitions created while it is active retain it automatically.
 
-## Available Tools (17)
+## Available Tools (19)
+
+`codemap mcp` serves 19 tools over stdio. When it is registered, hook nudges name the matching tool next to the CLI command, for example `codemap --importers X (MCP: get_importers)`.
+
+`get_structure`, `get_diff`, `get_importers`, `get_dependencies`, and `get_handoff` declare an `OutputSchema` and return typed structured content alongside the text response, so callers get parseable results instead of prose.
 
 ### Project Analysis
 
@@ -114,10 +138,18 @@ and managed MCP definitions created while it is active retain it automatically.
 | `get_structure` | Project tree view with file sizes and language detection, tests folded into their source, plus the hub list |
 | `get_dependencies` | Dependency flow with imports, functions, and hub files |
 | `get_diff` | Changed files with line counts and impact analysis |
+| `find` | Rank files by path and function/type names, then body text (`(body)` tag), with importer count and hub status per hit |
 | `find_file` | Find files by name pattern |
 | `get_importers` | Find all files that import a specific file |
 | `get_hubs` | List all hub files (3+ importers) with dependent counts |
 | `get_file_context` | Complete dependency context for one file (imports, importers, hub status, connected files) |
+
+### Topology
+
+| Tool | Description |
+|------|-------------|
+| `get_topology` | Project/module topology from build manifests: module dependencies, dependents, hubs, membership, evidence, and coverage |
+| `get_module_context` | Dependency context for one exact module ID, unique module name, or repository-relative file owner; ambiguous names return candidate IDs |
 
 ### Watch Daemon
 
@@ -184,3 +216,5 @@ Output and budget notes:
 Cancellation notes:
 - project scans, dependency graphs, ast-grep, Git diff/impact work, project discovery, and generated handoff/detail work stop with the MCP request context
 - with `save=true`, cancellation observed after generation but before persistence prevents `WriteLatest`; once persistence begins, the existing multi-file write completes or reports its existing error without rollback
+
+Next: [back to the README](../README.md)
