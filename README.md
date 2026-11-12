@@ -8,7 +8,7 @@
 ![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/JordanCoin/6ffe3276ddb8a7a7f08d50d649e567bd/raw/codemap-coverage.json)
 [![Run in Smithery](https://smithery.ai/badge/skills/jordancoin)](https://smithery.ai/skills?ns=jordancoin&utm_source=github&utm_medium=badge)
 
-![codemap screenshot](assets/codemap.png)
+![codemap . typed in a terminal, scrolling through the tree to the hub list](assets/codemap.gif)
 
 ## Your agent's first minute
 
