@@ -17,15 +17,15 @@ go test -cover ./... 2>&1 | sort -t'%' -k2 -n
 
 2. **Pick the lowest-coverage package** from this priority list (skip packages already above 80%):
 
-| Priority | Package | Notes |
-|----------|---------|-------|
-| 1 | `scanner/` | Core scanning logic, high impact |
-| 2 | `watch/` | Daemon/event system |
-| 3 | `render/` | Output rendering |
-| 4 | `handoff/` | Handoff artifact building |
-| 5 | `cmd/` | CLI commands |
-| 6 | `config/` | Configuration loading |
-| 7 | `limits/` | Budget enforcement |
+| Priority | Target | Notes |
+|----------|--------|-------|
+| 1 | root package: `blast_radius.go`, `collide.go` | Largest untested block outside entry points |
+| 2 | `cmd/`: `hooks.go`, `doctor.go`, `drift.go` | CLI commands |
+| 3 | `topology/` | Build-system providers |
+| 4 | `watch/` | Daemon/event system |
+| 5 | `plugins/` | Plugin install |
+
+`scanner/`, `render/`, `handoff/`, `config/` and `limits/` were already above 80% on 2026-11-12.
 
 **Skip these packages** (hard to test in isolation):
 - `mcp/` — MCP server, requires full stdio lifecycle
