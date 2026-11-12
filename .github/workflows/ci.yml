@@ -60,11 +60,11 @@ jobs:
         shell: bash
 
       - name: Enforce coverage floor
-        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23'
+        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.24'
         run: |
           total=$(go tool cover -func=coverage.out | awk '/^total:/ {gsub("%","",$3); print $3}')
-          # Current enforced coverage floor. Codex PRs raise this incrementally toward 90%.
-          min=55.0
+          # Current enforced coverage floor (total was 80.8% on 2026-11-12). Raise it as coverage grows toward 90%.
+          min=78.0
           awk -v t="$total" -v m="$min" 'BEGIN {
             if (t+0 < m+0) {
               printf "Coverage %.1f%% is below floor %.1f%%\n", t, m
@@ -76,7 +76,7 @@ jobs:
           echo "COVERAGE=$(printf '%.0f' "$total")" >> "$GITHUB_ENV"
 
       - name: Update coverage badge
-        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23' && github.ref == 'refs/heads/main'
+        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.24' && github.ref == 'refs/heads/main'
         # Cosmetic gist badge update; a bad/expired GIST_TOKEN must not red-fail
         # the whole main build. Rotate GIST_TOKEN (PAT with gist scope) to restore.
         continue-on-error: true
@@ -92,7 +92,7 @@ jobs:
           maxColorRange: 90
 
       - name: Upload coverage
-        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23'
+        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.24'
         uses: codecov/codecov-action@v4
         with:
           files: coverage.out
