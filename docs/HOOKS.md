@@ -1,5 +1,7 @@
 # Codemap Hooks
 
+This doc answers: what does codemap show my agent automatically, when, and how do I configure it?
+
 Hooks give Claude Code and Codex automatic codebase context throughout a session or task.
 
 ## The Full Experience
@@ -469,3 +471,5 @@ The 8-second hook timeout prevents any single hook from blocking Claude.
 4. You should see project structure at the top
 5. Ask the agent to edit a core file - watch for hub warnings
 6. End your session and see the summary
+
+Next: [how codemap resolves dependencies](RESOLUTION.md)

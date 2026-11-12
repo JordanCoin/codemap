@@ -1,7 +1,7 @@
 # codemap session ledger, spec v1
 
 Status: proposal, revised after Codex's interrogation of v0
-(docs/SESSION-LEDGER-CODEX-REVIEW.md, 31 items). Items 1 to 27 are applied
+(docs/design/SESSION-LEDGER-CODEX-REVIEW.md, 31 items). Items 1 to 27 are applied
 below and referenced as [C-n]; cuts 28 to 30 are applied. Nothing is built.
 Every claim about current behaviour names where it was checked on
 2026-10-11 at main 253c8d6.
