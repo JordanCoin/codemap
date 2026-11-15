@@ -517,7 +517,7 @@ func hookSessionStart(root string) error {
 		if exeErr != nil {
 			return ""
 		}
-		out, _ := renderTreeSubprocess(exe, root, projCfg, depth, lean, os.Stderr)
+		out, _ := renderTreeSubprocess(context.Background(), exe, root, projCfg, depth, lean, os.Stderr)
 		rendered[key] = out + "\n"
 		return rendered[key]
 	}
@@ -541,7 +541,7 @@ func hookSessionStart(root string) error {
 
 // renderTreeSubprocess renders `codemap --depth N` for root in a child
 // process with the project's filters and the given lean level.
-func renderTreeSubprocess(exe, root string, projCfg config.ProjectConfig, depth int, lean string, stderr io.Writer) (string, error) {
+func renderTreeSubprocess(ctx context.Context, exe, root string, projCfg config.ProjectConfig, depth int, lean string, stderr io.Writer) (string, error) {
 	args := projectpath.PrependSetupRootArgs("--depth", strconv.Itoa(depth))
 	if len(projCfg.Only) > 0 {
 		args = append(args, "--only", strings.Join(projCfg.Only, ","))
@@ -550,7 +550,7 @@ func renderTreeSubprocess(exe, root string, projCfg config.ProjectConfig, depth 
 		args = append(args, "--exclude", strings.Join(projCfg.Exclude, ","))
 	}
 	args = append(args, root)
-	cmd := exec.Command(exe, args...)
+	cmd := exec.CommandContext(ctx, exe, args...)
 	if lean != "" {
 		cmd.Env = append(os.Environ(), TreeLeanEnv+"="+lean)
 	}
@@ -563,6 +563,11 @@ func renderTreeSubprocess(exe, root string, projCfg config.ProjectConfig, depth 
 
 // subagentStartCap bounds the subagent orientation block.
 const subagentStartCap = 2500
+
+// subagentStartTimeout kills the tree render; a slow repo gets no block
+// rather than a stalled subagent.
+// ponytail: renders on every spawn (4s on a 10k-file repo); cache the block per HEAD if large repos need it.
+const subagentStartTimeout = 3 * time.Second
 
 // hookSubagentStart orients a subagent, which never gets SessionStart: the
 // top-level directories with hub marks, then the hub list. The payload's cwd
@@ -587,13 +592,39 @@ func hookSubagentStart(root string) error {
 	if err != nil {
 		return err
 	}
-	tree, err := renderTreeSubprocess(exe, root, config.Load(root), 1, TreeLeanDirsOnly, io.Discard)
+	ctx, cancel := context.WithTimeout(context.Background(), subagentStartTimeout)
+	defer cancel()
+	tree, err := renderTreeSubprocess(ctx, exe, root, config.Load(root), 1, TreeLeanDirsOnly, io.Discard)
 	if err != nil {
 		return err
 	}
-	out := "📍 codemap orientation: top-level directories (⭐️ marks hubs), then the hub list. Run `codemap .` for the full tree.\n" + tree
-	fmt.Print(cutAtLine(out, subagentStartCap, ""))
+	header := "📍 codemap orientation: top-level directories (⭐️ marks hubs), then the hub list. Run `codemap .` for the full tree.\n"
+	fmt.Print(fitSubagentStart(header, tree, subagentStartCap))
 	return nil
+}
+
+// fitSubagentStart keeps the tree's trailer (legend, hubs, Next) whole and
+// cuts the directory lines to fit, ending them with a count of what was cut.
+func fitSubagentStart(header, tree string, maxBytes int) string {
+	split := len(tree)
+	for _, marker := range []string{treeHubLegend, treeNoHubLegend} {
+		if i := strings.Index(tree, marker); i >= 0 && i < split {
+			split = strings.LastIndex(tree[:i], "\n") + 1
+		}
+	}
+	dirs, trailer := tree[:split], cutAtLine(tree[split:], maxBytes/2, "")
+	budget := maxBytes - len(header) - len(trailer)
+	if len(dirs) <= budget {
+		return header + dirs + trailer
+	}
+	lines := strings.SplitAfter(strings.TrimSuffix(dirs, "\n"), "\n")
+	marker := func(n int) string { return fmt.Sprintf("... %d more directories\n", n) }
+	kept, used := 0, 0
+	for kept < len(lines) && used+len(lines[kept])+len(marker(len(lines))) <= budget {
+		used += len(lines[kept])
+		kept++
+	}
+	return header + strings.Join(lines[:kept], "") + marker(len(lines)-kept) + trailer
 }
 
 // TreeLeanEnv tells a tree render to shed extras: "1" cuts the hub list to
@@ -2267,17 +2298,25 @@ func appendUniquePath(paths []string, path string) []string {
 }
 
 // projectRelPath returns a hook-supplied path relative to root, or false when
-// it resolves outside root. Relative paths are taken as root-relative; both
-// sides are canonicalised so a symlinked root still matches.
+// it is outside root. Relative paths are taken as root-relative. The path
+// counts as inside when it is spelled under root or under root's canonical
+// form (/tmp vs /private/tmp); only its parent directory is canonicalised,
+// so an in-repo symlink pointing outside the repo still counts as inside.
 func projectRelPath(root, path string) (string, bool) {
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(root, path)
 	}
-	rel, err := filepath.Rel(projectpath.CanonicalPath(root), projectpath.CanonicalPath(path))
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", false
+	path = filepath.Clean(path)
+	paths := []string{path, filepath.Join(projectpath.CanonicalPath(filepath.Dir(path)), filepath.Base(path))}
+	for _, r := range []string{root, projectpath.CanonicalPath(root)} {
+		for _, p := range paths {
+			rel, err := filepath.Rel(r, p)
+			if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return rel, true
+			}
+		}
 	}
-	return rel, true
+	return "", false
 }
 
 // checkFileImporters checks if a file is a hub and shows its importers

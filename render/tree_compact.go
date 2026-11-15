@@ -140,7 +140,7 @@ func printTreeNode(w io.Writer, node *treeNode, prefix string, isLast bool, mark
 				prefix, connector, BoldBlue, mergedName, Reset, Dim, countAndSize(fileCount, totalSize), Reset)
 			continue
 		}
-		if marks.compact && len(current.children) == 1 {
+		if marks.compact && !marks.dirsOnly && len(current.children) == 1 {
 			f := onlyChild(current)
 			star, count := hubMark(marks.hubFiles[f.path])
 			fmt.Fprintf(w, "%s%s%s  %s%s/%s%s%s%s%s %s(%s)%s\n",

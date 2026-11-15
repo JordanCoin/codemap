@@ -434,6 +434,40 @@ func TestEditHooksIgnoreFilesOutsideRoot(t *testing.T) {
 	}
 }
 
+func TestProjectRelPathKeepsInRepoSymlinks(t *testing.T) {
+	root, elsewhere := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(elsewhere, "real.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(elsewhere, "real.go"), filepath.Join(root, "lib", "linked.go")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(root, "vendored")); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]string{
+		filepath.Join(root, "lib", "linked.go"):                         filepath.Join("lib", "linked.go"),
+		filepath.Join(root, "vendored", "a.go"):                         filepath.Join("vendored", "a.go"),
+		projectpath.CanonicalPath(filepath.Join(root, "lib", "new.go")): filepath.Join("lib", "new.go"),
+	} {
+		if got, ok := projectRelPath(root, path); !ok || got != want {
+			t.Fatalf("projectRelPath(%s) = %q, %v; want %q, true", path, got, ok, want)
+		}
+	}
+	if _, ok := projectRelPath(root, filepath.Join(elsewhere, "real.go")); ok {
+		t.Fatal("a file outside the repo counted as inside")
+	}
+	if err := recordAgentEdit(root, "s", filepath.Join(root, "lib", "linked.go"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(agentEditsPath(root)); err != nil {
+		t.Fatalf("in-repo symlink edit was not recorded: %v", err)
+	}
+}
+
 // assertNoEditNudge checks the edit hooks no longer print command lists that
 // agents ignored (0.9% follow-through), while the hub facts stay.
 func assertNoEditNudge(t *testing.T, out string) {

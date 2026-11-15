@@ -465,7 +465,8 @@ func main() {
 	// adds to the config's exclude list (issue #150), since a config exclude
 	// is a standing decision about the repo and one run narrowing further
 	// must not silently re-admit it.
-	if tempDir == "" {
+	// The subagent orientation runs in repos that never ran setup; it must not write config.
+	if tempDir == "" && os.Getenv(cmd.TreeLeanEnv) != cmd.TreeLeanDirsOnly {
 		cmd.EnsureProjectConfig(absRoot)
 	}
 	projCfg := config.Load(absRoot)
