@@ -156,7 +156,7 @@ func refreshSubagentCache(root string) {
 	ctx, cancel := context.WithTimeout(context.Background(), subagentRefreshBound)
 	defer cancel()
 	if delay, err := time.ParseDuration(os.Getenv(subagentRenderDelayEnv)); err == nil {
-		time.Sleep(delay)
+		time.Sleep(min(delay, 5*time.Second))
 	}
 	if block, err := renderSubagentBlock(ctx, root); err == nil {
 		writeSubagentCache(root, key, block)

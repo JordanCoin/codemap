@@ -233,6 +233,10 @@ func RunHookWithTimeout(hookName, root string, timeout time.Duration) error {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return &HookTimeoutError{Hook: hookName, Timeout: timeout}
 		}
+		// Same rule as RunHook: no safe place for state never fails the agent.
+		if errors.Is(err, projectpath.ErrNoStateDir) || errors.Is(err, runtimefile.ErrUnsafe) {
+			return nil
+		}
 		return err
 	}
 	return runWithTimeout(hookName, timeout, func() error {

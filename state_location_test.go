@@ -744,6 +744,14 @@ func TestUnsafeStateFilesQuietInHooksActionableInCommands(t *testing.T) {
 			if err := os.Symlink(filepath.Join(t.TempDir(), "outside"), link); err != nil {
 				t.Fatal(err)
 			}
+			// A real change, so session-stop has a handoff to write.
+			src, err := os.ReadFile(filepath.Join(root, "main.go"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "main.go"), append(src, "// changed\n"...), 0o644); err != nil {
+				t.Fatal(err)
+			}
 			for _, step := range []struct{ hook, stdin string }{
 				{"session-start", `{"session_id":"u"}`},
 				{"post-edit", `{"session_id":"u","tool_input":{"file_path":"` + filepath.ToSlash(filepath.Join(root, "main.go")) + `"}}`},
