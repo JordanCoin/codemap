@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -115,25 +116,85 @@ func EnsureAutoConfig(root string) bool {
 	if err != nil {
 		return false
 	}
-	return runtimefile.WriteAtomic(path, encodeConfig(cfg), 0o600) == nil
+	return writeAutoConfig(root, cfg)
 }
 
-// RefreshAutoConfig re-derives the auto config from files, the unfiltered
-// result of a scan the caller already ran, and rewrites the stored copy when
-// it changed, so it follows the repo's file mix without a second scan.
-func RefreshAutoConfig(root string, files []scanner.FileInfo) config.ProjectConfig {
-	cfg := configFromFiles(files, &configInitResult{})
-	path := config.AutoConfigPath(root)
-	data := encodeConfig(cfg)
-	if stored, err := runtimefile.Read(path); path != "" && (err != nil || !bytes.Equal(stored, data)) {
-		_ = runtimefile.WriteAtomic(path, data, 0o600)
+// writeAutoConfig stores cfg as root's auto config when it differs from the
+// stored copy, creating the state dir only now that there is something to
+// write.
+func writeAutoConfig(root string, cfg config.ProjectConfig) bool {
+	dir, err := projectpath.CheckedRuntimeCodemapDir(root)
+	if err != nil {
+		return false
 	}
-	return cfg
+	path := filepath.Join(dir, config.AutoConfigFile)
+	data := encodeConfig(cfg)
+	if stored, err := runtimefile.Read(path); err == nil && bytes.Equal(stored, data) {
+		return false
+	}
+	return runtimefile.WriteAtomic(path, data, 0o600) == nil
 }
 
-// AutoFilterNote names an auto filter in one line, so it is never silent.
-func AutoFilterNote(cfg config.ProjectConfig) string {
-	if len(cfg.Only) == 0 && len(cfg.Exclude) == 0 {
+// RefreshAutoConfig keeps root's stored auto config in step with its file
+// mix and returns the listing it used. The mix comes from git's file list,
+// which is unbounded and far cheaper than a walk, so a repo over the scan
+// bound never derives filters from a truncated sample. Without git the stored
+// copy stays as it is (EnsureAutoConfig fills a missing one) and the listing
+// is nil.
+func RefreshAutoConfig(root string) []scanner.FileInfo {
+	if !AutoConfigActive(root) {
+		return nil
+	}
+	files, err := gitListedFiles(root)
+	if err != nil {
+		EnsureAutoConfig(root)
+		return nil
+	}
+	writeAutoConfig(root, configFromFiles(files, &configInitResult{}))
+	return files
+}
+
+// gitListedFiles is every tracked or unignored untracked file under root,
+// minus the directories the scanner never enters.
+func gitListedFiles(root string) ([]scanner.FileInfo, error) {
+	cmd := exec.Command("git", "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	var files []scanner.FileInfo
+	for _, path := range strings.Split(string(out), "\x00") {
+		if path == "" || inIgnoredDir(path) {
+			continue
+		}
+		files = append(files, scanner.FileInfo{Path: path, Ext: filepath.Ext(path)})
+	}
+	return files, nil
+}
+
+func inIgnoredDir(path string) bool {
+	parts := strings.Split(path, "/")
+	for _, dir := range parts[:len(parts)-1] {
+		if scanner.IgnoredDirs[dir] {
+			return true
+		}
+	}
+	return false
+}
+
+// AutoFilterNote names the auto filter in one line, so it is never silent,
+// but only when it hides at least one of files (a Go-only repo filtered to
+// Go hides nothing and gets no note).
+func AutoFilterNote(cfg config.ProjectConfig, files []scanner.FileInfo) string {
+	hides := false
+	for _, f := range files {
+		if !scanner.MatchesFilters(f.Path, f.Ext, cfg.Only, cfg.Exclude) {
+			hides = true
+			break
+		}
+	}
+	if !hides {
 		return ""
 	}
 	note := "auto filter:"

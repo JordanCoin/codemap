@@ -51,7 +51,7 @@ func runEveryEntryPoint(t *testing.T, root, cache string) {
 		t.Helper()
 		cmd := exec.Command(codemapTestBinaryPath, args...)
 		cmd.Dir = root
-		cmd.Env = append(os.Environ(), "HOME="+cache, "CODEMAP_HOOK_TIMEOUT=30s")
+		cmd.Env = append(append(os.Environ(), homeEnv(cache)...), "CODEMAP_HOOK_TIMEOUT=30s")
 		cmd.Stdin = strings.NewReader(stdin)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
@@ -125,7 +125,7 @@ func TestUnsetUpRepoWithoutCacheDirWritesNothing(t *testing.T) {
 	edit := `{"session_id":"s","tool_input":{"file_path":"` + filepath.ToSlash(filepath.Join(root, "main.go")) + `"}}`
 	var env []string
 	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "HOME=") && !strings.HasPrefix(kv, "XDG_CACHE_HOME=") && !strings.HasPrefix(kv, "LOCALAPPDATA=") {
+		if !strings.HasPrefix(kv, "HOME=") && !strings.HasPrefix(kv, "USERPROFILE=") {
 			env = append(env, kv)
 		}
 	}
@@ -157,6 +157,12 @@ func TestUnsetUpRepoWithoutCacheDirWritesNothing(t *testing.T) {
 	}
 }
 
+// homeEnv points os.UserHomeDir at dir on every OS: Windows reads
+// USERPROFILE, not HOME.
+func homeEnv(dir string) []string {
+	return []string{"HOME=" + dir, "USERPROFILE=" + dir}
+}
+
 // codemapIn runs the test binary in dir with env appended and returns
 // combined output.
 func codemapIn(t *testing.T, dir string, env []string, stdin string, args ...string) (string, error) {
@@ -173,7 +179,7 @@ func codemapIn(t *testing.T, dir string, env []string, stdin string, args ...str
 // thing it may add to the repo is .codemap/.
 func setUpFixture(t *testing.T, root, cache string) {
 	t.Helper()
-	if out, err := codemapIn(t, root, []string{"HOME=" + cache}, "", "setup", "--no-hooks", "--no-mcp", "--no-skills", root); err != nil {
+	if out, err := codemapIn(t, root, homeEnv(cache), "", "setup", "--no-hooks", "--no-mcp", "--no-skills", root); err != nil {
 		t.Fatalf("setup: %v\n%s", err, out)
 	}
 }
@@ -240,7 +246,7 @@ func TestRemovingCodemapDirKeepsStateWhereItIs(t *testing.T) {
 	root := stateFixture(t)
 	cache := t.TempDir()
 	setUpFixture(t, root, cache)
-	env := []string{"HOME=" + cache}
+	env := homeEnv(cache)
 	edit := func(file string) {
 		t.Helper()
 		stdin := `{"session_id":"s","tool_input":{"file_path":"` + filepath.ToSlash(filepath.Join(root, file)) + `"}}`
@@ -326,7 +332,7 @@ func TestAutoConfigKeepsHubsInADataHeavyRepo(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	out, err := codemapIn(t, root, []string{"HOME=" + t.TempDir()}, "", ".")
+	out, err := codemapIn(t, root, homeEnv(t.TempDir()), "", ".")
 	if err != nil {
 		t.Fatalf("codemap .: %v\n%s", err, out)
 	}
@@ -352,7 +358,7 @@ func TestSetupWhileDaemonRunsKeepsOneDaemon(t *testing.T) {
 		t.Skip("pgrep")
 	}
 	root := projectpathCanonical(t, stateFixture(t))
-	env := []string{"HOME=" + t.TempDir()}
+	env := homeEnv(t.TempDir())
 	t.Cleanup(func() { _, _ = codemapIn(t, root, env, "", "watch", "stop", root) })
 	if out, err := codemapIn(t, root, env, "", "watch", "start", root); err != nil {
 		t.Fatalf("watch start: %v\n%s", err, out)
@@ -384,7 +390,7 @@ func TestRegisteredDaemonWithEmptyStateDirGetsNoSecond(t *testing.T) {
 	}
 	root := projectpathCanonical(t, stateFixture(t))
 	home := t.TempDir()
-	env := []string{"HOME=" + home}
+	env := homeEnv(home)
 	t.Cleanup(func() { _, _ = codemapIn(t, root, env, "", "watch", "stop", root) })
 	if out, err := codemapIn(t, root, env, "", "watch", "start", root); err != nil {
 		t.Fatalf("watch start: %v\n%s", err, out)
@@ -428,8 +434,8 @@ func TestDifferentXDGCacheHomesShareOneDaemon(t *testing.T) {
 	}
 	root := projectpathCanonical(t, stateFixture(t))
 	home := t.TempDir()
-	shell := []string{"HOME=" + home, "XDG_CACHE_HOME=" + t.TempDir()}
-	gui := []string{"HOME=" + home, "XDG_CACHE_HOME="}
+	shell := append(homeEnv(home), "XDG_CACHE_HOME="+t.TempDir())
+	gui := append(homeEnv(home), "XDG_CACHE_HOME=")
 	t.Cleanup(func() { _, _ = codemapIn(t, root, shell, "", "watch", "stop", root) })
 	if out, err := codemapIn(t, root, shell, "", "watch", "start", root); err != nil {
 		t.Fatalf("watch start: %v\n%s", err, out)
@@ -452,7 +458,7 @@ func TestConcurrentWatchStartsAllSucceedWithOneDaemon(t *testing.T) {
 		t.Skip("pgrep")
 	}
 	root := projectpathCanonical(t, stateFixture(t))
-	env := []string{"HOME=" + t.TempDir()}
+	env := homeEnv(t.TempDir())
 	t.Cleanup(func() { _, _ = codemapIn(t, root, env, "", "watch", "stop", root) })
 	const n = 4
 	outs, errs := make([]string, n), make([]error, n)
@@ -494,7 +500,7 @@ func TestPlantedStateFileLinksAreNotWrittenThrough(t *testing.T) {
 		}
 	}
 	runEveryEntryPoint(t, root, home)
-	if out, err := codemapIn(t, root, []string{"HOME=" + home}, "", "handoff", "."); err == nil {
+	if out, err := codemapIn(t, root, homeEnv(home), "", "handoff", "."); err == nil {
 		t.Fatalf("handoff saved through a planted link:\n%s", out)
 	}
 	if data, _ := os.ReadFile(outside); string(data) != "mine\n" {
@@ -531,9 +537,9 @@ func TestNoUsableStateDirIsQuiet(t *testing.T) {
 	}
 	missing := filepath.Join(t.TempDir(), "gone")
 	cases := map[string][]string{
-		"missing home":   {"HOME=" + missing, "CODEMAP_DAEMON_REGISTRY="},
-		"read-only home": {"HOME=" + readOnly},
-		"planted link":   {"HOME=" + linkCache},
+		"missing home":   append(homeEnv(missing), "CODEMAP_DAEMON_REGISTRY="),
+		"read-only home": homeEnv(readOnly),
+		"planted link":   homeEnv(linkCache),
 	}
 	for name, env := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -547,7 +553,7 @@ func TestNoUsableStateDirIsQuiet(t *testing.T) {
 				{`{"session_id":"s"}`, "session-stop"},
 			} {
 				out, err := codemapIn(t, root, env, step.stdin, "hook", step.hook)
-				if err != nil || strings.Contains(out, "permission denied") || strings.Contains(out, "unsafe runtime") {
+				if err != nil || strings.Contains(out, "permission denied") || strings.Contains(out, "unsafe") {
 					t.Fatalf("hook %s: %v\n%s", step.hook, err, out)
 				}
 			}
@@ -567,10 +573,13 @@ func TestNoUsableStateDirIsQuiet(t *testing.T) {
 
 // V4: a hook timeout that ends the process before the render still leaves
 // the background render running, which fills the cache and drops its lock.
+// The render is held back past the hook's budget, so the slow path does not
+// depend on how fast this machine renders.
 func TestSubagentStartTimeoutStillFillsTheCache(t *testing.T) {
 	root := stateFixture(t)
 	cache := t.TempDir()
-	out, err := codemapIn(t, root, []string{"HOME=" + cache, "CODEMAP_HOOK_TIMEOUT=1ms"}, `{"cwd":"`+filepath.ToSlash(root)+`"}`, "hook", "subagent-start")
+	env := append(homeEnv(cache), "CODEMAP_HOOK_TIMEOUT=200ms", "CODEMAP_TEST_SUBAGENT_RENDER_DELAY=2s")
+	out, err := codemapIn(t, root, env, `{"cwd":"`+filepath.ToSlash(root)+`"}`, "hook", "subagent-start")
 	if err != nil || out != "" {
 		t.Fatalf("timed-out subagent-start: %v %q", err, out)
 	}
@@ -580,5 +589,183 @@ func TestSubagentStartTimeoutStillFillsTheCache(t *testing.T) {
 			t.Fatal("background render never filled the cache or left its lock")
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// Reading creates nothing: read-only commands leave ~/.codemap/state absent
+// in a plain directory (and each subdirectory), and a git repo gets at most
+// one entry however many of its directories are looked at.
+func TestReadOnlyCommandsCreateNoState(t *testing.T) {
+	readOnly := func(t *testing.T, home string, dirs ...string) {
+		t.Helper()
+		for _, dir := range dirs {
+			for _, args := range [][]string{{"."}, {"--deps", "."}, {"find", "x", "."}, {"config", "show", "."}, {"doctor", "."}} {
+				_, _ = codemapIn(t, dir, homeEnv(home), "", args...)
+			}
+		}
+	}
+	plain := t.TempDir()
+	for rel, body := range map[string]string{"a.go": "package a\n", "sub/b.go": "package b\n"} {
+		path := filepath.Join(plain, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	home := t.TempDir()
+	readOnly(t, home, plain, filepath.Join(plain, "sub"))
+	if _, err := os.Stat(filepath.Join(home, ".codemap", "state")); !os.IsNotExist(err) {
+		t.Fatalf("read-only commands outside git created state: %s", dirNames(t, filepath.Join(home, ".codemap", "state")))
+	}
+
+	repo := stateFixture(t)
+	readOnly(t, home, repo, filepath.Join(repo, "pkg"), filepath.Join(repo, "cmd", "a"))
+	if entries, _ := os.ReadDir(filepath.Join(home, ".codemap", "state")); len(entries) > 1 {
+		t.Fatalf("one git repo got %d state entries: %s", len(entries), dirNames(t, filepath.Join(home, ".codemap", "state")))
+	}
+}
+
+// A repo over the scan bound keeps its stored auto filter: the bounded walk is
+// the filtered one, and the stored copy is never re-derived from a truncated
+// sample.
+func TestAutoConfigSurvivesTheScanBound(t *testing.T) {
+	root := stateFixture(t)
+	for i := 0; i < 600; i++ {
+		path := filepath.Join(root, "data", fmt.Sprintf("r%03d.json", i))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("{}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	home := t.TempDir()
+	if out, err := codemapIn(t, root, homeEnv(home), "", "."); err != nil {
+		t.Fatalf("codemap .: %v\n%s", err, out)
+	}
+	out, err := codemapIn(t, root, homeEnv(home), "", "--max-files", "100", ".")
+	if err != nil || !strings.Contains(out, "pkg") || strings.Contains(out, "data/") {
+		t.Fatalf("bounded tree lost the code: %v\n%s", err, out)
+	}
+	data, _ := os.ReadFile(findFile(t, home, "auto-config.json"))
+	if !strings.Contains(string(data), `"go"`) {
+		t.Fatalf("stored auto config lost its filter: %s", data)
+	}
+}
+
+// The auto filter note is for a person reading `codemap .`: never in JSON,
+// any lean render, or a hook's context.
+func TestAutoFilterNoteStaysOutOfAgentOutput(t *testing.T) {
+	root := stateFixture(t)
+	env := homeEnv(t.TempDir())
+	t.Cleanup(func() { _, _ = codemapIn(t, root, env, "", "watch", "stop", root) })
+	if out, _ := codemapIn(t, root, env, "", "."); !strings.Contains(out, "auto filter: only go") {
+		t.Fatalf("human tree has no auto filter note (docs/x.md is hidden):\n%s", out)
+	}
+	runs := map[string][]string{"json": {"--json", "."}}
+	for _, lean := range []string{"0", "1", "2", "dirs"} {
+		runs["lean "+lean] = []string{"."}
+	}
+	for name, args := range runs {
+		runEnv := env
+		if strings.HasPrefix(name, "lean ") {
+			runEnv = append(append([]string{}, env...), "CODEMAP_TREE_LEAN="+strings.TrimPrefix(name, "lean "))
+		}
+		if out, _ := codemapIn(t, root, runEnv, "", args...); strings.Contains(out, "auto filter") {
+			t.Fatalf("%s output carries the auto filter note:\n%s", name, out)
+		}
+	}
+	for _, hook := range []struct{ name, stdin string }{
+		{"subagent-start", `{"cwd":"` + filepath.ToSlash(root) + `"}`},
+		{"session-start", `{"session_id":"n"}`},
+	} {
+		if out, _ := codemapIn(t, root, env, hook.stdin, "hook", hook.name); strings.Contains(out, "auto filter") {
+			t.Fatalf("%s carries the auto filter note:\n%s", hook.name, out)
+		}
+	}
+}
+
+// A state subdirectory replaced by a link is never listed, written or
+// cleaned through: the outside directory stays byte for byte.
+func TestPlantedStateDirLinksAreNotFollowed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks needs privileges on Windows")
+	}
+	root := stateFixture(t)
+	home := t.TempDir()
+	runEveryEntryPoint(t, root, home)
+	stateDir := filepath.Dir(findFile(t, home, "project.json"))
+	for _, name := range []string{"sessions", "flush"} {
+		outside := t.TempDir()
+		old := filepath.Join(outside, "old-lease")
+		if err := os.WriteFile(old, []byte("mine\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		stale := time.Now().Add(-48 * time.Hour)
+		if err := os.Chtimes(old, stale, stale); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.RemoveAll(filepath.Join(stateDir, name)); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(stateDir, name)); err != nil {
+			t.Fatal(err)
+		}
+		runEveryEntryPoint(t, root, home)
+		if got := dirNames(t, outside); got != "old-lease" {
+			t.Fatalf("%s link: outside dir now holds %q", name, got)
+		}
+		if data, _ := os.ReadFile(old); string(data) != "mine\n" {
+			t.Fatalf("%s link: outside file changed: %q", name, data)
+		}
+	}
+}
+
+// An unsafe state file never fails or speaks in a hook; a user command fails
+// with one line that names the path and says to remove it, and the link is
+// left alone.
+func TestUnsafeStateFilesQuietInHooksActionableInCommands(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks needs privileges on Windows")
+	}
+	for _, name := range []string{"state.json", "project.json", "watch.pid", "handoff.latest.json"} {
+		t.Run(name, func(t *testing.T) {
+			root := projectpathCanonical(t, stateFixture(t))
+			home := t.TempDir()
+			env := homeEnv(home)
+			t.Cleanup(func() { _, _ = codemapIn(t, root, env, "", "watch", "stop", root) })
+			if out, err := codemapIn(t, root, env, "", "."); err != nil {
+				t.Fatalf("codemap .: %v\n%s", err, out)
+			}
+			link := filepath.Join(filepath.Dir(findFile(t, home, "project.json")), name)
+			_ = os.Remove(link)
+			if err := os.Symlink(filepath.Join(t.TempDir(), "outside"), link); err != nil {
+				t.Fatal(err)
+			}
+			for _, step := range []struct{ hook, stdin string }{
+				{"session-start", `{"session_id":"u"}`},
+				{"post-edit", `{"session_id":"u","tool_input":{"file_path":"` + filepath.ToSlash(filepath.Join(root, "main.go")) + `"}}`},
+				{"pre-compact", `{"session_id":"u"}`},
+				{"session-stop", `{"session_id":"u"}`},
+			} {
+				out, err := codemapIn(t, root, env, step.stdin, "hook", step.hook)
+				if err != nil || strings.Contains(out, "unsafe") {
+					t.Fatalf("hook %s: %v\n%s", step.hook, err, out)
+				}
+			}
+			if name == "handoff.latest.json" {
+				return // the daemon does not read it; `codemap handoff` is covered above
+			}
+			_, _ = codemapIn(t, root, env, "", "watch", "stop", root)
+			out, err := codemapIn(t, root, env, "", "watch", "start", root)
+			if err == nil || !strings.Contains(out, link+" is a symlink") || !strings.Contains(out, "remove it") {
+				t.Fatalf("watch start with a planted %s: %v\n%s", name, err, out)
+			}
+			if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+				t.Fatalf("the planted link was touched: %v", err)
+			}
+		})
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -180,5 +181,25 @@ func TestRunWatchStartReportsDaemonThatDies(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(projectpath.ProjectRuntimeDir(root), "watch.pid")); !os.IsNotExist(statErr) {
 		t.Fatalf("dead daemon left its PID file behind: %v", statErr)
+	}
+}
+
+// A `watch start` that loses the transition lock and sees no daemon come up
+// fails; it reports success only when a daemon is actually running.
+func TestWatchStartLoserWithNoDaemonFails(t *testing.T) {
+	root := projectpathCanonical(t, stateFixture(t))
+	selection, err := projectpath.SelectRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock := filepath.Join(selection.RuntimeDir, "watch.transition")
+	if err := os.WriteFile(lock, []byte(`{"pid":`+strconv.Itoa(os.Getpid())+`,"token":"held"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	previous := watchReadinessTimeout
+	t.Cleanup(func() { watchReadinessTimeout = previous })
+	watchReadinessTimeout = 100 * time.Millisecond
+	if err := runWatchSubcommand("start", root); err == nil || !strings.Contains(err.Error(), "no daemon came up") {
+		t.Fatalf("watch start with a held lock and no daemon = %v, want a failure", err)
 	}
 }

@@ -5,8 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
+
+	"codemap/internal/runtimefile"
 )
 
 func setHome(t *testing.T, dir string) {
@@ -79,7 +80,7 @@ func TestSelectRuntimeRefusesLinksFromTheStateLevelDown(t *testing.T) {
 			if err := os.Symlink(planted, filepath.Join(home, rel)); err != nil {
 				t.Skipf("symlinks unavailable: %v", err)
 			}
-			if _, err := CheckedRuntimeCodemapDir(root); !errors.Is(err, ErrNoStateDir) || !strings.Contains(err.Error(), "unsafe runtime directory") {
+			if _, err := CheckedRuntimeCodemapDir(root); !errors.Is(err, ErrNoStateDir) || !errors.Is(err, runtimefile.ErrUnsafe) {
 				t.Fatalf("err = %v, want ErrNoStateDir naming an unsafe runtime directory", err)
 			}
 			if entries, _ := os.ReadDir(planted); len(entries) != 0 {

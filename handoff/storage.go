@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"codemap/internal/projectpath"
 	"codemap/internal/runtimefile"
@@ -33,7 +32,7 @@ func DeltaPath(root string) string { return displayPath(root, deltaFilename) }
 func MetricsPath(root string) string { return displayPath(root, metricsFilename) }
 
 func displayPath(root, name string) string {
-	path, err := runtimePath(root, name)
+	path, err := statePath(root, name)
 	if err != nil {
 		return ""
 	}
@@ -43,16 +42,13 @@ func displayPath(root, name string) string {
 // ReadLatest reads the latest handoff artifact if it exists.
 // Returns (nil, nil) when no artifact is present.
 func ReadLatest(root string) (*Artifact, error) {
-	path, err := runtimePath(root, latestFilename)
+	path, err := statePath(root, latestFilename)
 	if err != nil {
 		return nil, err
 	}
 	data, err := runtimefile.Read(path)
 	if os.IsNotExist(err) {
-		if data = readLegacyLatest(root); data == nil {
-			return nil, nil
-		}
-		err = nil
+		return nil, nil
 	}
 	if err != nil {
 		return nil, err
@@ -65,32 +61,6 @@ func ReadLatest(root string) (*Artifact, error) {
 	normalizeArtifact(&artifact)
 
 	return &artifact, nil
-}
-
-// readLegacyLatest returns the handoff an older codemap saved inside the repo,
-// so the first session after an upgrade keeps it; the next save lands in the
-// state dir and wins from then on. Read-only, and every level must be a real
-// directory or regular file, never a link.
-func readLegacyLatest(root string) []byte {
-	dir := filepath.Join(projectpath.RuntimeRoot(root), ".codemap")
-	for _, rel := range []string{filepath.Join("projects", projectpath.ProjectKey(root)), "."} {
-		candidate := dir
-		safe := true
-		for _, part := range append([]string{""}, strings.Split(rel, string(filepath.Separator))...) {
-			candidate = filepath.Join(candidate, part)
-			if info, err := os.Lstat(candidate); err != nil || !info.IsDir() {
-				safe = false
-				break
-			}
-		}
-		if !safe {
-			continue
-		}
-		if data, err := runtimefile.Read(filepath.Join(candidate, latestFilename)); err == nil {
-			return data
-		}
-	}
-	return nil
 }
 
 // WriteLatest writes an artifact atomically to handoff.latest.json in the
@@ -113,6 +83,15 @@ func WriteLatest(root string, artifact *Artifact) error {
 		return err
 	}
 	return appendMetricsAt(filepath.Join(runtimeDir, metricsFilename), artifact)
+}
+
+// statePath names a state file for reading; it creates nothing.
+func statePath(root, name string) (string, error) {
+	dir, err := projectpath.StateDir(root)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, name), nil
 }
 
 func runtimePath(root, name string) (string, error) {

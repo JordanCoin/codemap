@@ -8,8 +8,14 @@ import (
 	"path/filepath"
 )
 
-// ErrUnsafe marks a state file that is a symlink or not a regular file.
-var ErrUnsafe = errors.New("unsafe runtime file")
+// ErrUnsafe marks a state path that is a symlink or of the wrong type.
+var ErrUnsafe = errors.New("unsafe codemap state")
+
+// Unsafe is the one error every refused state path gets: it names the path
+// and says what to do. codemap never deletes it itself.
+func Unsafe(path string) error {
+	return fmt.Errorf("%w: %s is a symlink or not a plain file or directory; remove it and rerun", ErrUnsafe, path)
+}
 
 // WriteAtomic replaces a regular runtime file without following its endpoint.
 func WriteAtomic(path string, data []byte, mode os.FileMode) error {
@@ -22,7 +28,7 @@ func WriteAtomic(path string, data []byte, mode os.FileMode) error {
 // WriteAtomicWith replaces a regular runtime file with streamed content.
 func WriteAtomicWith(path string, mode os.FileMode, write func(io.Writer) error) error {
 	if info, err := os.Lstat(path); err == nil && !info.Mode().IsRegular() {
-		return fmt.Errorf("%w %q", ErrUnsafe, path)
+		return Unsafe(path)
 	} else if err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -46,6 +52,28 @@ func WriteAtomicWith(path string, mode os.FileMode, write func(io.Writer) error)
 	return replaceFile(tmpPath, path)
 }
 
+// EnsureDir makes path a private directory, creating it when missing, and
+// refuses a symlink or anything else that is not a real directory, so a
+// listing or cleanup inside it never reaches outside the state dir.
+func EnsureDir(path string) error {
+	if err := os.Mkdir(path, 0o700); err != nil && !os.IsExist(err) {
+		return err
+	}
+	return CheckDir(path)
+}
+
+// CheckDir is EnsureDir without creating: a missing path is os.ErrNotExist.
+func CheckDir(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return Unsafe(path)
+	}
+	return nil
+}
+
 // Read rejects symlink and non-regular endpoints.
 func Read(path string) ([]byte, error) {
 	f, err := OpenRead(path)
@@ -65,7 +93,7 @@ func OpenRead(path string) (*os.File, error) {
 		return nil, err
 	}
 	if !before.Mode().IsRegular() {
-		return nil, fmt.Errorf("%w %q", ErrUnsafe, path)
+		return nil, Unsafe(path)
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -73,7 +101,7 @@ func OpenRead(path string) (*os.File, error) {
 	}
 	if after, err := f.Stat(); err != nil || !os.SameFile(before, after) {
 		_ = f.Close()
-		return nil, fmt.Errorf("%w %q", ErrUnsafe, path)
+		return nil, Unsafe(path)
 	}
 	return f, nil
 }

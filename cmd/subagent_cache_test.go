@@ -3,7 +3,9 @@ package cmd
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -101,7 +103,15 @@ func TestSubagentStartConcurrentMissesLaunchOneRender(t *testing.T) {
 // A render slower than the budget prints nothing for anyone, yet still fills
 // the cache afterwards and drops its lock.
 func TestSubagentStartSlowRenderPrintsNothingAndFillsTheCacheLater(t *testing.T) {
-	root, renders, launches := subagentCacheRepo(t, 300*time.Millisecond)
+	root, renders, launches := subagentCacheRepo(t, 0)
+	// The render waits for every caller to give up, whatever the machine's
+	// speed, so "slow" is a fact of the test, not a race.
+	gate := make(chan struct{})
+	fast := renderSubagentBlock
+	renderSubagentBlock = func(ctx context.Context, root string) (string, error) {
+		<-gate
+		return fast(ctx, root)
+	}
 	var wg sync.WaitGroup
 	for i := 0; i < 4; i++ {
 		wg.Add(1)
@@ -113,6 +123,7 @@ func TestSubagentStartSlowRenderPrintsNothingAndFillsTheCacheLater(t *testing.T)
 		}()
 	}
 	wg.Wait()
+	close(gate)
 	waitForSubagentRefresh(t, root)
 	if launches.Load() != 1 || renders.Load() != 1 {
 		t.Fatalf("launches=%d renders=%d, want one", launches.Load(), renders.Load())
@@ -137,4 +148,40 @@ func TestSubagentStartTakesOverAStaleLock(t *testing.T) {
 		t.Fatalf("stale lock not taken over: out=%q renders=%d", out, renders.Load())
 	}
 	waitForSubagentRefresh(t, root)
+}
+
+// A fresh lock whose refresher died is taken over at once; one held by a
+// live process stays held.
+func TestSubagentStartTakesOverTheLockOfADeadRefresher(t *testing.T) {
+	root, renders, launches := subagentCacheRepo(t, 0)
+	dir, _ := subagentCacheDir(root)
+	lock := filepath.Join(dir, subagentRefreshLock)
+	if err := os.WriteFile(lock, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out := subagentStartBlock(root, 50*time.Millisecond); out != "" || launches.Load() != 0 {
+		t.Fatalf("a live refresher's lock must hold: out=%q launches=%d", out, launches.Load())
+	}
+	dead := exec.Command("git", "--version")
+	if err := dead.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lock, []byte(strconv.Itoa(dead.Process.Pid)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out := subagentStartBlock(root, subagentStartTimeout); !strings.HasPrefix(out, "block ") || renders.Load() != 1 {
+		t.Fatalf("dead refresher's lock not taken over: out=%q renders=%d", out, renders.Load())
+	}
+	waitForSubagentRefresh(t, root)
+}
+
+// With no usable state dir the block is rendered in the foreground, not
+// lost (the cache is an optimisation).
+func TestSubagentStartWithoutAStateDirStillPrintsTheBlock(t *testing.T) {
+	root, renders, launches := subagentCacheRepo(t, 0)
+	t.Setenv("HOME", filepath.Join(t.TempDir(), "missing"))
+	t.Setenv("USERPROFILE", filepath.Join(t.TempDir(), "missing"))
+	if out := subagentStartBlock(root, subagentStartTimeout); !strings.HasPrefix(out, "block ") || renders.Load() != 1 || launches.Load() != 0 {
+		t.Fatalf("out=%q renders=%d launches=%d", out, renders.Load(), launches.Load())
+	}
 }

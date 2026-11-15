@@ -33,7 +33,7 @@ func OpenAppend(path string, mode os.FileMode) (*os.File, error) {
 	}
 	if info.FileAttributes&syscall.FILE_ATTRIBUTE_REPARSE_POINT != 0 || info.FileAttributes&syscall.FILE_ATTRIBUTE_DIRECTORY != 0 {
 		_ = syscall.CloseHandle(handle)
-		return nil, fmt.Errorf("%w %q", ErrUnsafe, path)
+		return nil, Unsafe(path)
 	}
 	file := os.NewFile(uintptr(handle), path)
 	if file == nil {

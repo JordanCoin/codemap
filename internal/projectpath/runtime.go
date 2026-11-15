@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"codemap/internal/runtimefile"
 )
 
 // RuntimeSelection separates reusable setup policy from mutable project state.
@@ -63,6 +65,51 @@ func SelectRuntime(projectRoot string) (RuntimeSelection, error) {
 		return RuntimeSelection{}, err
 	}
 	return result, nil
+}
+
+// StateDir returns the directory SelectRuntime would give as ProjectDir, but
+// creates nothing: a read of missing state then simply misses. Every level
+// that does exist is checked as SelectRuntime checks it (real directory,
+// owned by this user, project marker matches).
+func StateDir(projectRoot string) (string, error) {
+	selection, err := Select(projectRoot)
+	if err != nil {
+		return "", err
+	}
+	var levels []string
+	if selection.Source == SourceExplicit {
+		digest := sha256.Sum256([]byte(selection.ProjectRoot))
+		runtimeDir := filepath.Join(selection.SetupRoot, ".codemap", "runtime", hex.EncodeToString(digest[:]))
+		levels = []string{runtimeDir, filepath.Join(runtimeDir, "projects"), filepath.Join(runtimeDir, "projects", ProjectKey(selection.ProjectRoot))}
+	} else {
+		base, ok := UserDir()
+		if !ok {
+			return "", ErrNoStateDir
+		}
+		state := filepath.Join(CanonicalPath(base), "state")
+		levels = []string{state, filepath.Join(state, ProjectKey(selection.ProjectRoot))}
+	}
+	for _, dir := range levels {
+		info, err := os.Lstat(dir)
+		if os.IsNotExist(err) {
+			break
+		}
+		if err != nil || !info.IsDir() || !ownedByCurrentUser(info) {
+			return "", fmt.Errorf("%w: %w", ErrNoStateDir, runtimefile.Unsafe(dir))
+		}
+	}
+	dir := levels[len(levels)-1]
+	markerDir := dir
+	if selection.Source == SourceExplicit {
+		markerDir = levels[0]
+	}
+	if data, err := os.ReadFile(filepath.Join(markerDir, "project.json")); err == nil {
+		var marker projectMarker
+		if json.Unmarshal(data, &marker) != nil || marker.CanonicalRoot != CanonicalPath(selection.ProjectRoot) && marker.CanonicalRoot != selection.ProjectRoot {
+			return "", fmt.Errorf("%w: runtime identity mismatch in %q", ErrNoStateDir, markerDir)
+		}
+	}
+	return dir, nil
 }
 
 // IsSetUp reports whether the project's policy directory (<setup root>/.codemap)
@@ -163,7 +210,7 @@ func ensureDirectory(path string, perm os.FileMode) error {
 		return fmt.Errorf("inspect runtime directory %q: %w", path, err)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("unsafe runtime directory %q: expected a real directory", path)
+		return runtimefile.Unsafe(path)
 	}
 	return nil
 }
@@ -196,7 +243,7 @@ func ensureProjectMarker(runtimeDir, canonicalRoot string) error {
 	}
 	info, statErr := os.Lstat(path)
 	if statErr != nil || !info.Mode().IsRegular() {
-		return fmt.Errorf("unsafe runtime identity %q", path)
+		return runtimefile.Unsafe(path)
 	}
 	data, readErr := os.ReadFile(path)
 	if readErr != nil {

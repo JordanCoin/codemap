@@ -46,7 +46,7 @@ func AcquireTransition(root string) (*Transition, error) {
 		return nil, err
 	}
 	if info, err := os.Lstat(selection.RuntimeDir); err != nil || !info.IsDir() {
-		return nil, fmt.Errorf("unsafe runtime directory %q", selection.RuntimeDir)
+		return nil, runtimefile.Unsafe(selection.RuntimeDir)
 	}
 	path := filepath.Join(selection.RuntimeDir, "watch.transition")
 	for attempt := 0; attempt < 2; attempt++ {

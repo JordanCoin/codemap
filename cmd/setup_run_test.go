@@ -23,6 +23,7 @@ func TestClaudeSettingsPath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("USERPROFILE", home)
 	global, err := claudeSettingsPath(root, true)
 	if err != nil {
 		t.Fatalf("global claudeSettingsPath error: %v", err)
@@ -73,6 +74,7 @@ func TestRunSetupInstallsClaudeSkillsIdempotently(t *testing.T) {
 func TestRunSetupGlobalSkillsFollowSymlinkedClaudeHome(t *testing.T) {
 	root, home, dotfiles := t.TempDir(), t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("USERPROFILE", home)
 	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatal(err)
@@ -125,6 +127,7 @@ func TestRunSetupCreatesConfigAndHooks(t *testing.T) {
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	first := captureOutput(func() { RunSetup([]string{"--agent", "both", root}, ".") })
@@ -207,7 +210,9 @@ func TestRunSetupWritesStateIgnore(t *testing.T) {
 		t.Skip("git not available")
 	}
 	root := makeGitRepo(t)
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	exclude, err := infoExcludePath(root)
 	if err != nil {
 		t.Fatal(err)

@@ -434,6 +434,7 @@ func TestRunDoctorReportsUnconfiguredProject(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
 			t.Setenv("USERPROFILE", home)
+			t.Setenv("USERPROFILE", home)
 			t.Setenv("PATH", t.TempDir())
 
 			doctorLookPath = func(name string) (string, error) {
@@ -540,6 +541,7 @@ func TestDiscoverWindowsBundledCodexCLICandidates(t *testing.T) {
 func TestDetectInstalledAgentsUsesHomeMarkers(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("PATH", t.TempDir())
 
@@ -650,9 +652,12 @@ func TestRunDoctorReportsTrackedCodemapState(t *testing.T) {
 		t.Fatalf("a committed config.json is not machine state, got:\n%s", out)
 	}
 
-	// Legacy repo: an older codemap left state.json committed beside config.json.
-	if err := os.WriteFile(filepath.Join(root, ".codemap", "state.json"), []byte("{}\n"), 0o644); err != nil {
-		t.Fatal(err)
+	// Legacy repo: an older codemap left state.json committed beside config.json,
+	// and the user committed files of their own there too.
+	for _, name := range []string{"state.json", "a b.json", "-rf"} {
+		if err := os.WriteFile(filepath.Join(root, ".codemap", name), []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	runGitTestCmd(t, root, "add", "-f", ".codemap")
 	runGitTestCmd(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "track codemap state")
@@ -678,14 +683,14 @@ func TestRunDoctorReportsTrackedCodemapState(t *testing.T) {
 		"  untrack with: git rm --cached -- .codemap/state.json\n",
 		"NOTE leftover codemap state: 2 file(s) under .codemap/ from an older codemap are no longer used and are safe to delete:\n" +
 			"  (file names, not commands)\n  .codemap/hubs.txt\n  .codemap/projects/abc/handoff.latest.json\n",
-		"NOTE unrecognised files in .codemap/ (not touched by codemap): 1\n  (file names, not commands)\n  .codemap/notes/mine.txt\n",
+		"NOTE unrecognised files in .codemap/ (not touched by codemap): 3\n  (file names, not commands)\n  .codemap/-rf\n  .codemap/a\\x20b.json\n  .codemap/notes/mine.txt\n",
 		"OK   state dir: ",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected %q in tracked-state diagnosis, got:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "config.json\"") || strings.Contains(out, "git rm -r") {
+	if strings.Contains(out, "config.json\"") || strings.Contains(out, "git rm -r") || strings.Contains(out, "by hand") {
 		t.Fatalf("untrack report must name only machine state:\n%s", out)
 	}
 }
@@ -723,8 +728,5 @@ func TestTrackedStateDetailKeepsHostileNamesOutOfTheCommand(t *testing.T) {
 	}
 	if strings.ContainsAny(strings.ReplaceAll(out, "(file names, not commands)", ""), "$;|~\"") {
 		t.Fatalf("a shell metacharacter reached the output:\n%s", out)
-	}
-	if !strings.Contains(out, "5 unrecognised name(s)") {
-		t.Fatalf("missing left-out note:\n%s", out)
 	}
 }

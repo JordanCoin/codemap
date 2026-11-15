@@ -175,11 +175,11 @@ func ClaimDaemonPID(root string, pid int) (claimed bool, err error) {
 
 // ReadPID reads the daemon PID from the project's runtime namespace.
 func ReadPID(root string) (int, error) {
-	selection, err := projectpath.SelectRuntime(root)
+	dir, err := projectpath.StateDir(root)
 	if err != nil {
 		return 0, err
 	}
-	return readPIDAt(projectpath.ProjectRuntimeDir(selection.ProjectRoot))
+	return readPIDAt(dir)
 }
 
 // RemovePID removes the project's PID file.
@@ -221,14 +221,20 @@ type ActiveRuntime struct {
 // ResolveActiveRuntime selects the project namespace and its live daemon, or a
 // positively owned live daemon the registry records for this root.
 func ResolveActiveRuntime(root string) (ActiveRuntime, error) {
-	selection, err := projectpath.SelectRuntime(root)
+	selection, err := projectpath.Select(root)
 	if err != nil {
 		return ActiveRuntime{}, err
 	}
-	active := ActiveRuntime{Directory: projectpath.ProjectRuntimeDir(selection.ProjectRoot), CanonicalRoot: selection.ProjectRoot}
+	dir, err := projectpath.StateDir(root)
+	if err != nil {
+		return ActiveRuntime{}, err
+	}
+	active := ActiveRuntime{Directory: dir, CanonicalRoot: selection.ProjectRoot}
 	pid, readErr := readPIDAt(active.Directory)
 	switch {
 	case os.IsNotExist(readErr):
+	case errors.Is(readErr, runtimefile.ErrUnsafe):
+		return ActiveRuntime{}, readErr
 	case readErr != nil || pid <= 0:
 		return ActiveRuntime{}, ErrDaemonOwnershipUnknown
 	case !processAlive(pid):
@@ -297,7 +303,7 @@ func requireRegularRuntimeFile(path string) error {
 		return err
 	}
 	if !info.Mode().IsRegular() {
-		return fmt.Errorf("unsafe runtime file %q", path)
+		return runtimefile.Unsafe(path)
 	}
 	return nil
 }
@@ -421,9 +427,9 @@ func removePIDIfMatches(dir string, pid int) error {
 
 // RemoveProcessPID removes only the caller's still-current PID publication.
 func RemoveProcessPID(root string, pid int) error {
-	selection, err := projectpath.SelectRuntime(root)
+	dir, err := projectpath.StateDir(root)
 	if err != nil {
 		return err
 	}
-	return removePIDIfMatches(projectpath.ProjectRuntimeDir(selection.ProjectRoot), pid)
+	return removePIDIfMatches(dir, pid)
 }

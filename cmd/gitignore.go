@@ -77,9 +77,11 @@ func leftoverMachineState(root string) (left, unknown []string) {
 		}
 		rel = filepath.ToSlash(rel)
 		switch {
-		case userAuthored(rel) || tracked[rel]:
-		case knownStateFile.MatchString(rel) && !strings.Contains(rel, ".."):
-			left = append(left, rel)
+		case userAuthored(rel):
+		case isKnownStateFile(rel):
+			if !tracked[rel] { // tracked ones are reported with the untrack command
+				left = append(left, rel)
+			}
 		default:
 			unknown = append(unknown, rel)
 		}
@@ -119,34 +121,34 @@ func isPasteSafe(c byte) bool {
 	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.IndexByte("._/-", c) >= 0
 }
 
-// trackedStateDetail lists tracked files as data, one per line, then a
-// paste-safe untrack command. File names are repo-controlled, so the command
-// carries only names matching a known state file; anything else is listed
-// for the user to handle by hand.
+// trackedStateDetail lists tracked state files as data, one per line, then a
+// paste-safe untrack command. Names are repo-controlled, so the command
+// carries only those matching knownStateFile, whatever the caller passed.
 func trackedStateDetail(tracked []string) string {
-	var b strings.Builder
 	var safe []string
-	b.WriteString(nameList(tracked))
 	for _, f := range tracked {
-		if knownStateFile.MatchString(f) && !strings.Contains(f, "..") {
+		if isKnownStateFile(f) {
 			safe = append(safe, f)
 		}
 	}
+	detail := nameList(tracked)
 	if len(safe) > 0 {
-		fmt.Fprintf(&b, "  untrack with: git rm --cached -- %s\n", strings.Join(safe, " "))
+		detail += fmt.Sprintf("  untrack with: git rm --cached -- %s\n", strings.Join(safe, " "))
 	}
-	if len(safe) < len(tracked) {
-		fmt.Fprintf(&b, "  %d unrecognised name(s) above are left out of the command. Untrack them by hand if they are codemap state\n", len(tracked)-len(safe))
-	}
-	return b.String()
+	return detail
+}
+
+func isKnownStateFile(rel string) bool {
+	return knownStateFile.MatchString(rel) && !strings.Contains(rel, "..")
 }
 
 // knownStateFile matches the machine-state paths codemap writes, in the
 // characters [A-Za-z0-9._/-] only.
 var knownStateFile = regexp.MustCompile(`^\.codemap/(state\.json|status|hubs\.txt|agent_edits\.jsonl|events\.log|watch\.pid|watch\.transition|project\.json|sessions\.lock|topology-state\.json|handoff\.[A-Za-z0-9_-]+\.(json|log)|(sessions|projects|runtime)/[A-Za-z0-9._/-]+)$`)
 
-// trackedMachineState is gitexclude.TrackedStateFiles minus the user-authored
-// files (config.json, skills/) that are meant to be committed.
+// trackedMachineState is the tracked files under .codemap/ with a known
+// machine-state name. Other tracked files (config.json, skills/, or anything
+// codemap does not recognise) are the user's.
 func trackedMachineState(root string) []string {
 	files, err := gitexclude.TrackedStateFiles(root)
 	if err != nil {
@@ -154,17 +156,11 @@ func trackedMachineState(root string) []string {
 	}
 	var state []string
 	for _, f := range files {
-		if !userAuthored(f) {
+		if isKnownStateFile(f) {
 			state = append(state, f)
 		}
 	}
 	return state
-}
-
-// localCodemapIgnore reports whether root's info/exclude already lists
-// ignoreEntry.
-func localCodemapIgnore(root string) (string, bool, error) {
-	return gitexclude.LocalEntry(root)
 }
 
 // isGitWorkTree reports whether root sits inside a git working tree.
@@ -186,10 +182,4 @@ func infoExcludePath(root string) (string, error) {
 // appendIgnoreEntry adds entry on its own line to the ignore file at path.
 func appendIgnoreEntry(path, entry string) error {
 	return gitexclude.AppendEntry(path, entry)
-}
-
-// hasIgnoreLine reports whether data lists entry as a standalone, uncommented
-// line.
-func hasIgnoreLine(data []byte, entry string) bool {
-	return gitexclude.HasLine(data, entry)
 }

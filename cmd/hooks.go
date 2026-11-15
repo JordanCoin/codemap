@@ -569,9 +569,10 @@ func renderTreeSubprocess(ctx context.Context, exe, root string, projCfg config.
 	}
 	args = append(args, root)
 	cmd := exec.CommandContext(ctx, exe, args...)
-	if lean != "" {
-		cmd.Env = append(os.Environ(), TreeLeanEnv+"="+lean)
+	if lean == "" {
+		lean = treeLeanNone
 	}
+	cmd.Env = append(os.Environ(), TreeLeanEnv+"="+lean)
 	var buf strings.Builder
 	cmd.Stdout = &buf
 	cmd.Stderr = stderr
@@ -651,10 +652,13 @@ func fitSubagentStart(header, tree string, maxBytes int) string {
 
 // TreeLeanEnv tells a tree render to shed extras: "1" cuts the hub list to
 // three, "2" also drops line counts. TreeLeanDirsOnly keeps only directory
-// lines and the full hub list, with no line counts.
+// lines and the full hub list, with no line counts. Hooks always set it ("0"
+// sheds nothing), so a tree that sees it set is rendering for an agent and
+// leaves out human-only lines such as the auto filter note.
 const (
 	TreeLeanEnv      = "CODEMAP_TREE_LEAN"
 	TreeLeanDirsOnly = "dirs"
+	treeLeanNone     = "0"
 )
 
 // Markers of the tree's own hub trailer (render/tree_compact.go).
@@ -2059,7 +2063,11 @@ func DaemonShouldExit(root string, now time.Time) bool {
 	if err != nil {
 		return false
 	}
-	entries, err := os.ReadDir(filepath.Join(codemapDir, "sessions"))
+	sessions := filepath.Join(codemapDir, "sessions")
+	if runtimefile.CheckDir(sessions) != nil {
+		return false
+	}
+	entries, err := os.ReadDir(sessions)
 	if err != nil || len(entries) == 0 {
 		return false
 	}
@@ -2099,7 +2107,7 @@ func updateSessionLeaseContext(ctx context.Context, root, sessionID string, acti
 	defer os.Remove(lockPath)
 
 	leaseDir := filepath.Join(codemapDir, "sessions")
-	if err := os.MkdirAll(leaseDir, 0o700); err != nil {
+	if err := runtimefile.EnsureDir(leaseDir); err != nil {
 		return err
 	}
 	entries, err := os.ReadDir(leaseDir)
@@ -2168,7 +2176,7 @@ func acquireSessionLockContext(ctx context.Context, lockPath string) error {
 		if !os.IsExist(err) {
 			return err
 		}
-		if info, statErr := os.Stat(lockPath); statErr == nil && time.Since(info.ModTime()) > sessionLockStaleAfter {
+		if info, statErr := os.Lstat(lockPath); statErr == nil && time.Since(info.ModTime()) > sessionLockStaleAfter {
 			_ = os.RemoveAll(lockPath)
 			continue
 		}

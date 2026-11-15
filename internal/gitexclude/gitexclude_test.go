@@ -22,15 +22,6 @@ func gitRun(t *testing.T, dir string, args ...string) string {
 	return string(out)
 }
 
-func canonical(t *testing.T, path string) string {
-	t.Helper()
-	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		t.Fatalf("EvalSymlinks(%q): %v", path, err)
-	}
-	return resolved
-}
-
 func freshClone(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {

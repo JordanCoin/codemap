@@ -6,11 +6,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"codemap/internal/projectpath"
 	"codemap/internal/runtimefile"
+	"codemap/watch"
 )
 
 // The subagent orientation block is cached per HEAD commit in the project's
@@ -22,6 +24,9 @@ const (
 	subagentRefreshLock  = "subagent-start.lock"
 	subagentRefreshHook  = "subagent-refresh" // internal: the background render
 	subagentRefreshBound = 60 * time.Second
+	// subagentRenderDelayEnv delays the background render; only tests set it,
+	// so the slow path is exercised without racing the machine's speed.
+	subagentRenderDelayEnv = "CODEMAP_TEST_SUBAGENT_RENDER_DELAY"
 )
 
 type subagentCache struct {
@@ -35,10 +40,10 @@ func subagentCacheDir(root string) (string, bool) {
 }
 
 // readSubagentCache returns the cached block for key; a missing, corrupt or
-// stale cache is a miss.
+// stale cache is a miss. It creates nothing.
 func readSubagentCache(root, key string) (string, bool) {
-	dir, ok := subagentCacheDir(root)
-	if !ok || key == "" {
+	dir, err := projectpath.StateDir(root)
+	if err != nil || key == "" {
 		return "", false
 	}
 	data, err := runtimefile.Read(filepath.Join(dir, subagentCacheFile))
@@ -91,7 +96,12 @@ func subagentStartBlock(root string, budget time.Duration) string {
 	}
 	dir, ok := subagentCacheDir(root)
 	if !ok {
-		return ""
+		// The cache is an optimisation: with nowhere to keep it, render here
+		// under the same budget and store nothing.
+		ctx, cancel := context.WithTimeout(context.Background(), budget)
+		defer cancel()
+		block, _ := renderSubagentBlock(ctx, root)
+		return block
 	}
 	if release, won := acquireRefreshLock(filepath.Join(dir, subagentRefreshLock)); won && !startSubagentRefresh(root) {
 		release()
@@ -135,21 +145,28 @@ func refreshSubagentCache(root string) {
 	if !ok {
 		return
 	}
-	defer os.Remove(filepath.Join(dir, subagentRefreshLock))
+	lock := filepath.Join(dir, subagentRefreshLock)
+	defer os.Remove(lock)
+	// The pid lets a waiter take the lock over at once if this process dies.
+	_ = runtimefile.WriteAtomic(lock, []byte(strconv.Itoa(os.Getpid())), 0o600)
 	key := subagentCacheKey(root)
 	if _, hit := readSubagentCache(root, key); hit {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), subagentRefreshBound)
 	defer cancel()
+	if delay, err := time.ParseDuration(os.Getenv(subagentRenderDelayEnv)); err == nil {
+		time.Sleep(delay)
+	}
 	if block, err := renderSubagentBlock(ctx, root); err == nil {
 		writeSubagentCache(root, key, block)
 	}
 }
 
 // acquireRefreshLock creates lock exclusively (O_EXCL never follows a link).
-// A lock older than the refresh bound belongs to a render that died, so it is
-// taken over.
+// A lock whose recorded refresher is no longer alive, or that is older than
+// the refresh bound (a live but stuck render, or one that never recorded its
+// pid), is taken over.
 func acquireRefreshLock(lock string) (func(), bool) {
 	for attempt := 0; attempt < 2; attempt++ {
 		f, err := os.OpenFile(lock, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -158,7 +175,13 @@ func acquireRefreshLock(lock string) (func(), bool) {
 			return func() { _ = os.Remove(lock) }, true
 		}
 		info, statErr := os.Lstat(lock)
-		if statErr != nil || time.Since(info.ModTime()) < subagentRefreshBound {
+		if statErr != nil || !info.Mode().IsRegular() {
+			return nil, false
+		}
+		data, _ := runtimefile.Read(lock)
+		pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+		dead := pid > 0 && !watch.ProcessAlive(pid)
+		if !dead && time.Since(info.ModTime()) < subagentRefreshBound {
 			return nil, false
 		}
 		_ = os.Remove(lock)

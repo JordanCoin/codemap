@@ -286,22 +286,44 @@ func TestHooksNeverScanForTheAutoConfig(t *testing.T) {
 // The tree re-derives the auto config from its own scan, so a repo that
 // gained Go files after a Python-only start shows them on the next tree.
 func TestRefreshAutoConfigFollowsTheFileMix(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
 	root := t.TempDir()
-	mustWriteConfigFixture(t, filepath.Join(root, ".git", "HEAD"), "ref: refs/heads/main\n")
+	runGitTestCmd(t, root, "init", "-q")
 	mustWriteConfigFixture(t, filepath.Join(root, "tool.py"), "print(1)\n")
-	files, _ := scanForConfig(root)
-	if got := strings.Join(RefreshAutoConfig(root, files).Only, ","); got != "py" {
+	listed := RefreshAutoConfig(root)
+	if got := strings.Join(config.Load(root).Only, ","); got != "py" {
 		t.Fatalf("only = %q, want py", got)
+	}
+	if note := AutoFilterNote(config.Load(root), listed); note != "" {
+		t.Fatalf("a filter that hides nothing printed %q", note)
 	}
 	mustWriteConfigFixture(t, filepath.Join(root, "pkg", "a.go"), "package pkg\n")
 	mustWriteConfigFixture(t, filepath.Join(root, "pkg", "b.go"), "package pkg\n")
-	files, _ = scanForConfig(root)
-	RefreshAutoConfig(root, files)
+	mustWriteConfigFixture(t, filepath.Join(root, "README.md"), "# r\n")
+	listed = RefreshAutoConfig(root)
 	if got := config.Load(root).Only; !slices.Contains(got, "go") {
 		t.Fatalf("stored only = %v, want go added", got)
 	}
-	if note := AutoFilterNote(config.Load(root)); !strings.HasPrefix(note, "auto filter: only go,py") {
+	if note := AutoFilterNote(config.Load(root), listed); !strings.HasPrefix(note, "auto filter: only go,py") {
 		t.Fatalf("note = %q", note)
+	}
+}
+
+// Without git the stored auto config is kept, never re-derived from a walk.
+func TestRefreshAutoConfigWithoutGitKeepsTheStoredCopy(t *testing.T) {
+	root := t.TempDir()
+	mustWriteConfigFixture(t, filepath.Join(root, ".git", "HEAD"), "garbage")
+	mustWriteConfigFixture(t, filepath.Join(root, "a.py"), "x = 1\n")
+	if !writeAutoConfig(root, config.ProjectConfig{Only: []string{"go"}, Mode: "auto"}) {
+		t.Fatal("could not store the auto config")
+	}
+	if listed := RefreshAutoConfig(root); listed != nil {
+		t.Fatalf("listed %d files from a broken git dir", len(listed))
+	}
+	if got := strings.Join(config.Load(root).Only, ","); got != "go" {
+		t.Fatalf("stored only = %q, want go kept", got)
 	}
 }
 

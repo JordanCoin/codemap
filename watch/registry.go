@@ -103,7 +103,7 @@ func unregisterDaemon(pid int) {
 // readDaemonRegistry returns every well-formed entry and deletes malformed ones.
 func readDaemonRegistry() []registryEntry {
 	dir, err := daemonRegistryDir()
-	if err != nil {
+	if err != nil || runtimefile.CheckDir(dir) != nil {
 		return nil
 	}
 	items, err := os.ReadDir(dir)
@@ -177,3 +177,6 @@ func StopDaemon(d DaemonInfo) error {
 	unregisterDaemon(d.PID)
 	return nil
 }
+
+// ProcessAlive reports whether pid is a running process.
+func ProcessAlive(pid int) bool { return processAlive(pid) }

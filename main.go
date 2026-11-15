@@ -465,8 +465,11 @@ func main() {
 	// adds to the config's exclude list (issue #150), since a config exclude
 	// is a standing decision about the repo and one run narrowing further
 	// must not silently re-admit it.
-	cliExclude := exclude
 	autoFilter := tempDir == "" && len(only) == 0 && cmd.AutoConfigActive(absRoot)
+	var gitListed []scanner.FileInfo
+	if autoFilter {
+		gitListed = cmd.RefreshAutoConfig(absRoot)
+	}
 	projCfg := config.Load(absRoot)
 	if len(only) == 0 && len(projCfg.Only) > 0 {
 		only = projCfg.Only
@@ -577,34 +580,14 @@ func main() {
 	// Scan files, keeping at most the bound and counting the rest (#186).
 	treeFilters := filters
 	treeFilters.IncludeSymlinks = true
-	if autoFilter {
-		// Scan unfiltered once: the auto config is re-derived from it, then
-		// applied, so it follows the repo's file mix with no second scan.
-		treeFilters.Only, treeFilters.Exclude = nil, cliExclude
-	}
 	files, totalFiles, err := scanner.ScanFilesBounded(context.Background(), root, gitCache, treeFilters)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error walking tree: %v\n", err)
 		os.Exit(1)
 	}
 	autoNote := ""
-	if autoFilter {
-		autoCfg := cmd.RefreshAutoConfig(absRoot, files)
-		autoNote = cmd.AutoFilterNote(autoCfg)
-		filters.Only = autoCfg.Only
-		filters.Exclude = config.MergeExcludes(autoCfg.Exclude, cliExclude)
-		only, exclude = filters.Only, filters.Exclude
-		bounded := totalFiles > len(files)
-		kept := files[:0]
-		for _, f := range files {
-			if scanner.MatchesFilters(filepath.ToSlash(f.Path), f.Ext, only, exclude) {
-				kept = append(kept, f)
-			}
-		}
-		files = kept
-		if !bounded {
-			totalFiles = len(files)
-		}
+	if autoFilter && os.Getenv(cmd.TreeLeanEnv) == "" {
+		autoNote = cmd.AutoFilterNote(projCfg, gitListed)
 	}
 	var scanBound *scanner.ScanBound
 	if totalFiles > len(files) {
@@ -1014,8 +997,7 @@ func runWatchSubcommand(subCmd, root string) error {
 					return nil
 				}
 			}
-			fmt.Println("Watch daemon start already in progress")
-			return nil
+			return fmt.Errorf("another watch start held the lock and no daemon came up within %s", watchReadinessTimeout)
 		}
 		if err != nil {
 			return fmt.Errorf("starting daemon: %w", err)
