@@ -37,7 +37,7 @@ Global settings instead of project-local:
 codemap setup --global
 ```
 
-After an upgrade there is no need to run setup again: when a settings file already has codemap's session-start hook but lacks a newer one (`SubagentStart`), the session-start hook adds it and says so. It takes effect in the next session. Settings files without codemap hooks are never touched.
+After an upgrade there is no need to run setup again: when a settings file already has codemap's session-start hook but lacks a newer one (`SubagentStart`), the session-start hook adds it and says so. It takes effect in the next session; Codex also asks you to trust the new hook from `/hooks` first. Hook files without codemap hooks are never touched.
 
 This command:
 - creates `.codemap/config.json` and `.codemap/.gitignore` when missing; machine state always lives in the per-user state dir, never in the repo (see [INSTALL.md](INSTALL.md#setup))
@@ -363,7 +363,7 @@ Hubs (top 10 of 15, by importers):
 Next: codemap --deps · codemap --importers scanner/astgrep.go
 ```
 
-Above the large-repo file limit the hub list is replaced by the tree's `No ⭐️ hub marks:` note. Outside a git repository, or on any error, it prints nothing and exits 0 so a subagent never fails on it. Codex has no subagent-start event, so this hook is Claude-only.
+Above the large-repo file limit the hub list is replaced by the tree's `No ⭐️ hub marks:` note. Outside a git repository, or on any error, it prints nothing and exits 0 so a subagent never fails on it. `codemap setup` wires it for Claude Code and for Codex (which needs a Codex version with the `SubagentStart` hook event; 0.163.0 has it).
 
 ### At Session End
 ```
@@ -405,7 +405,7 @@ If a recent handoff exists **for the current branch**, session start includes a 
 | `codemap hook prompt-submit` | `UserPromptSubmit` | Intent classification, hub context, risk analysis, working set, route suggestions, drift warnings |
 | `codemap hook pre-compact` | `PreCompact` | Saves hub state to `hubs.txt` in the state dir |
 | `codemap hook session-stop` | `SessionEnd` | Edit timeline + writes `handoff.latest.json`, `handoff.prefix.json`, `handoff.delta.json` in the state dir |
-| `codemap hook subagent-start` | `SubagentStart` | Top-level directories with hub marks, then the hub list (Claude only) |
+| `codemap hook subagent-start` | `SubagentStart` | Top-level directories with hub marks, then the hub list |
 
 ---
 

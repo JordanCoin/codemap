@@ -428,6 +428,7 @@ func runHookWithoutStdout(fn func() error) error {
 
 // hookSessionStart shows project structure, starts daemon, and shows hub warnings
 func hookSessionStart(root string) error {
+	fmt.Print(SessionStartNotice)
 	// Handle meta-repo: parent directory containing child git repos.
 	// Check this before the git guard so that non-repo parent directories
 	// still get multi-repo context.

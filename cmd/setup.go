@@ -126,6 +126,7 @@ func generatedCodexHooks(executable string) []claudeHookSpec {
 		// SessionEnd, not Stop: Codex fires Stop after every turn, and the
 		// session-stop handler releases the lease and stops the daemon (#225).
 		{Event: "SessionEnd", Command: command + " hook session-stop --agent=codex --integration=codex-setup"},
+		{Event: "SubagentStart", Command: command + " hook subagent-start --agent=codex --integration=codex-setup"},
 	}
 }
 
@@ -766,22 +767,38 @@ func ensureClaudeHooks(settingsPath string, global bool) (ensureHooksResult, err
 	return ensureClaudeHooksWithExecutable(settingsPath, global, executable)
 }
 
-// RepairClaudeSubagentHook adds the SubagentStart entry to Claude settings
-// files that codemap setup already manages, so an upgrade needs no re-run.
-// Files without codemap's own session-start entry are never touched.
-func RepairClaudeSubagentHook(root string) {
+// SessionStartNotice is printed at the top of the session-start hook output.
+var SessionStartNotice string
+
+// RepairSubagentHook adds the SubagentStart entry to the agent's hook files
+// that codemap setup already manages, so an upgrade needs no re-run. Files
+// without codemap's own session-start entry are never touched.
+func RepairSubagentHook(root, agent string) {
+	pathFor, marker, note := claudeSettingsPath, "hook session-start --integration=claude-setup", "active next session"
+	if agent == "codex" {
+		pathFor, marker, note = codexHooksPath, "hook session-start --agent=codex --integration=codex-setup", "trust it from /hooks in Codex, then start a new session"
+	}
+	executable, err := resolveIntegrationExecutable()
+	if err != nil {
+		return
+	}
 	for _, global := range []bool{false, true} {
-		path, err := claudeSettingsPath(root, global)
+		path, err := pathFor(root, global)
 		if err != nil {
 			continue
 		}
 		data, err := os.ReadFile(path)
-		if err != nil || !bytes.Contains(data, []byte("hook session-start --integration=claude-setup")) ||
-			bytes.Contains(data, []byte("hook subagent-start")) {
+		if err != nil || !bytes.Contains(data, []byte(marker)) || bytes.Contains(data, []byte("hook subagent-start")) {
 			continue
 		}
-		if res, err := ensureClaudeHooks(path, global); err == nil && res.WroteFile {
-			fmt.Printf("codemap: added SubagentStart hook to %s, active next session\n", path)
+		var res ensureHooksResult
+		if agent == "codex" {
+			res, err = ensureCodexHooksWithExecutable(path, global, executable)
+		} else {
+			res, err = ensureClaudeHooksWithExecutable(path, global, executable)
+		}
+		if err == nil && res.WroteFile {
+			SessionStartNotice += fmt.Sprintf("codemap: added SubagentStart hook to %s, %s\n", path, note)
 		}
 	}
 }

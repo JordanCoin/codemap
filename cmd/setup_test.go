@@ -249,8 +249,8 @@ func TestEnsureCodexHooksReconcilesMixedLegacyAndCanonicalConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ensureCodexHooksWithExecutable: %v", err)
 	}
-	if result.AddedHooks != 0 || result.RemovedHooks != 7 || !result.WroteFile {
-		t.Fatalf("result = %+v, want AddedHooks=0 RemovedHooks=7 WroteFile=true", result)
+	if result.AddedHooks != 1 || result.RemovedHooks != 7 || !result.WroteFile {
+		t.Fatalf("result = %+v, want AddedHooks=1 (SubagentStart) RemovedHooks=7 WroteFile=true", result)
 	}
 	settings := readSettingsFile(t, settingsPath)
 	precisionSettings, err := decodeJSONObject(mustReadFile(t, settingsPath))
@@ -301,8 +301,8 @@ func TestEnsureCodexHooksMigratesLegacyOnlyConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ensureCodexHooksWithExecutable: %v", err)
 	}
-	if result.AddedHooks != 6 || result.RemovedHooks != 6 || !result.WroteFile {
-		t.Fatalf("result = %+v, want AddedHooks=6 RemovedHooks=6 WroteFile=true", result)
+	if result.AddedHooks != 7 || result.RemovedHooks != 6 || !result.WroteFile {
+		t.Fatalf("result = %+v, want AddedHooks=7 RemovedHooks=6 WroteFile=true", result)
 	}
 	settings := readSettingsFile(t, settingsPath)
 	assertCodexCanonicalHooks(t, readHooksMap(t, settings), specs)
