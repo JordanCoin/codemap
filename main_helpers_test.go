@@ -301,8 +301,8 @@ func TestMainFreshCloneLeavesGitStatusClean(t *testing.T) {
 	if !strings.Contains(out, "Files:") {
 		t.Fatalf("expected a structure summary, got:\n%s", out)
 	}
-	if _, err := os.Stat(filepath.Join(clone, ".codemap", "config.json")); err != nil {
-		t.Fatalf("auto-init config not written: %v", err)
+	if _, err := os.Stat(filepath.Join(clone, ".codemap")); !os.IsNotExist(err) {
+		t.Fatalf("`codemap .` created .codemap/ in a repo that never ran setup: %v", err)
 	}
 	status := exec.Command("git", "status", "--porcelain")
 	status.Dir = clone

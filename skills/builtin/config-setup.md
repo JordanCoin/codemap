@@ -25,7 +25,7 @@ Write or improve `.codemap/config.json` so future Codemap calls stay focused on 
 
 ## Use this when
 
-1. `.codemap/config.json` is missing
+1. `.codemap/config.json` is missing in a repo the user has set up (`.codemap/` exists), or the user asked to set codemap up. Never create `.codemap/` in a repo the user has not asked to set up.
 2. The existing config looks like a bare bootstrap instead of a real project policy
 3. Codemap output is dominated by assets, fixtures, generated files, vendor trees, PDFs, screenshots, models, or training data
 4. The project stack is obvious, but Codemap is not prioritizing the right parts of the repo

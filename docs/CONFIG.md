@@ -11,6 +11,8 @@ codemap config init   # auto-detect top extensions, write config
 codemap config show   # display current config
 ```
 
+Only `codemap setup`, `codemap config init` and `codemap skill init` create `.codemap/`. Commit `.codemap/config.json` and `.codemap/skills/` if you want to share them; everything else in the folder is machine state, ignored by the folder's own `.gitignore`. A repo with no `.codemap/` runs on the defaults below and keeps its machine state in the user cache directory ([INSTALL.md](INSTALL.md#setup)).
+
 ```json
 {
   "only": ["rs", "sh", "sql", "toml", "yml"],

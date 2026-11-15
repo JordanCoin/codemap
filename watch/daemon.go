@@ -177,12 +177,11 @@ func (d *Daemon) Start() error {
 	if err := gitexclude.MkdirAll(codemapDir, 0755); err != nil {
 		return fmt.Errorf("failed to create .codemap dir: %w", err)
 	}
-	// Ensure the config directory exists; it is watched so config edits can
-	// refresh the configured-file inventory.
+	// The config directory is watched so config edits refresh the configured
+	// inventory. Only an explicit setup creates it (#184); without it there
+	// is no config to watch.
 	configDir := d.configDir
-	if err := gitexclude.MkdirAll(configDir, 0755); err != nil {
-		return fmt.Errorf("failed to create .codemap dir: %w", err)
-	}
+	_, configDirErr := os.Stat(configDir)
 
 	// Initial full scan
 	if err := d.fullScan(); err != nil {
@@ -198,8 +197,10 @@ func (d *Daemon) Start() error {
 	if err := d.addWatchDirs(); err != nil {
 		return fmt.Errorf("failed to add watch dirs: %w", err)
 	}
-	if err := d.watcher.Add(configDir); err != nil {
-		return fmt.Errorf("failed to watch .codemap dir: %w", err)
+	if configDirErr == nil {
+		if err := d.watcher.Add(configDir); err != nil {
+			return fmt.Errorf("failed to watch .codemap dir: %w", err)
+		}
 	}
 	if err := ensureControlDirectory(d.publisher.flushDir); err != nil {
 		return fmt.Errorf("create flush directory: %w", err)

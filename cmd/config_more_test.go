@@ -209,8 +209,17 @@ func TestEnsureProjectConfigWritesOnlyInsideRepos(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustWriteConfigFixture(t, filepath.Join(repo, "main.go"), "package main\n")
+	if EnsureProjectConfig(repo) {
+		t.Fatal("must not write config in a repo that never ran setup")
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".codemap")); !os.IsNotExist(err) {
+		t.Fatalf(".codemap created in a repo that never ran setup: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(repo, ".codemap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if !EnsureProjectConfig(repo) {
-		t.Fatal("expected config to be written in a repo")
+		t.Fatal("expected config to be written in a set-up repo")
 	}
 	if _, err := os.Stat(config.ConfigPath(repo)); err != nil {
 		t.Fatalf("config not written: %v", err)
@@ -229,11 +238,10 @@ func TestEnsureProjectConfigWritesOnlyInsideRepos(t *testing.T) {
 	}
 }
 
-// TestEnsureProjectConfigKeepsFreshCloneClean is the exit test from issue
-// #184: a fresh clone of a repo with no codemap config, one codemap command,
-// and `git status --porcelain` is empty. The auto-written config lands in
-// .codemap/, which the auto-init must ignore via the clone-local
-// info/exclude, never by creating or editing a tracked .gitignore.
+// TestEnsureProjectConfigKeepsFreshCloneClean: in a clone whose .codemap/
+// exists but holds no config, the auto-write leaves only committable files
+// (.codemap/.gitignore, config.json) visible to git and never touches the
+// root .gitignore.
 func TestEnsureProjectConfigKeepsFreshCloneClean(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -241,6 +249,9 @@ func TestEnsureProjectConfigKeepsFreshCloneClean(t *testing.T) {
 	src := makeRepoOnBranch(t, "main")
 	clone := filepath.Join(t.TempDir(), "clone")
 	runGitTestCmd(t, src, "clone", "-q", src, clone)
+	if err := os.Mkdir(filepath.Join(clone, ".codemap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	if !EnsureProjectConfig(clone) {
 		t.Fatal("expected config to be written in a fresh clone")
@@ -248,19 +259,19 @@ func TestEnsureProjectConfigKeepsFreshCloneClean(t *testing.T) {
 	if _, err := os.Stat(config.ConfigPath(clone)); err != nil {
 		t.Fatalf("config not written: %v", err)
 	}
-	status := exec.Command("git", "status", "--porcelain")
+	status := exec.Command("git", "status", "--porcelain", "--untracked-files=all")
 	status.Dir = clone
 	out, err := status.Output()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(string(out)) != "" {
-		t.Fatalf("git status --porcelain not empty after auto-init:\n%s", out)
+	if got, want := strings.TrimSpace(string(out)), "?? .codemap/.gitignore\n?? .codemap/config.json"; got != want {
+		t.Fatalf("git status after auto-init = %q, want %q", got, want)
 	}
 	if _, err := os.Stat(filepath.Join(clone, ".gitignore")); !os.IsNotExist(err) {
 		t.Fatal("auto-init must not create a tracked .gitignore")
 	}
-	if !gitIgnoresCodemap(t, clone) {
+	if !gitIgnoresState(t, clone) {
 		t.Fatal("git does not ignore .codemap after auto-init")
 	}
 }

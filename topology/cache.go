@@ -15,6 +15,7 @@ import (
 
 	"codemap/config"
 	"codemap/internal/gitexclude"
+	"codemap/internal/projectpath"
 	"codemap/scanner"
 )
 
@@ -35,7 +36,7 @@ type CacheEnvelope struct {
 }
 
 func CachePath(root string) string {
-	return CachePathAt(filepath.Join(root, ".codemap"))
+	return CachePathAt(projectpath.RuntimeCodemapDir(root))
 }
 
 // CachePathAt returns the topology cache path inside cacheDir.
@@ -134,7 +135,7 @@ func BuildCacheIdentity(root string, files []scanner.FileInfo, manifests []strin
 }
 
 func ReadCache(root string, expected CacheIdentity) (*Graph, bool) {
-	return ReadCacheAt(filepath.Join(root, ".codemap"), root, expected)
+	return ReadCacheAt(projectpath.RuntimeCodemapDir(root), root, expected)
 }
 
 // ReadCacheAt reads a cache from cacheDir and validates graph paths against root.
@@ -170,7 +171,7 @@ func IsCacheable(graph *Graph) bool {
 }
 
 func WriteCache(root string, envelope CacheEnvelope) error {
-	return WriteCacheAt(filepath.Join(root, ".codemap"), envelope)
+	return WriteCacheAt(projectpath.RuntimeCodemapDir(root), envelope)
 }
 
 // WriteCacheAt atomically writes a topology cache inside cacheDir.

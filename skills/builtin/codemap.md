@@ -38,7 +38,7 @@ codemap serve --port 9471       # HTTP API for non-MCP integrations
 
 Before deeper Codemap analysis in a repo:
 
-1. Check `.codemap/config.json`.
+1. Check `.codemap/config.json`. A repo with no `.codemap/` folder was never set up: leave it that way unless the user asks (codemap keeps its state outside the repo).
 2. If it is missing, clearly boilerplate, or obviously too noisy for the stack, run `codemap skill show config-setup` and follow it.
 3. After writing or improving config, rerun `codemap .` and `codemap --deps`.
 

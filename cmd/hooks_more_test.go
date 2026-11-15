@@ -157,6 +157,9 @@ func mustJSONInput(t *testing.T, v any) string {
 func writeProjectConfig(t *testing.T, root string, cfg config.ProjectConfig) {
 	t.Helper()
 
+	if err := os.MkdirAll(filepath.Dir(config.ConfigPath(root)), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(projectpath.ProjectRuntimeDir(root), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -639,10 +642,23 @@ func TestShowConfigSetupHint(t *testing.T) {
 		}
 	})
 
-	t.Run("missing config emits setup hint", func(t *testing.T) {
+	t.Run("git repo that never ran setup stays quiet", func(t *testing.T) {
+		// #184: nothing was set up, so there is nothing to finish.
 		root := t.TempDir()
 		if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 			t.Fatal(err)
+		}
+		if out := captureOutput(func() { showConfigSetupHint(root) }); strings.TrimSpace(out) != "" {
+			t.Fatalf("expected no setup hint in an un-set-up repo, got:\n%s", out)
+		}
+	})
+
+	t.Run("set-up repo missing its config emits setup hint", func(t *testing.T) {
+		root := t.TempDir()
+		for _, dir := range []string{".git", ".codemap"} {
+			if err := os.Mkdir(filepath.Join(root, dir), 0o755); err != nil {
+				t.Fatal(err)
+			}
 		}
 		out := captureOutput(func() { showConfigSetupHint(root) })
 		if !strings.Contains(out, "codemap:config") {
@@ -1054,8 +1070,11 @@ func TestDaemonCommandHelpersAndMultiRepoShellout(t *testing.T) {
 		root := t.TempDir()
 		repos := []string{"svc-a", "svc-b", "svc-c", "svc-d", "svc-e", "svc-f"}
 		for _, repo := range repos {
-			if err := os.MkdirAll(filepath.Join(root, repo, ".git"), 0o755); err != nil {
-				t.Fatal(err)
+			// Set up but unconfigured, so each child also carries a setup hint.
+			for _, dir := range []string{".git", ".codemap"} {
+				if err := os.MkdirAll(filepath.Join(root, repo, dir), 0o755); err != nil {
+					t.Fatal(err)
+				}
 			}
 		}
 		withHookRuntimeStubs(
@@ -1086,11 +1105,13 @@ func TestDaemonCommandHelpersAndMultiRepoShellout(t *testing.T) {
 	t.Run("multi repo start emits setup hints for child repos needing config", func(t *testing.T) {
 		root := t.TempDir()
 		for _, repo := range []string{"svc-a", "svc-b"} {
-			// Child repos are git checkouts (findChildRepos requires .git);
-			// the hint stays quiet for non-repos since #224.
-			repoPath := filepath.Join(root, repo, ".git")
-			if err := os.MkdirAll(repoPath, 0o755); err != nil {
-				t.Fatal(err)
+			// Child repos are set-up git checkouts (findChildRepos requires
+			// .git); the hint stays quiet for non-repos (#224) and for repos
+			// that never ran setup (#184).
+			for _, dir := range []string{".git", ".codemap"} {
+				if err := os.MkdirAll(filepath.Join(root, repo, dir), 0o755); err != nil {
+					t.Fatal(err)
+				}
 			}
 		}
 

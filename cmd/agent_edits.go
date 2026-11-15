@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"codemap/internal/gitexclude"
+	"codemap/internal/projectpath"
 )
 
 // The watch daemon sees every write on disk — including git merges, checkouts,
@@ -34,8 +35,14 @@ type agentEdits struct {
 	bySession map[string]map[string]bool // session id -> paths
 }
 
+// agentEditsPath is <root>/.codemap/agent_edits.jsonl in a set-up project,
+// else under the user state cache; "" when runtime storage is unsafe.
 func agentEditsPath(root string) string {
-	return filepath.Join(root, ".codemap", agentEditsFile)
+	selection, err := projectpath.SelectRuntime(root)
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(selection.RuntimeDir, agentEditsFile)
 }
 
 // normalizeAgentEditPath converts hook-provided paths (often absolute, with
@@ -59,7 +66,11 @@ func recordAgentEdit(root, sessionID, path string, now time.Time) error {
 	if _, inRoot := projectRelPath(root, path); !inRoot {
 		return nil
 	}
-	if err := gitexclude.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
+	logPath := agentEditsPath(root)
+	if logPath == "" {
+		return nil
+	}
+	if err := gitexclude.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return err
 	}
 	record := agentEditRecord{
@@ -71,7 +82,6 @@ func recordAgentEdit(root, sessionID, path string, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	logPath := agentEditsPath(root)
 	compactAgentEdits(logPath, now)
 	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {

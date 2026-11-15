@@ -3,39 +3,66 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"codemap/internal/gitexclude"
+	"codemap/internal/projectpath"
 )
 
 // ignoreEntry keeps the runtime-state directory out of git. The trailing
 // slash scopes the rule to the directory.
 const ignoreEntry = gitexclude.Entry
 
-// reportEnsureIgnored ensures .codemap/ is ignored for root and reports the
-// outcome to w (notice, warning, or nothing).
+// reportEnsureIgnored ensures the project's .codemap/ carries its own
+// .gitignore (machine state ignored, config.json and skills/ committable) and
+// reports the outcome to w (notice, warning, or nothing).
 func reportEnsureIgnored(w io.Writer, root string) {
-	wrote, err := ensureCodemapIgnored(root)
+	dir := projectpath.CodemapDir(root)
+	if _, err := os.Stat(dir); err != nil {
+		return
+	}
+	wrote, err := gitexclude.EnsureStateIgnore(dir)
 	if err != nil {
-		fmt.Fprintf(w, "Warning: could not update ignore rules: %v\n", err)
+		fmt.Fprintf(w, "Warning: could not write %s: %v\n", filepath.Join(dir, ".gitignore"), err)
 		return
 	}
-	if wrote == "" {
-		return
+	if wrote {
+		fmt.Fprintln(w, "Wrote .codemap/.gitignore (machine state ignored; config.json and skills/ can be committed)")
 	}
-	rel := wrote
-	if r, relErr := filepath.Rel(root, wrote); relErr == nil && !strings.HasPrefix(r, "..") {
-		rel = r
-	}
-	fmt.Fprintf(w, "Added %s to %s\n", ignoreEntry, rel)
+	reportTrackedState(w, root)
 }
 
-// ensureCodemapIgnored ensures .codemap/ is ignored for root by writing
-// ignoreEntry to the clone-local info/exclude. It returns the file written,
-// or "" when the entry already exists or root is not a git work tree.
-func ensureCodemapIgnored(root string) (string, error) {
-	return gitexclude.EnsureIgnored(root)
+// reportTrackedState names machine-state files git already tracks under
+// .codemap/ (an ignore rule cannot untrack them) and the command that would.
+// It prints only; it never runs git rm.
+func reportTrackedState(w io.Writer, root string) {
+	tracked := trackedMachineState(root)
+	if len(tracked) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "%d codemap machine-state file(s) are committed; untrack them with:\n  %s\n", len(tracked), untrackCommand(tracked))
+}
+
+// trackedMachineState is gitexclude.TrackedStateFiles minus the user-authored
+// files (config.json, skills/) that are meant to be committed.
+func trackedMachineState(root string) []string {
+	files, err := gitexclude.TrackedStateFiles(root)
+	if err != nil {
+		return nil
+	}
+	var state []string
+	for _, f := range files {
+		if f != ".codemap/config.json" && f != ".codemap/.gitignore" && !strings.HasPrefix(f, ".codemap/skills/") {
+			state = append(state, f)
+		}
+	}
+	return state
+}
+
+func untrackCommand(files []string) string {
+	return "git rm --cached -- " + strings.Join(files, " ")
 }
 
 // localCodemapIgnore reports whether root's info/exclude already lists

@@ -280,6 +280,10 @@ func RunSetup(args []string, defaultRoot string) int {
 		}
 	}
 
+	// Setup is what marks a project as set up (#184), with or without a config.
+	if err := os.MkdirAll(projectpath.CodemapDir(absRoot), 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not create %s: %v\n", projectpath.CodemapDir(absRoot), err)
+	}
 	reportEnsureIgnored(os.Stdout, absRoot)
 
 	if *skipHooks {

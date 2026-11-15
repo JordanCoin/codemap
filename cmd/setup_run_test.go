@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"codemap/internal/gitexclude"
 )
 
 func TestClaudeSettingsPath(t *testing.T) {
@@ -197,28 +199,55 @@ func TestRunSetupUsesNearestGitRootFromNestedDirectory(t *testing.T) {
 	}
 }
 
-func TestRunSetupAddsOnlyLocalCodemapIgnore(t *testing.T) {
+// TestRunSetupWritesStateIgnore: setup creates .codemap/.gitignore instead
+// of an info/exclude rule, and once a hook writes machine state there, git
+// can see only the committable files.
+func TestRunSetupWritesStateIgnore(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
 	root := makeGitRepo(t)
 	t.Setenv("HOME", t.TempDir())
-
-	out := captureOutput(func() {
-		RunSetup([]string{"--agent", "codex", "--no-config", "--no-mcp", root}, ".")
-	})
-	if !strings.Contains(out, "Added .codemap/ to "+filepath.Join(".git", "info", "exclude")) {
-		t.Fatalf("expected local-ignore notice, got:\n%s", out)
-	}
 	exclude, err := infoExcludePath(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(exclude)
-	if err != nil || !strings.Contains(string(data), ".codemap/\n") {
-		t.Fatalf("expected .codemap/ in %s, data=%q, err=%v", exclude, data, err)
+	before, _ := os.ReadFile(exclude)
+
+	out := captureOutput(func() {
+		RunSetup([]string{"--agent", "codex", "--no-mcp", root}, ".")
+	})
+	if !strings.Contains(out, "Wrote .codemap/.gitignore") {
+		t.Fatalf("expected state-ignore notice, got:\n%s", out)
+	}
+	if data, err := os.ReadFile(filepath.Join(root, ".codemap", ".gitignore")); err != nil || string(data) != gitexclude.StateIgnore {
+		t.Fatalf(".codemap/.gitignore = %q, %v", data, err)
+	}
+	if after, _ := os.ReadFile(exclude); string(after) != string(before) {
+		t.Fatalf("setup changed %s:\n%s", exclude, after)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".gitignore")); !os.IsNotExist(err) {
 		t.Fatalf("setup must not create tracked .gitignore, err=%v", err)
+	}
+
+	withStdinInput(t, `{"tool_input":{"file_path":"main.go"},"session_id":"s"}`, func() {
+		captureOutput(func() { _ = hookPostEdit(root) })
+	})
+	if err := hookPreCompact(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".codemap", "agent_edits.jsonl")); err != nil {
+		t.Fatalf("post-edit did not record in the set-up repo: %v", err)
+	}
+	status := exec.Command("git", "status", "--porcelain", "--untracked-files=all")
+	status.Dir = root
+	got, err := status.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(got)), "\n") {
+		if strings.Contains(line, ".codemap/") && line != "?? .codemap/.gitignore" && line != "?? .codemap/config.json" {
+			t.Fatalf("machine state visible to git: %q in\n%s", line, got)
+		}
 	}
 }

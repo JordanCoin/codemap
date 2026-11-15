@@ -48,55 +48,57 @@ func freshClone(t *testing.T) string {
 	return clone
 }
 
-func TestMkdirAllIgnoresNewStateDirInFreshClone(t *testing.T) {
+func TestMkdirAllWritesStateIgnoreAndLeavesExclude(t *testing.T) {
 	root := freshClone(t)
+	exclude, err := InfoExcludePath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(exclude)
 	stateDir := filepath.Join(root, ".codemap", "projects", "abc")
-
 	if err := MkdirAll(stateDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(stateDir, "state.json"), []byte("{}"), 0o644); err != nil {
-		t.Fatal(err)
+	for path, content := range map[string]string{
+		filepath.Join(stateDir, "state.json"):                         "{}",
+		filepath.Join(root, ".codemap", "agent_edits.jsonl"):          "{}",
+		filepath.Join(root, ".codemap", "config.json"):                "{}",
+		filepath.Join(root, ".codemap", "skills", "mine", "SKILL.md"): "x",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if status := gitRun(t, root, "status", "--porcelain"); strings.TrimSpace(status) != "" {
-		t.Fatalf("git status not clean after state write:\n%s", status)
+	status := gitRun(t, root, "status", "--porcelain", "--untracked-files=all")
+	for _, want := range []string{".codemap/.gitignore", ".codemap/config.json", ".codemap/skills/mine/SKILL.md"} {
+		if !strings.Contains(status, want) {
+			t.Fatalf("git status should offer %s for commit:\n%s", want, status)
+		}
 	}
-	if _, err := os.Stat(filepath.Join(root, ".gitignore")); !os.IsNotExist(err) {
-		t.Fatal("must never create a tracked .gitignore")
+	for _, gone := range []string{"state.json", "agent_edits"} {
+		if strings.Contains(status, gone) {
+			t.Fatalf("machine state %s is not ignored:\n%s", gone, status)
+		}
 	}
-	exclude, err := InfoExcludePath(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(exclude)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !HasLine(data, Entry) {
-		t.Fatalf("info/exclude missing %q:\n%s", Entry, data)
+	if after, _ := os.ReadFile(exclude); string(after) != string(before) {
+		t.Fatalf("info/exclude changed:\n%s", after)
 	}
 }
 
-func TestMkdirAllAddsNoLocalRuleWhenTrackedIgnoreCovers(t *testing.T) {
-	root := freshClone(t)
-	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte(".codemap/\n"), 0o644); err != nil {
+func TestEnsureStateIgnoreKeepsUserCopy(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".gitignore")
+	if err := os.WriteFile(path, []byte("mine\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	gitRun(t, root, "add", ".gitignore")
-	gitRun(t, root, "commit", "-q", "-m", "ignore")
-
-	if err := MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
-		t.Fatal(err)
+	if wrote, err := EnsureStateIgnore(dir); err != nil || wrote {
+		t.Fatalf("EnsureStateIgnore = %v, %v; want no write", wrote, err)
 	}
-	exclude, err := InfoExcludePath(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if data, err := os.ReadFile(exclude); err == nil && HasLine(data, Entry) {
-		t.Fatalf("local rule written although .gitignore already ignores .codemap/:\n%s", data)
-	}
-	if status := gitRun(t, root, "status", "--porcelain"); strings.TrimSpace(status) != "" {
-		t.Fatalf("git status not clean:\n%s", status)
+	if data, _ := os.ReadFile(path); string(data) != "mine\n" {
+		t.Fatalf("user .gitignore rewritten: %q", data)
 	}
 }
 
@@ -117,39 +119,6 @@ func TestMkdirAllOutsideGitAndWithoutStateDir(t *testing.T) {
 	}
 	if got, ok := stateDirOf(plain); !ok || filepath.Base(got) != ".codemap" {
 		t.Fatalf("stateDirOf(%q) = %q, %v", plain, got, ok)
-	}
-}
-
-func TestEnsureIgnoredIfNeededUsesSharedExcludeInLinkedWorktree(t *testing.T) {
-	root := freshClone(t)
-	wt := filepath.Join(t.TempDir(), "wt")
-	gitRun(t, root, "worktree", "add", "-q", wt, "HEAD")
-
-	wrote, err := EnsureIgnoredIfNeeded(wt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// git reports the common dir with symlinks resolved (macOS keeps
-	// t.TempDir under /var -> /private/var), so compare canonical paths.
-	want := canonical(t, filepath.Join(root, ".git", "info", "exclude"))
-	if got := canonical(t, wrote); got != want {
-		t.Fatalf("wrote %q, want the primary's shared exclude %q", got, want)
-	}
-	if err := os.MkdirAll(filepath.Join(wt, ".codemap"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(wt, ".codemap", "config.json"), []byte("{}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if status := gitRun(t, wt, "status", "--porcelain"); strings.TrimSpace(status) != "" {
-		t.Fatalf("worktree git status not clean:\n%s", status)
-	}
-	again, err := EnsureIgnoredIfNeeded(wt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if again != "" {
-		t.Fatalf("second call wrote %q, want nothing", again)
 	}
 }
 

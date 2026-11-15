@@ -37,6 +37,9 @@ func SelectRuntime(projectRoot string) (RuntimeSelection, error) {
 		Source:      selection.Source,
 	}
 	if selection.Source != SourceExplicit {
+		if !IsSetUp(selection.ProjectRoot) {
+			result.RuntimeDir = filepath.Join(CanonicalPath(StateCacheDir()), ProjectKey(selection.ProjectRoot))
+		}
 		return result, nil
 	}
 
@@ -52,6 +55,28 @@ func SelectRuntime(projectRoot string) (RuntimeSelection, error) {
 		return RuntimeSelection{}, err
 	}
 	return result, nil
+}
+
+// IsSetUp reports whether the project's policy directory (<setup root>/.codemap)
+// exists. Only explicit commands (setup, config init, skill init) create it;
+// a project without one keeps its machine state in StateCacheDir (#184).
+func IsSetUp(projectRoot string) bool {
+	info, err := os.Lstat(CodemapDir(projectRoot))
+	return err == nil && info.IsDir()
+}
+
+// StateCacheDir is the per-user root for machine state of projects that are
+// not set up: $XDG_CACHE_HOME/codemap on every OS when set, else the OS user
+// cache directory.
+func StateCacheDir() string {
+	base := os.Getenv("XDG_CACHE_HOME")
+	if !filepath.IsAbs(base) {
+		var err error
+		if base, err = os.UserCacheDir(); err != nil {
+			base = os.TempDir()
+		}
+	}
+	return filepath.Join(base, "codemap")
 }
 
 func ensureRealDirectory(path string) error {

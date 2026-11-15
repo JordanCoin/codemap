@@ -38,7 +38,7 @@ codemap setup --global
 ```
 
 This command:
-- creates `.codemap/config.json` when missing
+- creates `.codemap/config.json` and `.codemap/.gitignore` when missing (a repo that never ran setup gets no `.codemap/`; see [INSTALL.md](INSTALL.md#setup) for where its state lives)
 - merges codemap hooks into Claude and Codex settings without removing existing hooks
 - keeps hook setup idempotent (safe to run more than once)
 
@@ -339,7 +339,7 @@ The `💡 Suggestions` block prints only for file-specific suggestions from depe
 
 The **working set** tracks files you've edited during the current session. It shows edit count, net line delta, and hub status — giving Claude awareness of your active work context.
 
-Edits are attributed by *provenance*, not by disk churn. The `PostToolUse` hook records the paths an agent wrote through its own tool calls into `.codemap/agent_edits.jsonl`, so a branch switch, a build, or a `git` command that touches hundreds of files does not masquerade as work the agent did. When no agent edits have been recorded, the summary says so and falls back to reporting disk activity rather than conflating the two.
+Edits are attributed by *provenance*, not by disk churn. The `PostToolUse` hook records the paths an agent wrote through its own tool calls into `agent_edits.jsonl` (in `.codemap/` once the repo is set up, otherwise in the user cache directory), so a branch switch, a build, or a `git` command that touches hundreds of files does not masquerade as work the agent did. When no agent edits have been recorded, the summary says so and falls back to reporting disk activity rather than conflating the two.
 
 Provenance depends on the hook receiving a payload it understands: `tool_input.file_path` (Edit/Write), `tool_input.notebook_path` (NotebookEdit), or `tool_input.command` (Codex `apply_patch`).
 

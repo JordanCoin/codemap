@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -569,11 +570,12 @@ func TestRunDoctorReportsLocalCodemapIgnorePresent(t *testing.T) {
 		t.Skip("git not available")
 	}
 	root := makeGitRepo(t)
-	if _, err := ensureCodemapIgnored(root); err != nil {
+	if err := os.Mkdir(filepath.Join(root, ".codemap"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	reportEnsureIgnored(io.Discard, root)
 	out := captureOutput(func() { RunDoctor([]string{root}, ".") })
-	if !strings.Contains(out, "OK   local Codemap ignore") {
+	if !strings.Contains(out, "OK   local Codemap ignore: machine state ignored via .codemap/.gitignore") {
 		t.Fatalf("expected OK local-ignore diagnosis, got:\n%s", out)
 	}
 	if strings.Contains(out, "MISS local Codemap ignore") {
@@ -592,9 +594,12 @@ func TestRunDoctorReportsOKWhenTrackedIgnoreIsEffective(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("node_modules/\n.codemap/\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Mkdir(filepath.Join(root, ".codemap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	out := captureOutput(func() { RunDoctor([]string{root}, ".") })
-	if !strings.Contains(out, "OK   local Codemap ignore: effective via") {
+	if !strings.Contains(out, "OK   local Codemap ignore: machine state ignored via .gitignore:2:.codemap/") {
 		t.Fatalf("expected effective-ignore OK, got:\n%s", out)
 	}
 	if strings.Contains(out, "MISS local Codemap ignore") {
@@ -608,8 +613,12 @@ func TestDoctorCheckLocalCodemapIgnoreFailsWhenGitUnavailable(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".codemap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	failures := 0
-	out := captureOutput(func() { doctorCheckLocalCodemapIgnore(t.TempDir(), &failures) })
+	out := captureOutput(func() { doctorCheckLocalCodemapIgnore(root, &failures) })
 	if failures != 1 {
 		t.Fatalf("failures = %d, want 1", failures)
 	}
@@ -627,21 +636,24 @@ func TestRunDoctorReportsTrackedCodemapState(t *testing.T) {
 		t.Skip("git not available")
 	}
 	root := makeRepoOnBranch(t, "main")
-	if _, err := ensureCodemapIgnored(root); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, ".codemap", "config.json"), []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	runGitTestCmd(t, root, "add", "-f", ".codemap")
+	runGitTestCmd(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "commit config")
 
 	out := captureOutput(func() { RunDoctor([]string{root}, ".") })
-	if !strings.Contains(out, "OK   tracked codemap state: 0 files under .codemap/ are committed") {
-		t.Fatalf("expected clean tracked-state line, got:\n%s", out)
+	if !strings.Contains(out, "OK   tracked codemap state: no machine-state files under .codemap/ are committed") {
+		t.Fatalf("a committed config.json is not machine state, got:\n%s", out)
 	}
 
+	// Legacy repo: an older codemap left state.json committed beside config.json.
+	if err := os.WriteFile(filepath.Join(root, ".codemap", "state.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	runGitTestCmd(t, root, "add", "-f", ".codemap")
 	runGitTestCmd(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "track codemap state")
 
@@ -650,7 +662,11 @@ func TestRunDoctorReportsTrackedCodemapState(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("RunDoctor exit code = 0, want tracked state to fail\n%s", out)
 	}
-	if !strings.Contains(out, "MISS tracked codemap state: 1 file(s) under .codemap/ are committed; run: git rm -r --cached .codemap") {
-		t.Fatalf("expected tracked-state diagnosis, got:\n%s", out)
+	want := "MISS tracked codemap state: 1 machine-state file(s) under .codemap/ are committed (.codemap/state.json); run: git rm --cached -- .codemap/state.json"
+	if !strings.Contains(out, want) {
+		t.Fatalf("expected tracked-state diagnosis %q, got:\n%s", want, out)
+	}
+	if strings.Contains(out, "git rm --cached -- .codemap/config.json") || strings.Contains(out, "git rm -r") {
+		t.Fatalf("untrack command must name only machine state:\n%s", out)
 	}
 }

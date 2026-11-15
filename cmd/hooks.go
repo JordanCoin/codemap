@@ -433,7 +433,6 @@ func hookSessionStart(root string) error {
 		state = waitForDaemonState(root, 2*time.Second)
 	}
 	fileCount, fileCountKnown = configuredStateFileCount(root, state)
-	EnsureProjectConfig(root)
 	projCfg := config.Load(root)
 	structureBudget := projCfg.SessionStartOutputBytes()
 	maxHubs := projCfg.HubDisplayLimit()
@@ -1121,7 +1120,6 @@ func hookPromptSubmit(root string) error {
 	}
 	touchSessionLease(root, sessionIDFromHookInput(input))
 
-	EnsureProjectConfig(root)
 	projCfg := config.Load(root)
 	topK := projCfg.RoutingTopKOrDefault()
 	info := getValidatedHubInfo(root)
@@ -1270,19 +1268,16 @@ func showMatchedSkills(root string, intent TaskIntent) {
 	}
 }
 
-// setupNeedsAttention is config.AssessSetup gated for #224: a directory with
-// no .git and no config (such as $HOME) is not a project, so there is nothing
-// to set up and the hooks stay quiet instead of telling the agent to write
-// .codemap/config.json there on every prompt.
+// setupNeedsAttention is config.AssessSetup gated for #224 and #184: a
+// project that never ran setup (no .codemap/ directory) is not asked to
+// finish it on every prompt; only a set-up project missing its config is.
 func setupNeedsAttention(root string) (config.SetupAssessment, bool) {
 	assessment := config.AssessSetup(root)
 	if !assessment.NeedsAttention() {
 		return assessment, false
 	}
-	if assessment.State == config.SetupStateMissing {
-		if _, err := os.Stat(filepath.Join(root, ".git")); err != nil {
-			return assessment, false
-		}
+	if assessment.State == config.SetupStateMissing && !projectpath.IsSetUp(root) {
+		return assessment, false
 	}
 	return assessment, true
 }
@@ -1632,7 +1627,7 @@ func hookPreCompact(root string) error {
 	}
 
 	fmt.Println()
-	fmt.Printf("💾 Saved hub state to .codemap/hubs.txt before compact\n")
+	fmt.Printf("💾 Saved hub state to %s before compact\n", hubsFile)
 	fmt.Printf("   (%d hub files tracked)\n", len(info.Hubs))
 	fmt.Println()
 
@@ -1776,7 +1771,7 @@ func hookSessionStopContext(ctx context.Context, root string, out io.Writer) err
 		if err := writeSessionHandoffContext(ctx, root, state); err != nil {
 			return err
 		}
-		fmt.Fprintln(out, "🤝 Saved handoff to .codemap/handoff.latest.json")
+		fmt.Fprintln(out, "🤝 Saved handoff to "+handoff.LatestPath(root))
 	}
 
 	fmt.Fprintln(out)

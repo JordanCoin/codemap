@@ -307,6 +307,27 @@ func IsNestedGitRepo(dir string) bool {
 	return info.IsDir() || info.Mode().IsRegular()
 }
 
+// IgnoredDirPaths are root-relative directories skipped by path, not name:
+// agent worktrees left under .claude/worktrees/ without a .git entry would
+// otherwise be scanned as project source (#184).
+var IgnoredDirPaths = []string{".claude/worktrees"}
+
+// ignoredDirPath returns path's slash form relative to root when it is one
+// of IgnoredDirPaths.
+func ignoredDirPath(root, path string) (string, bool) {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return "", false
+	}
+	rel = filepath.ToSlash(rel)
+	for _, p := range IgnoredDirPaths {
+		if rel == p {
+			return rel, true
+		}
+	}
+	return "", false
+}
+
 // NestedGitRepos returns the root-relative paths (OS separators, sorted) of
 // every git repository nested anywhere under root: linked worktrees (for
 // example `.claude/worktrees/agent-x`), plain clones, and submodules, at any
@@ -507,6 +528,9 @@ func ScanFilesBounded(ctx context.Context, root string, cache *GitIgnoreCache, f
 				return filepath.SkipDir
 			}
 			return nil
+		}
+		if _, ok := ignoredDirPath(absRoot, path); ok && info.IsDir() {
+			return filepath.SkipDir
 		}
 		if info.Mode()&os.ModeSymlink != 0 && path != absRoot && !filters.IncludeSymlinks {
 			return nil

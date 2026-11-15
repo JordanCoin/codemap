@@ -465,8 +465,7 @@ func main() {
 	// adds to the config's exclude list (issue #150), since a config exclude
 	// is a standing decision about the repo and one run narrowing further
 	// must not silently re-admit it.
-	// The subagent orientation runs in repos that never ran setup; it must not write config.
-	if tempDir == "" && os.Getenv(cmd.TreeLeanEnv) != cmd.TreeLeanDirsOnly {
+	if tempDir == "" {
 		cmd.EnsureProjectConfig(absRoot)
 	}
 	projCfg := config.Load(absRoot)
@@ -894,7 +893,7 @@ func runWatchMode(root string, verbose bool) {
 
 	fmt.Printf("Watching: %s\n", root)
 	fmt.Printf("Files tracked: %d (every file under the root, before config filters)\n", daemon.FileCount())
-	fmt.Println("Event log: .codemap/events.log")
+	fmt.Println("Event log: " + filepath.Join(projectpath.ProjectRuntimeDir(root), "events.log"))
 	fmt.Println()
 	fmt.Println("Press Ctrl+C to stop")
 	fmt.Println()

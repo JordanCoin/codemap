@@ -16,6 +16,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	os.Setenv(daemonRegistryEnv, dir)
+	os.Setenv("XDG_CACHE_HOME", dir)
 	code := m.Run()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)
