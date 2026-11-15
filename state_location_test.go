@@ -111,6 +111,46 @@ func TestUnsetUpRepoKeepsNothingInTheRepo(t *testing.T) {
 	}
 }
 
+// TestUnsetUpRepoWithoutCacheDirWritesNothing: with no user cache directory
+// (no HOME, no XDG_CACHE_HOME) state is unavailable, never put in a shared
+// temp dir, and every hook still exits 0.
+func TestUnsetUpRepoWithoutCacheDirWritesNothing(t *testing.T) {
+	root := stateFixture(t)
+	edit := `{"session_id":"s","tool_input":{"file_path":"` + filepath.ToSlash(filepath.Join(root, "main.go")) + `"}}`
+	var env []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "HOME=") && !strings.HasPrefix(kv, "XDG_CACHE_HOME=") && !strings.HasPrefix(kv, "LOCALAPPDATA=") {
+			env = append(env, kv)
+		}
+	}
+	for _, step := range []struct{ stdin, hook string }{
+		{`{"session_id":"s"}`, "session-start"},
+		{`{"session_id":"s","prompt":"fix pkg/pkg.go"}`, "prompt-submit"},
+		{edit, "pre-edit"},
+		{edit, "post-edit"},
+		{`{"cwd":"` + filepath.ToSlash(root) + `"}`, "subagent-start"},
+		{`{"session_id":"s"}`, "pre-compact"},
+		{`{"session_id":"s"}`, "session-stop"},
+	} {
+		cmd := exec.Command(codemapTestBinaryPath, "hook", step.hook)
+		cmd.Dir = root
+		cmd.Env = env
+		cmd.Stdin = strings.NewReader(step.stdin)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("hook %s without a cache dir: %v\n%s", step.hook, err, out)
+		}
+	}
+	stop := exec.Command(codemapTestBinaryPath, "watch", "stop", root)
+	stop.Env = env
+	_ = stop.Run()
+	if _, err := os.Stat(filepath.Join(root, ".codemap")); !os.IsNotExist(err) {
+		t.Fatalf(".codemap/ created without a cache dir: %v", err)
+	}
+	if matches, _ := filepath.Glob(filepath.Join(os.TempDir(), "codemap", "*")); len(matches) != 0 {
+		t.Fatalf("state fell back to the shared temp dir: %v", matches)
+	}
+}
+
 // TestSetUpRepoKeepsStateInRepo: a repo with .codemap/ keeps its state there
 // exactly as before, and the user cache stays empty.
 func TestSetUpRepoKeepsStateInRepo(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"codemap/internal/gitexclude"
@@ -42,8 +43,34 @@ func reportTrackedState(w io.Writer, root string) {
 	if len(tracked) == 0 {
 		return
 	}
-	fmt.Fprintf(w, "%d codemap machine-state file(s) are committed; untrack them with:\n  %s\n", len(tracked), untrackCommand(tracked))
+	fmt.Fprintf(w, "%d codemap machine-state file(s) are committed:\n%s", len(tracked), trackedStateDetail(tracked))
 }
+
+// trackedStateDetail lists tracked files as quoted data, one per line, then a
+// paste-safe untrack command. File names are repo-controlled, so the command
+// carries only names matching a known state file; anything else is listed
+// for the user to handle by hand.
+func trackedStateDetail(tracked []string) string {
+	var b strings.Builder
+	var safe []string
+	for _, f := range tracked {
+		fmt.Fprintf(&b, "  %q\n", f)
+		if knownStateFile.MatchString(f) && !strings.Contains(f, "..") {
+			safe = append(safe, f)
+		}
+	}
+	if len(safe) > 0 {
+		fmt.Fprintf(&b, "  untrack with: git rm --cached -- %s\n", strings.Join(safe, " "))
+	}
+	if len(safe) < len(tracked) {
+		fmt.Fprintf(&b, "  %d unrecognised name(s) above are left out of the command; untrack them by hand if they are codemap state\n", len(tracked)-len(safe))
+	}
+	return b.String()
+}
+
+// knownStateFile matches the machine-state paths codemap writes, in the
+// characters [A-Za-z0-9._/-] only.
+var knownStateFile = regexp.MustCompile(`^\.codemap/(state\.json|status|hubs\.txt|agent_edits\.jsonl|events\.log|watch\.pid|sessions\.lock|topology-state\.json|handoff\.[A-Za-z0-9_-]+\.(json|log)|(sessions|projects|runtime)/[A-Za-z0-9._/-]+)$`)
 
 // trackedMachineState is gitexclude.TrackedStateFiles minus the user-authored
 // files (config.json, skills/) that are meant to be committed.
@@ -59,10 +86,6 @@ func trackedMachineState(root string) []string {
 		}
 	}
 	return state
-}
-
-func untrackCommand(files []string) string {
-	return "git rm --cached -- " + strings.Join(files, " ")
 }
 
 // localCodemapIgnore reports whether root's info/exclude already lists

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -38,7 +39,11 @@ func SelectRuntime(projectRoot string) (RuntimeSelection, error) {
 	}
 	if selection.Source != SourceExplicit {
 		if !IsSetUp(selection.ProjectRoot) {
-			result.RuntimeDir = filepath.Join(CanonicalPath(StateCacheDir()), ProjectKey(selection.ProjectRoot))
+			dir, err := userStateDir(selection.ProjectRoot)
+			if err != nil {
+				return RuntimeSelection{}, err
+			}
+			result.RuntimeDir = dir
 		}
 		return result, nil
 	}
@@ -65,24 +70,74 @@ func IsSetUp(projectRoot string) bool {
 	return err == nil && info.IsDir()
 }
 
+// ErrNoStateDir reports that a project that is not set up has nowhere safe to
+// keep machine state; callers skip writes and treat state as absent.
+var ErrNoStateDir = errors.New("no user cache directory for codemap state")
+
 // StateCacheDir is the per-user root for machine state of projects that are
-// not set up: $XDG_CACHE_HOME/codemap on every OS when set, else the OS user
-// cache directory.
-func StateCacheDir() string {
+// not set up: $XDG_CACHE_HOME/codemap on every OS when it is absolute, else
+// the OS user cache directory. There is deliberately no shared-temp fallback.
+func StateCacheDir() (string, bool) {
 	base := os.Getenv("XDG_CACHE_HOME")
 	if !filepath.IsAbs(base) {
 		var err error
-		if base, err = os.UserCacheDir(); err != nil {
-			base = os.TempDir()
+		if base, err = os.UserCacheDir(); err != nil || !filepath.IsAbs(base) {
+			return "", false
 		}
 	}
-	return filepath.Join(base, "codemap")
+	return filepath.Join(base, "codemap"), true
+}
+
+// userStateDir returns, creating it 0700, <StateCacheDir>/<ProjectKey>: both
+// levels real directories owned by this user, marked with the project root.
+func userStateDir(projectRoot string) (string, error) {
+	cacheDir, ok := StateCacheDir()
+	if !ok {
+		return "", ErrNoStateDir
+	}
+	if err := os.MkdirAll(filepath.Dir(cacheDir), 0o700); err != nil {
+		return "", fmt.Errorf("create user cache %q: %w", filepath.Dir(cacheDir), err)
+	}
+	cacheDir = CanonicalPath(cacheDir)
+	dir := filepath.Join(cacheDir, ProjectKey(projectRoot))
+	for _, d := range []string{cacheDir, dir} {
+		if err := ensurePrivateDirectory(d); err != nil {
+			return "", err
+		}
+	}
+	if err := ensureProjectMarker(dir, CanonicalPath(projectRoot)); err != nil {
+		return "", err
+	}
+	return dir, nil
 }
 
 func ensureRealDirectory(path string) error {
+	return ensureDirectory(path, 0o755)
+}
+
+// ensurePrivateDirectory is ensureRealDirectory for per-user state: created
+// 0700, owned by this user, and narrowed to 0700 when it was wider.
+func ensurePrivateDirectory(path string) error {
+	if err := ensureDirectory(path, 0o700); err != nil {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !ownedByCurrentUser(info) {
+		return fmt.Errorf("unsafe runtime directory %q: not owned by the current user", path)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return os.Chmod(path, 0o700)
+	}
+	return nil
+}
+
+func ensureDirectory(path string, perm os.FileMode) error {
 	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
-		if err := os.Mkdir(path, 0o755); err != nil && !os.IsExist(err) {
+		if err := os.Mkdir(path, perm); err != nil && !os.IsExist(err) {
 			return fmt.Errorf("create runtime directory %q: %w", path, err)
 		}
 		info, err = os.Lstat(path)

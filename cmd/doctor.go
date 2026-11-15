@@ -225,7 +225,7 @@ func doctorCheckTrackedCodemapState(root string, failures *int) {
 		return
 	}
 	if tracked := trackedMachineState(root); len(tracked) > 0 {
-		fmt.Printf("MISS tracked codemap state: %d machine-state file(s) under .codemap/ are committed (%s); run: %s\n", len(tracked), strings.Join(tracked, ", "), untrackCommand(tracked))
+		fmt.Printf("MISS tracked codemap state: %d machine-state file(s) under .codemap/ are committed:\n%s", len(tracked), trackedStateDetail(tracked))
 		*failures++
 		return
 	}

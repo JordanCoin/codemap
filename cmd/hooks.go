@@ -345,7 +345,12 @@ func RunHook(hookName, root string) error {
 	default:
 		return fmt.Errorf("unknown hook: %s\nAvailable: session-start, subagent-start, pre-edit, post-edit, prompt-submit, pre-compact, session-stop", hookName)
 	}
-	return runHookOutput(hookName, fn)
+	err = runHookOutput(hookName, fn)
+	// No safe place for state degrades features; it never fails the agent.
+	if errors.Is(err, projectpath.ErrNoStateDir) {
+		return nil
+	}
+	return err
 }
 
 func runHookOutput(hookName string, fn func() error) error {
