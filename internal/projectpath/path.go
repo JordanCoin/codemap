@@ -169,17 +169,20 @@ func nearestGitRoot(root string) (string, bool) {
 // ProjectRuntimeDir returns the per-project mutable-state directory: the
 // shared runtime area (e.g. a setup root) scoped to this project, so projects
 // sharing a setup root never collide on pid, state, events, or handoff files.
+// It is "" when there is no usable state dir.
 func ProjectRuntimeDir(projectRoot string) string {
-	return filepath.Join(RuntimeCodemapDir(projectRoot), "projects", ProjectKey(projectRoot))
+	dir, _ := CheckedRuntimeCodemapDir(projectRoot)
+	return dir
 }
 
-// RuntimeCodemapDir returns the .codemap directory for mutable project state.
+// RuntimeCodemapDir returns the state dir for mutable project state, or ""
+// when there is none; it never falls back to a path inside the repo.
 func RuntimeCodemapDir(projectRoot string) string {
 	selection, err := SelectRuntime(projectRoot)
-	if err == nil {
-		return selection.RuntimeDir
+	if err != nil {
+		return ""
 	}
-	return filepath.Join(filepath.Clean(projectRoot), ".codemap")
+	return selection.RuntimeDir
 }
 
 // CheckedRuntimeCodemapDir returns the validated mutable-state directory.

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"codemap/internal/gitexclude"
 	"codemap/internal/projectpath"
 	"codemap/internal/runtimefile"
 )
@@ -73,10 +72,20 @@ func writeSubagentCache(root, key, block string) {
 		return
 	}
 	data, err := json.Marshal(subagentCache{Key: key, Block: block})
-	if err != nil || gitexclude.MkdirAll(dir, 0o755) != nil {
+	if err != nil {
 		return
 	}
-	_ = runtimefile.WriteAtomic(filepath.Join(dir, subagentCacheFile), data, 0o644)
+	_ = runtimefile.WriteAtomic(filepath.Join(dir, subagentCacheFile), data, 0o600)
+}
+
+// subagentRefreshRunning reports a background render holding a fresh lock.
+func subagentRefreshRunning(root string) bool {
+	dir, ok := subagentCacheDir(root)
+	if !ok {
+		return true // nowhere to write: do not launch one
+	}
+	info, err := os.Stat(filepath.Join(dir, subagentRefreshLock))
+	return err == nil && time.Since(info.ModTime()) < subagentRefreshBound
 }
 
 // startSubagentRefresh launches the background render, detached, so the next
@@ -104,7 +113,7 @@ func refreshSubagentCache(root string) {
 	}
 	dir, ok := subagentCacheDir(root)
 	key := subagentCacheKey(root)
-	if !ok || key == "" || gitexclude.MkdirAll(dir, 0o755) != nil {
+	if !ok || key == "" {
 		return
 	}
 	release, ok := acquireRefreshLock(filepath.Join(dir, subagentRefreshLock))
@@ -126,7 +135,7 @@ func refreshSubagentCache(root string) {
 // bound belongs to a render that died, so it is taken over.
 func acquireRefreshLock(lock string) (func(), bool) {
 	for attempt := 0; attempt < 2; attempt++ {
-		f, err := os.OpenFile(lock, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		f, err := os.OpenFile(lock, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err == nil {
 			_ = f.Close()
 			return func() { _ = os.Remove(lock) }, true

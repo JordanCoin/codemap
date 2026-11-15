@@ -17,8 +17,9 @@ import (
 const ignoreEntry = gitexclude.Entry
 
 // reportEnsureIgnored ensures the project's .codemap/ carries its own
-// .gitignore (machine state ignored, config.json and skills/ committable) and
-// reports the outcome to w (notice, warning, or nothing).
+// .gitignore (it hides machine state older versions left there; config.json
+// and skills/ stay committable) and reports the outcome to w. Only setup,
+// config init and skill init call it.
 func reportEnsureIgnored(w io.Writer, root string) {
 	dir := projectpath.CodemapDir(root)
 	if _, err := os.Stat(dir); err != nil {
@@ -30,31 +31,95 @@ func reportEnsureIgnored(w io.Writer, root string) {
 		return
 	}
 	if wrote {
-		fmt.Fprintln(w, "Wrote .codemap/.gitignore (machine state ignored; config.json and skills/ can be committed)")
+		fmt.Fprintln(w, "Wrote .codemap/.gitignore (config.json and skills/ can be committed; anything else there is ignored)")
 	}
-	reportTrackedState(w, root)
+	reportLegacyState(w, root)
 }
 
-// reportTrackedState names machine-state files git already tracks under
-// .codemap/ (an ignore rule cannot untrack them) and the command that would.
-// It prints only; it never runs git rm.
-func reportTrackedState(w io.Writer, root string) {
-	tracked := trackedMachineState(root)
-	if len(tracked) == 0 {
-		return
+// reportLegacyState names machine state older versions left under .codemap/:
+// files git tracks (an ignore rule cannot untrack them) with the command that
+// would, then untracked leftovers, which nothing reads any more. It prints
+// only; it never runs git rm or deletes anything.
+func reportLegacyState(w io.Writer, root string) {
+	if tracked := trackedMachineState(root); len(tracked) > 0 {
+		fmt.Fprintf(w, "%d codemap machine-state file(s) are committed:\n%s", len(tracked), trackedStateDetail(tracked))
 	}
-	fmt.Fprintf(w, "%d codemap machine-state file(s) are committed:\n%s", len(tracked), trackedStateDetail(tracked))
+	if left := leftoverMachineState(root); len(left) > 0 {
+		fmt.Fprintf(w, "%d codemap machine-state file(s) under .codemap/ are no longer used and are safe to delete:\n%s", len(left), nameList(left))
+	}
 }
 
-// trackedStateDetail lists tracked files as quoted data, one per line, then a
+// leftoverListMax bounds the leftover list; the count above it is exact.
+const leftoverListMax = 20
+
+// leftoverMachineState lists untracked files under .codemap/ other than
+// config.json, .gitignore and skills/: state from before it moved to the
+// per-user state dir. Symlinks are listed, never followed.
+func leftoverMachineState(root string) []string {
+	dir := projectpath.CodemapDir(root)
+	tracked := map[string]bool{}
+	files, _ := gitexclude.TrackedStateFiles(root)
+	for _, f := range files {
+		tracked[f] = true
+	}
+	var left []string
+	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		rel, relErr := filepath.Rel(filepath.Dir(dir), path)
+		if relErr != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if !userAuthored(rel) && !tracked[rel] {
+			left = append(left, rel)
+		}
+		return nil
+	})
+	return left
+}
+
+func userAuthored(rel string) bool {
+	return rel == ".codemap/config.json" || rel == ".codemap/.gitignore" || strings.HasPrefix(rel, ".codemap/skills/")
+}
+
+// nameList prints file names one per line, each byte outside [A-Za-z0-9._/-]
+// as \xNN, so a hostile name can neither run when pasted nor fake a line.
+func nameList(names []string) string {
+	var b strings.Builder
+	b.WriteString("  (file names, not commands)\n")
+	for i, name := range names {
+		if i == leftoverListMax {
+			fmt.Fprintf(&b, "  ... %d more\n", len(names)-i)
+			break
+		}
+		b.WriteString("  ")
+		for j := 0; j < len(name); j++ {
+			if c := name[j]; isPasteSafe(c) {
+				b.WriteByte(c)
+			} else {
+				fmt.Fprintf(&b, `\x%02x`, c)
+			}
+		}
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+func isPasteSafe(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.IndexByte("._/-", c) >= 0
+}
+
+// trackedStateDetail lists tracked files as data, one per line, then a
 // paste-safe untrack command. File names are repo-controlled, so the command
 // carries only names matching a known state file; anything else is listed
 // for the user to handle by hand.
 func trackedStateDetail(tracked []string) string {
 	var b strings.Builder
 	var safe []string
+	b.WriteString(nameList(tracked))
 	for _, f := range tracked {
-		fmt.Fprintf(&b, "  %q\n", f)
 		if knownStateFile.MatchString(f) && !strings.Contains(f, "..") {
 			safe = append(safe, f)
 		}
@@ -63,7 +128,7 @@ func trackedStateDetail(tracked []string) string {
 		fmt.Fprintf(&b, "  untrack with: git rm --cached -- %s\n", strings.Join(safe, " "))
 	}
 	if len(safe) < len(tracked) {
-		fmt.Fprintf(&b, "  %d unrecognised name(s) above are left out of the command; untrack them by hand if they are codemap state\n", len(tracked)-len(safe))
+		fmt.Fprintf(&b, "  %d unrecognised name(s) above are left out of the command. Untrack them by hand if they are codemap state\n", len(tracked)-len(safe))
 	}
 	return b.String()
 }
@@ -81,7 +146,7 @@ func trackedMachineState(root string) []string {
 	}
 	var state []string
 	for _, f := range files {
-		if f != ".codemap/config.json" && f != ".codemap/.gitignore" && !strings.HasPrefix(f, ".codemap/skills/") {
+		if !userAuthored(f) {
 			state = append(state, f)
 		}
 	}

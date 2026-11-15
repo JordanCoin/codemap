@@ -198,8 +198,10 @@ func TestRuntimeCodemapDirSeparatesAutomaticAndExplicitStorage(t *testing.T) {
 	if got, want := CodemapDir(linked), filepath.Join(primary, ".codemap"); got != want {
 		t.Fatalf("CodemapDir() = %q, want policy dir %q", got, want)
 	}
-	if got, want := RuntimeCodemapDir(linked), filepath.Join(linked, ".codemap"); got != want {
-		t.Fatalf("RuntimeCodemapDir() = %q, want local runtime dir %q", got, want)
+	got, primaryState := RuntimeCodemapDir(linked), RuntimeCodemapDir(primary)
+	inside := func(dir string) bool { return strings.HasPrefix(got, CanonicalPath(dir)+string(filepath.Separator)) }
+	if got == "" || got == primaryState || inside(linked) || inside(primary) {
+		t.Fatalf("RuntimeCodemapDir() = %q (primary %q), want a per-worktree dir outside both checkouts", got, primaryState)
 	}
 
 	explicit := t.TempDir()
@@ -232,9 +234,6 @@ func TestExplicitSetupRuntimeNamespacesAreDeterministicAndDistinct(t *testing.T)
 	}
 	if a.RuntimeDir == b.RuntimeDir {
 		t.Fatalf("runtime dirs both %q; want project isolation", a.RuntimeDir)
-	}
-	if a.LegacyDir != a.PolicyDir || b.LegacyDir != b.PolicyDir {
-		t.Fatalf("legacy dirs = %q, %q; want shared old location", a.LegacyDir, b.LegacyDir)
 	}
 	assertProjectMarker(t, a.RuntimeDir, a.ProjectRoot)
 	assertProjectMarker(t, b.RuntimeDir, b.ProjectRoot)

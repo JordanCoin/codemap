@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -657,6 +656,16 @@ func TestRunDoctorReportsTrackedCodemapState(t *testing.T) {
 	}
 	runGitTestCmd(t, root, "add", "-f", ".codemap")
 	runGitTestCmd(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "track codemap state")
+	// ...and untracked leftovers nothing reads any more.
+	for _, name := range []string{"hubs.txt", "projects/abc/handoff.latest.json"} {
+		path := filepath.Join(root, ".codemap", filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	var code int
 	out = captureOutput(func() { code = RunDoctor([]string{root}, ".") })
@@ -665,8 +674,11 @@ func TestRunDoctorReportsTrackedCodemapState(t *testing.T) {
 	}
 	for _, want := range []string{
 		"MISS tracked codemap state: 1 machine-state file(s) under .codemap/ are committed:",
-		`  ".codemap/state.json"`,
+		"  (file names, not commands)\n  .codemap/state.json\n",
 		"  untrack with: git rm --cached -- .codemap/state.json\n",
+		"NOTE leftover codemap state: 2 file(s) under .codemap/ from an older codemap are no longer used and are safe to delete:\n" +
+			"  (file names, not commands)\n  .codemap/hubs.txt\n  .codemap/projects/abc/handoff.latest.json\n",
+		"OK   state dir: ",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected %q in tracked-state diagnosis, got:\n%s", want, out)
@@ -697,10 +709,19 @@ func TestTrackedStateDetailKeepsHostileNamesOutOfTheCommand(t *testing.T) {
 	if command != "  untrack with: git rm --cached -- .codemap/hubs.txt" {
 		t.Fatalf("command line = %q\nfull output:\n%s", command, out)
 	}
-	for _, name := range hostile {
-		if !strings.Contains(out, fmt.Sprintf("%q", name)) {
-			t.Fatalf("hostile name %q not listed as quoted data:\n%s", name, out)
+	for _, escaped := range []string{
+		`  .codemap/x\x3b\x20curl\x20evil\x20\x7c\x20sh` + "\n",
+		`  .codemap/state.json\x0arm\x20-rf\x20\x7e` + "\n",
+		`  .codemap/\x24\x28id\x29` + "\n",
+		"  .codemap/projects/../../etc\n",
+		`  .codemap/handoff.a\x20b.json` + "\n",
+	} {
+		if !strings.Contains(out, escaped) {
+			t.Fatalf("hostile name not listed as escaped data %q:\n%s", escaped, out)
 		}
+	}
+	if strings.ContainsAny(strings.ReplaceAll(out, "(file names, not commands)", ""), "$;|~\"") {
+		t.Fatalf("a shell metacharacter reached the output:\n%s", out)
 	}
 	if !strings.Contains(out, "5 unrecognised name(s)") {
 		t.Fatalf("missing left-out note:\n%s", out)

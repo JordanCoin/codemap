@@ -1,6 +1,6 @@
-// Package gitexclude keeps codemap's machine state out of `git status`
-// without touching the repo's own ignore files: an in-repo .codemap/ carries
-// its own .gitignore that leaves only config.json and skills/ committable.
+// Package gitexclude keeps an in-repo .codemap/ out of `git status` without
+// touching the repo's own ignore files: .codemap/ carries its own .gitignore
+// that leaves only config.json and skills/ committable.
 package gitexclude
 
 import (
@@ -104,35 +104,6 @@ func EnsureStateIgnore(stateDir string) (bool, error) {
 		return false, err
 	}
 	return true, nil
-}
-
-// MkdirAll creates dir like os.MkdirAll and, when dir is or sits inside a
-// `.codemap` directory, ensures that directory carries StateIgnore. Every
-// in-repo codemap state write goes through here, so machine state never
-// shows in `git status`. The ignore write is best-effort: a failure there
-// never fails the directory creation.
-func MkdirAll(dir string, perm os.FileMode) error {
-	if err := os.MkdirAll(dir, perm); err != nil {
-		return err
-	}
-	if stateDir, ok := stateDirOf(dir); ok {
-		_, _ = EnsureStateIgnore(stateDir)
-	}
-	return nil
-}
-
-// stateDirOf returns the nearest path on or above dir whose base is
-// `.codemap`.
-func stateDirOf(dir string) (string, bool) {
-	dir = filepath.Clean(dir)
-	for current := dir; ; current = filepath.Dir(current) {
-		if filepath.Base(current) == stateDirName {
-			return current, true
-		}
-		if parent := filepath.Dir(current); parent == current {
-			return "", false
-		}
-	}
 }
 
 // TrackedStateFiles returns the paths under .codemap/ that git tracks at

@@ -15,7 +15,6 @@ type RuntimeSelection struct {
 	ProjectRoot string
 	PolicyDir   string
 	RuntimeDir  string
-	LegacyDir   string
 	Source      Source
 }
 
@@ -33,18 +32,14 @@ func SelectRuntime(projectRoot string) (RuntimeSelection, error) {
 	result := RuntimeSelection{
 		ProjectRoot: selection.ProjectRoot,
 		PolicyDir:   policyDir,
-		RuntimeDir:  filepath.Join(selection.RuntimeRoot, ".codemap"),
-		LegacyDir:   policyDir,
 		Source:      selection.Source,
 	}
 	if selection.Source != SourceExplicit {
-		if !IsSetUp(selection.ProjectRoot) {
-			dir, err := userStateDir(selection.ProjectRoot)
-			if err != nil {
-				return RuntimeSelection{}, err
-			}
-			result.RuntimeDir = dir
+		dir, err := userStateDir(selection.ProjectRoot)
+		if err != nil {
+			return RuntimeSelection{}, err
 		}
+		result.RuntimeDir = dir
 		return result, nil
 	}
 
@@ -56,6 +51,12 @@ func SelectRuntime(projectRoot string) (RuntimeSelection, error) {
 			return RuntimeSelection{}, err
 		}
 	}
+	projects := filepath.Join(result.RuntimeDir, "projects")
+	for _, dir := range []string{projects, filepath.Join(projects, ProjectKey(selection.ProjectRoot))} {
+		if err := ensurePrivateDirectory(dir); err != nil {
+			return RuntimeSelection{}, err
+		}
+	}
 	if err := ensureProjectMarker(result.RuntimeDir, selection.ProjectRoot); err != nil {
 		return RuntimeSelection{}, err
 	}
@@ -63,20 +64,21 @@ func SelectRuntime(projectRoot string) (RuntimeSelection, error) {
 }
 
 // IsSetUp reports whether the project's policy directory (<setup root>/.codemap)
-// exists. Only explicit commands (setup, config init, skill init) create it;
-// a project without one keeps its machine state in StateCacheDir (#184).
+// exists. Only explicit commands (setup, config init, skill init) create it.
+// It never decides where machine state goes: that is always StateCacheDir.
 func IsSetUp(projectRoot string) bool {
 	info, err := os.Lstat(CodemapDir(projectRoot))
 	return err == nil && info.IsDir()
 }
 
-// ErrNoStateDir reports that a project that is not set up has nowhere safe to
-// keep machine state; callers skip writes and treat state as absent.
-var ErrNoStateDir = errors.New("no user cache directory for codemap state")
+// ErrNoStateDir reports that there is nowhere safe to keep machine state (no
+// cache dir, not creatable, not writable, or unsafe). Every failure to get the
+// private state dir wraps it; callers skip writes and treat state as absent.
+var ErrNoStateDir = errors.New("no usable codemap state directory")
 
-// StateCacheDir is the per-user root for machine state of projects that are
-// not set up: $XDG_CACHE_HOME/codemap on every OS when it is absolute, else
-// the OS user cache directory. There is deliberately no shared-temp fallback.
+// StateCacheDir is the per-user root for machine state of every project:
+// $XDG_CACHE_HOME/codemap on every OS when it is absolute, else the OS user
+// cache directory. There is deliberately no shared-temp fallback.
 func StateCacheDir() (string, bool) {
 	base := os.Getenv("XDG_CACHE_HOME")
 	if !filepath.IsAbs(base) {
@@ -88,27 +90,43 @@ func StateCacheDir() (string, bool) {
 	return filepath.Join(base, "codemap"), true
 }
 
-// userStateDir returns, creating it 0700, <StateCacheDir>/<ProjectKey>: both
-// levels real directories owned by this user, marked with the project root.
+// userStateDir returns <StateCacheDir>/<ProjectKey>, marked with the project
+// root, after creating it and its projects/<ProjectKey> runtime dir.
 func userStateDir(projectRoot string) (string, error) {
 	cacheDir, ok := StateCacheDir()
 	if !ok {
 		return "", ErrNoStateDir
 	}
-	if err := os.MkdirAll(filepath.Dir(cacheDir), 0o700); err != nil {
-		return "", fmt.Errorf("create user cache %q: %w", filepath.Dir(cacheDir), err)
+	dir, err := privateStateDir(cacheDir, ProjectKey(projectRoot))
+	if err == nil {
+		err = ensureProjectMarker(dir, CanonicalPath(projectRoot))
 	}
-	cacheDir = CanonicalPath(cacheDir)
-	dir := filepath.Join(cacheDir, ProjectKey(projectRoot))
-	for _, d := range []string{cacheDir, dir} {
-		if err := ensurePrivateDirectory(d); err != nil {
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrNoStateDir, err)
+	}
+	return dir, nil
+}
+
+// privateStateDir creates <cacheDir>/<key>/projects/<key>, every level a real
+// 0700 directory owned by this user. Only the OS cache dir itself may be
+// created above that, never its parents, so a missing home stays missing.
+// Links above the cache dir belong to the user or the OS and are resolved;
+// from the codemap leaf down every level is Lstat-checked and links refused.
+func privateStateDir(cacheDir, key string) (string, error) {
+	base := filepath.Dir(cacheDir)
+	if _, err := os.Stat(base); os.IsNotExist(err) {
+		if err := os.Mkdir(base, 0o700); err != nil {
+			return "", fmt.Errorf("create user cache %q: %w", base, err)
+		}
+	}
+	dir := filepath.Join(CanonicalPath(base), filepath.Base(cacheDir))
+	for _, part := range []string{"", key, "projects", key} {
+		dir = filepath.Join(dir, part)
+		if err := ensurePrivateDirectory(dir); err != nil {
 			return "", err
 		}
 	}
-	if err := ensureProjectMarker(dir, CanonicalPath(projectRoot)); err != nil {
-		return "", err
-	}
-	return dir, nil
+	return filepath.Dir(filepath.Dir(dir)), nil
 }
 
 func ensureRealDirectory(path string) error {

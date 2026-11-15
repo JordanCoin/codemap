@@ -971,7 +971,7 @@ func (d *Daemon) logEvent(e Event) {
 	if err := requireRegularRuntimeFile(d.eventLog); err != nil && !os.IsNotExist(err) {
 		return
 	}
-	f, err := runtimefile.OpenAppend(d.eventLog, 0o644)
+	f, err := runtimefile.OpenAppend(d.eventLog, 0o600)
 	if err != nil {
 		return
 	}
@@ -1085,7 +1085,7 @@ func trimEventLogToBytes(path string, maxBytes, keepBytes int64) error {
 		tail = tail[idx+1:]
 	}
 
-	return os.WriteFile(path, tail, 0644)
+	return os.WriteFile(path, tail, 0o600)
 }
 
 // countLines counts lines in a file efficiently (no full read into memory)

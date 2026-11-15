@@ -96,7 +96,7 @@ func (p *statePublisher) snapshot(generation uint64) State {
 
 func (p *statePublisher) publish() error {
 	next := p.generation + 1
-	err := runtimefile.WriteAtomicWith(p.path, 0o644, func(w io.Writer) error {
+	err := runtimefile.WriteAtomicWith(p.path, 0o600, func(w io.Writer) error {
 		encoder := json.NewEncoder(w)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(p.snapshot(next))
@@ -138,7 +138,7 @@ func (p *statePublisher) recordWriteFailure(err error) {
 	p.writeFailure.LastFailedAt = now
 	p.writeFailure.Attempts++
 	if data, marshalErr := json.Marshal(p.writeFailure); marshalErr == nil {
-		_ = runtimefile.WriteAtomic(p.writeFailurePath(), data, 0o644)
+		_ = runtimefile.WriteAtomic(p.writeFailurePath(), data, 0o600)
 	}
 }
 

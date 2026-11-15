@@ -256,11 +256,36 @@ func ConfigPath(root string) string {
 	return filepath.Join(projectpath.CodemapDir(root), "config.json")
 }
 
-// Load reads .codemap/config.json from root.
-// Returns zero-value ProjectConfig if the file is missing.
+// AutoConfigFile is the auto-detected config kept in the state dir for a
+// repo without .codemap/config.json.
+const AutoConfigFile = "auto-config.json"
+
+// AutoConfigPath returns the state-dir path of root's auto-detected config,
+// or "" when there is no usable state dir.
+func AutoConfigPath(root string) string {
+	dir := projectpath.ProjectRuntimeDir(root)
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, AutoConfigFile)
+}
+
+// Load reads .codemap/config.json from root, else the auto-detected config.
+// Returns zero-value ProjectConfig if both are missing.
 // Logs a warning to stderr and returns zero-value if JSON is malformed.
 func Load(root string) ProjectConfig {
-	return LoadFile(ConfigPath(root))
+	return LoadFirst(ConfigPath(root), func() string { return AutoConfigPath(root) })
+}
+
+// LoadFirst loads path, or the fallback path when path does not exist: the
+// in-repo config always wins over the auto-detected one.
+func LoadFirst(path string, fallback func() string) ProjectConfig {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if auto := fallback(); auto != "" {
+			return LoadFile(auto)
+		}
+	}
+	return LoadFile(path)
 }
 
 // LoadFile reads a previously resolved config path.

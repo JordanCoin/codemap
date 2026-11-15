@@ -12,7 +12,6 @@ import (
 
 	"codemap/analysis"
 	"codemap/config"
-	"codemap/internal/gitexclude"
 	"codemap/internal/projectpath"
 	"codemap/limits"
 	"codemap/scanner"
@@ -32,6 +31,7 @@ type Daemon struct {
 	root       string
 	configDir  string
 	configPath string
+	autoConfig string // used while configPath does not exist
 	runtimeDir string
 	graph      *Graph
 	watcher    *fsnotify.Watcher
@@ -87,7 +87,7 @@ func (d *Daemon) runtimeStateDir() (string, error) {
 
 func (d *Daemon) loadConfig() config.ProjectConfig {
 	if d.configPath != "" {
-		return config.LoadFile(d.configPath)
+		return config.LoadFirst(d.configPath, func() string { return d.autoConfig })
 	}
 	if d.configDir != "" {
 		return config.LoadFile(filepath.Join(d.configDir, "config.json"))
@@ -101,9 +101,6 @@ func (d *Daemon) ensurePublisher() error {
 	}
 	runtimeDir, err := d.runtimeStateDir()
 	if err != nil {
-		return err
-	}
-	if err := gitexclude.MkdirAll(runtimeDir, 0o755); err != nil {
 		return err
 	}
 	d.publisher = newStatePublisher(d, filepath.Join(runtimeDir, "state.json"), "legacy-test-instance")
@@ -136,6 +133,7 @@ func NewDaemon(root string, verbose bool) (*Daemon, error) {
 		root:         absRoot,
 		configDir:    selection.PolicyDir,
 		configPath:   filepath.Join(selection.PolicyDir, "config.json"),
+		autoConfig:   filepath.Join(runtimeDir, config.AutoConfigFile),
 		runtimeDir:   runtimeDir,
 		watcher:      watcher,
 		gitCache:     gitCache,
@@ -168,14 +166,6 @@ func NewDaemon(root string, verbose bool) (*Daemon, error) {
 func (d *Daemon) Start() error {
 	if err := d.ensurePublisher(); err != nil {
 		return fmt.Errorf("resolve runtime state: %w", err)
-	}
-	runtimeDir, err := d.runtimeStateDir()
-	if err != nil {
-		return fmt.Errorf("resolve runtime state: %w", err)
-	}
-	codemapDir := runtimeDir
-	if err := gitexclude.MkdirAll(codemapDir, 0755); err != nil {
-		return fmt.Errorf("failed to create .codemap dir: %w", err)
 	}
 	// The config directory is watched so config edits refresh the configured
 	// inventory. Only an explicit setup creates it (#184); without it there

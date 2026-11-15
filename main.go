@@ -466,7 +466,7 @@ func main() {
 	// is a standing decision about the repo and one run narrowing further
 	// must not silently re-admit it.
 	if tempDir == "" {
-		cmd.EnsureProjectConfig(absRoot)
+		cmd.EnsureAutoConfig(absRoot)
 	}
 	projCfg := config.Load(absRoot)
 	if len(only) == 0 && len(projCfg.Only) > 0 {
@@ -992,10 +992,16 @@ func runWatchSubcommand(subCmd, root string) error {
 		if err != nil {
 			return fmt.Errorf("starting daemon: %w", err)
 		}
-		if active.PID > 0 {
+		if active.Legacy {
+			if err := watch.StopActive(active); err != nil {
+				return fmt.Errorf("replacing daemon from an older codemap (pid %d): %w", active.PID, err)
+			}
+			fmt.Printf("Stopped watch daemon from an older codemap (pid %d); starting a current one\n", active.PID)
+		} else if active.PID > 0 {
 			fmt.Println("Watch daemon already running")
 			return nil
 		}
+		cmd.EnsureAutoConfig(absRoot)
 		if err := watch.PreserveStalePIDEvidence(active); err != nil {
 			return fmt.Errorf("preserving stale daemon PID: %w", err)
 		}
@@ -1087,7 +1093,10 @@ func runWatchSubcommand(subCmd, root string) error {
 		if err != nil {
 			return fmt.Errorf("watch daemon status unavailable: %w", err)
 		}
-		if active.PID > 0 {
+		if active.Legacy {
+			fmt.Printf("Watch daemon from an older codemap running (pid %d); it keeps state where this version does not read it\n", active.PID)
+			fmt.Println("  Next: `codemap watch start` replaces it.")
+		} else if active.PID > 0 {
 			state := watch.ReadState(absRoot)
 			// A daemon whose state writes fail is still "running"; without
 			// this line its stale numbers would read as current (#140).

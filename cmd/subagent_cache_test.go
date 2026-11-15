@@ -30,7 +30,7 @@ func runSubagentStartHook(t *testing.T, root string) string {
 	var out string
 	withStdinInput(t, `{"cwd":"`+filepath.ToSlash(root)+`"}`, func() {
 		out = captureOutput(func() {
-			if err := hookSubagentStart(root); err != nil {
+			if err := hookSubagentStart(root, subagentStartTimeout); err != nil {
 				t.Fatalf("hookSubagentStart: %v", err)
 			}
 		})
@@ -85,7 +85,7 @@ func TestSubagentStartTimeoutPrintsNothingAndRefreshes(t *testing.T) {
 	}
 	start := time.Now()
 	withStdinInput(t, `{"cwd":"`+filepath.ToSlash(root)+`"}`, func() {
-		out := captureOutput(func() { _ = hookSubagentStart(root) })
+		out := captureOutput(func() { _ = hookSubagentStart(root, subagentStartTimeout) })
 		if out != "" {
 			t.Fatalf("timed-out render printed %q", out)
 		}
@@ -95,6 +95,34 @@ func TestSubagentStartTimeoutPrintsNothingAndRefreshes(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > subagentStartTimeout+2*time.Second {
 		t.Fatalf("hook took %v past its deadline", elapsed)
+	}
+}
+
+// The background render starts before the foreground one, so a hook killed by
+// its timeout still leaves one running; a fresh lock means one already is.
+func TestSubagentStartLaunchesRefreshUpFrontUnlessLocked(t *testing.T) {
+	root, renders, refreshes := subagentCacheRepo(t)
+	renderSubagentBlock = func(context.Context, string) (string, error) {
+		*renders++
+		if *refreshes != 1 {
+			t.Errorf("foreground render began before the background refresh (refreshes=%d)", *refreshes)
+		}
+		return "block\n", nil
+	}
+	runSubagentStartHook(t, root)
+
+	dir, _ := subagentCacheDir(root)
+	if err := os.Remove(filepath.Join(dir, subagentCacheFile)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, subagentRefreshLock), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	*refreshes = 0
+	renderSubagentBlock = func(context.Context, string) (string, error) { return "block\n", nil }
+	runSubagentStartHook(t, root)
+	if *refreshes != 0 {
+		t.Fatalf("launched a refresh while a fresh lock exists (refreshes=%d)", *refreshes)
 	}
 }
 

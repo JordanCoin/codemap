@@ -191,12 +191,18 @@ func RunDoctor(args []string, defaultRoot string) int {
 	return 0
 }
 
-// doctorCheckLocalCodemapIgnore verifies machine state under an in-repo
-// .codemap/ is ignored. Git's check-ignore reflects the rules that actually
-// apply, so it is the authority. A project never set up has no in-repo state.
+// doctorCheckLocalCodemapIgnore names the per-user state dir, then verifies
+// anything but config and skills under an in-repo .codemap/ is ignored. Git's
+// check-ignore reflects the rules that actually apply, so it is the authority.
 func doctorCheckLocalCodemapIgnore(root string, failures *int) {
+	if dir := projectpath.ProjectRuntimeDir(root); dir != "" {
+		fmt.Printf("OK   state dir: %s (handoff, hubs, agent edits, daemon state, auto-detected config)\n", dir)
+	} else {
+		_, err := projectpath.CheckedRuntimeCodemapDir(root)
+		fmt.Printf("MISS state dir: %v; codemap runs without saved state\n", err)
+		*failures++
+	}
 	if !projectpath.IsSetUp(root) {
-		fmt.Printf("OK   local Codemap ignore: not set up; machine state lives in %s\n", projectpath.RuntimeCodemapDir(root))
 		return
 	}
 	// A path no codemap writes: check-ignore reports tracked files as not ignored.
@@ -227,9 +233,12 @@ func doctorCheckTrackedCodemapState(root string, failures *int) {
 	if tracked := trackedMachineState(root); len(tracked) > 0 {
 		fmt.Printf("MISS tracked codemap state: %d machine-state file(s) under .codemap/ are committed:\n%s", len(tracked), trackedStateDetail(tracked))
 		*failures++
-		return
+	} else {
+		fmt.Println("OK   tracked codemap state: no machine-state files under .codemap/ are committed (git ls-files .codemap)")
 	}
-	fmt.Println("OK   tracked codemap state: no machine-state files under .codemap/ are committed (git ls-files .codemap)")
+	if left := leftoverMachineState(root); len(left) > 0 {
+		fmt.Printf("NOTE leftover codemap state: %d file(s) under .codemap/ from an older codemap are no longer used and are safe to delete:\n%s", len(left), nameList(left))
+	}
 }
 
 func reportCodexRuntimeVersions(cliPath string) bool {

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"codemap/internal/gitexclude"
 	"codemap/internal/projectpath"
 )
 
@@ -35,8 +34,8 @@ type agentEdits struct {
 	bySession map[string]map[string]bool // session id -> paths
 }
 
-// agentEditsPath is <root>/.codemap/agent_edits.jsonl in a set-up project,
-// else under the user state cache; "" when runtime storage is unsafe.
+// agentEditsPath is agent_edits.jsonl in the project's state dir; "" when
+// there is no usable state dir.
 func agentEditsPath(root string) string {
 	selection, err := projectpath.SelectRuntime(root)
 	if err != nil {
@@ -70,9 +69,6 @@ func recordAgentEdit(root, sessionID, path string, now time.Time) error {
 	if logPath == "" {
 		return nil
 	}
-	if err := gitexclude.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
-		return err
-	}
 	record := agentEditRecord{
 		Path:    normalizeAgentEditPath(root, path),
 		Session: strings.TrimSpace(sessionID),
@@ -83,7 +79,7 @@ func recordAgentEdit(root, sessionID, path string, now time.Time) error {
 		return err
 	}
 	compactAgentEdits(logPath, now)
-	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
@@ -120,7 +116,7 @@ func compactAgentEdits(logPath string, now time.Time) {
 		kept.Write(scanner.Bytes())
 		kept.WriteByte('\n')
 	}
-	_ = writeFileAtomic(logPath, kept.Bytes(), 0o644)
+	_ = writeFileAtomic(logPath, kept.Bytes(), 0o600)
 }
 
 // loadAgentEdits reads records at or after `since`. Missing or malformed logs

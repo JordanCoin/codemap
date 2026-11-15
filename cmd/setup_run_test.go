@@ -236,10 +236,18 @@ func TestRunSetupWritesStateIgnore(t *testing.T) {
 	if err := hookPreCompact(root); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(root, ".codemap", "agent_edits.jsonl")); err != nil {
-		t.Fatalf("post-edit did not record in the set-up repo: %v", err)
+	if _, err := os.Stat(agentEditsPath(root)); err != nil {
+		t.Fatalf("post-edit did not record in the state dir: %v", err)
 	}
-	status := exec.Command("git", "status", "--porcelain", "--untracked-files=all")
+	entries, _ := os.ReadDir(filepath.Join(root, ".codemap"))
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if got := strings.Join(names, ","); got != ".gitignore,config.json" {
+		t.Fatalf(".codemap/ holds %q, want only .gitignore and config.json", got)
+	}
+	status := exec.Command("git", "status", "--porcelain", "--ignored", "--untracked-files=all")
 	status.Dir = root
 	got, err := status.Output()
 	if err != nil {

@@ -48,7 +48,7 @@ func freshClone(t *testing.T) string {
 	return clone
 }
 
-func TestMkdirAllWritesStateIgnoreAndLeavesExclude(t *testing.T) {
+func TestStateIgnoreHidesLegacyLeftoversAndLeavesExclude(t *testing.T) {
 	root := freshClone(t)
 	exclude, err := InfoExcludePath(root)
 	if err != nil {
@@ -56,8 +56,11 @@ func TestMkdirAllWritesStateIgnoreAndLeavesExclude(t *testing.T) {
 	}
 	before, _ := os.ReadFile(exclude)
 	stateDir := filepath.Join(root, ".codemap", "projects", "abc")
-	if err := MkdirAll(stateDir, 0o755); err != nil {
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		t.Fatal(err)
+	}
+	if wrote, err := EnsureStateIgnore(filepath.Join(root, ".codemap")); err != nil || !wrote {
+		t.Fatalf("EnsureStateIgnore = %v, %v", wrote, err)
 	}
 	for path, content := range map[string]string{
 		filepath.Join(stateDir, "state.json"):                         "{}",
@@ -99,26 +102,6 @@ func TestEnsureStateIgnoreKeepsUserCopy(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(path); string(data) != "mine\n" {
 		t.Fatalf("user .gitignore rewritten: %q", data)
-	}
-}
-
-func TestMkdirAllOutsideGitAndWithoutStateDir(t *testing.T) {
-	plain := filepath.Join(t.TempDir(), "a", ".codemap", "b")
-	if err := MkdirAll(plain, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if info, err := os.Stat(plain); err != nil || !info.IsDir() {
-		t.Fatalf("dir not created: %v", err)
-	}
-	other := filepath.Join(t.TempDir(), "cache", "x")
-	if err := MkdirAll(other, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := stateDirOf(other); ok {
-		t.Fatalf("stateDirOf(%q) found a .codemap ancestor", other)
-	}
-	if got, ok := stateDirOf(plain); !ok || filepath.Base(got) != ".codemap" {
-		t.Fatalf("stateDirOf(%q) = %q, %v", plain, got, ok)
 	}
 }
 

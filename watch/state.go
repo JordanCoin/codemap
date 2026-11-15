@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"codemap/internal/gitexclude"
 	"codemap/internal/projectpath"
 	"codemap/internal/runtimefile"
 )
@@ -128,11 +127,8 @@ func WriteProcessPID(root string, pid int) error {
 	if err != nil {
 		return err
 	}
-	if err := gitexclude.MkdirAll(runtimeDir, 0o755); err != nil {
-		return err
-	}
 	pidFile := filepath.Join(runtimeDir, "watch.pid")
-	if err := runtimefile.WriteAtomic(pidFile, []byte(fmt.Sprintf("%d", pid)), 0o644); err != nil {
+	if err := runtimefile.WriteAtomic(pidFile, []byte(fmt.Sprintf("%d", pid)), 0o600); err != nil {
 		return err
 	}
 	registerDaemon(root, pid)
@@ -215,54 +211,45 @@ type ActiveRuntime struct {
 	Directory     string
 	CanonicalRoot string
 	PID           int
-	Legacy        bool
-	StalePIDPath  string
+	// Legacy marks a live daemon for this root found only through the
+	// registry: it publishes state somewhere other than Directory (an older
+	// binary's layout), so it is stale and `watch start` replaces it.
+	Legacy       bool
+	StalePIDPath string
 }
 
-// ResolveActiveRuntime selects the project namespace, or a positively owned
-// live legacy daemon during forward migration.
+// ResolveActiveRuntime selects the project namespace and its live daemon, or a
+// positively owned live daemon the registry records for this root.
 func ResolveActiveRuntime(root string) (ActiveRuntime, error) {
 	selection, err := projectpath.SelectRuntime(root)
 	if err != nil {
 		return ActiveRuntime{}, err
 	}
-	base := ActiveRuntime{Directory: projectpath.ProjectRuntimeDir(selection.ProjectRoot), CanonicalRoot: selection.ProjectRoot}
-	var stalePath string
-	for _, candidate := range []ActiveRuntime{
-		base,
-		// Keep the immediately-prior explicit setup-root layout readable during migration.
-		{Directory: filepath.Join(selection.LegacyDir, "projects", projectpath.ProjectKey(selection.ProjectRoot)), CanonicalRoot: selection.ProjectRoot, Legacy: true},
-		{Directory: selection.LegacyDir, CanonicalRoot: selection.ProjectRoot, Legacy: true},
-	} {
-		if candidate.Legacy && candidate.Directory == base.Directory {
-			continue
-		}
-		pid, readErr := readPIDAt(candidate.Directory)
-		if os.IsNotExist(readErr) {
-			continue
-		}
-		if readErr != nil || pid <= 0 {
-			return ActiveRuntime{}, ErrDaemonOwnershipUnknown
-		}
-		if !processAlive(pid) {
-			if candidate.Legacy {
-				continue
-			}
-			stalePath = filepath.Join(candidate.Directory, "watch.pid")
-			continue
-		}
+	active := ActiveRuntime{Directory: projectpath.ProjectRuntimeDir(selection.ProjectRoot), CanonicalRoot: selection.ProjectRoot}
+	pid, readErr := readPIDAt(active.Directory)
+	switch {
+	case os.IsNotExist(readErr):
+	case readErr != nil || pid <= 0:
+		return ActiveRuntime{}, ErrDaemonOwnershipUnknown
+	case !processAlive(pid):
+		active.StalePIDPath = filepath.Join(active.Directory, "watch.pid")
+	default:
 		switch daemonOwnershipForPID(selection.ProjectRoot, pid) {
 		case ownershipOwned:
-			candidate.PID = pid
-			return candidate, nil
+			active.PID = pid
+			return active, nil
 		case ownershipForeign:
 			return ActiveRuntime{}, ErrForeignDaemonPID
 		default:
 			return ActiveRuntime{}, ErrDaemonOwnershipUnknown
 		}
 	}
-	base.StalePIDPath = stalePath
-	return base, nil
+	if pid := registeredPID(selection.ProjectRoot); pid > 0 && processAlive(pid) &&
+		daemonOwnershipForPID(selection.ProjectRoot, pid) == ownershipOwned {
+		active.PID = pid
+		active.Legacy = true
+	}
+	return active, nil
 }
 
 // PreserveStalePIDEvidence moves dead or malformed PID evidence aside under a
@@ -350,7 +337,9 @@ func IsOwnedDaemon(root string) bool {
 // IsRunning checks if the daemon is running
 func IsRunning(root string) bool {
 	active, err := ResolveActiveRuntime(root)
-	if err != nil || active.PID <= 0 {
+	// A Legacy daemon publishes elsewhere, so it counts as not running here and
+	// the start path replaces it.
+	if err != nil || active.PID <= 0 || active.Legacy {
 		return false
 	}
 	// Liveness is checked in a platform-specific way: Signal(0) on Unix is
@@ -369,6 +358,12 @@ func Stop(root string) error {
 	if err != nil {
 		return err
 	}
+	return StopActive(active)
+}
+
+// StopActive stops the daemon ResolveActiveRuntime found; the caller holds
+// the transition lock.
+func StopActive(active ActiveRuntime) error {
 	if active.PID <= 0 {
 		return fmt.Errorf("no daemon running: %w", os.ErrNotExist)
 	}
@@ -389,6 +384,10 @@ func Stop(root string) error {
 	}
 	if processAlive(active.PID) {
 		return ErrDaemonExitTimeout
+	}
+	if active.Legacy {
+		unregisterDaemon(active.PID)
+		return nil
 	}
 	if err := removePIDIfMatches(active.Directory, active.PID); err != nil {
 		return err

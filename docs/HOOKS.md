@@ -38,7 +38,7 @@ codemap setup --global
 ```
 
 This command:
-- creates `.codemap/config.json` and `.codemap/.gitignore` when missing (a repo that never ran setup gets no `.codemap/`; see [INSTALL.md](INSTALL.md#setup) for where its state lives)
+- creates `.codemap/config.json` and `.codemap/.gitignore` when missing; machine state always lives in the per-user state dir, never in the repo (see [INSTALL.md](INSTALL.md#setup))
 - merges codemap hooks into Claude and Codex settings without removing existing hooks
 - keeps hook setup idempotent (safe to run more than once)
 
@@ -62,7 +62,8 @@ codemap -C /tmp/feature-worktree context
 
 Normal CLI, hook, and plugin MCP calls need no `--setup-root`. Config and skills
 come from the primary worktree, while daemon state, events, handoffs, and
-session files remain local to the linked worktree. Tools built on standard
+session files stay per worktree, in the per-user state dir (never inside the
+worktree, which gets no `.codemap/`). Tools built on standard
 linked worktrees require no special Codemap integration.
 
 Independent clones remain unrelated. Use `--setup-root /path/to/original`
@@ -339,7 +340,7 @@ The `💡 Suggestions` block prints only for file-specific suggestions from depe
 
 The **working set** tracks files you've edited during the current session. It shows edit count, net line delta, and hub status — giving Claude awareness of your active work context.
 
-Edits are attributed by *provenance*, not by disk churn. The `PostToolUse` hook records the paths an agent wrote through its own tool calls into `agent_edits.jsonl` (in `.codemap/` once the repo is set up, otherwise in the user cache directory), so a branch switch, a build, or a `git` command that touches hundreds of files does not masquerade as work the agent did. When no agent edits have been recorded, the summary says so and falls back to reporting disk activity rather than conflating the two.
+Edits are attributed by *provenance*, not by disk churn. The `PostToolUse` hook records the paths an agent wrote through its own tool calls into `agent_edits.jsonl` in the per-user state dir (`codemap doctor` prints it), so a branch switch, a build, or a `git` command that touches hundreds of files does not masquerade as work the agent did. When no agent edits have been recorded, the summary says so and falls back to reporting disk activity rather than conflating the two.
 
 Provenance depends on the hook receiving a payload it understands: `tool_input.file_path` (Edit/Write), `tool_input.notebook_path` (NotebookEdit), or `tool_input.command` (Codex `apply_patch`).
 
@@ -373,7 +374,7 @@ Edit Timeline:
   14:30:11 CREATE cmd/new_feature.go +45
 
 Stats: 8 events, 3 files touched, +63 lines, 1 hub edits
-🤝 Saved handoff to .codemap/handoff.latest.json
+🤝 Saved handoff to <state dir>/handoff.latest.json
 ```
 
 ### Next Session Start (Handoff Resume)
@@ -400,8 +401,8 @@ If a recent handoff exists **for the current branch**, session start includes a 
 | `codemap hook pre-edit` | `PreToolUse` (Edit\|Write) | Who imports file + what hubs it imports |
 | `codemap hook post-edit` | `PostToolUse` (Edit\|Write) | Impact of changes (same as pre-edit), and records the edit's provenance |
 | `codemap hook prompt-submit` | `UserPromptSubmit` | Intent classification, hub context, risk analysis, working set, route suggestions, drift warnings |
-| `codemap hook pre-compact` | `PreCompact` | Saves hub state to .codemap/hubs.txt |
-| `codemap hook session-stop` | `SessionEnd` | Edit timeline + writes `.codemap/handoff.latest.json`, `.codemap/handoff.prefix.json`, `.codemap/handoff.delta.json` |
+| `codemap hook pre-compact` | `PreCompact` | Saves hub state to `hubs.txt` in the state dir |
+| `codemap hook session-stop` | `SessionEnd` | Edit timeline + writes `handoff.latest.json`, `handoff.prefix.json`, `handoff.delta.json` in the state dir |
 | `codemap hook subagent-start` | `SubagentStart` | Top-level directories with hub marks, then the hub list (Claude only) |
 
 ---
@@ -460,7 +461,7 @@ Session-start hook performance depends on whether the daemon is running:
 
 | State | Latency | What Happens |
 |-------|---------|--------------|
-| Daemon running, state fresh | <100ms | Reads `.codemap/state.json` from disk |
+| Daemon running, state fresh | <100ms | Reads `state.json` from the state dir |
 | Daemon running, state stale (>30s) | <100ms | Still reads state (daemon is alive) |
 | No daemon, small repo (<2000 files) | 200-500ms | Starts daemon + initial scan + dep graph |
 | No daemon, medium repo (2000-5000) | 500ms-2s | Starts daemon + scan (deps computed) |

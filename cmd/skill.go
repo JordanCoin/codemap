@@ -112,10 +112,11 @@ func runSkillShow(root, name string) {
 
 func runSkillInit(root string) {
 	skillsDir := filepath.Join(projectpath.CodemapDir(root), "skills")
-	if err := gitexclude.MkdirAll(skillsDir, 0755); err != nil {
+	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating skills directory: %v\n", err)
 		os.Exit(1)
 	}
+	_, _ = gitexclude.EnsureStateIgnore(projectpath.CodemapDir(root))
 
 	template := `---
 name: my-skill

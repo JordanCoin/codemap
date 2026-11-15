@@ -12,7 +12,7 @@ languages: ["go", "typescript", "javascript", "python", "rust", "ruby", "swift",
 
 A score of 100 means a hook found the config missing, empty, malformed, or boilerplate. Fix it first; it takes under a minute and every later Codemap answer depends on it.
 
-1. Run `codemap config show` to see the current state. If it says missing, run `codemap config init` (most commands now do this for you).
+1. Run `codemap config show` to see the current state. If it says missing, codemap is running on auto-detected filters kept outside the repo; run `codemap config init` to write a committable `.codemap/config.json`.
 2. Write or tune `.codemap/config.json` using the workflow below: keep source extensions in `only`, add `exclude` for real noise, set `depth` if the tree is wide.
 3. Rerun `codemap .` and confirm the tree is dominated by source, not assets.
 4. Verify one known cross-file dependency still resolves with `codemap --importers <file>`.

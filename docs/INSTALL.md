@@ -43,15 +43,15 @@ codemap setup
 `codemap setup` configures the agents it detects: Claude Code when `~/.claude`, `~/.claude.json`, or `claude` on `PATH` exists, Codex when `~/.codex` or `codex` on `PATH` exists, and both when it finds neither. It:
 
 - creates `.codemap/` with `config.json` (auto-detected language filters) and `.codemap/.gitignore`
-- names any machine-state files under `.codemap/` that git already tracks and prints the `git rm --cached -- <files>` command that untracks them (it never runs it)
+- names machine-state files an older codemap left under `.codemap/`: committed ones with the `git rm --cached -- <files>` command that untracks them (it never runs it), and untracked ones as no longer used and safe to delete
 - merges Claude hooks into `.claude/settings.local.json` and configures MCP in `.mcp.json` (project scope)
 - merges Codex hooks into `~/.codex/hooks.json` and configures MCP in `~/.codex/config.toml` (user scope, since Codex skips a project's `.codex/` until the project is trusted; `--project` writes `.codex/` instead)
 - writes the builtin skills to `.claude/skills/` for Claude, keeping any skill file you edited
 - hooks start and read daemon state at session start
 
-`.codemap/config.json` and `.codemap/skills/` are safe to commit. Everything else in the folder is machine state, ignored by the folder's own `.gitignore`; codemap writes that file only when it is missing, so your edits to it stay.
+`.codemap/` holds only what you author: `config.json` and `skills/`, both safe to commit. Its `.gitignore` ignores anything else, which is only ever leftovers from older versions; codemap writes that file only when it is missing, so your edits to it stay.
 
-Until you run setup (or `codemap config init` / `codemap skill init`), codemap writes nothing into the repo: no `.codemap/`, no `.git/info/exclude` rule. Hooks, the watch daemon and every command keep machine state under `$XDG_CACHE_HOME/codemap/<project key>/` when `XDG_CACHE_HOME` is set, otherwise the OS user cache directory (`~/Library/Caches/codemap/` on macOS, `~/.cache/codemap/` on Linux). Without a config file codemap uses its defaults (every file type) instead of auto-detected filters.
+Machine state never goes into the repo, set up or not, primary checkout or linked worktree. Hooks, the watch daemon and every command keep it under `$XDG_CACHE_HOME/codemap/<project key>/` when `XDG_CACHE_HOME` is set, otherwise the OS user cache directory (`~/Library/Caches/codemap/` on macOS, `~/.cache/codemap/` on Linux). `codemap doctor` prints the exact directory on its `state dir:` line. Only `codemap setup`, `codemap config init` and `codemap skill init` create `.codemap/`; nothing else writes there, and a linked worktree never gets one. A repo without `config.json` gets auto-detected filters stored in the state dir (`auto-config.json`), computed once; run `codemap config init` to commit filters instead. When no usable cache directory exists, codemap runs without saved state.
 
 Rerunning setup is safe: it changes only what is missing or stale. `--no-config`, `--no-hooks`, `--no-mcp`, and `--no-skills` skip a piece.
 

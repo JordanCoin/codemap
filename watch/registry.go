@@ -55,14 +55,37 @@ func registerDaemon(root string, pid int) {
 	if err != nil {
 		return
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// Create .codemap/daemons but never a missing home above it.
+	if _, err := os.Stat(filepath.Dir(filepath.Dir(dir))); err != nil {
 		return
+	}
+	for _, d := range []string{filepath.Dir(dir), dir} {
+		if err := os.Mkdir(d, 0o700); err != nil && !os.IsExist(err) {
+			return
+		}
 	}
 	payload, err := json.Marshal(DaemonInfo{PID: pid, Root: canonicalRoot(root)})
 	if err != nil {
 		return
 	}
-	_ = runtimefile.WriteAtomic(filepath.Join(dir, projectpath.ProjectKey(root)+".json"), payload, 0o644)
+	_ = runtimefile.WriteAtomic(filepath.Join(dir, projectpath.ProjectKey(root)+".json"), payload, 0o600)
+}
+
+// registeredPID returns the pid the registry records for root, or 0.
+func registeredPID(root string) int {
+	dir, err := daemonRegistryDir()
+	if err != nil {
+		return 0
+	}
+	data, err := runtimefile.Read(filepath.Join(dir, projectpath.ProjectKey(root)+".json"))
+	if err != nil {
+		return 0
+	}
+	var info DaemonInfo
+	if json.Unmarshal(data, &info) != nil || info.PID <= 0 || canonicalRoot(info.Root) != canonicalRoot(root) {
+		return 0
+	}
+	return info.PID
 }
 
 // unregisterDaemon drops every entry naming pid.

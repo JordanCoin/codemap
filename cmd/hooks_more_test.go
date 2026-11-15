@@ -1188,7 +1188,7 @@ func TestAutomaticLinkedWorktreeUsesLocalHookState(t *testing.T) {
 		t.Fatal(err)
 	}
 	linked := filepath.Join(t.TempDir(), "linked")
-	if err := os.MkdirAll(projectpath.ProjectRuntimeDir(linked), 0o755); err != nil {
+	if err := os.MkdirAll(linked, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(linked, ".git"), []byte("gitdir: "+gitDir+"\n"), 0o644); err != nil {

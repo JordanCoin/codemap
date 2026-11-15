@@ -203,76 +203,75 @@ func TestInitProjectConfigExcludesPresentNoise(t *testing.T) {
 	}
 }
 
-func TestEnsureProjectConfigWritesOnlyInsideRepos(t *testing.T) {
+// TestEnsureAutoConfigStaysOutOfTheRepo: the auto-detected config lives in
+// the state dir, is computed once, recomputed when unreadable, loses to an
+// in-repo config, and is never written outside a git checkout.
+func TestEnsureAutoConfigStaysOutOfTheRepo(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	mustWriteConfigFixture(t, filepath.Join(repo, "main.go"), "package main\n")
-	if EnsureProjectConfig(repo) {
-		t.Fatal("must not write config in a repo that never ran setup")
+	if !EnsureAutoConfig(repo) {
+		t.Fatal("expected an auto config for a repo without config.json")
 	}
 	if _, err := os.Stat(filepath.Join(repo, ".codemap")); !os.IsNotExist(err) {
-		t.Fatalf(".codemap created in a repo that never ran setup: %v", err)
+		t.Fatalf(".codemap created by the auto config: %v", err)
 	}
-	if err := os.Mkdir(filepath.Join(repo, ".codemap"), 0o755); err != nil {
+	auto := config.AutoConfigPath(repo)
+	info, err := os.Stat(auto)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("auto config %s: %v, mode %v; want 0600", auto, err, info)
+	}
+	if got := strings.Join(config.Load(repo).Only, ","); got != "go" {
+		t.Fatalf("Load().Only = %q, want go from the auto config", got)
+	}
+	if EnsureAutoConfig(repo) {
+		t.Fatal("second call must not recompute a readable auto config")
+	}
+	if err := os.WriteFile(auto, []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if !EnsureProjectConfig(repo) {
-		t.Fatal("expected config to be written in a set-up repo")
+	if !EnsureAutoConfig(repo) {
+		t.Fatal("an unreadable auto config must be recomputed")
 	}
-	if _, err := os.Stat(config.ConfigPath(repo)); err != nil {
-		t.Fatalf("config not written: %v", err)
+
+	mustWriteConfigFixture(t, config.ConfigPath(repo), `{"only":["md"]}`)
+	if EnsureAutoConfig(repo) {
+		t.Fatal("an in-repo config.json must stop the auto config")
 	}
-	if EnsureProjectConfig(repo) {
-		t.Fatal("second call must not rewrite an existing config")
+	if got := strings.Join(config.Load(repo).Only, ","); got != "md" {
+		t.Fatalf("Load().Only = %q, want the in-repo config to win", got)
 	}
 
 	plain := t.TempDir()
 	mustWriteConfigFixture(t, filepath.Join(plain, "main.go"), "package main\n")
-	if EnsureProjectConfig(plain) {
-		t.Fatal("must not write config outside a repo")
-	}
-	if _, err := os.Stat(config.ConfigPath(plain)); !os.IsNotExist(err) {
-		t.Fatalf("config unexpectedly present in non-repo: %v", err)
+	if EnsureAutoConfig(plain) {
+		t.Fatal("must not compute a config outside a repo")
 	}
 }
 
-// TestEnsureProjectConfigKeepsFreshCloneClean: in a clone whose .codemap/
-// exists but holds no config, the auto-write leaves only committable files
-// (.codemap/.gitignore, config.json) visible to git and never touches the
-// root .gitignore.
-func TestEnsureProjectConfigKeepsFreshCloneClean(t *testing.T) {
+// TestEnsureAutoConfigKeepsFreshCloneClean: the auto config leaves a fresh
+// clone with nothing new, not even ignored files.
+func TestEnsureAutoConfigKeepsFreshCloneClean(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
 	src := makeRepoOnBranch(t, "main")
 	clone := filepath.Join(t.TempDir(), "clone")
 	runGitTestCmd(t, src, "clone", "-q", src, clone)
-	if err := os.Mkdir(filepath.Join(clone, ".codemap"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 
-	if !EnsureProjectConfig(clone) {
-		t.Fatal("expected config to be written in a fresh clone")
+	if !EnsureAutoConfig(clone) {
+		t.Fatal("expected an auto config in a fresh clone")
 	}
-	if _, err := os.Stat(config.ConfigPath(clone)); err != nil {
-		t.Fatalf("config not written: %v", err)
-	}
-	status := exec.Command("git", "status", "--porcelain", "--untracked-files=all")
+	status := exec.Command("git", "status", "--porcelain", "--ignored", "--untracked-files=all")
 	status.Dir = clone
 	out, err := status.Output()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := strings.TrimSpace(string(out)), "?? .codemap/.gitignore\n?? .codemap/config.json"; got != want {
-		t.Fatalf("git status after auto-init = %q, want %q", got, want)
-	}
-	if _, err := os.Stat(filepath.Join(clone, ".gitignore")); !os.IsNotExist(err) {
-		t.Fatal("auto-init must not create a tracked .gitignore")
-	}
-	if !gitIgnoresState(t, clone) {
-		t.Fatal("git does not ignore .codemap after auto-init")
+	if got := strings.TrimSpace(string(out)); got != "" {
+		t.Fatalf("git status after the auto config = %q, want clean", got)
 	}
 }
 

@@ -19,7 +19,6 @@ import (
 
 	"codemap/config"
 	"codemap/handoff"
-	"codemap/internal/gitexclude"
 	"codemap/internal/projectpath"
 	"codemap/limits"
 	"codemap/scanner"
@@ -208,6 +207,11 @@ func RunHookWithTimeout(hookName, root string, timeout time.Duration) error {
 	if timeout <= 0 || hookName == subagentRefreshHook {
 		return RunHook(hookName, root)
 	}
+	// Bounded inside, so the background render is launched before we return.
+	if hookName == "subagent-start" {
+		runSubagentStart(root, min(timeout, subagentStartTimeout))
+		return nil
+	}
 
 	if hookName == "session-stop" {
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -308,11 +312,15 @@ func waitForDaemonState(root string, timeout time.Duration) *watch.State {
 	return nil
 }
 
+// runSubagentStart never fails a subagent: any error leaves stdout empty.
+func runSubagentStart(root string, budget time.Duration) {
+	_ = emitHookContext("SubagentStart", func() error { return hookSubagentStart(root, budget) }, false)
+}
+
 // RunHook executes the named hook with the given project root
 func RunHook(hookName, root string) error {
 	if hookName == "subagent-start" {
-		// Never fail a subagent: any error leaves stdout empty and exits 0.
-		_ = emitHookContext("SubagentStart", func() error { return hookSubagentStart(root) }, false)
+		runSubagentStart(root, subagentStartTimeout)
 		return nil
 	}
 	if hookName == subagentRefreshHook {
@@ -434,6 +442,7 @@ func hookSessionStart(root string) error {
 	// Check for previous session context before starting new daemon
 	lastSessionEvents := getLastSessionEvents(root)
 
+	EnsureAutoConfig(root) // before the daemon, which reads it
 	ensureSessionDaemon(root, hookSessionIDFromStdin())
 
 	fileCount := 0
@@ -594,9 +603,12 @@ var renderSubagentBlock = func(ctx context.Context, root string) (string, error)
 // hookSubagentStart orients a subagent, which never gets SessionStart: the
 // top-level directories with hub marks, then the hub list. The payload's cwd
 // wins over the process cwd because a worktree-isolated subagent runs elsewhere.
+// On a cache miss the background render starts before the foreground one, so
+// it survives a hook timeout that ends this process; whichever finishes first
+// writes the cache.
 // ponytail: cached per HEAD, so a new top-level directory shows only after
 // the next commit; key on a tree listing hash if that ever matters.
-func hookSubagentStart(root string) error {
+func hookSubagentStart(root string, budget time.Duration) error {
 	if info, err := os.Stdin.Stat(); err == nil && info.Mode()&os.ModeCharDevice == 0 {
 		var payload struct {
 			Cwd string `json:"cwd"`
@@ -617,13 +629,13 @@ func hookSubagentStart(root string) error {
 		fmt.Print(block)
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), subagentStartTimeout)
+	if key != "" && !subagentRefreshRunning(root) {
+		startSubagentRefresh(root)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	block, err := renderSubagentBlock(ctx, root)
 	if err != nil {
-		if ctx.Err() != nil && key != "" {
-			startSubagentRefresh(root)
-		}
 		return err
 	}
 	writeSubagentCache(root, key, block)
@@ -1231,7 +1243,7 @@ func writeStatuslineState(root string, intent TaskIntent) {
 	if intent.RiskLevel != "low" {
 		status += " " + intent.RiskLevel
 	}
-	os.WriteFile(filepath.Join(codemapDir, "status"), []byte(status), 0644)
+	os.WriteFile(filepath.Join(codemapDir, "status"), []byte(status), 0o600)
 }
 
 // emitIntentMarker outputs a structured JSON comment for machine consumption.
@@ -1633,9 +1645,6 @@ func hookPreCompact(root string) error {
 	if err != nil {
 		return err
 	}
-	if err := gitexclude.MkdirAll(codemapDir, 0755); err != nil {
-		return err
-	}
 
 	info := getHubInfoNoFallback(root)
 	if info == nil || len(info.Hubs) == 0 {
@@ -1644,7 +1653,7 @@ func hookPreCompact(root string) error {
 
 	// Write hub state
 	hubsFile := filepath.Join(codemapDir, "hubs.txt")
-	f, err := os.Create(hubsFile)
+	f, err := os.OpenFile(hubsFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}
@@ -2103,9 +2112,6 @@ func updateSessionLeaseContext(ctx context.Context, root, sessionID string, acti
 	if err != nil {
 		return err
 	}
-	if err := gitexclude.MkdirAll(codemapDir, 0o755); err != nil {
-		return err
-	}
 	lockPath := filepath.Join(codemapDir, "sessions.lock")
 	if err := acquireSessionLockContext(ctx, lockPath); err != nil {
 		return err
@@ -2113,7 +2119,7 @@ func updateSessionLeaseContext(ctx context.Context, root, sessionID string, acti
 	defer os.Remove(lockPath)
 
 	leaseDir := filepath.Join(codemapDir, "sessions")
-	if err := os.MkdirAll(leaseDir, 0o755); err != nil {
+	if err := os.MkdirAll(leaseDir, 0o700); err != nil {
 		return err
 	}
 	entries, err := os.ReadDir(leaseDir)

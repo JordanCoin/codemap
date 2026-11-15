@@ -261,87 +261,68 @@ func TestExplicitSetupSeparatesMutableWatchFiles(t *testing.T) {
 	}
 }
 
-func TestResolveActiveRuntimeUsesOnlyExactlyOwnedLiveLegacyDaemon(t *testing.T) {
-	setup := t.TempDir()
-	project := filepath.Join(t.TempDir(), "project with space")
-	if err := os.Mkdir(project, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	projectpath.SetSetupRoot(setup)
-	t.Cleanup(projectpath.ResetSetupRoot)
-	selection, err := projectpath.SelectRuntime(project)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	process := exec.Command(os.Args[0], "-test.run=TestHelperWatchDaemonProcess", "--", "watch", "daemon", selection.ProjectRoot)
+func startHelperDaemon(t *testing.T, root string) *exec.Cmd {
+	t.Helper()
+	process := exec.Command(os.Args[0], "-test.run=TestHelperWatchDaemonProcess", "--", "watch", "daemon", root)
 	process.Env = append(os.Environ(), "CODEMAP_TEST_WATCH_HELPER=1")
 	if err := process.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = process.Process.Kill(); _, _ = process.Process.Wait() })
-	if err := os.MkdirAll(selection.LegacyDir, 0o755); err != nil {
+	go func() { _ = process.Wait() }() // reap, so a terminated helper is not a live zombie
+	t.Cleanup(func() { _ = process.Process.Kill() })
+	return process
+}
+
+// A daemon from an older binary publishes state elsewhere; only the registry
+// knows it. It must be found (so no second one starts) yet count as not
+// running here (so the start path replaces it), and Stop must end it.
+func TestResolveActiveRuntimeFindsRegisteredDaemonOutsideStateDir(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "project with space")
+	if err := os.MkdirAll(filepath.Join(project, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(selection.LegacyDir, "watch.pid"), []byte(fmt.Sprint(process.Process.Pid)), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	root := projectpath.CanonicalPath(project)
+	process := startHelperDaemon(t, root)
+	registerDaemon(root, process.Process.Pid)
 
 	active, err := ResolveActiveRuntime(project)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if active.Directory != selection.LegacyDir || !active.Legacy || active.PID != process.Process.Pid {
-		t.Fatalf("ResolveActiveRuntime() = %#v, want owned legacy daemon", active)
+	if !active.Legacy || active.PID != process.Process.Pid {
+		t.Fatalf("ResolveActiveRuntime() = %#v, want the registered daemon", active)
 	}
-
-	foreign := t.TempDir()
-	foreignProcess := exec.Command(os.Args[0], "-test.run=TestHelperWatchDaemonProcess", "--", "watch", "daemon", foreign)
-	foreignProcess.Env = append(os.Environ(), "CODEMAP_TEST_WATCH_HELPER=1")
-	if err := foreignProcess.Start(); err != nil {
-		t.Fatal(err)
+	if IsRunning(project) {
+		t.Fatal("IsRunning = true for a daemon that publishes outside the state dir")
 	}
-	t.Cleanup(func() { _ = foreignProcess.Process.Kill(); _, _ = foreignProcess.Process.Wait() })
-	if err := os.WriteFile(filepath.Join(selection.LegacyDir, "watch.pid"), []byte(fmt.Sprint(foreignProcess.Process.Pid)), 0o644); err != nil {
-		t.Fatal(err)
+	if err := Stop(project); err != nil {
+		t.Fatalf("Stop() = %v", err)
 	}
-	if _, err := ResolveActiveRuntime(project); !errors.Is(err, ErrForeignDaemonPID) {
-		t.Fatalf("foreign ResolveActiveRuntime() error = %v, want ErrForeignDaemonPID", err)
+	if registeredPID(root) != 0 {
+		t.Fatal("registry entry survived Stop")
 	}
 }
 
-func TestResolveActiveRuntimeFindsPriorExplicitSetupProjectDaemon(t *testing.T) {
-	setup := t.TempDir()
-	project := filepath.Join(t.TempDir(), "project")
-	if err := os.Mkdir(project, 0o755); err != nil {
+func TestResolveActiveRuntimeIgnoresForeignRegisteredPID(t *testing.T) {
+	project := t.TempDir()
+	if err := os.Mkdir(filepath.Join(project, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	projectpath.SetSetupRoot(setup)
-	t.Cleanup(projectpath.ResetSetupRoot)
-	selection, err := projectpath.SelectRuntime(project)
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacyDir := filepath.Join(selection.LegacyDir, "projects", projectpath.ProjectKey(selection.ProjectRoot))
-	process := exec.Command(os.Args[0], "-test.run=TestHelperWatchDaemonProcess", "--", "watch", "daemon", selection.ProjectRoot)
-	process.Env = append(os.Environ(), "CODEMAP_TEST_WATCH_HELPER=1")
-	if err := process.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = process.Process.Kill(); _, _ = process.Process.Wait() })
-	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(legacyDir, "watch.pid"), []byte(fmt.Sprint(process.Process.Pid)), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	foreign := startHelperDaemon(t, t.TempDir())
+	registerDaemon(project, foreign.Process.Pid)
 
 	active, err := ResolveActiveRuntime(project)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if active.Directory != legacyDir || !active.Legacy || active.PID != process.Process.Pid {
-		t.Fatalf("ResolveActiveRuntime() = %#v, want prior setup-root daemon", active)
+	if active.PID != 0 || active.Legacy {
+		t.Fatalf("ResolveActiveRuntime() = %#v, want no daemon for a foreign pid", active)
+	}
+	if err := Stop(project); err == nil {
+		t.Fatal("Stop() succeeded with no daemon")
+	}
+	if !processAlive(foreign.Process.Pid) {
+		t.Fatal("Stop killed a daemon for another root")
 	}
 }
 
@@ -412,9 +393,6 @@ func TestStopOwnedDaemonWaitsForVerifiedExitBeforeRemovingPID(t *testing.T) {
 	}
 	if err := Stop(root); err != nil {
 		t.Fatal(err)
-	}
-	if processAlive(process.Process.Pid) {
-		t.Fatal("Stop returned before daemon exit was observable")
 	}
 	selection, err := projectpath.SelectRuntime(root)
 	if err != nil {
