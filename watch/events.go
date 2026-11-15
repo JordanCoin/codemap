@@ -1085,6 +1085,8 @@ func trimEventLogToBytes(path string, maxBytes, keepBytes int64) error {
 		tail = tail[idx+1:]
 	}
 
+	// Close before replacing: Windows refuses to replace a file that is still open.
+	f.Close()
 	return runtimefile.WriteAtomic(path, tail, 0o600)
 }
 
