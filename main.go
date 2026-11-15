@@ -152,6 +152,9 @@ func main() {
 				os.Exit(2)
 			}
 		}
+		if hookName == "session-start" && hookIntegration == "claude-setup" {
+			cmd.RepairClaudeSubagentHook(root)
+		}
 		if err := cmd.RunHookWithTimeout(hookName, root, cmd.HookTimeoutFromEnv(os.Getenv)); err != nil {
 			var timeoutErr *cmd.HookTimeoutError
 			if errors.As(err, &timeoutErr) {

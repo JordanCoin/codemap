@@ -766,6 +766,26 @@ func ensureClaudeHooks(settingsPath string, global bool) (ensureHooksResult, err
 	return ensureClaudeHooksWithExecutable(settingsPath, global, executable)
 }
 
+// RepairClaudeSubagentHook adds the SubagentStart entry to Claude settings
+// files that codemap setup already manages, so an upgrade needs no re-run.
+// Files without codemap's own session-start entry are never touched.
+func RepairClaudeSubagentHook(root string) {
+	for _, global := range []bool{false, true} {
+		path, err := claudeSettingsPath(root, global)
+		if err != nil {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil || !bytes.Contains(data, []byte("hook session-start --integration=claude-setup")) ||
+			bytes.Contains(data, []byte("hook subagent-start")) {
+			continue
+		}
+		if res, err := ensureClaudeHooks(path, global); err == nil && res.WroteFile {
+			fmt.Printf("codemap: added SubagentStart hook to %s, active next session\n", path)
+		}
+	}
+}
+
 func ensureClaudeHooksWithExecutable(settingsPath string, global bool, executable string) (ensureHooksResult, error) {
 	return ensureHooks(settingsPath, global, generatedClaudeHooks(executable), nil)
 }

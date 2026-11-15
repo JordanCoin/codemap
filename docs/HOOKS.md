@@ -37,6 +37,8 @@ Global settings instead of project-local:
 codemap setup --global
 ```
 
+After an upgrade there is no need to run setup again: when a settings file already has codemap's session-start hook but lacks a newer one (`SubagentStart`), the session-start hook adds it and says so. It takes effect in the next session. Settings files without codemap hooks are never touched.
+
 This command:
 - creates `.codemap/config.json` and `.codemap/.gitignore` when missing; machine state always lives in the per-user state dir, never in the repo (see [INSTALL.md](INSTALL.md#setup))
 - merges codemap hooks into Claude and Codex settings without removing existing hooks
