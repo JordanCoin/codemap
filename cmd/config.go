@@ -1,18 +1,20 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"codemap/config"
-	"codemap/internal/gitexclude"
 	"codemap/internal/projectpath"
+	"codemap/internal/runtimefile"
 	"codemap/scanner"
 )
 
@@ -85,35 +87,124 @@ func detectNoise(files []scanner.FileInfo) []string {
 	return out
 }
 
-// EnsureProjectConfig writes an auto-detected .codemap/config.json when none
-// exists and root is a git checkout. Every analysis entry point calls this so
-// a repo never stays in the "missing" state past its first codemap command.
-// Write failures (read-only checkout) are silent: the caller still runs.
-func EnsureProjectConfig(root string) bool {
-	if _, err := os.Stat(config.ConfigPath(root)); err == nil {
+// AutoConfigActive reports whether root, a git checkout, has no
+// .codemap/config.json and so runs on the auto-detected config.
+func AutoConfigActive(root string) bool {
+	if _, err := os.Stat(config.ConfigPath(root)); !os.IsNotExist(err) {
 		return false
 	}
-	if _, err := os.Stat(filepath.Join(root, ".git")); err != nil {
+	_, err := os.Stat(filepath.Join(root, ".git"))
+	return err == nil
+}
+
+// EnsureAutoConfig stores an auto-detected config in the project's state dir
+// (config.AutoConfigPath) when it is missing or unreadable, so a repo that
+// never ran setup still gets `only` filters (a few Go files among thousands
+// of data files stay under the large-repo cutoff). It scans, so hooks never
+// call it; the tree keeps the stored copy current through RefreshAutoConfig.
+// `codemap config init` is the explicit, committable path. It never writes
+// inside the repo, and failures are silent. It reports whether it wrote.
+func EnsureAutoConfig(root string) bool {
+	path := config.AutoConfigPath(root)
+	if !AutoConfigActive(root) || path == "" {
 		return false
 	}
-	result, err := initProjectConfig(root)
+	if data, err := runtimefile.Read(path); err == nil && json.Valid(data) {
+		return false
+	}
+	cfg, err := detectProjectConfig(root, &configInitResult{})
 	if err != nil {
 		return false
 	}
-	// The auto-write just created .codemap/ in a checkout that never asked
-	// for it, so keep it out of `git status` (issue #184): the rule goes to
-	// the clone-local info/exclude, never a tracked .gitignore, and only
-	// when no existing rule already ignores the directory.
-	excludeFile, _ := gitexclude.EnsureIgnoredIfNeeded(filepath.Dir(filepath.Dir(result.Path)))
-	// Only a person at a terminal needs the notice; piped consumers that
-	// merge stderr into a JSON stream must not see it.
-	if info, err := os.Stderr.Stat(); err == nil && info.Mode()&os.ModeCharDevice != 0 {
-		fmt.Fprintln(os.Stderr, "codemap: wrote .codemap/config.json (auto-detected); tune with: codemap skill show config-setup")
-		if excludeFile != "" {
-			fmt.Fprintf(os.Stderr, "codemap: added %s to %s so git status stays clean; verify with: git check-ignore -v .codemap\n", gitexclude.Entry, excludeFile)
+	return writeAutoConfig(root, cfg)
+}
+
+// writeAutoConfig stores cfg as root's auto config when it differs from the
+// stored copy, creating the state dir only now that there is something to
+// write.
+func writeAutoConfig(root string, cfg config.ProjectConfig) bool {
+	dir, err := projectpath.CheckedRuntimeCodemapDir(root)
+	if err != nil {
+		return false
+	}
+	path := filepath.Join(dir, config.AutoConfigFile)
+	data := encodeConfig(cfg)
+	if stored, err := runtimefile.Read(path); err == nil && bytes.Equal(stored, data) {
+		return false
+	}
+	return runtimefile.WriteAtomic(path, data, 0o600) == nil
+}
+
+// RefreshAutoConfig keeps root's stored auto config in step with its file
+// mix and returns the listing it used. The mix comes from git's file list,
+// which is unbounded and far cheaper than a walk, so a repo over the scan
+// bound never derives filters from a truncated sample. Without git the stored
+// copy stays as it is (EnsureAutoConfig fills a missing one) and the listing
+// is nil.
+func RefreshAutoConfig(root string) []scanner.FileInfo {
+	if !AutoConfigActive(root) {
+		return nil
+	}
+	files, err := gitListedFiles(root)
+	if err != nil {
+		EnsureAutoConfig(root)
+		return nil
+	}
+	writeAutoConfig(root, configFromFiles(files, &configInitResult{}))
+	return files
+}
+
+// gitListedFiles is every tracked or unignored untracked file under root,
+// minus the directories the scanner never enters.
+func gitListedFiles(root string) ([]scanner.FileInfo, error) {
+	cmd := exec.Command("git", "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	var files []scanner.FileInfo
+	for _, path := range strings.Split(string(out), "\x00") {
+		if path == "" || inIgnoredDir(path) {
+			continue
+		}
+		files = append(files, scanner.FileInfo{Path: path, Ext: filepath.Ext(path)})
+	}
+	return files, nil
+}
+
+func inIgnoredDir(path string) bool {
+	parts := strings.Split(path, "/")
+	for _, dir := range parts[:len(parts)-1] {
+		if scanner.IgnoredDirs[dir] {
+			return true
 		}
 	}
-	return true
+	return false
+}
+
+// AutoFilterNote names the auto filter in one line, so it is never silent,
+// but only when it hides at least one of files (a Go-only repo filtered to
+// Go hides nothing and gets no note).
+func AutoFilterNote(cfg config.ProjectConfig, files []scanner.FileInfo) string {
+	hides := false
+	for _, f := range files {
+		if !scanner.MatchesFilters(f.Path, f.Ext, cfg.Only, cfg.Exclude) {
+			hides = true
+			break
+		}
+	}
+	if !hides {
+		return ""
+	}
+	note := "auto filter:"
+	if len(cfg.Only) > 0 {
+		note += " only " + strings.Join(cfg.Only, ",")
+	}
+	if len(cfg.Exclude) > 0 {
+		note += " exclude " + strings.Join(cfg.Exclude, ",")
+	}
+	return note + "; codemap config show"
 }
 
 // nonCodeExtensions are extensions excluded from "config init" auto-detection.
@@ -204,13 +295,41 @@ func initProjectConfig(root string) (configInitResult, error) {
 	if primary, ok := sharedConfigPrimary(root); ok {
 		return result, fmt.Errorf("%s is a linked worktree; its config lives in the primary checkout, run `codemap config init` in %s", root, primary)
 	}
-
-	gitCache := scanner.NewGitIgnoreCache(root)
-	files, err := scanner.ScanFiles(context.Background(), root, gitCache, nil, nil)
+	cfg, err := detectProjectConfig(root, &result)
 	if err != nil {
-		return result, fmt.Errorf("scan files: %w", err)
+		return result, err
 	}
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0755); err != nil {
+		return result, fmt.Errorf("create .codemap directory: %w", err)
+	}
+	if err := os.WriteFile(cfgPath, encodeConfig(cfg), 0644); err != nil {
+		return result, fmt.Errorf("write config: %w", err)
+	}
+	return result, nil
+}
 
+func encodeConfig(cfg config.ProjectConfig) []byte {
+	data, _ := json.MarshalIndent(cfg, "", "  ") // a plain struct always encodes
+	return append(data, '\n')
+}
+
+// scanForConfig is the full scan config detection runs; tests count it.
+var scanForConfig = func(root string) ([]scanner.FileInfo, error) {
+	return scanner.ScanFiles(context.Background(), root, scanner.NewGitIgnoreCache(root), nil, nil)
+}
+
+// detectProjectConfig picks `only` and `exclude` from the files under root
+// and fills result's counts; it writes nothing.
+func detectProjectConfig(root string, result *configInitResult) (config.ProjectConfig, error) {
+	files, err := scanForConfig(root)
+	if err != nil {
+		return config.ProjectConfig{}, fmt.Errorf("scan files: %w", err)
+	}
+	return configFromFiles(files, result), nil
+}
+
+// configFromFiles derives the auto config from an unfiltered file list.
+func configFromFiles(files []scanner.FileInfo, result *configInitResult) config.ProjectConfig {
 	extCount := make(map[string]int)
 	for _, f := range files {
 		ext := strings.TrimPrefix(strings.ToLower(f.Ext), ".")
@@ -249,20 +368,6 @@ func initProjectConfig(root string) (configInitResult, error) {
 	result.Exclude = detectNoise(files)
 	cfg := config.ProjectConfig{Only: result.TopExts, Exclude: result.Exclude, Mode: "auto"}
 
-	if err := os.MkdirAll(filepath.Dir(cfgPath), 0755); err != nil {
-		return result, fmt.Errorf("create .codemap directory: %w", err)
-	}
-
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return result, fmt.Errorf("encode config: %w", err)
-	}
-	data = append(data, '\n')
-
-	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
-		return result, fmt.Errorf("write config: %w", err)
-	}
-
 	result.TotalFiles = len(files)
 	if len(result.TopExts) > 0 {
 		matchExts := make(map[string]bool, len(result.TopExts))
@@ -276,8 +381,7 @@ func initProjectConfig(root string) (configInitResult, error) {
 			}
 		}
 	}
-
-	return result, nil
+	return cfg
 }
 
 func configShow(root string) {
@@ -286,6 +390,11 @@ func configShow(root string) {
 	switch assessment.State {
 	case config.SetupStateMissing:
 		fmt.Println("No config file found.")
+		if auto := config.AutoConfigPath(root); auto != "" {
+			if _, err := os.Stat(auto); err == nil {
+				fmt.Printf("Using auto-detected filters from %s (not committed; computed once)\n", auto)
+			}
+		}
 		if primary, ok := sharedConfigPrimary(root); ok {
 			fmt.Printf("Run 'codemap config init' in the primary checkout %s to create %s\n", primary, cfgPath)
 			return

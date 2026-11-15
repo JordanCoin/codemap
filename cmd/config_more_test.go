@@ -7,12 +7,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"codemap/config"
+	"codemap/scanner"
 )
 
 func TestInitProjectConfigCreatesAutoDetectedConfig(t *testing.T) {
@@ -203,38 +206,135 @@ func TestInitProjectConfigExcludesPresentNoise(t *testing.T) {
 	}
 }
 
-func TestEnsureProjectConfigWritesOnlyInsideRepos(t *testing.T) {
+// TestEnsureAutoConfigStaysOutOfTheRepo: the auto-detected config lives in
+// the state dir, is computed once, recomputed when unreadable, loses to an
+// in-repo config, and is never written outside a git checkout.
+func TestEnsureAutoConfigStaysOutOfTheRepo(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	mustWriteConfigFixture(t, filepath.Join(repo, "main.go"), "package main\n")
-	if !EnsureProjectConfig(repo) {
-		t.Fatal("expected config to be written in a repo")
+	if !EnsureAutoConfig(repo) {
+		t.Fatal("expected an auto config for a repo without config.json")
 	}
-	if _, err := os.Stat(config.ConfigPath(repo)); err != nil {
-		t.Fatalf("config not written: %v", err)
+	if _, err := os.Stat(filepath.Join(repo, ".codemap")); !os.IsNotExist(err) {
+		t.Fatalf(".codemap created by the auto config: %v", err)
 	}
-	if EnsureProjectConfig(repo) {
-		t.Fatal("second call must not rewrite an existing config")
+	auto := config.AutoConfigPath(repo)
+	info, err := os.Stat(auto)
+	if err != nil {
+		t.Fatalf("auto config %s: %v", auto, err)
+	}
+	// Windows has no Unix permission bits; the 0600 check is Unix-only.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Fatalf("auto config %s mode %v; want 0600", auto, info.Mode().Perm())
+	}
+	if got := strings.Join(config.Load(repo).Only, ","); got != "go" {
+		t.Fatalf("Load().Only = %q, want go from the auto config", got)
+	}
+	if EnsureAutoConfig(repo) {
+		t.Fatal("second call must not recompute a readable auto config")
+	}
+	if err := os.WriteFile(auto, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !EnsureAutoConfig(repo) {
+		t.Fatal("an unreadable auto config must be recomputed")
+	}
+
+	mustWriteConfigFixture(t, config.ConfigPath(repo), `{"only":["md"]}`)
+	if EnsureAutoConfig(repo) {
+		t.Fatal("an in-repo config.json must stop the auto config")
+	}
+	if got := strings.Join(config.Load(repo).Only, ","); got != "md" {
+		t.Fatalf("Load().Only = %q, want the in-repo config to win", got)
 	}
 
 	plain := t.TempDir()
 	mustWriteConfigFixture(t, filepath.Join(plain, "main.go"), "package main\n")
-	if EnsureProjectConfig(plain) {
-		t.Fatal("must not write config outside a repo")
-	}
-	if _, err := os.Stat(config.ConfigPath(plain)); !os.IsNotExist(err) {
-		t.Fatalf("config unexpectedly present in non-repo: %v", err)
+	if EnsureAutoConfig(plain) {
+		t.Fatal("must not compute a config outside a repo")
 	}
 }
 
-// TestEnsureProjectConfigKeepsFreshCloneClean is the exit test from issue
-// #184: a fresh clone of a repo with no codemap config, one codemap command,
-// and `git status --porcelain` is empty. The auto-written config lands in
-// .codemap/, which the auto-init must ignore via the clone-local
-// info/exclude, never by creating or editing a tracked .gitignore.
-func TestEnsureProjectConfigKeepsFreshCloneClean(t *testing.T) {
+// Hooks never run a scan to compute the auto config: with none stored they
+// use defaults, and the tree the session-start subprocess runs stores it.
+func TestHooksNeverScanForTheAutoConfig(t *testing.T) {
+	root := makeRepoOnBranch(t, "main")
+	mustWriteConfigFixture(t, filepath.Join(root, "main.go"), "package main\n")
+	scans := 0
+	orig := scanForConfig
+	t.Cleanup(func() { scanForConfig = orig })
+	scanForConfig = func(root string) ([]scanner.FileInfo, error) { scans++; return orig(root) }
+	withHookRuntimeStubs(t, func() (string, error) { return "", errors.New("no subprocess in this test") }, nil, func(string) bool { return true }, func(time.Duration) {})
+
+	edit := `{"session_id":"s","tool_input":{"file_path":"` + filepath.ToSlash(filepath.Join(root, "main.go")) + `"}}`
+	for _, step := range []struct{ hook, stdin string }{
+		{"session-start", `{"session_id":"s"}`},
+		{"prompt-submit", `{"session_id":"s","prompt":"fix main.go"}`},
+		{"pre-edit", edit},
+		{"post-edit", edit},
+		{"pre-compact", `{"session_id":"s"}`},
+		{"session-stop", `{"session_id":"s"}`},
+	} {
+		withStdinInput(t, step.stdin, func() { captureOutput(func() { _ = RunHook(step.hook, root) }) })
+	}
+	if scans != 0 {
+		t.Fatalf("hooks ran %d config scan(s)", scans)
+	}
+	if _, err := os.Stat(config.AutoConfigPath(root)); !os.IsNotExist(err) {
+		t.Fatalf("a hook stored an auto config: %v", err)
+	}
+}
+
+// The tree re-derives the auto config from its own scan, so a repo that
+// gained Go files after a Python-only start shows them on the next tree.
+func TestRefreshAutoConfigFollowsTheFileMix(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root := t.TempDir()
+	runGitTestCmd(t, root, "init", "-q")
+	mustWriteConfigFixture(t, filepath.Join(root, "tool.py"), "print(1)\n")
+	listed := RefreshAutoConfig(root)
+	if got := strings.Join(config.Load(root).Only, ","); got != "py" {
+		t.Fatalf("only = %q, want py", got)
+	}
+	if note := AutoFilterNote(config.Load(root), listed); note != "" {
+		t.Fatalf("a filter that hides nothing printed %q", note)
+	}
+	mustWriteConfigFixture(t, filepath.Join(root, "pkg", "a.go"), "package pkg\n")
+	mustWriteConfigFixture(t, filepath.Join(root, "pkg", "b.go"), "package pkg\n")
+	mustWriteConfigFixture(t, filepath.Join(root, "README.md"), "# r\n")
+	listed = RefreshAutoConfig(root)
+	if got := config.Load(root).Only; !slices.Contains(got, "go") {
+		t.Fatalf("stored only = %v, want go added", got)
+	}
+	if note := AutoFilterNote(config.Load(root), listed); !strings.HasPrefix(note, "auto filter: only go,py") {
+		t.Fatalf("note = %q", note)
+	}
+}
+
+// Without git the stored auto config is kept, never re-derived from a walk.
+func TestRefreshAutoConfigWithoutGitKeepsTheStoredCopy(t *testing.T) {
+	root := t.TempDir()
+	mustWriteConfigFixture(t, filepath.Join(root, ".git", "HEAD"), "garbage")
+	mustWriteConfigFixture(t, filepath.Join(root, "a.py"), "x = 1\n")
+	if !writeAutoConfig(root, config.ProjectConfig{Only: []string{"go"}, Mode: "auto"}) {
+		t.Fatal("could not store the auto config")
+	}
+	if listed := RefreshAutoConfig(root); listed != nil {
+		t.Fatalf("listed %d files from a broken git dir", len(listed))
+	}
+	if got := strings.Join(config.Load(root).Only, ","); got != "go" {
+		t.Fatalf("stored only = %q, want go kept", got)
+	}
+}
+
+// TestEnsureAutoConfigKeepsFreshCloneClean: the auto config leaves a fresh
+// clone with nothing new, not even ignored files.
+func TestEnsureAutoConfigKeepsFreshCloneClean(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
@@ -242,26 +342,17 @@ func TestEnsureProjectConfigKeepsFreshCloneClean(t *testing.T) {
 	clone := filepath.Join(t.TempDir(), "clone")
 	runGitTestCmd(t, src, "clone", "-q", src, clone)
 
-	if !EnsureProjectConfig(clone) {
-		t.Fatal("expected config to be written in a fresh clone")
+	if !EnsureAutoConfig(clone) {
+		t.Fatal("expected an auto config in a fresh clone")
 	}
-	if _, err := os.Stat(config.ConfigPath(clone)); err != nil {
-		t.Fatalf("config not written: %v", err)
-	}
-	status := exec.Command("git", "status", "--porcelain")
+	status := exec.Command("git", "status", "--porcelain", "--ignored", "--untracked-files=all")
 	status.Dir = clone
 	out, err := status.Output()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(string(out)) != "" {
-		t.Fatalf("git status --porcelain not empty after auto-init:\n%s", out)
-	}
-	if _, err := os.Stat(filepath.Join(clone, ".gitignore")); !os.IsNotExist(err) {
-		t.Fatal("auto-init must not create a tracked .gitignore")
-	}
-	if !gitIgnoresCodemap(t, clone) {
-		t.Fatal("git does not ignore .codemap after auto-init")
+	if got := strings.TrimSpace(string(out)); got != "" {
+		t.Fatalf("git status after the auto config = %q, want clean", got)
 	}
 }
 

@@ -111,6 +111,7 @@ func generatedClaudeHooks(executable string) []claudeHookSpec {
 		{Event: "UserPromptSubmit", Command: command + " hook prompt-submit --integration=claude-setup"},
 		{Event: "PreCompact", Command: command + " hook pre-compact --integration=claude-setup"},
 		{Event: "SessionEnd", Command: command + " hook session-stop --integration=claude-setup"},
+		{Event: "SubagentStart", Command: command + " hook subagent-start --integration=claude-setup"},
 	}
 }
 
@@ -125,6 +126,7 @@ func generatedCodexHooks(executable string) []claudeHookSpec {
 		// SessionEnd, not Stop: Codex fires Stop after every turn, and the
 		// session-stop handler releases the lease and stops the daemon (#225).
 		{Event: "SessionEnd", Command: command + " hook session-stop --agent=codex --integration=codex-setup"},
+		{Event: "SubagentStart", Command: command + " hook subagent-start --agent=codex --integration=codex-setup"},
 	}
 }
 
@@ -279,6 +281,10 @@ func RunSetup(args []string, defaultRoot string) int {
 		}
 	}
 
+	// Setup is what marks a project as set up (#184), with or without a config.
+	if err := os.MkdirAll(projectpath.CodemapDir(absRoot), 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not create %s: %v\n", projectpath.CodemapDir(absRoot), err)
+	}
 	reportEnsureIgnored(os.Stdout, absRoot)
 
 	if *skipHooks {
@@ -759,6 +765,48 @@ func ensureClaudeHooks(settingsPath string, global bool) (ensureHooksResult, err
 		return ensureHooksResult{}, err
 	}
 	return ensureClaudeHooksWithExecutable(settingsPath, global, executable)
+}
+
+// SessionStartNotice is printed at the top of the session-start hook output.
+var SessionStartNotice string
+
+// RepairSubagentHook adds the SubagentStart entry to the agent's hook files
+// that codemap setup already manages, so an upgrade needs no re-run. Files
+// without codemap's own session-start entry are never touched.
+func RepairSubagentHook(root, agent string) {
+	pathFor, marker, note := claudeSettingsPath, "hook session-start --integration=claude-setup", "active next session"
+	if agent == "codex" {
+		pathFor, marker, note = codexHooksPath, "hook session-start --agent=codex --integration=codex-setup", "trust it from /hooks in Codex, then start a new session"
+	}
+	executable, err := resolveIntegrationExecutable()
+	if err != nil {
+		return
+	}
+	for _, global := range []bool{false, true} {
+		// A project .codex/hooks.json can come from a cloned repo, and Codex
+		// asks the user to trust new hooks: never tell them to trust a file
+		// codemap did not write. Only the user's own CODEX_HOME is repaired.
+		if agent == "codex" && !global {
+			continue
+		}
+		path, err := pathFor(root, global)
+		if err != nil {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil || !bytes.Contains(data, []byte(marker)) || bytes.Contains(data, []byte("hook subagent-start")) {
+			continue
+		}
+		var res ensureHooksResult
+		if agent == "codex" {
+			res, err = ensureCodexHooksWithExecutable(path, global, executable)
+		} else {
+			res, err = ensureClaudeHooksWithExecutable(path, global, executable)
+		}
+		if err == nil && res.WroteFile {
+			SessionStartNotice += fmt.Sprintf("codemap: added SubagentStart hook to %s, %s\n", path, note)
+		}
+	}
 }
 
 func ensureClaudeHooksWithExecutable(settingsPath string, global bool, executable string) (ensureHooksResult, error) {

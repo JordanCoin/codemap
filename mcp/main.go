@@ -221,7 +221,7 @@ type HandoffInput struct {
 	Since  string `json:"since,omitempty" jsonschema:"Look back window for recent events (Go duration, e.g. 2h, 30m)"`
 	Ref    string `json:"ref,omitempty" jsonschema:"Git base ref for diff (default: main)"`
 	Latest bool   `json:"latest,omitempty" jsonschema:"Read latest saved handoff artifact instead of generating a new one"`
-	Save   bool   `json:"save,omitempty" jsonschema:"When true, persist generated artifact to .codemap/handoff.latest.json"`
+	Save   bool   `json:"save,omitempty" jsonschema:"When true, persist generated artifact to handoff.latest.json in the project state directory"`
 	JSON   bool   `json:"json,omitempty" jsonschema:"Return raw JSON output"`
 	Prefix bool   `json:"prefix,omitempty" jsonschema:"Return only the stable prefix snapshot"`
 	Delta  bool   `json:"delta,omitempty" jsonschema:"Return only the recent delta snapshot"`

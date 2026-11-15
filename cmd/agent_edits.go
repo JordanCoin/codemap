@@ -9,7 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"codemap/internal/gitexclude"
+	"codemap/internal/projectpath"
+	"codemap/internal/runtimefile"
 )
 
 // The watch daemon sees every write on disk — including git merges, checkouts,
@@ -34,8 +35,14 @@ type agentEdits struct {
 	bySession map[string]map[string]bool // session id -> paths
 }
 
+// agentEditsPath is agent_edits.jsonl in the project's state dir; "" when
+// there is no usable state dir.
 func agentEditsPath(root string) string {
-	return filepath.Join(root, ".codemap", agentEditsFile)
+	selection, err := projectpath.SelectRuntime(root)
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(selection.RuntimeDir, agentEditsFile)
 }
 
 // normalizeAgentEditPath converts hook-provided paths (often absolute, with
@@ -56,8 +63,12 @@ func recordAgentEdit(root, sessionID, path string, now time.Time) error {
 	if strings.TrimSpace(path) == "" {
 		return nil
 	}
-	if err := gitexclude.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
-		return err
+	if _, inRoot := projectRelPath(root, path); !inRoot {
+		return nil
+	}
+	logPath := agentEditsPath(root)
+	if logPath == "" {
+		return nil
 	}
 	record := agentEditRecord{
 		Path:    normalizeAgentEditPath(root, path),
@@ -68,9 +79,8 @@ func recordAgentEdit(root, sessionID, path string, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	logPath := agentEditsPath(root)
 	compactAgentEdits(logPath, now)
-	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := runtimefile.OpenAppend(logPath, 0o600)
 	if err != nil {
 		return err
 	}
@@ -89,7 +99,7 @@ func compactAgentEdits(logPath string, now time.Time) {
 	if err != nil || info.Size() <= agentEditsMaxBytes {
 		return
 	}
-	data, err := os.ReadFile(logPath)
+	data, err := runtimefile.Read(logPath)
 	if err != nil {
 		return
 	}
@@ -107,7 +117,7 @@ func compactAgentEdits(logPath string, now time.Time) {
 		kept.Write(scanner.Bytes())
 		kept.WriteByte('\n')
 	}
-	_ = writeFileAtomic(logPath, kept.Bytes(), 0o644)
+	_ = runtimefile.WriteAtomic(logPath, kept.Bytes(), 0o600)
 }
 
 // loadAgentEdits reads records at or after `since`. Missing or malformed logs
@@ -117,7 +127,7 @@ func loadAgentEdits(root string, since time.Time) agentEdits {
 		paths:     make(map[string]bool),
 		bySession: make(map[string]map[string]bool),
 	}
-	data, err := os.ReadFile(agentEditsPath(root))
+	data, err := runtimefile.Read(agentEditsPath(root))
 	if err != nil {
 		return edits
 	}

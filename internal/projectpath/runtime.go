@@ -4,9 +4,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"codemap/internal/runtimefile"
 )
 
 // RuntimeSelection separates reusable setup policy from mutable project state.
@@ -14,7 +17,7 @@ type RuntimeSelection struct {
 	ProjectRoot string
 	PolicyDir   string
 	RuntimeDir  string
-	LegacyDir   string
+	ProjectDir  string // this project's state: RuntimeDir, or RuntimeDir/projects/<key> under --setup-root
 	Source      Source
 }
 
@@ -32,11 +35,14 @@ func SelectRuntime(projectRoot string) (RuntimeSelection, error) {
 	result := RuntimeSelection{
 		ProjectRoot: selection.ProjectRoot,
 		PolicyDir:   policyDir,
-		RuntimeDir:  filepath.Join(selection.RuntimeRoot, ".codemap"),
-		LegacyDir:   policyDir,
 		Source:      selection.Source,
 	}
 	if selection.Source != SourceExplicit {
+		dir, err := userStateDir(selection.ProjectRoot)
+		if err != nil {
+			return RuntimeSelection{}, err
+		}
+		result.RuntimeDir, result.ProjectDir = dir, dir
 		return result, nil
 	}
 
@@ -48,16 +54,154 @@ func SelectRuntime(projectRoot string) (RuntimeSelection, error) {
 			return RuntimeSelection{}, err
 		}
 	}
+	projects := filepath.Join(result.RuntimeDir, "projects")
+	result.ProjectDir = filepath.Join(projects, ProjectKey(selection.ProjectRoot))
+	for _, dir := range []string{projects, result.ProjectDir} {
+		if err := ensurePrivateDirectory(dir); err != nil {
+			return RuntimeSelection{}, err
+		}
+	}
 	if err := ensureProjectMarker(result.RuntimeDir, selection.ProjectRoot); err != nil {
 		return RuntimeSelection{}, err
 	}
 	return result, nil
 }
 
+// StateDir returns the directory SelectRuntime would give as ProjectDir, but
+// creates nothing: a read of missing state then simply misses. Every level
+// that does exist is checked as SelectRuntime checks it (real directory,
+// owned by this user, project marker matches).
+func StateDir(projectRoot string) (string, error) {
+	selection, err := Select(projectRoot)
+	if err != nil {
+		return "", err
+	}
+	var levels []string
+	if selection.Source == SourceExplicit {
+		digest := sha256.Sum256([]byte(selection.ProjectRoot))
+		runtimeDir := filepath.Join(selection.SetupRoot, ".codemap", "runtime", hex.EncodeToString(digest[:]))
+		levels = []string{runtimeDir, filepath.Join(runtimeDir, "projects"), filepath.Join(runtimeDir, "projects", ProjectKey(selection.ProjectRoot))}
+	} else {
+		base, ok := UserDir()
+		if !ok {
+			return "", ErrNoStateDir
+		}
+		state := filepath.Join(CanonicalPath(base), "state")
+		levels = []string{state, filepath.Join(state, ProjectKey(selection.ProjectRoot))}
+	}
+	for _, dir := range levels {
+		info, err := os.Lstat(dir)
+		if os.IsNotExist(err) {
+			break
+		}
+		if err != nil || !info.IsDir() || !ownedByCurrentUser(info) {
+			return "", fmt.Errorf("%w: %w", ErrNoStateDir, runtimefile.Unsafe(dir))
+		}
+	}
+	dir := levels[len(levels)-1]
+	markerDir := dir
+	if selection.Source == SourceExplicit {
+		markerDir = levels[0]
+	}
+	if data, err := os.ReadFile(filepath.Join(markerDir, "project.json")); err == nil {
+		var marker projectMarker
+		if json.Unmarshal(data, &marker) != nil || marker.CanonicalRoot != CanonicalPath(selection.ProjectRoot) && marker.CanonicalRoot != selection.ProjectRoot {
+			return "", fmt.Errorf("%w: runtime identity mismatch in %q", ErrNoStateDir, markerDir)
+		}
+	}
+	return dir, nil
+}
+
+// IsSetUp reports whether the project's policy directory (<setup root>/.codemap)
+// exists. Only explicit commands (setup, config init, skill init) create it.
+// It never decides where machine state goes: that is always UserDir/state.
+func IsSetUp(projectRoot string) bool {
+	info, err := os.Lstat(CodemapDir(projectRoot))
+	return err == nil && info.IsDir()
+}
+
+// ErrNoStateDir reports that there is nowhere safe to keep machine state (no
+// home dir, not creatable, not writable, or unsafe). Every failure to get the
+// private state dir wraps it; callers skip writes and treat state as absent.
+var ErrNoStateDir = errors.New("no usable codemap state directory")
+
+// UserDir is the per-user codemap base, ~/.codemap: the daemon registry
+// (daemons/) and every project's machine state (state/<key>/) live under one
+// root, so every process of this user agrees on both whatever its
+// environment. It is not a cache: the OS may purge those, and a handoff is
+// not disposable. There is deliberately no shared-temp fallback.
+func UserDir() (string, bool) {
+	home, err := os.UserHomeDir()
+	if err != nil || !filepath.IsAbs(home) {
+		return "", false
+	}
+	return filepath.Join(home, ".codemap"), true
+}
+
+// EnsureUserSubdir creates UserDir/<names...>, returning its canonical path.
+// It creates ~/.codemap 0700 when missing but never a missing home. A link at
+// ~/.codemap is the user's and is resolved; from <name> down every level is
+// Lstat-checked, links refused, and it must be a 0700 dir this user owns.
+func EnsureUserSubdir(names ...string) (string, error) {
+	base, ok := UserDir()
+	if !ok {
+		return "", ErrNoStateDir
+	}
+	if _, err := os.Stat(base); os.IsNotExist(err) {
+		if err := os.Mkdir(base, 0o700); err != nil && !os.IsExist(err) {
+			return "", fmt.Errorf("%w: create %q: %w", ErrNoStateDir, base, err)
+		}
+	}
+	dir := CanonicalPath(base)
+	for _, name := range names {
+		dir = filepath.Join(dir, name)
+		if err := ensurePrivateDirectory(dir); err != nil {
+			return "", fmt.Errorf("%w: %w", ErrNoStateDir, err)
+		}
+	}
+	return dir, nil
+}
+
+// userStateDir returns ~/.codemap/state/<ProjectKey>, marked with the
+// project root.
+func userStateDir(projectRoot string) (string, error) {
+	dir, err := EnsureUserSubdir("state", ProjectKey(projectRoot))
+	if err != nil {
+		return "", err
+	}
+	if err := ensureProjectMarker(dir, CanonicalPath(projectRoot)); err != nil {
+		return "", fmt.Errorf("%w: %w", ErrNoStateDir, err)
+	}
+	return dir, nil
+}
+
 func ensureRealDirectory(path string) error {
+	return ensureDirectory(path, 0o755)
+}
+
+// ensurePrivateDirectory is ensureRealDirectory for per-user state: created
+// 0700, owned by this user, and narrowed to 0700 when it was wider.
+func ensurePrivateDirectory(path string) error {
+	if err := ensureDirectory(path, 0o700); err != nil {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !ownedByCurrentUser(info) {
+		return fmt.Errorf("unsafe runtime directory %q: not owned by the current user", path)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return os.Chmod(path, 0o700)
+	}
+	return nil
+}
+
+func ensureDirectory(path string, perm os.FileMode) error {
 	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
-		if err := os.Mkdir(path, 0o755); err != nil && !os.IsExist(err) {
+		if err := os.Mkdir(path, perm); err != nil && !os.IsExist(err) {
 			return fmt.Errorf("create runtime directory %q: %w", path, err)
 		}
 		info, err = os.Lstat(path)
@@ -66,7 +210,7 @@ func ensureRealDirectory(path string) error {
 		return fmt.Errorf("inspect runtime directory %q: %w", path, err)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("unsafe runtime directory %q: expected a real directory", path)
+		return runtimefile.Unsafe(path)
 	}
 	return nil
 }
@@ -77,25 +221,29 @@ func ensureProjectMarker(runtimeDir, canonicalRoot string) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err == nil {
-		if _, writeErr := f.Write(payload); writeErr != nil {
-			_ = f.Close()
-			_ = os.Remove(path)
-			return writeErr
-		}
-		if closeErr := f.Close(); closeErr != nil {
-			_ = os.Remove(path)
-			return closeErr
-		}
-		return nil
+	// Written aside and hard-linked into place: the link is exclusive and
+	// atomic, so a concurrent reader never sees an empty marker.
+	f, err := os.CreateTemp(runtimeDir, ".project-*.json")
+	if err != nil {
+		return fmt.Errorf("create runtime identity %q: %w", path, err)
 	}
-	if !os.IsExist(err) {
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	_, err = f.Write(payload)
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	if err := os.Link(tmp, path); err == nil {
+		return nil
+	} else if !os.IsExist(err) {
 		return fmt.Errorf("create runtime identity %q: %w", path, err)
 	}
 	info, statErr := os.Lstat(path)
 	if statErr != nil || !info.Mode().IsRegular() {
-		return fmt.Errorf("unsafe runtime identity %q", path)
+		return runtimefile.Unsafe(path)
 	}
 	data, readErr := os.ReadFile(path)
 	if readErr != nil {

@@ -1,6 +1,6 @@
-// Package gitexclude keeps codemap's own state directory out of `git status`
-// without touching a tracked .gitignore: the rule goes to the clone-local
-// <git-common-dir>/info/exclude, which linked worktrees share.
+// Package gitexclude keeps an in-repo .codemap/ out of `git status` without
+// touching the repo's own ignore files: .codemap/ carries its own .gitignore
+// that leaves only config.json and skills/ committable.
 package gitexclude
 
 import (
@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"codemap/internal/runtimefile"
 )
 
 // Entry is the ignore rule written for codemap's state directory. The
@@ -81,82 +83,27 @@ func LocalEntry(root string) (string, bool, error) {
 	return target, HasLine(data, Entry), nil
 }
 
-// EnsureIgnored ensures Entry is listed in root's clone-local info/exclude.
-// It returns the file written, or "" when the entry already exists there or
-// root is not a git work tree. It records the local rule even when a tracked
-// .gitignore already covers it, so `codemap setup` leaves a rule it owns.
-func EnsureIgnored(root string) (string, error) {
-	if !IsWorkTree(root) {
-		return "", nil
-	}
-	target, present, err := LocalEntry(root)
-	if err != nil {
-		return "", err
-	}
-	if present {
-		return "", nil
-	}
-	if err := AppendEntry(target, Entry); err != nil {
-		return "", err
-	}
-	return target, nil
-}
+// StateIgnore is the .codemap/.gitignore codemap writes: machine state stays
+// out of git while config.json and skills/ stay committable.
+const StateIgnore = `# Written by codemap. Machine state stays out of git; config and skills can be committed.
+*
+!.gitignore
+!config.json
+!skills/
+!skills/**
+`
 
-// EnsureIgnoredIfNeeded is the quiet variant used when codemap creates the
-// state directory on its own (issue #184): it writes Entry to info/exclude
-// only when git does not already ignore .codemap/ by any rule, so a repo
-// whose tracked .gitignore covers it gains no redundant local rule. It
-// returns the file written, or "" when nothing was needed or root is not a
-// git work tree.
-func EnsureIgnoredIfNeeded(root string) (string, error) {
-	if !IsWorkTree(root) {
-		return "", nil
+// EnsureStateIgnore writes stateDir/.gitignore with StateIgnore when the file
+// is missing; a user's copy is never touched. It returns whether it wrote.
+func EnsureStateIgnore(stateDir string) (bool, error) {
+	path := filepath.Join(stateDir, ".gitignore")
+	if _, err := os.Lstat(path); err == nil || !os.IsNotExist(err) {
+		return false, err
 	}
-	ignored, _, err := CheckIgnored(root, Entry)
-	if err != nil {
-		return "", err
+	if err := runtimefile.WriteAtomic(path, []byte(StateIgnore), 0o644); err != nil {
+		return false, err
 	}
-	if ignored {
-		return "", nil
-	}
-	return EnsureIgnored(root)
-}
-
-// MkdirAll creates dir like os.MkdirAll and, when doing so creates a
-// `.codemap` directory (dir itself or an ancestor of it) that did not exist
-// before, ensures git ignores it via EnsureIgnoredIfNeeded on the directory
-// that contains it. Every codemap state write that may create `.codemap/`
-// goes through here so a fresh checkout's `git status` stays clean after
-// any command. The ignore write is best-effort: a failure there never fails
-// the directory creation, and nothing runs when `.codemap` already exists.
-func MkdirAll(dir string, perm os.FileMode) error {
-	stateDir, hasStateDir := stateDirOf(dir)
-	existed := true
-	if hasStateDir {
-		_, err := os.Lstat(stateDir)
-		existed = err == nil
-	}
-	if err := os.MkdirAll(dir, perm); err != nil {
-		return err
-	}
-	if hasStateDir && !existed {
-		_, _ = EnsureIgnoredIfNeeded(filepath.Dir(stateDir))
-	}
-	return nil
-}
-
-// stateDirOf returns the nearest path on or above dir whose base is
-// `.codemap`.
-func stateDirOf(dir string) (string, bool) {
-	dir = filepath.Clean(dir)
-	for current := dir; ; current = filepath.Dir(current) {
-		if filepath.Base(current) == stateDirName {
-			return current, true
-		}
-		if parent := filepath.Dir(current); parent == current {
-			return "", false
-		}
-	}
+	return true, nil
 }
 
 // TrackedStateFiles returns the paths under .codemap/ that git tracks at

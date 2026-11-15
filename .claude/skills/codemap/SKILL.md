@@ -36,7 +36,7 @@ codemap serve --port 9471       # HTTP API for non-MCP integrations
 
 Before deeper Codemap analysis in a repo:
 
-1. Check `.codemap/config.json`.
+1. Check `.codemap/config.json`. A repo with no `.codemap/` folder was never set up: leave it that way unless the user asks (codemap keeps its state outside the repo).
 2. If it is missing, clearly boilerplate, or obviously too noisy for the stack, run `codemap skill show config-setup` and follow it.
 3. After writing or improving config, rerun `codemap .` and `codemap --deps`.
 
@@ -107,6 +107,9 @@ Skills matched: hub-safety, refactor - run `codemap skill show <name>` for guida
 - **Intent categories**: refactor, bugfix, feature, explore, test, docs
 - **Risk levels**: low (no hubs), medium (1 hub), high (2+ hubs or 8+ importers)
 - **Skills are pull-based**: only names are shown, run `codemap skill show` for full body
+- **Suggestions** print only for a named file with dependency evidence; otherwise the marker has `"suggestions":[]`
+
+The edit hooks print hub facts only (hub warning, dependents, `Imported by N`, `Imports N hub(s)`) and stay silent for files outside the project. A subagent gets the top-level directories and the hub list at start, since it never sees the session-start tree.
 
 ## Builtin Skills
 

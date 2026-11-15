@@ -13,6 +13,7 @@ func isolateHome(t *testing.T) string {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("CODEX_HOME", "")
 	return home
 }

@@ -30,7 +30,7 @@ Treat codemap as part of the execution loop, not as optional reference material:
 - Before editing any file: `codemap --importers <file>`
 - Before refactors, moves, or dependency-heavy changes: `codemap --deps`
 - Before summarizing, reviewing, or committing: `codemap --diff`
-- If a codemap hook prints `Next codemap:` or `Run now:`, do that before continuing
+- If a codemap hook warns that a file is a hub, read its dependents list before editing
 
 Use `rg` for exact string lookup after codemap has established structure or blast radius.
 

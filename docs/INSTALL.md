@@ -42,11 +42,16 @@ codemap setup
 
 `codemap setup` configures the agents it detects: Claude Code when `~/.claude`, `~/.claude.json`, or `claude` on `PATH` exists, Codex when `~/.codex` or `codex` on `PATH` exists, and both when it finds neither. It:
 
-- creates `.codemap/config.json` with auto-detected language filters
+- creates `.codemap/` with `config.json` (auto-detected language filters) and `.codemap/.gitignore`
+- names machine-state files an older codemap left under `.codemap/`: committed ones with the `git rm --cached -- <files>` command that untracks them (it never runs it), and untracked ones as no longer used and safe to delete
 - merges Claude hooks into `.claude/settings.local.json` and configures MCP in `.mcp.json` (project scope)
 - merges Codex hooks into `~/.codex/hooks.json` and configures MCP in `~/.codex/config.toml` (user scope, since Codex skips a project's `.codex/` until the project is trusted; `--project` writes `.codex/` instead)
 - writes the builtin skills to `.claude/skills/` for Claude, keeping any skill file you edited
 - hooks start and read daemon state at session start
+
+`.codemap/` holds only what you author: `config.json` and `skills/`, both safe to commit. The one exception is a directory you pass as `--setup-root`: a daemon started under it keeps its runtime state in `<setup-root>/.codemap/runtime/`. Its `.gitignore` ignores anything else, which is only ever leftovers from older versions; codemap writes that file only when it is missing, so your edits to it stay.
+
+Machine state never goes into the repo, set up or not, primary checkout or linked worktree. Hooks, the watch daemon and every command keep it under `~/.codemap/state/<project key>/`, next to the daemon registry in `~/.codemap/daemons/`; `XDG_CACHE_HOME` is not consulted. Every directory is private (0700), every file 0600, and codemap refuses a symlinked state directory or state file. `codemap doctor` prints the exact directory on its `state dir:` line. Only `codemap setup`, `codemap config init` and `codemap skill init` create `.codemap/`; nothing else writes there, and a linked worktree never gets one. A git repo without `config.json` gets auto-detected filters stored in the state dir (`auto-config.json`); `codemap .` re-derives them from git's file list, and the tree says `auto filter: ...` when they hide something. Run `codemap config init` to commit filters instead. Reading never creates state, and a directory outside git gets none. When there is no home directory, codemap runs without saved state and never creates one.
 
 Rerunning setup is safe: it changes only what is missing or stale. `--no-config`, `--no-hooks`, `--no-mcp`, and `--no-skills` skip a piece.
 

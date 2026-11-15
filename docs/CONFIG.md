@@ -11,6 +11,8 @@ codemap config init   # auto-detect top extensions, write config
 codemap config show   # display current config
 ```
 
+Only `codemap setup`, `codemap config init` and `codemap skill init` create `.codemap/`. Commit `.codemap/config.json` and `.codemap/skills/` if you want to share them; the folder's own `.gitignore` ignores anything else (only leftovers from older versions). Machine state lives in `~/.codemap/state/<project key>/`, never in the repo ([INSTALL.md](INSTALL.md#setup)). Without `config.json`, codemap auto-detects `only` and `exclude` and keeps them as `auto-config.json` in that state dir. `codemap .` re-derives them from `git ls-files` (unbounded, so a repo over the scan bound keeps its code-first filter), picking up a changing file mix, and prints `auto filter: only ...; codemap config show` when the filter hides at least one file. Agent-facing output (hooks, `--json`, MCP) never carries that line, and hooks never scan to compute the filters. Run `codemap config init` for filters you can tune and commit. An in-repo `config.json` always wins.
+
 ```json
 {
   "only": ["rs", "sh", "sql", "toml", "yml"],
@@ -124,6 +126,6 @@ When you switch agents (Claude → Codex → Cursor), codemap tracks who worked 
 }
 ```
 
-Agent detection is automatic via environment variables. History carries across sessions, capped at 20 entries, in `.codemap/handoff.latest.json`.
+Agent detection is automatic via environment variables. History carries across sessions, capped at 20 entries, in `handoff.latest.json` in the state dir (`codemap doctor` prints it).
 
 Next: [MCP tools and Codex](MCP.md)

@@ -10,6 +10,7 @@ Hooks give Claude Code and Codex automatic codebase context throughout a session
 |------|--------------|
 | **Session starts** | Claude sees full project tree, hubs, branch diff, and last session context |
 | **After compact** | Claude sees the tree again (context restored) |
+| **A subagent starts** | The subagent sees the top-level directories and the hub list |
 | **You mention a file** | Claude gets intent analysis, hub context, risk level, working set, and suggestions |
 | **Before editing** | Claude sees who imports the file AND what hubs it imports |
 | **After editing** | Claude sees the impact of what was just changed |
@@ -36,8 +37,10 @@ Global settings instead of project-local:
 codemap setup --global
 ```
 
+After an upgrade there is no need to run setup again: when a settings file already has codemap's session-start hook but lacks a newer one (`SubagentStart`), the session-start hook adds it and says so. It takes effect in the next session; Codex also asks you to trust the new hook from `/hooks` first, and only the global Codex hook file is repaired; for a project-local `.codex/hooks.json`, run `codemap setup` again. Hook files without codemap hooks are never touched.
+
 This command:
-- creates `.codemap/config.json` when missing
+- creates `.codemap/config.json` and `.codemap/.gitignore` when missing; machine state always lives in the per-user state dir, never in the repo (see [INSTALL.md](INSTALL.md#setup))
 - merges codemap hooks into Claude and Codex settings without removing existing hooks
 - keeps hook setup idempotent (safe to run more than once)
 
@@ -61,7 +64,8 @@ codemap -C /tmp/feature-worktree context
 
 Normal CLI, hook, and plugin MCP calls need no `--setup-root`. Config and skills
 come from the primary worktree, while daemon state, events, handoffs, and
-session files remain local to the linked worktree. Tools built on standard
+session files stay per worktree, in the per-user state dir (never inside the
+worktree, which gets no `.codemap/`). Tools built on standard
 linked worktrees require no special Codemap integration.
 
 Independent clones remain unrelated. Use `--setup-root /path/to/original`
@@ -134,6 +138,16 @@ If you want to manage Claude settings manually, add this `hooks` object to `.cla
           {
             "type": "command",
             "command": "codemap hook session-stop"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "codemap hook subagent-start"
           }
         ]
       }
@@ -253,16 +267,12 @@ myproject
 
 ### Before/After Editing a File
 
-Claude Code passes tool-hook stdout to the model only as JSON, so `pre-edit` and `post-edit` print this text inside a `{"hookSpecificOutput":{"hookEventName":"PreToolUse"|"PostToolUse","additionalContext":"..."}}` envelope, and print nothing when there is nothing to say. Run by hand at a terminal, they print the plain text.
+Claude Code passes tool-hook stdout to the model only as JSON, so `pre-edit` and `post-edit` print this text inside a `{"hookSpecificOutput":{"hookEventName":"PreToolUse"|"PostToolUse","additionalContext":"..."}}` envelope, and print nothing when there is nothing to say. Run by hand at a terminal, they print the plain text. A file that resolves outside the project root (symlinks resolved) gets no output, and `post-edit` does not record it as an agent edit.
 
 ```
 📍 Before editing: cmd/hooks.go
    Imported by 1 file(s): main.go
    Imports 16 hub(s): scanner/types.go, scanner/walker.go, watch/daemon.go...
-
-   Run now:
-   • codemap --importers cmd/hooks.go — review blast radius for this file
-   • codemap --deps — verify dependency flow around this change
 ```
 
 Or if it's a hub:
@@ -275,10 +285,6 @@ Or if it's a hub:
    • mcp/main.go
    • watch/watch.go
    ... and 7 more
-
-   Run now:
-   • codemap --importers scanner/types.go — review blast radius for this file
-   • codemap --deps — verify dependency flow around this change
 ```
 
 ### When You Mention a File (Prompt Submit)
@@ -296,10 +302,6 @@ The prompt-submit hook performs **intent classification** and surfaces relevant 
    • [check-deps] scanner/types.go — verify dependents still compile after changes
    • [run-tests] . — run full test suite after refactoring
 
-Next codemap:
-   • codemap --importers scanner/types.go — check blast radius before editing this hub (10 importers)
-   • codemap --deps — verify dependency flow before refactoring
-
 <!-- codemap:routes [{"id":"scanning","score":3,"docs":["docs/MCP.md"]}] -->
 
 📚 Suggested context routes:
@@ -313,6 +315,8 @@ Next codemap:
 ```
 
 **Structured markers** (`<!-- codemap:intent -->`, `<!-- codemap:routes -->`) are machine-readable JSON that tools can parse. The human-readable output is always shown alongside them.
+
+The `💡 Suggestions` block prints only for file-specific suggestions from dependency evidence. A prompt with no file or no graph gets none, and the intent marker carries `"suggestions":[]`.
 
 #### Intent Categories
 
@@ -338,9 +342,28 @@ Next codemap:
 
 The **working set** tracks files you've edited during the current session. It shows edit count, net line delta, and hub status — giving Claude awareness of your active work context.
 
-Edits are attributed by *provenance*, not by disk churn. The `PostToolUse` hook records the paths an agent wrote through its own tool calls into `.codemap/agent_edits.jsonl`, so a branch switch, a build, or a `git` command that touches hundreds of files does not masquerade as work the agent did. When no agent edits have been recorded, the summary says so and falls back to reporting disk activity rather than conflating the two.
+Edits are attributed by *provenance*, not by disk churn. The `PostToolUse` hook records the paths an agent wrote through its own tool calls into `agent_edits.jsonl` in the per-user state dir (`codemap doctor` prints it), so a branch switch, a build, or a `git` command that touches hundreds of files does not masquerade as work the agent did. When no agent edits have been recorded, the summary says so and falls back to reporting disk activity rather than conflating the two.
 
 Provenance depends on the hook receiving a payload it understands: `tool_input.file_path` (Edit/Write), `tool_input.notebook_path` (NotebookEdit), or `tool_input.command` (Codex `apply_patch`).
+
+### When a Subagent Starts
+
+Claude Code does not fire `SessionStart` for subagents, so `codemap hook subagent-start` runs on `SubagentStart` (every agent type, no matcher). It reads the payload's `cwd`, so a subagent in its own worktree is oriented on that worktree, and answers with one `{"hookSpecificOutput":{"hookEventName":"SubagentStart","additionalContext":"..."}}` envelope capped at 2,500 characters:
+
+```
+📍 codemap orientation: top-level directories (⭐️ marks hubs), then the hub list. Run `codemap .` for the full tree.
+codemap
+├──   cmd/ (59 files, 535.1KB, all .go)
+├──   ⭐️ scanner/ ←79 (95 files, 790.4KB, all .go)
+└──   ⭐️ watch/ ←25 (33 files, 255.0KB, all .go)
+⭐️ ←N = imported by N files, 3+ of them non-test (Go: package count, on its dir)
+Hubs (top 10 of 15, by importers):
+  ←79  scanner/
+  ←25  watch/
+Next: codemap --deps · codemap --importers scanner/astgrep.go
+```
+
+Above the large-repo file limit the hub list is replaced by the tree's `No ⭐️ hub marks:` note. Outside a git repository, or on any error, it prints nothing and exits 0 so a subagent never fails on it. `codemap setup` wires it for Claude Code and for Codex (which needs a Codex version with the `SubagentStart` hook event; 0.163.0 has it).
 
 ### At Session End
 ```
@@ -353,7 +376,7 @@ Edit Timeline:
   14:30:11 CREATE cmd/new_feature.go +45
 
 Stats: 8 events, 3 files touched, +63 lines, 1 hub edits
-🤝 Saved handoff to .codemap/handoff.latest.json
+🤝 Saved handoff to <state dir>/handoff.latest.json
 ```
 
 ### Next Session Start (Handoff Resume)
@@ -380,8 +403,9 @@ If a recent handoff exists **for the current branch**, session start includes a 
 | `codemap hook pre-edit` | `PreToolUse` (Edit\|Write) | Who imports file + what hubs it imports |
 | `codemap hook post-edit` | `PostToolUse` (Edit\|Write) | Impact of changes (same as pre-edit), and records the edit's provenance |
 | `codemap hook prompt-submit` | `UserPromptSubmit` | Intent classification, hub context, risk analysis, working set, route suggestions, drift warnings |
-| `codemap hook pre-compact` | `PreCompact` | Saves hub state to .codemap/hubs.txt |
-| `codemap hook session-stop` | `SessionEnd` | Edit timeline + writes `.codemap/handoff.latest.json`, `.codemap/handoff.prefix.json`, `.codemap/handoff.delta.json` |
+| `codemap hook pre-compact` | `PreCompact` | Saves hub state to `hubs.txt` in the state dir |
+| `codemap hook session-stop` | `SessionEnd` | Edit timeline + writes `handoff.latest.json`, `handoff.prefix.json`, `handoff.delta.json` in the state dir |
+| `codemap hook subagent-start` | `SubagentStart` | Top-level directories with hub marks, then the hub list |
 
 ---
 
@@ -410,7 +434,7 @@ codemap handoff --detail a.go . # lazy-load full detail for one changed file
 With these hooks, Claude:
 1. **Knows** which files are hubs before touching them
 2. **Sees** the blast radius after making changes
-3. **Gets exact codemap commands** at decision points instead of generic protocol reminders
+3. **Orients subagents** that never see the session-start tree
 4. **Remembers** important files even after context compaction
 
 ---
@@ -439,7 +463,7 @@ Session-start hook performance depends on whether the daemon is running:
 
 | State | Latency | What Happens |
 |-------|---------|--------------|
-| Daemon running, state fresh | <100ms | Reads `.codemap/state.json` from disk |
+| Daemon running, state fresh | <100ms | Reads `state.json` from the state dir |
 | Daemon running, state stale (>30s) | <100ms | Still reads state (daemon is alive) |
 | No daemon, small repo (<2000 files) | 200-500ms | Starts daemon + initial scan + dep graph |
 | No daemon, medium repo (2000-5000) | 500ms-2s | Starts daemon + scan (deps computed) |
@@ -457,6 +481,7 @@ Hooks are budgeted to avoid context blowup:
 | prompt-submit | 180-350 bytes | Skill bodies not injected (pull-based) |
 | pre/post-edit | 0-500 bytes | Only for files with importers |
 | session-stop | 500-2KB | Last 10 events |
+| subagent-start | 1-2KB | 2,500 characters |
 | multi-repo | Varies | 60KB total across all repos |
 
 The 8-second hook timeout prevents any single hook from blocking Claude.

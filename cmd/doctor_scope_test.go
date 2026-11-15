@@ -162,6 +162,7 @@ func TestRunDoctorFallsBackToUserScopeHooks(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("USERPROFILE", home)
 
 	originalLook := doctorLookPath
 	originalRecommended := recommendedClaudeHooks
@@ -204,6 +205,7 @@ func TestRunDoctorFindsLocalScopedClaudeMCP(t *testing.T) {
 	home := t.TempDir()
 	root := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("USERPROFILE", home)
 
 	originalLook := doctorLookPath
@@ -266,6 +268,7 @@ func TestRunDoctorReportsMisconfiguredScopeOverAbsentOne(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("USERPROFILE", home)
 
 	originalLook := doctorLookPath
 	t.Cleanup(func() { doctorLookPath = originalLook })
@@ -321,6 +324,7 @@ func TestRunDoctorGlobalFlagChecksOnlyUserScope(t *testing.T) {
 	home := t.TempDir()
 	root := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("USERPROFILE", home)
 
 	originalLook := doctorLookPath

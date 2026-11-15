@@ -17,6 +17,7 @@ func TestRunDoctorReportsBrokenLocalMCPThatShadowsHealthyUserScope(t *testing.T)
 	root := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("USERPROFILE", home)
 
 	originalLook := doctorLookPath
 	originalVersionProbe := doctorVersionProbe

@@ -181,26 +181,30 @@ func Tree(w io.Writer, project scanner.Project) {
 		innerWidth = len(statsLine) + 4
 	}
 
+	panel := w
+	if project.DirsOnly {
+		panel = io.Discard
+	}
 	// Title in top border line (like rich panel)
 	titleLine := fmt.Sprintf(" %s ", projectName)
 	padding := innerWidth - len(titleLine)
 	leftPad := padding / 2
 	rightPad := padding - leftPad
-	fmt.Fprintf(w, "╭%s%s%s╮\n", strings.Repeat("─", leftPad), titleLine, strings.Repeat("─", rightPad))
-	fmt.Fprintf(w, "│ %-*s │\n", innerWidth-2, statsLine)
+	fmt.Fprintf(panel, "╭%s%s%s╮\n", strings.Repeat("─", leftPad), titleLine, strings.Repeat("─", rightPad))
+	fmt.Fprintf(panel, "│ %-*s │\n", innerWidth-2, statsLine)
 
 	// Extensions line
 	if extLine != "" {
-		fmt.Fprintf(w, "│ %-*s │\n", innerWidth-2, extLine)
+		fmt.Fprintf(panel, "│ %-*s │\n", innerWidth-2, extLine)
 	}
 
 	// Remote URL indicator
 	if project.RemoteURL != "" {
 		remoteLine := fmt.Sprintf("↳ %s", project.RemoteURL)
-		fmt.Fprintf(w, "│ %-*s │\n", innerWidth-2, remoteLine)
+		fmt.Fprintf(panel, "│ %-*s │\n", innerWidth-2, remoteLine)
 	}
 
-	fmt.Fprintf(w, "╰%s╯\n", strings.Repeat("─", innerWidth))
+	fmt.Fprintf(panel, "╰%s╯\n", strings.Repeat("─", innerWidth))
 
 	// Build and render tree
 	root := buildTreeStructure(files)

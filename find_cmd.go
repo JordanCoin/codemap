@@ -72,7 +72,7 @@ func runFindSubcommand(args []string, launchDir string) int {
 		return 1
 	}
 
-	cmd.EnsureProjectConfig(absRoot)
+	cmd.EnsureAutoConfig(absRoot)
 	cfg := config.Load(absRoot)
 	report, err := find.Run(context.Background(), absRoot, scanner.Filters{Only: cfg.Only, Exclude: cfg.Exclude, MaxFiles: cfg.MaxFiles}, query, *limit)
 	if err != nil {

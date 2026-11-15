@@ -14,7 +14,8 @@ import (
 	"time"
 
 	"codemap/config"
-	"codemap/internal/gitexclude"
+	"codemap/internal/projectpath"
+	"codemap/internal/runtimefile"
 	"codemap/scanner"
 )
 
@@ -34,8 +35,13 @@ type CacheEnvelope struct {
 	Graph       *Graph        `json:"graph"`
 }
 
+// CachePath is "" when there is no usable state dir.
 func CachePath(root string) string {
-	return CachePathAt(filepath.Join(root, ".codemap"))
+	dir := projectpath.RuntimeCodemapDir(root)
+	if dir == "" {
+		return ""
+	}
+	return CachePathAt(dir)
 }
 
 // CachePathAt returns the topology cache path inside cacheDir.
@@ -134,12 +140,16 @@ func BuildCacheIdentity(root string, files []scanner.FileInfo, manifests []strin
 }
 
 func ReadCache(root string, expected CacheIdentity) (*Graph, bool) {
-	return ReadCacheAt(filepath.Join(root, ".codemap"), root, expected)
+	dir := projectpath.RuntimeCodemapDir(root)
+	if dir == "" {
+		return nil, false
+	}
+	return ReadCacheAt(dir, root, expected)
 }
 
 // ReadCacheAt reads a cache from cacheDir and validates graph paths against root.
 func ReadCacheAt(cacheDir, root string, expected CacheIdentity) (*Graph, bool) {
-	data, err := os.ReadFile(CachePathAt(cacheDir))
+	data, err := runtimefile.Read(CachePathAt(cacheDir))
 	if err != nil {
 		return nil, false
 	}
@@ -170,7 +180,11 @@ func IsCacheable(graph *Graph) bool {
 }
 
 func WriteCache(root string, envelope CacheEnvelope) error {
-	return WriteCacheAt(filepath.Join(root, ".codemap"), envelope)
+	dir := projectpath.RuntimeCodemapDir(root)
+	if dir == "" {
+		return projectpath.ErrNoStateDir
+	}
+	return WriteCacheAt(dir, envelope)
 }
 
 // WriteCacheAt atomically writes a topology cache inside cacheDir.
@@ -187,7 +201,7 @@ func WriteCacheAt(cacheDir string, envelope CacheEnvelope) error {
 	}
 	data = append(data, '\n')
 
-	if err := gitexclude.MkdirAll(cacheDir, 0o755); err != nil {
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
 		return err
 	}
 	temp, err := os.CreateTemp(cacheDir, ".topology-state-*.tmp")
@@ -197,7 +211,7 @@ func WriteCacheAt(cacheDir string, envelope CacheEnvelope) error {
 	tempName := temp.Name()
 	defer func() { _ = os.Remove(tempName) }()
 
-	if err := temp.Chmod(0o644); err != nil {
+	if err := temp.Chmod(0o600); err != nil {
 		_ = temp.Close()
 		return err
 	}

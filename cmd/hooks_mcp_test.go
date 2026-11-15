@@ -21,6 +21,7 @@ func TestMCPToolHintOnlyWhenHostHasCodemapMCP(t *testing.T) {
 	root, home := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("CODEMAP_HOOK_AGENT", "claude")
 
 	if got := mcpToolHint(root)("codemap --importers a.go"); got != "" {
@@ -44,6 +45,7 @@ func TestMCPToolHintOnlyWhenHostHasCodemapMCP(t *testing.T) {
 func TestIntegrationDriftLineNamesRepairCommand(t *testing.T) {
 	root, home := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("USERPROFILE", home)
 
 	writeClaudeProjectMCP(t, root, buildinfo.Current())

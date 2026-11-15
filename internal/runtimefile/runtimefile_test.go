@@ -57,3 +57,34 @@ func TestWriteAtomicWithReplacesDestination(t *testing.T) {
 		t.Fatalf("content = %q, want new", data)
 	}
 }
+
+// Every state write and read refuses a planted symlink, leaving its target
+// untouched.
+func TestEveryStateAccessRefusesAPlantedLink(t *testing.T) {
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.WriteFile(outside, []byte("mine\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "state.json")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if f, err := OpenAppend(link, 0o600); err == nil {
+		_, _ = f.Write([]byte("leak\n"))
+		_ = f.Close()
+		t.Error("OpenAppend followed the link")
+	}
+	if err := WriteAtomic(link, []byte("leak\n"), 0o600); err == nil {
+		t.Error("WriteAtomic replaced the link")
+	}
+	if _, err := Read(link); err == nil {
+		t.Error("Read followed the link")
+	}
+	if f, err := OpenRead(link); err == nil {
+		_ = f.Close()
+		t.Error("OpenRead followed the link")
+	}
+	if data, _ := os.ReadFile(outside); string(data) != "mine\n" {
+		t.Fatalf("outside file changed: %q", data)
+	}
+}

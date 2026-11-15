@@ -117,7 +117,7 @@ func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "hook" {
 		if len(os.Args) < 3 {
 			fmt.Fprintln(os.Stderr, "Usage: codemap hook <hookname>")
-			fmt.Fprintln(os.Stderr, "Available hooks: session-start, pre-edit, post-edit, prompt-submit, pre-compact, session-stop")
+			fmt.Fprintln(os.Stderr, "Available hooks: session-start, subagent-start, pre-edit, post-edit, prompt-submit, pre-compact, session-stop")
 			fmt.Fprintln(os.Stderr, "session-start also starts 'codemap watch daemon <root>' when none is running and writes runtime state under the project's .codemap/ directory. 'codemap watch stop' ends it.")
 			os.Exit(1)
 		}
@@ -151,6 +151,9 @@ func main() {
 				fmt.Fprintf(os.Stderr, "Unsupported hook integration: %s for agent %s\n", hookIntegration, hookAgent)
 				os.Exit(2)
 			}
+		}
+		if hookName == "session-start" && hookIntegration != "" {
+			cmd.RepairSubagentHook(root, hookAgent)
 		}
 		if err := cmd.RunHookWithTimeout(hookName, root, cmd.HookTimeoutFromEnv(os.Getenv)); err != nil {
 			var timeoutErr *cmd.HookTimeoutError
@@ -465,8 +468,10 @@ func main() {
 	// adds to the config's exclude list (issue #150), since a config exclude
 	// is a standing decision about the repo and one run narrowing further
 	// must not silently re-admit it.
-	if tempDir == "" {
-		cmd.EnsureProjectConfig(absRoot)
+	autoFilter := tempDir == "" && len(only) == 0 && cmd.AutoConfigActive(absRoot)
+	var gitListed []scanner.FileInfo
+	if autoFilter {
+		gitListed = cmd.RefreshAutoConfig(absRoot)
 	}
 	projCfg := config.Load(absRoot)
 	if len(only) == 0 && len(projCfg.Only) > 0 {
@@ -583,6 +588,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error walking tree: %v\n", err)
 		os.Exit(1)
 	}
+	autoNote := ""
+	if autoFilter && os.Getenv(cmd.TreeLeanEnv) == "" {
+		autoNote = cmd.AutoFilterNote(projCfg, gitListed)
+	}
 	var scanBound *scanner.ScanBound
 	if totalFiles > len(files) {
 		scanBound = &scanner.ScanBound{Scanned: len(files), Total: totalFiles, Limit: limits.ScanFileBound(*maxFiles)}
@@ -626,14 +635,18 @@ func main() {
 			project.Hubs, project.HubNote = treeHubs(absRoot, len(files), filters)
 			project.UntrackedDirs = untrackedDirs(root)
 			lean := os.Getenv(cmd.TreeLeanEnv)
-			if lean != "2" {
+			project.DirsOnly = lean == cmd.TreeLeanDirsOnly
+			if lean != "2" && !project.DirsOnly {
 				project.LineCounts = countLines(absRoot, files)
 			}
-			if lean != "" {
+			if lean == "1" || lean == "2" {
 				project.HubListMax = 3
 			}
 		}
 		render.Tree(os.Stdout, project)
+		if autoNote != "" {
+			fmt.Println(autoNote)
+		}
 	}
 	if !*jsonMode && scanBound != nil {
 		fmt.Printf("  Coverage: partial — %s\n", scanBound.Note())
@@ -892,7 +905,7 @@ func runWatchMode(root string, verbose bool) {
 
 	fmt.Printf("Watching: %s\n", root)
 	fmt.Printf("Files tracked: %d (every file under the root, before config filters)\n", daemon.FileCount())
-	fmt.Println("Event log: .codemap/events.log")
+	fmt.Println("Event log: " + filepath.Join(projectpath.ProjectRuntimeDir(root), "events.log"))
 	fmt.Println()
 	fmt.Println("Press Ctrl+C to stop")
 	fmt.Println()
@@ -979,6 +992,16 @@ func runWatchSubcommand(subCmd, root string) error {
 	switch subCmd {
 	case "start":
 		transition, err := acquireWatchTransition(absRoot)
+		if errors.Is(err, watch.ErrTransitionLocked) {
+			// Another start won the race; its daemon is ours too.
+			for deadline := time.Now().Add(watchReadinessTimeout); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+				if active, _ := watch.ResolveActiveRuntime(absRoot); active.PID > 0 && !active.Legacy {
+					fmt.Println("Watch daemon already running")
+					return nil
+				}
+			}
+			return fmt.Errorf("another watch start held the lock and no daemon came up within %s", watchReadinessTimeout)
+		}
 		if err != nil {
 			return fmt.Errorf("starting daemon: %w", err)
 		}
@@ -991,7 +1014,12 @@ func runWatchSubcommand(subCmd, root string) error {
 		if err != nil {
 			return fmt.Errorf("starting daemon: %w", err)
 		}
-		if active.PID > 0 {
+		if active.Legacy {
+			if err := watch.StopActive(active); err != nil {
+				return fmt.Errorf("replacing daemon from an older codemap (pid %d): %w", active.PID, err)
+			}
+			fmt.Printf("Stopped watch daemon from an older codemap (pid %d); starting a current one\n", active.PID)
+		} else if active.PID > 0 {
 			fmt.Println("Watch daemon already running")
 			return nil
 		}
@@ -1086,7 +1114,10 @@ func runWatchSubcommand(subCmd, root string) error {
 		if err != nil {
 			return fmt.Errorf("watch daemon status unavailable: %w", err)
 		}
-		if active.PID > 0 {
+		if active.Legacy {
+			fmt.Printf("Watch daemon from an older codemap running (pid %d); it keeps state where this version does not read it\n", active.PID)
+			fmt.Println("  Next: `codemap watch start` replaces it.")
+		} else if active.PID > 0 {
 			state := watch.ReadState(absRoot)
 			// A daemon whose state writes fail is still "running"; without
 			// this line its stale numbers would read as current (#140).

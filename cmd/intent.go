@@ -204,19 +204,9 @@ func classifyIntentWithFiles(prompt string, files, riskFiles []string, info *hub
 	// Compute risk level and generate suggestions from hub analysis
 	if info != nil && len(riskFiles) > 0 {
 		intent.RiskLevel, intent.Suggestions = analyzeRiskWithEvidence(riskFiles, info, intent.Category, false)
-	} else if inferredOnly {
-		intent.RiskLevel = "unknown"
-		intent.Suggestions = []ContextSuggestion{{
-			Type:   "check-deps",
-			Target: ".",
-			Reason: "risk is unknown without an explicit file mention",
-		}}
-	} else {
-		intent.Suggestions = []ContextSuggestion{{
-			Type:   "check-deps",
-			Target: ".",
-			Reason: "risk is unknown without a configured file and available dependency graph",
-		}}
+	}
+	if intent.Suggestions == nil {
+		intent.Suggestions = []ContextSuggestion{}
 	}
 
 	return intent

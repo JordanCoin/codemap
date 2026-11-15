@@ -15,6 +15,7 @@ func TestRunDoctorUsesNearestGitRootFromNestedDirectory(t *testing.T) {
 	root, home := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("USERPROFILE", home)
 	prevCodex := runCodexPluginCommand
 	runCodexPluginCommand = func(string, ...string) ([]byte, error) { return nil, os.ErrNotExist }
 	t.Cleanup(func() { runCodexPluginCommand = prevCodex })

@@ -19,8 +19,8 @@ import (
 
 	"codemap/config"
 	"codemap/handoff"
-	"codemap/internal/gitexclude"
 	"codemap/internal/projectpath"
+	"codemap/internal/runtimefile"
 	"codemap/limits"
 	"codemap/scanner"
 	"codemap/skills"
@@ -204,8 +204,14 @@ func getHubInfoWithFallback(root string, allowFallback bool) *hubInfo {
 // RunHookWithTimeout executes a hook with a hard timeout.
 // On timeout, returns HookTimeoutError and callers should fail open.
 func RunHookWithTimeout(hookName, root string, timeout time.Duration) error {
-	if timeout <= 0 {
+	// The background refresh carries its own bound (subagentRefreshBound).
+	if timeout <= 0 || hookName == subagentRefreshHook {
 		return RunHook(hookName, root)
+	}
+	// Bounded inside, so the background render is launched before we return.
+	if hookName == "subagent-start" {
+		runSubagentStart(root, min(timeout, subagentStartTimeout))
+		return nil
 	}
 
 	if hookName == "session-stop" {
@@ -226,6 +232,10 @@ func RunHookWithTimeout(hookName, root string, timeout time.Duration) error {
 		err = hookSessionStopContext(ctx, root, out)
 		if errors.Is(err, context.DeadlineExceeded) {
 			return &HookTimeoutError{Hook: hookName, Timeout: timeout}
+		}
+		// Same rule as RunHook: no safe place for state never fails the agent.
+		if errors.Is(err, projectpath.ErrNoStateDir) || errors.Is(err, runtimefile.ErrUnsafe) {
+			return nil
 		}
 		return err
 	}
@@ -307,8 +317,21 @@ func waitForDaemonState(root string, timeout time.Duration) *watch.State {
 	return nil
 }
 
+// runSubagentStart never fails a subagent: any error leaves stdout empty.
+func runSubagentStart(root string, budget time.Duration) {
+	_ = emitHookContext("SubagentStart", func() error { return hookSubagentStart(root, budget) }, false)
+}
+
 // RunHook executes the named hook with the given project root
 func RunHook(hookName, root string) error {
+	if hookName == "subagent-start" {
+		runSubagentStart(root, subagentStartTimeout)
+		return nil
+	}
+	if hookName == subagentRefreshHook {
+		refreshSubagentCache(root)
+		return nil
+	}
 	resolvedRoot, _, err := ResolveNearestGitRoot(root)
 	if err != nil {
 		return err
@@ -333,9 +356,14 @@ func RunHook(hookName, root string) error {
 	case "session-stop":
 		fn = func() error { return hookSessionStop(root) }
 	default:
-		return fmt.Errorf("unknown hook: %s\nAvailable: session-start, pre-edit, post-edit, prompt-submit, pre-compact, session-stop", hookName)
+		return fmt.Errorf("unknown hook: %s\nAvailable: session-start, subagent-start, pre-edit, post-edit, prompt-submit, pre-compact, session-stop", hookName)
 	}
-	return runHookOutput(hookName, fn)
+	err = runHookOutput(hookName, fn)
+	// No safe place for state degrades features; it never fails the agent.
+	if errors.Is(err, projectpath.ErrNoStateDir) || errors.Is(err, runtimefile.ErrUnsafe) {
+		return nil
+	}
+	return err
 }
 
 func runHookOutput(hookName string, fn func() error) error {
@@ -400,6 +428,7 @@ func runHookWithoutStdout(fn func() error) error {
 
 // hookSessionStart shows project structure, starts daemon, and shows hub warnings
 func hookSessionStart(root string) error {
+	fmt.Print(SessionStartNotice)
 	// Handle meta-repo: parent directory containing child git repos.
 	// Check this before the git guard so that non-repo parent directories
 	// still get multi-repo context.
@@ -428,7 +457,6 @@ func hookSessionStart(root string) error {
 		state = waitForDaemonState(root, 2*time.Second)
 	}
 	fileCount, fileCountKnown = configuredStateFileCount(root, state)
-	EnsureProjectConfig(root)
 	projCfg := config.Load(root)
 	structureBudget := projCfg.SessionStartOutputBytes()
 	maxHubs := projCfg.HubDisplayLimit()
@@ -512,23 +540,8 @@ func hookSessionStart(root string) error {
 		if exeErr != nil {
 			return ""
 		}
-		args := projectpath.PrependSetupRootArgs("--depth", strconv.Itoa(depth))
-		if len(projCfg.Only) > 0 {
-			args = append(args, "--only", strings.Join(projCfg.Only, ","))
-		}
-		if len(projCfg.Exclude) > 0 {
-			args = append(args, "--exclude", strings.Join(projCfg.Exclude, ","))
-		}
-		args = append(args, root)
-		cmd := exec.Command(exe, args...)
-		if lean != "" {
-			cmd.Env = append(os.Environ(), TreeLeanEnv+"="+lean)
-		}
-		var buf strings.Builder
-		cmd.Stdout = &buf
-		cmd.Stderr = os.Stderr
-		cmd.Run()
-		rendered[key] = buf.String() + "\n"
+		out, _ := renderTreeSubprocess(context.Background(), exe, root, projCfg, depth, lean, os.Stderr)
+		rendered[key] = out + "\n"
 		return rendered[key]
 	}
 
@@ -549,9 +562,109 @@ func hookSessionStart(root string) error {
 	return nil
 }
 
+// renderTreeSubprocess renders `codemap --depth N` for root in a child
+// process with the project's filters and the given lean level.
+func renderTreeSubprocess(ctx context.Context, exe, root string, projCfg config.ProjectConfig, depth int, lean string, stderr io.Writer) (string, error) {
+	args := projectpath.PrependSetupRootArgs("--depth", strconv.Itoa(depth))
+	if len(projCfg.Only) > 0 {
+		args = append(args, "--only", strings.Join(projCfg.Only, ","))
+	}
+	if len(projCfg.Exclude) > 0 {
+		args = append(args, "--exclude", strings.Join(projCfg.Exclude, ","))
+	}
+	args = append(args, root)
+	cmd := exec.CommandContext(ctx, exe, args...)
+	if lean == "" {
+		lean = treeLeanNone
+	}
+	cmd.Env = append(os.Environ(), TreeLeanEnv+"="+lean)
+	var buf strings.Builder
+	cmd.Stdout = &buf
+	cmd.Stderr = stderr
+	err := cmd.Run()
+	return buf.String(), err
+}
+
+// subagentStartCap bounds the subagent orientation block.
+const subagentStartCap = 2500
+
+// subagentStartTimeout bounds the wait for a cache-miss render; past it the
+// subagent gets no block and the background render fills the cache for later.
+const subagentStartTimeout = 3 * time.Second
+
+// renderSubagentBlock renders the orientation block; tests replace it.
+var renderSubagentBlock = func(ctx context.Context, root string) (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	tree, err := renderTreeSubprocess(ctx, exe, root, config.Load(root), 1, TreeLeanDirsOnly, io.Discard)
+	if err != nil {
+		return "", err
+	}
+	header := "📍 codemap orientation: top-level directories (⭐️ marks hubs), then the hub list. Run `codemap .` for the full tree.\n"
+	return fitSubagentStart(header, tree, subagentStartCap), nil
+}
+
+// hookSubagentStart orients a subagent, which never gets SessionStart: the
+// top-level directories with hub marks, then the hub list. The payload's cwd
+// wins over the process cwd because a worktree-isolated subagent runs elsewhere.
+// ponytail: cached per HEAD, so a new top-level directory shows only after
+// the next commit; key on a tree listing hash if that ever matters.
+func hookSubagentStart(root string, budget time.Duration) error {
+	if info, err := os.Stdin.Stat(); err == nil && info.Mode()&os.ModeCharDevice == 0 {
+		var payload struct {
+			Cwd string `json:"cwd"`
+		}
+		if input, err := io.ReadAll(os.Stdin); err == nil && json.Unmarshal(input, &payload) == nil && payload.Cwd != "" {
+			root = payload.Cwd
+		}
+	}
+	resolved, found, err := ResolveNearestGitRoot(root)
+	if err != nil || !found {
+		return nil
+	}
+	if root, err = ValidateProjectPath(resolved); err != nil {
+		return err
+	}
+	fmt.Print(subagentStartBlock(root, budget))
+	return nil
+}
+
+// fitSubagentStart keeps the tree's trailer (legend, hubs, Next) whole and
+// cuts the directory lines to fit, ending them with a count of what was cut.
+func fitSubagentStart(header, tree string, maxBytes int) string {
+	split := len(tree)
+	for _, marker := range []string{treeHubLegend, treeNoHubLegend} {
+		if i := strings.Index(tree, marker); i >= 0 && i < split {
+			split = strings.LastIndex(tree[:i], "\n") + 1
+		}
+	}
+	dirs, trailer := tree[:split], cutAtLine(tree[split:], maxBytes/2, "")
+	budget := maxBytes - len(header) - len(trailer)
+	if len(dirs) <= budget {
+		return header + dirs + trailer
+	}
+	lines := strings.SplitAfter(strings.TrimSuffix(dirs, "\n"), "\n")
+	marker := func(n int) string { return fmt.Sprintf("... %d more directories\n", n) }
+	kept, used := 0, 0
+	for kept < len(lines) && used+len(lines[kept])+len(marker(len(lines))) <= budget {
+		used += len(lines[kept])
+		kept++
+	}
+	return header + strings.Join(lines[:kept], "") + marker(len(lines)-kept) + trailer
+}
+
 // TreeLeanEnv tells a tree render to shed extras: "1" cuts the hub list to
-// three, "2" also drops line counts.
-const TreeLeanEnv = "CODEMAP_TREE_LEAN"
+// three, "2" also drops line counts. TreeLeanDirsOnly keeps only directory
+// lines and the full hub list, with no line counts. Hooks always set it ("0"
+// sheds nothing), so a tree that sees it set is rendering for an agent and
+// leaves out human-only lines such as the auto filter note.
+const (
+	TreeLeanEnv      = "CODEMAP_TREE_LEAN"
+	TreeLeanDirsOnly = "dirs"
+	treeLeanNone     = "0"
+)
 
 // Markers of the tree's own hub trailer (render/tree_compact.go).
 const (
@@ -748,7 +861,7 @@ func getLastSessionEvents(root string) []string {
 		return nil
 	}
 	eventsFile := filepath.Join(codemapDir, "events.log")
-	f, err := os.Open(eventsFile)
+	f, err := runtimefile.OpenRead(eventsFile)
 	if err != nil {
 		return nil
 	}
@@ -1039,7 +1152,6 @@ func hookPromptSubmit(root string) error {
 	}
 	touchSessionLease(root, sessionIDFromHookInput(input))
 
-	EnsureProjectConfig(root)
 	projCfg := config.Load(root)
 	topK := projCfg.RoutingTopKOrDefault()
 	info := getValidatedHubInfo(root)
@@ -1091,8 +1203,6 @@ func hookPromptSubmit(root string) error {
 		}
 	}
 
-	showNextCodemapSteps(root, intent, info)
-
 	showRouteSuggestions(prompt, projCfg, topK)
 
 	// Match and inject relevant skills
@@ -1124,7 +1234,7 @@ func writeStatuslineState(root string, intent TaskIntent) {
 	if intent.RiskLevel != "low" {
 		status += " " + intent.RiskLevel
 	}
-	os.WriteFile(filepath.Join(codemapDir, "status"), []byte(status), 0644)
+	_ = runtimefile.WriteAtomic(filepath.Join(codemapDir, "status"), []byte(status), 0o600)
 }
 
 // emitIntentMarker outputs a structured JSON comment for machine consumption.
@@ -1190,134 +1300,16 @@ func showMatchedSkills(root string, intent TaskIntent) {
 	}
 }
 
-type codemapNextStep struct {
-	Command string
-	Reason  string
-}
-
-func showNextCodemapSteps(root string, intent TaskIntent, info *hubInfo) {
-	steps := planCodemapNextSteps(intent, info)
-	if len(steps) == 0 {
-		return
-	}
-
-	hint := mcpToolHint(root)
-	fmt.Println()
-	fmt.Println("Next codemap:")
-	for _, step := range steps {
-		fmt.Printf("   • %s%s — %s\n", step.Command, hint(step.Command), step.Reason)
-	}
-}
-
-func planCodemapNextSteps(intent TaskIntent, info *hubInfo) []codemapNextStep {
-	if intent.Confidence < intentConfidenceFloor {
-		return nil
-	}
-
-	var steps []codemapNextStep
-	seen := make(map[string]bool)
-	add := func(command, reason string) {
-		if command == "" || seen[command] {
-			return
-		}
-		seen[command] = true
-		steps = append(steps, codemapNextStep{Command: command, Reason: reason})
-	}
-
-	primaryFile := pickPrimaryCodemapFile(intent.Files, info)
-	if primaryFile != "" {
-		importerCount := 0
-		hubImporterCount := 0
-		if info != nil {
-			importerCount = len(info.Importers[primaryFile])
-			hubImporterCount = scanner.CountHubImporters(info.Importers[primaryFile])
-		}
-
-		reason := "check callers before editing"
-		switch {
-		case hubImporterCount >= scanner.HubThreshold:
-			reason = fmt.Sprintf("check blast radius before editing this hub (%s)", importersNoun(importerCount))
-		case importerCount > 0:
-			reason = fmt.Sprintf("check callers before editing (%s)", importersNoun(importerCount))
-		}
-		add("codemap --importers "+shellQuoteIfNeeded(primaryFile), reason)
-		if hubImporterCount >= scanner.HubThreshold {
-			add("codemap --deps", "trace dependency flow around this hub before changing it")
-		}
-	}
-
-	switch intent.Category {
-	case "vcs":
-		add("codemap --diff", "review what changed before merging, reviewing, or releasing")
-	case "explore":
-		if len(intent.Files) == 0 {
-			add("codemap .", "refresh project structure before diving in")
-		} else {
-			add("codemap --deps", "trace how the mentioned code connects")
-		}
-	case "refactor":
-		add("codemap --deps", "verify dependency flow before refactoring")
-	case "feature":
-		if len(intent.Files) == 0 {
-			add("codemap .", "refresh project structure before choosing edit points")
-		}
-		if len(intent.Files) > 0 || intent.Scope != "single-file" {
-			add("codemap --deps", "feature work tends to cross existing dependencies")
-		}
-	case "bugfix":
-		if len(intent.Files) == 0 {
-			add("codemap --diff", "check recent branch changes before debugging")
-		} else if primaryFile != "" && info != nil && scanner.CountHubImporters(info.Importers[primaryFile]) >= scanner.HubThreshold {
-			add("codemap --deps", "hub fixes can ripple through dependents")
-		}
-	}
-
-	if len(steps) > 2 {
-		steps = steps[:2]
-	}
-	return steps
-}
-
-func pickPrimaryCodemapFile(files []string, info *hubInfo) string {
-	if len(files) == 0 {
-		return ""
-	}
-
-	best := files[0]
-	bestImporters := -1
-	for _, file := range files {
-		importerCount := 0
-		if info != nil {
-			importerCount = len(info.Importers[file])
-		}
-		if importerCount > bestImporters {
-			best = file
-			bestImporters = importerCount
-		}
-	}
-	return best
-}
-
-func shellQuoteIfNeeded(value string) string {
-	if strings.ContainsAny(value, " \t") {
-		return strconv.Quote(value)
-	}
-	return value
-}
-
-// setupNeedsAttention is config.AssessSetup gated for #224: a directory with
-// no .git and no config (such as $HOME) is not a project, so there is nothing
-// to set up and the hooks stay quiet instead of telling the agent to write
-// .codemap/config.json there on every prompt.
+// setupNeedsAttention is config.AssessSetup gated for #224 and #184: a
+// project that never ran setup (no .codemap/ directory) is not asked to
+// finish it on every prompt; only a set-up project missing its config is.
 func setupNeedsAttention(root string) (config.SetupAssessment, bool) {
 	assessment := config.AssessSetup(root)
 	if !assessment.NeedsAttention() {
 		return assessment, false
 	}
-	if assessment.State == config.SetupStateMissing {
-		if _, err := os.Stat(filepath.Join(root, ".git")); err != nil {
-			return assessment, false
-		}
+	if assessment.State == config.SetupStateMissing && !projectpath.IsSetUp(root) {
+		return assessment, false
 	}
 	return assessment, true
 }
@@ -1644,9 +1636,6 @@ func hookPreCompact(root string) error {
 	if err != nil {
 		return err
 	}
-	if err := gitexclude.MkdirAll(codemapDir, 0755); err != nil {
-		return err
-	}
 
 	info := getHubInfoNoFallback(root)
 	if info == nil || len(info.Hubs) == 0 {
@@ -1655,19 +1644,17 @@ func hookPreCompact(root string) error {
 
 	// Write hub state
 	hubsFile := filepath.Join(codemapDir, "hubs.txt")
-	f, err := os.Create(hubsFile)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	fmt.Fprintf(f, "# Hub files at %s\n", time.Now().Format(time.RFC3339))
+	var hubs strings.Builder
+	fmt.Fprintf(&hubs, "# Hub files at %s\n", time.Now().Format(time.RFC3339))
 	for _, hub := range info.Hubs {
-		fmt.Fprintln(f, hub)
+		fmt.Fprintln(&hubs, hub)
+	}
+	if err := runtimefile.WriteAtomic(hubsFile, []byte(hubs.String()), 0o600); err != nil {
+		return err
 	}
 
 	fmt.Println()
-	fmt.Printf("💾 Saved hub state to .codemap/hubs.txt before compact\n")
+	fmt.Printf("💾 Saved hub state to %s before compact\n", hubsFile)
 	fmt.Printf("   (%d hub files tracked)\n", len(info.Hubs))
 	fmt.Println()
 
@@ -1811,7 +1798,7 @@ func hookSessionStopContext(ctx context.Context, root string, out io.Writer) err
 		if err := writeSessionHandoffContext(ctx, root, state); err != nil {
 			return err
 		}
-		fmt.Fprintln(out, "🤝 Saved handoff to .codemap/handoff.latest.json")
+		fmt.Fprintln(out, "🤝 Saved handoff to "+handoff.LatestPath(root))
 	}
 
 	fmt.Fprintln(out)
@@ -2081,7 +2068,11 @@ func DaemonShouldExit(root string, now time.Time) bool {
 	if err != nil {
 		return false
 	}
-	entries, err := os.ReadDir(filepath.Join(codemapDir, "sessions"))
+	sessions := filepath.Join(codemapDir, "sessions")
+	if runtimefile.CheckDir(sessions) != nil {
+		return false
+	}
+	entries, err := os.ReadDir(sessions)
 	if err != nil || len(entries) == 0 {
 		return false
 	}
@@ -2114,9 +2105,6 @@ func updateSessionLeaseContext(ctx context.Context, root, sessionID string, acti
 	if err != nil {
 		return err
 	}
-	if err := gitexclude.MkdirAll(codemapDir, 0o755); err != nil {
-		return err
-	}
 	lockPath := filepath.Join(codemapDir, "sessions.lock")
 	if err := acquireSessionLockContext(ctx, lockPath); err != nil {
 		return err
@@ -2124,7 +2112,7 @@ func updateSessionLeaseContext(ctx context.Context, root, sessionID string, acti
 	defer os.Remove(lockPath)
 
 	leaseDir := filepath.Join(codemapDir, "sessions")
-	if err := os.MkdirAll(leaseDir, 0o755); err != nil {
+	if err := runtimefile.EnsureDir(leaseDir); err != nil {
 		return err
 	}
 	entries, err := os.ReadDir(leaseDir)
@@ -2157,7 +2145,7 @@ func updateSessionLeaseContext(ctx context.Context, root, sessionID string, acti
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(leasePath, append(payload, '\n'), 0o600); err != nil {
+		if err := runtimefile.WriteAtomic(leasePath, append(payload, '\n'), 0o600); err != nil {
 			return err
 		}
 	} else if err := os.Remove(leasePath); err != nil && !os.IsNotExist(err) {
@@ -2193,7 +2181,7 @@ func acquireSessionLockContext(ctx context.Context, lockPath string) error {
 		if !os.IsExist(err) {
 			return err
 		}
-		if info, statErr := os.Stat(lockPath); statErr == nil && time.Since(info.ModTime()) > sessionLockStaleAfter {
+		if info, statErr := os.Lstat(lockPath); statErr == nil && time.Since(info.ModTime()) > sessionLockStaleAfter {
 			_ = os.RemoveAll(lockPath)
 			continue
 		}
@@ -2332,22 +2320,41 @@ func appendUniquePath(paths []string, path string) []string {
 	return append(paths, path)
 }
 
+// projectRelPath returns a hook-supplied path relative to root, or false when
+// it is outside root. Relative paths are taken as root-relative. The path
+// counts as inside when it is spelled under root or under root's canonical
+// form (/tmp vs /private/tmp); only its parent directory is canonicalised,
+// so an in-repo symlink pointing outside the repo still counts as inside.
+func projectRelPath(root, path string) (string, bool) {
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(root, path)
+	}
+	path = filepath.Clean(path)
+	paths := []string{path, filepath.Join(projectpath.CanonicalPath(filepath.Dir(path)), filepath.Base(path))}
+	for _, r := range []string{root, projectpath.CanonicalPath(root)} {
+		for _, p := range paths {
+			rel, err := filepath.Rel(r, p)
+			if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return rel, true
+			}
+		}
+	}
+	return "", false
+}
+
 // checkFileImporters checks if a file is a hub and shows its importers
 func checkFileImporters(root, filePath string) error {
 	return checkFileImportersWithPhase(root, filePath, "")
 }
 
 func checkFileImportersWithPhase(root, filePath, phase string) error {
+	filePath, inRoot := projectRelPath(root, filePath)
+	if !inRoot {
+		return nil
+	}
 	info := getHubInfoNoFallback(root)
 	if info == nil {
 		return nil // silently skip if deps unavailable
-	}
-
-	// Handle absolute paths - convert to relative
-	if filepath.IsAbs(filePath) {
-		if rel, err := filepath.Rel(root, filePath); err == nil {
-			filePath = rel
-		}
 	}
 
 	importers := info.Importers[filePath]
@@ -2402,42 +2409,7 @@ func checkFileImportersWithPhase(root, filePath, phase string) error {
 		fmt.Println()
 	}
 
-	showFileCodemapActions(root, filePath, len(importers), len(hubImports) > 0, phase)
-
 	return nil
-}
-
-func showFileCodemapActions(root, filePath string, importerCount int, importsHub bool, phase string) {
-	steps := []codemapNextStep{
-		{
-			Command: "codemap --importers " + shellQuoteIfNeeded(filePath),
-			Reason:  "review blast radius for this file",
-		},
-	}
-	if importerCount >= 3 || importsHub {
-		steps = append(steps, codemapNextStep{
-			Command: "codemap --deps",
-			Reason:  "verify dependency flow around this change",
-		})
-	}
-
-	if len(steps) == 0 {
-		return
-	}
-
-	switch phase {
-	case "before":
-		fmt.Println("   Run now:")
-	case "after":
-		fmt.Println("   Re-check with:")
-	default:
-		fmt.Println("   Next codemap:")
-	}
-	hint := mcpToolHint(root)
-	for _, step := range steps {
-		fmt.Printf("   • %s%s — %s\n", step.Command, hint(step.Command), step.Reason)
-	}
-	fmt.Println()
 }
 
 // isHub checks if a file is a hub (has HubThreshold+ non-test importers).
@@ -2572,17 +2544,10 @@ func hookSessionStartMultiRepo(root string, childRepos []string) error {
 	return nil
 }
 
-// filesText and importersNoun keep counts grammatical: "1 file", "2 files".
+// filesText keeps counts grammatical: "1 file", "2 files".
 func filesText(n int) string {
 	if n == 1 {
 		return "1 file"
 	}
 	return fmt.Sprintf("%d files", n)
-}
-
-func importersNoun(n int) string {
-	if n == 1 {
-		return "1 importer"
-	}
-	return fmt.Sprintf("%d importers", n)
 }

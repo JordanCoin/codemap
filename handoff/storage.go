@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"codemap/internal/gitexclude"
 	"codemap/internal/projectpath"
 	"codemap/internal/runtimefile"
 )
@@ -19,58 +18,39 @@ const (
 	maxMetricsLines = 500
 )
 
-// LatestPath returns the absolute location of the latest handoff artifact.
-func LatestPath(root string) string {
-	runtimeRoot := projectpath.ProjectRuntimeDir(root)
-	absRoot, err := filepath.Abs(runtimeRoot)
-	if err != nil {
-		return filepath.Join(runtimeRoot, latestFilename)
-	}
-	return filepath.Join(absRoot, latestFilename)
-}
+// LatestPath returns the absolute location of the latest handoff artifact,
+// or "" when there is no usable state dir (same for the paths below).
+func LatestPath(root string) string { return displayPath(root, latestFilename) }
 
 // PrefixPath returns the absolute location of the prefix snapshot.
-func PrefixPath(root string) string {
-	runtimeRoot := projectpath.ProjectRuntimeDir(root)
-	absRoot, err := filepath.Abs(runtimeRoot)
-	if err != nil {
-		return filepath.Join(runtimeRoot, prefixFilename)
-	}
-	return filepath.Join(absRoot, prefixFilename)
-}
+func PrefixPath(root string) string { return displayPath(root, prefixFilename) }
 
 // DeltaPath returns the absolute location of the delta snapshot.
-func DeltaPath(root string) string {
-	runtimeRoot := projectpath.ProjectRuntimeDir(root)
-	absRoot, err := filepath.Abs(runtimeRoot)
-	if err != nil {
-		return filepath.Join(runtimeRoot, deltaFilename)
-	}
-	return filepath.Join(absRoot, deltaFilename)
-}
+func DeltaPath(root string) string { return displayPath(root, deltaFilename) }
 
 // MetricsPath returns the absolute location of the handoff metrics log.
-func MetricsPath(root string) string {
-	runtimeRoot := projectpath.ProjectRuntimeDir(root)
-	absRoot, err := filepath.Abs(runtimeRoot)
+func MetricsPath(root string) string { return displayPath(root, metricsFilename) }
+
+func displayPath(root, name string) string {
+	path, err := statePath(root, name)
 	if err != nil {
-		return filepath.Join(runtimeRoot, metricsFilename)
+		return ""
 	}
-	return filepath.Join(absRoot, metricsFilename)
+	return path
 }
 
 // ReadLatest reads the latest handoff artifact if it exists.
 // Returns (nil, nil) when no artifact is present.
 func ReadLatest(root string) (*Artifact, error) {
-	path, err := runtimePath(root, latestFilename)
+	path, err := statePath(root, latestFilename)
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := runtimefile.Read(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
 
@@ -83,7 +63,8 @@ func ReadLatest(root string) (*Artifact, error) {
 	return &artifact, nil
 }
 
-// WriteLatest writes an artifact atomically to .codemap/handoff.latest.json.
+// WriteLatest writes an artifact atomically to handoff.latest.json in the
+// project's state dir.
 func WriteLatest(root string, artifact *Artifact) error {
 	normalizeArtifact(artifact)
 
@@ -92,10 +73,6 @@ func WriteLatest(root string, artifact *Artifact) error {
 		return err
 	}
 	path := filepath.Join(runtimeDir, latestFilename)
-	if err := gitexclude.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-
 	if err := writeJSONAtomic(path, artifact); err != nil {
 		return err
 	}
@@ -106,6 +83,15 @@ func WriteLatest(root string, artifact *Artifact) error {
 		return err
 	}
 	return appendMetricsAt(filepath.Join(runtimeDir, metricsFilename), artifact)
+}
+
+// statePath names a state file for reading; it creates nothing.
+func statePath(root, name string) (string, error) {
+	dir, err := projectpath.StateDir(root)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, name), nil
 }
 
 func runtimePath(root, name string) (string, error) {
@@ -121,7 +107,7 @@ func writeJSONAtomic(path string, value any) error {
 	if err != nil {
 		return err
 	}
-	return runtimefile.WriteAtomic(path, data, 0o644)
+	return runtimefile.WriteAtomic(path, data, 0o600)
 }
 
 func appendMetrics(root string, artifact *Artifact) error {
@@ -156,7 +142,7 @@ func appendMetricsAt(path string, artifact *Artifact) error {
 		return err
 	}
 
-	f, err := runtimefile.OpenAppend(path, 0o644)
+	f, err := runtimefile.OpenAppend(path, 0o600)
 	if err != nil {
 		return err
 	}
@@ -270,5 +256,5 @@ func capMetricsLogAt(path string, maxLines int) error {
 
 	trimmed := bytes.Join(lines[len(lines)-maxLines:], []byte("\n"))
 	trimmed = append(trimmed, '\n')
-	return runtimefile.WriteAtomic(path, trimmed, 0o644)
+	return runtimefile.WriteAtomic(path, trimmed, 0o600)
 }

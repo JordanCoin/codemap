@@ -17,6 +17,7 @@ import (
 	"codemap/config"
 	"codemap/internal/buildinfo"
 	"codemap/internal/gitexclude"
+	"codemap/internal/projectpath"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/pelletier/go-toml/v2"
@@ -190,47 +191,58 @@ func RunDoctor(args []string, defaultRoot string) int {
 	return 0
 }
 
-// doctorCheckLocalCodemapIgnore verifies .codemap/ is ignored in this working
-// tree. Git's check-ignore reflects the rules that actually apply, so it is
-// the authority: report OK when the directory is ignored and MISS only when
-// it genuinely is not, naming the local exclude and a minimal repair hint.
+// doctorCheckLocalCodemapIgnore names the per-user state dir, then verifies
+// anything but config and skills under an in-repo .codemap/ is ignored. Git's
+// check-ignore reflects the rules that actually apply, so it is the authority.
 func doctorCheckLocalCodemapIgnore(root string, failures *int) {
-	ignored, mechanism, err := gitCheckIgnoreVerbose(root, ignoreEntry)
+	if dir := projectpath.ProjectRuntimeDir(root); dir != "" {
+		fmt.Printf("OK   state dir: %s (handoff, hubs, agent edits, daemon state, auto-detected config)\n", dir)
+	} else {
+		_, err := projectpath.CheckedRuntimeCodemapDir(root)
+		fmt.Printf("MISS state dir: %v; codemap runs without saved state\n", err)
+		*failures++
+	}
+	if !projectpath.IsSetUp(root) {
+		return
+	}
+	// A path no codemap writes: check-ignore reports tracked files as not ignored.
+	ignored, mechanism, err := gitCheckIgnoreVerbose(root, ".codemap/machine-state-probe")
 	if err != nil {
 		fmt.Printf("MISS local Codemap ignore: %v\n", err)
 		*failures++
 		return
 	}
 	if ignored {
-		fmt.Printf("OK   local Codemap ignore: effective via %s\n", mechanism)
+		fmt.Printf("OK   local Codemap ignore: machine state ignored via %s\n", mechanism)
 		return
 	}
-	path, _, err := localCodemapIgnore(root)
-	if err != nil {
-		fmt.Printf("MISS local Codemap ignore: %v\n", err)
-		*failures++
-		return
-	}
-	fmt.Printf("MISS local Codemap ignore: %s does not ignore %s; repair with `codemap setup --no-hooks --no-mcp --no-skills --no-config %s`\n", path, ignoreEntry, root)
+	fmt.Printf("MISS local Codemap ignore: machine state under .codemap/ is not ignored; repair with `codemap setup --no-hooks --no-mcp --no-skills --no-config %s` (writes .codemap/.gitignore)\n", root)
 	*failures++
 }
 
-// doctorCheckTrackedCodemapState reports .codemap/ files git already tracks
-// (`git ls-files .codemap`): an ignore rule cannot hide those, so they show
-// up in every diff until they are removed from the index.
+// doctorCheckTrackedCodemapState reports machine-state files git already
+// tracks under .codemap/: an ignore rule cannot hide those, so they show up
+// in every diff until they are removed from the index. config.json and
+// skills/ are meant to be committed and are not reported.
 func doctorCheckTrackedCodemapState(root string, failures *int) {
-	tracked, err := gitexclude.TrackedStateFiles(root)
-	if err != nil {
+	if _, err := gitexclude.TrackedStateFiles(root); err != nil {
 		fmt.Printf("MISS tracked codemap state: %v\n", err)
 		*failures++
 		return
 	}
-	if len(tracked) > 0 {
-		fmt.Printf("MISS tracked codemap state: %d file(s) under .codemap/ are committed; run: git rm -r --cached .codemap\n", len(tracked))
+	if tracked := trackedMachineState(root); len(tracked) > 0 {
+		fmt.Printf("MISS tracked codemap state: %d machine-state file(s) under .codemap/ are committed:\n%s", len(tracked), trackedStateDetail(tracked))
 		*failures++
-		return
+	} else {
+		fmt.Println("OK   tracked codemap state: no machine-state files under .codemap/ are committed (git ls-files .codemap)")
 	}
-	fmt.Println("OK   tracked codemap state: 0 files under .codemap/ are committed (git ls-files .codemap)")
+	left, unknown := leftoverMachineState(root)
+	if len(left) > 0 {
+		fmt.Printf("NOTE leftover codemap state: %d file(s) under .codemap/ from an older codemap are no longer used and are safe to delete:\n%s", len(left), nameList(left))
+	}
+	if len(unknown) > 0 {
+		fmt.Printf("NOTE unrecognised files in .codemap/ (not touched by codemap): %d\n%s", len(unknown), nameList(unknown))
+	}
 }
 
 func reportCodexRuntimeVersions(cliPath string) bool {

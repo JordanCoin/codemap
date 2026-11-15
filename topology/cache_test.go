@@ -56,7 +56,7 @@ func TestReadCacheMissesMalformedStaleAndNewerSchemas(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
-			writeTopologyFixture(t, root, ".codemap/topology-state.json", tt.data)
+			writeTopologyFixture(t, "", CachePath(root), tt.data)
 			before := readFixture(t, CachePath(root))
 
 			if graph, ok := ReadCache(root, identity); ok || graph != nil {
@@ -115,7 +115,7 @@ func TestReadCacheMissesTransientProviderFailures(t *testing.T) {
 
 func TestWriteCacheAtomicallyReplacesTopologyState(t *testing.T) {
 	root := t.TempDir()
-	writeTopologyFixture(t, root, ".codemap/topology-state.json", `{"schema":1,"old":true}`)
+	writeTopologyFixture(t, "", CachePath(root), `{"schema":1,"old":true}`)
 	graph := cachedTestGraph(root)
 	identity := CacheIdentity{Filters: "new"}
 

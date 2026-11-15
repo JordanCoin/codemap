@@ -47,6 +47,9 @@ type Project struct {
 	// hub list under the tree (0 = the default of 10).
 	LineCounts map[string]int `json:"-"`
 	HubListMax int            `json:"-"`
+	// DirsOnly drops the header panel and every file listing, leaving the
+	// directory lines and the hub trailer (the subagent orientation).
+	DirsOnly bool `json:"-"`
 }
 
 // ScanBound records a walk that stopped keeping files at Limit.

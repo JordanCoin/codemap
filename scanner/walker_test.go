@@ -14,6 +14,31 @@ import (
 	"codemap/internal/projectpath"
 )
 
+func TestScanFilesSkipsClaudeWorktreesByPath(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range []string{"main.go", ".claude/worktrees/leftover/stale.go", "pkg/.claude/worktrees/kept.go"} {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("package x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files, err := ScanFiles(context.Background(), root, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, f := range files {
+		got = append(got, filepath.ToSlash(f.Path))
+	}
+	sort.Strings(got)
+	if want := []string{"main.go", "pkg/.claude/worktrees/kept.go"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("files = %v, want %v", got, want)
+	}
+}
+
 func TestIgnoredDirs(t *testing.T) {
 	// Verify common directories are in the ignored list
 	expectedIgnored := []string{

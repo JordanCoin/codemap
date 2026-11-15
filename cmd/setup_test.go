@@ -68,6 +68,13 @@ func TestEnsureClaudeHooksCreatesSettings(t *testing.T) {
 			t.Fatalf("expected %q hook command in event %q", spec.Command, spec.Event)
 		}
 	}
+	if subagent := hooks["SubagentStart"]; len(subagent) != 1 || subagent[0].Matcher != "" {
+		t.Fatalf("expected one SubagentStart entry with no matcher, got %v", hooks["SubagentStart"])
+	}
+	again, err := ensureClaudeHooks(settingsPath, false)
+	if err != nil || again.AddedHooks != 0 || again.WroteFile {
+		t.Fatalf("second ensureClaudeHooks should be a no-op, got %+v, err %v", again, err)
+	}
 }
 
 func TestEnsureClaudeHooksPreservesFieldsAndAvoidsDuplicates(t *testing.T) {
@@ -173,7 +180,8 @@ func TestEnsureClaudeHooksAddsMatcherScopedHookWhenMatcherMissing(t *testing.T) 
     "PostToolUse": [{"matcher":"Edit|Write","hooks":[{"type":"command","command":"codemap hook post-edit"}]}],
     "UserPromptSubmit": [{"hooks":[{"type":"command","command":"codemap hook prompt-submit"}]}],
     "PreCompact": [{"hooks":[{"type":"command","command":"codemap hook pre-compact"}]}],
-    "SessionEnd": [{"hooks":[{"type":"command","command":"codemap hook session-stop"}]}]
+    "SessionEnd": [{"hooks":[{"type":"command","command":"codemap hook session-stop"}]}],
+    "SubagentStart": [{"hooks":[{"type":"command","command":"codemap hook subagent-start"}]}]
   }
 }`
 	if err := os.WriteFile(settingsPath, []byte(existing), 0644); err != nil {
@@ -241,8 +249,8 @@ func TestEnsureCodexHooksReconcilesMixedLegacyAndCanonicalConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ensureCodexHooksWithExecutable: %v", err)
 	}
-	if result.AddedHooks != 0 || result.RemovedHooks != 7 || !result.WroteFile {
-		t.Fatalf("result = %+v, want AddedHooks=0 RemovedHooks=7 WroteFile=true", result)
+	if result.AddedHooks != 1 || result.RemovedHooks != 7 || !result.WroteFile {
+		t.Fatalf("result = %+v, want AddedHooks=1 (SubagentStart) RemovedHooks=7 WroteFile=true", result)
 	}
 	settings := readSettingsFile(t, settingsPath)
 	precisionSettings, err := decodeJSONObject(mustReadFile(t, settingsPath))
@@ -293,8 +301,8 @@ func TestEnsureCodexHooksMigratesLegacyOnlyConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ensureCodexHooksWithExecutable: %v", err)
 	}
-	if result.AddedHooks != 6 || result.RemovedHooks != 6 || !result.WroteFile {
-		t.Fatalf("result = %+v, want AddedHooks=6 RemovedHooks=6 WroteFile=true", result)
+	if result.AddedHooks != 7 || result.RemovedHooks != 6 || !result.WroteFile {
+		t.Fatalf("result = %+v, want AddedHooks=7 RemovedHooks=6 WroteFile=true", result)
 	}
 	settings := readSettingsFile(t, settingsPath)
 	assertCodexCanonicalHooks(t, readHooksMap(t, settings), specs)

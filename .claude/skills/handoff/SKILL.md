@@ -40,9 +40,11 @@ The prefix file count and size-based handoff budgets honor the active
 
 ## Artifacts written
 
+In the per-user state dir, never in the repo; `codemap doctor` prints its path on the `state dir:` line.
+
 | File | Content |
 |------|---------|
-| `.codemap/handoff.latest.json` | Full artifact (all layers) |
-| `.codemap/handoff.prefix.json` | Stable prefix snapshot |
-| `.codemap/handoff.delta.json` | Dynamic delta snapshot |
-| `.codemap/handoff.metrics.log` | Append-only metrics stream |
+| `handoff.latest.json` | Full artifact (all layers) |
+| `handoff.prefix.json` | Stable prefix snapshot |
+| `handoff.delta.json` | Dynamic delta snapshot |
+| `handoff.metrics.log` | Append-only metrics stream |
