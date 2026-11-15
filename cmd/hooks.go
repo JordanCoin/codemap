@@ -204,7 +204,8 @@ func getHubInfoWithFallback(root string, allowFallback bool) *hubInfo {
 // RunHookWithTimeout executes a hook with a hard timeout.
 // On timeout, returns HookTimeoutError and callers should fail open.
 func RunHookWithTimeout(hookName, root string, timeout time.Duration) error {
-	if timeout <= 0 {
+	// The background refresh carries its own bound (subagentRefreshBound).
+	if timeout <= 0 || hookName == subagentRefreshHook {
 		return RunHook(hookName, root)
 	}
 
@@ -312,6 +313,10 @@ func RunHook(hookName, root string) error {
 	if hookName == "subagent-start" {
 		// Never fail a subagent: any error leaves stdout empty and exits 0.
 		_ = emitHookContext("SubagentStart", func() error { return hookSubagentStart(root) }, false)
+		return nil
+	}
+	if hookName == subagentRefreshHook {
+		refreshSubagentCache(root)
 		return nil
 	}
 	resolvedRoot, _, err := ResolveNearestGitRoot(root)
@@ -563,14 +568,29 @@ func renderTreeSubprocess(ctx context.Context, exe, root string, projCfg config.
 // subagentStartCap bounds the subagent orientation block.
 const subagentStartCap = 2500
 
-// subagentStartTimeout kills the tree render; a slow repo gets no block
-// rather than a stalled subagent.
-// ponytail: renders on every spawn (4s on a 10k-file repo); cache the block per HEAD if large repos need it.
+// subagentStartTimeout bounds a cache-miss render; past it the subagent gets
+// no block and a background render fills the cache for the next one.
 const subagentStartTimeout = 3 * time.Second
+
+// renderSubagentBlock renders the orientation block; tests replace it.
+var renderSubagentBlock = func(ctx context.Context, root string) (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	tree, err := renderTreeSubprocess(ctx, exe, root, config.Load(root), 1, TreeLeanDirsOnly, io.Discard)
+	if err != nil {
+		return "", err
+	}
+	header := "📍 codemap orientation: top-level directories (⭐️ marks hubs), then the hub list. Run `codemap .` for the full tree.\n"
+	return fitSubagentStart(header, tree, subagentStartCap), nil
+}
 
 // hookSubagentStart orients a subagent, which never gets SessionStart: the
 // top-level directories with hub marks, then the hub list. The payload's cwd
 // wins over the process cwd because a worktree-isolated subagent runs elsewhere.
+// ponytail: cached per HEAD, so a new top-level directory shows only after
+// the next commit; key on a tree listing hash if that ever matters.
 func hookSubagentStart(root string) error {
 	if info, err := os.Stdin.Stat(); err == nil && info.Mode()&os.ModeCharDevice == 0 {
 		var payload struct {
@@ -587,18 +607,22 @@ func hookSubagentStart(root string) error {
 	if root, err = ValidateProjectPath(resolved); err != nil {
 		return err
 	}
-	exe, err := os.Executable()
-	if err != nil {
-		return err
+	key := subagentCacheKey(root)
+	if block, ok := readSubagentCache(root, key); ok {
+		fmt.Print(block)
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), subagentStartTimeout)
 	defer cancel()
-	tree, err := renderTreeSubprocess(ctx, exe, root, config.Load(root), 1, TreeLeanDirsOnly, io.Discard)
+	block, err := renderSubagentBlock(ctx, root)
 	if err != nil {
+		if ctx.Err() != nil && key != "" {
+			startSubagentRefresh(root)
+		}
 		return err
 	}
-	header := "📍 codemap orientation: top-level directories (⭐️ marks hubs), then the hub list. Run `codemap .` for the full tree.\n"
-	fmt.Print(fitSubagentStart(header, tree, subagentStartCap))
+	writeSubagentCache(root, key, block)
+	fmt.Print(block)
 	return nil
 }
 
