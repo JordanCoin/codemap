@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -222,8 +223,12 @@ func TestEnsureAutoConfigStaysOutOfTheRepo(t *testing.T) {
 	}
 	auto := config.AutoConfigPath(repo)
 	info, err := os.Stat(auto)
-	if err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("auto config %s: %v, mode %v; want 0600", auto, err, info)
+	if err != nil {
+		t.Fatalf("auto config %s: %v", auto, err)
+	}
+	// Windows has no Unix permission bits; the 0600 check is Unix-only.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Fatalf("auto config %s mode %v; want 0600", auto, info.Mode().Perm())
 	}
 	if got := strings.Join(config.Load(repo).Only, ","); got != "go" {
 		t.Fatalf("Load().Only = %q, want go from the auto config", got)
