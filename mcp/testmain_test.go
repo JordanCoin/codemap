@@ -16,7 +16,8 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	os.Setenv("CODEMAP_DAEMON_REGISTRY", dir)
-	os.Setenv("XDG_CACHE_HOME", dir)
+	os.Setenv("HOME", dir)
+	os.Setenv("USERPROFILE", dir)
 	code := m.Run()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)

@@ -20,6 +20,7 @@ import (
 	"codemap/config"
 	"codemap/handoff"
 	"codemap/internal/projectpath"
+	"codemap/internal/runtimefile"
 	"codemap/limits"
 	"codemap/scanner"
 	"codemap/skills"
@@ -355,7 +356,7 @@ func RunHook(hookName, root string) error {
 	}
 	err = runHookOutput(hookName, fn)
 	// No safe place for state degrades features; it never fails the agent.
-	if errors.Is(err, projectpath.ErrNoStateDir) {
+	if errors.Is(err, projectpath.ErrNoStateDir) || errors.Is(err, runtimefile.ErrUnsafe) {
 		return nil
 	}
 	return err
@@ -442,7 +443,6 @@ func hookSessionStart(root string) error {
 	// Check for previous session context before starting new daemon
 	lastSessionEvents := getLastSessionEvents(root)
 
-	EnsureAutoConfig(root) // before the daemon, which reads it
 	ensureSessionDaemon(root, hookSessionIDFromStdin())
 
 	fileCount := 0
@@ -582,8 +582,8 @@ func renderTreeSubprocess(ctx context.Context, exe, root string, projCfg config.
 // subagentStartCap bounds the subagent orientation block.
 const subagentStartCap = 2500
 
-// subagentStartTimeout bounds a cache-miss render; past it the subagent gets
-// no block and a background render fills the cache for the next one.
+// subagentStartTimeout bounds the wait for a cache-miss render; past it the
+// subagent gets no block and the background render fills the cache for later.
 const subagentStartTimeout = 3 * time.Second
 
 // renderSubagentBlock renders the orientation block; tests replace it.
@@ -603,9 +603,6 @@ var renderSubagentBlock = func(ctx context.Context, root string) (string, error)
 // hookSubagentStart orients a subagent, which never gets SessionStart: the
 // top-level directories with hub marks, then the hub list. The payload's cwd
 // wins over the process cwd because a worktree-isolated subagent runs elsewhere.
-// On a cache miss the background render starts before the foreground one, so
-// it survives a hook timeout that ends this process; whichever finishes first
-// writes the cache.
 // ponytail: cached per HEAD, so a new top-level directory shows only after
 // the next commit; key on a tree listing hash if that ever matters.
 func hookSubagentStart(root string, budget time.Duration) error {
@@ -624,22 +621,7 @@ func hookSubagentStart(root string, budget time.Duration) error {
 	if root, err = ValidateProjectPath(resolved); err != nil {
 		return err
 	}
-	key := subagentCacheKey(root)
-	if block, ok := readSubagentCache(root, key); ok {
-		fmt.Print(block)
-		return nil
-	}
-	if key != "" && !subagentRefreshRunning(root) {
-		startSubagentRefresh(root)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), budget)
-	defer cancel()
-	block, err := renderSubagentBlock(ctx, root)
-	if err != nil {
-		return err
-	}
-	writeSubagentCache(root, key, block)
-	fmt.Print(block)
+	fmt.Print(subagentStartBlock(root, budget))
 	return nil
 }
 
@@ -870,7 +852,7 @@ func getLastSessionEvents(root string) []string {
 		return nil
 	}
 	eventsFile := filepath.Join(codemapDir, "events.log")
-	f, err := os.Open(eventsFile)
+	f, err := runtimefile.OpenRead(eventsFile)
 	if err != nil {
 		return nil
 	}
@@ -1243,7 +1225,7 @@ func writeStatuslineState(root string, intent TaskIntent) {
 	if intent.RiskLevel != "low" {
 		status += " " + intent.RiskLevel
 	}
-	os.WriteFile(filepath.Join(codemapDir, "status"), []byte(status), 0o600)
+	_ = runtimefile.WriteAtomic(filepath.Join(codemapDir, "status"), []byte(status), 0o600)
 }
 
 // emitIntentMarker outputs a structured JSON comment for machine consumption.
@@ -1653,15 +1635,13 @@ func hookPreCompact(root string) error {
 
 	// Write hub state
 	hubsFile := filepath.Join(codemapDir, "hubs.txt")
-	f, err := os.OpenFile(hubsFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	fmt.Fprintf(f, "# Hub files at %s\n", time.Now().Format(time.RFC3339))
+	var hubs strings.Builder
+	fmt.Fprintf(&hubs, "# Hub files at %s\n", time.Now().Format(time.RFC3339))
 	for _, hub := range info.Hubs {
-		fmt.Fprintln(f, hub)
+		fmt.Fprintln(&hubs, hub)
+	}
+	if err := runtimefile.WriteAtomic(hubsFile, []byte(hubs.String()), 0o600); err != nil {
+		return err
 	}
 
 	fmt.Println()
@@ -2152,7 +2132,7 @@ func updateSessionLeaseContext(ctx context.Context, root, sessionID string, acti
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(leasePath, append(payload, '\n'), 0o600); err != nil {
+		if err := runtimefile.WriteAtomic(leasePath, append(payload, '\n'), 0o600); err != nil {
 			return err
 		}
 	} else if err := os.Remove(leasePath); err != nil && !os.IsNotExist(err) {

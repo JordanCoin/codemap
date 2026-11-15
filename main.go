@@ -465,9 +465,8 @@ func main() {
 	// adds to the config's exclude list (issue #150), since a config exclude
 	// is a standing decision about the repo and one run narrowing further
 	// must not silently re-admit it.
-	if tempDir == "" {
-		cmd.EnsureAutoConfig(absRoot)
-	}
+	cliExclude := exclude
+	autoFilter := tempDir == "" && len(only) == 0 && cmd.AutoConfigActive(absRoot)
 	projCfg := config.Load(absRoot)
 	if len(only) == 0 && len(projCfg.Only) > 0 {
 		only = projCfg.Only
@@ -578,10 +577,34 @@ func main() {
 	// Scan files, keeping at most the bound and counting the rest (#186).
 	treeFilters := filters
 	treeFilters.IncludeSymlinks = true
+	if autoFilter {
+		// Scan unfiltered once: the auto config is re-derived from it, then
+		// applied, so it follows the repo's file mix with no second scan.
+		treeFilters.Only, treeFilters.Exclude = nil, cliExclude
+	}
 	files, totalFiles, err := scanner.ScanFilesBounded(context.Background(), root, gitCache, treeFilters)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error walking tree: %v\n", err)
 		os.Exit(1)
+	}
+	autoNote := ""
+	if autoFilter {
+		autoCfg := cmd.RefreshAutoConfig(absRoot, files)
+		autoNote = cmd.AutoFilterNote(autoCfg)
+		filters.Only = autoCfg.Only
+		filters.Exclude = config.MergeExcludes(autoCfg.Exclude, cliExclude)
+		only, exclude = filters.Only, filters.Exclude
+		bounded := totalFiles > len(files)
+		kept := files[:0]
+		for _, f := range files {
+			if scanner.MatchesFilters(filepath.ToSlash(f.Path), f.Ext, only, exclude) {
+				kept = append(kept, f)
+			}
+		}
+		files = kept
+		if !bounded {
+			totalFiles = len(files)
+		}
 	}
 	var scanBound *scanner.ScanBound
 	if totalFiles > len(files) {
@@ -635,6 +658,9 @@ func main() {
 			}
 		}
 		render.Tree(os.Stdout, project)
+		if autoNote != "" {
+			fmt.Println(autoNote)
+		}
 	}
 	if !*jsonMode && scanBound != nil {
 		fmt.Printf("  Coverage: partial — %s\n", scanBound.Note())
@@ -980,6 +1006,17 @@ func runWatchSubcommand(subCmd, root string) error {
 	switch subCmd {
 	case "start":
 		transition, err := acquireWatchTransition(absRoot)
+		if errors.Is(err, watch.ErrTransitionLocked) {
+			// Another start won the race; its daemon is ours too.
+			for deadline := time.Now().Add(watchReadinessTimeout); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+				if active, _ := watch.ResolveActiveRuntime(absRoot); active.PID > 0 && !active.Legacy {
+					fmt.Println("Watch daemon already running")
+					return nil
+				}
+			}
+			fmt.Println("Watch daemon start already in progress")
+			return nil
+		}
 		if err != nil {
 			return fmt.Errorf("starting daemon: %w", err)
 		}
@@ -1001,7 +1038,6 @@ func runWatchSubcommand(subCmd, root string) error {
 			fmt.Println("Watch daemon already running")
 			return nil
 		}
-		cmd.EnsureAutoConfig(absRoot)
 		if err := watch.PreserveStalePIDEvidence(active); err != nil {
 			return fmt.Errorf("preserving stale daemon PID: %w", err)
 		}

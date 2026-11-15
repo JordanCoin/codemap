@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"codemap/internal/projectpath"
 	"codemap/limits"
 )
 
@@ -50,7 +51,7 @@ func runEveryEntryPoint(t *testing.T, root, cache string) {
 		t.Helper()
 		cmd := exec.Command(codemapTestBinaryPath, args...)
 		cmd.Dir = root
-		cmd.Env = append(os.Environ(), "XDG_CACHE_HOME="+cache, "CODEMAP_HOOK_TIMEOUT=30s")
+		cmd.Env = append(os.Environ(), "HOME="+cache, "CODEMAP_HOOK_TIMEOUT=30s")
 		cmd.Stdin = strings.NewReader(stdin)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
@@ -117,7 +118,7 @@ func TestUnsetUpRepoKeepsNothingInTheRepo(t *testing.T) {
 }
 
 // TestUnsetUpRepoWithoutCacheDirWritesNothing: with no user cache directory
-// (no HOME, no XDG_CACHE_HOME) state is unavailable, never put in a shared
+// (no HOME) state is unavailable, never put in a shared
 // temp dir, and every hook still exits 0.
 func TestUnsetUpRepoWithoutCacheDirWritesNothing(t *testing.T) {
 	root := stateFixture(t)
@@ -172,7 +173,7 @@ func codemapIn(t *testing.T, dir string, env []string, stdin string, args ...str
 // thing it may add to the repo is .codemap/.
 func setUpFixture(t *testing.T, root, cache string) {
 	t.Helper()
-	if out, err := codemapIn(t, root, []string{"XDG_CACHE_HOME=" + cache}, "", "setup", "--no-hooks", "--no-mcp", "--no-skills", root); err != nil {
+	if out, err := codemapIn(t, root, []string{"HOME=" + cache}, "", "setup", "--no-hooks", "--no-mcp", "--no-skills", root); err != nil {
 		t.Fatalf("setup: %v\n%s", err, out)
 	}
 }
@@ -222,7 +223,7 @@ func TestSetUpRepoKeepsOnlyConfigInTheRepo(t *testing.T) {
 		return
 	}
 	// V3: every state dir is 0700 and every state file 0600.
-	_ = filepath.WalkDir(filepath.Join(cache, "codemap"), func(path string, d fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(filepath.Join(cache, ".codemap", "state"), func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -239,7 +240,7 @@ func TestRemovingCodemapDirKeepsStateWhereItIs(t *testing.T) {
 	root := stateFixture(t)
 	cache := t.TempDir()
 	setUpFixture(t, root, cache)
-	env := []string{"XDG_CACHE_HOME=" + cache}
+	env := []string{"HOME=" + cache}
 	edit := func(file string) {
 		t.Helper()
 		stdin := `{"session_id":"s","tool_input":{"file_path":"` + filepath.ToSlash(filepath.Join(root, file)) + `"}}`
@@ -325,7 +326,7 @@ func TestAutoConfigKeepsHubsInADataHeavyRepo(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	out, err := codemapIn(t, root, []string{"XDG_CACHE_HOME=" + t.TempDir()}, "", ".")
+	out, err := codemapIn(t, root, []string{"HOME=" + t.TempDir()}, "", ".")
 	if err != nil {
 		t.Fatalf("codemap .: %v\n%s", err, out)
 	}
@@ -351,7 +352,7 @@ func TestSetupWhileDaemonRunsKeepsOneDaemon(t *testing.T) {
 		t.Skip("pgrep")
 	}
 	root := projectpathCanonical(t, stateFixture(t))
-	env := []string{"XDG_CACHE_HOME=" + t.TempDir()}
+	env := []string{"HOME=" + t.TempDir()}
 	t.Cleanup(func() { _, _ = codemapIn(t, root, env, "", "watch", "stop", root) })
 	if out, err := codemapIn(t, root, env, "", "watch", "start", root); err != nil {
 		t.Fatalf("watch start: %v\n%s", err, out)
@@ -374,28 +375,36 @@ func TestSetupWhileDaemonRunsKeepsOneDaemon(t *testing.T) {
 	}
 }
 
-// Finding 1 across an upgrade: a live registered daemon whose state is not
-// in the current state dir is replaced, never joined by a second, and
-// `watch stop` stops whatever is registered.
+// Finding 1 across an upgrade: a live registered daemon with no pid file in
+// the state dir (an older binary's) is replaced, never joined by a second,
+// and `watch stop` stops whatever is registered.
 func TestRegisteredDaemonWithEmptyStateDirGetsNoSecond(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("pgrep")
 	}
 	root := projectpathCanonical(t, stateFixture(t))
-	oldEnv := []string{"XDG_CACHE_HOME=" + t.TempDir()}
-	newEnv := []string{"XDG_CACHE_HOME=" + t.TempDir()}
-	t.Cleanup(func() {
-		_, _ = codemapIn(t, root, newEnv, "", "watch", "stop", root)
-		_, _ = codemapIn(t, root, oldEnv, "", "watch", "stop", root)
-	})
-	if out, err := codemapIn(t, root, oldEnv, "", "watch", "start", root); err != nil {
+	home := t.TempDir()
+	env := []string{"HOME=" + home}
+	t.Cleanup(func() { _, _ = codemapIn(t, root, env, "", "watch", "stop", root) })
+	if out, err := codemapIn(t, root, env, "", "watch", "start", root); err != nil {
 		t.Fatalf("watch start: %v\n%s", err, out)
 	}
 	old := daemonPIDs(t, root)
 	if len(old) != 1 {
 		t.Fatalf("daemons after start = %v", old)
 	}
-	out, err := codemapIn(t, root, newEnv, "", "watch", "start", root)
+	// What an older binary leaves: a registry entry without a state dir, and
+	// its pid file somewhere this version does not look.
+	key := projectpath.ProjectKey(root)
+	entry := filepath.Join(os.Getenv("CODEMAP_DAEMON_REGISTRY"), key+".json")
+	if err := os.WriteFile(entry, []byte(`{"pid":`+old[0]+`,"root":"`+root+`"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(home, ".codemap", "state", key, "watch.pid")); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := codemapIn(t, root, env, "", "watch", "start", root)
 	if err != nil || !strings.Contains(out, "older codemap") {
 		t.Fatalf("start with an empty state dir: %v\n%s", err, out)
 	}
@@ -403,11 +412,93 @@ func TestRegisteredDaemonWithEmptyStateDirGetsNoSecond(t *testing.T) {
 	if len(now) != 1 || now[0] == old[0] {
 		t.Fatalf("daemons %v then %v, want the registered one replaced by exactly one", old, now)
 	}
-	if out, err := codemapIn(t, root, newEnv, "", "watch", "stop", root); err != nil {
+	if out, err := codemapIn(t, root, env, "", "watch", "stop", root); err != nil {
 		t.Fatalf("watch stop: %v\n%s", err, out)
 	}
 	if left := daemonPIDs(t, root); len(left) != 0 {
 		t.Fatalf("daemons left after stop: %v", left)
+	}
+}
+
+// Two environments that differ only in XDG_CACHE_HOME (a shell and a
+// GUI-launched agent) share one daemon instead of killing each other's.
+func TestDifferentXDGCacheHomesShareOneDaemon(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pgrep")
+	}
+	root := projectpathCanonical(t, stateFixture(t))
+	home := t.TempDir()
+	shell := []string{"HOME=" + home, "XDG_CACHE_HOME=" + t.TempDir()}
+	gui := []string{"HOME=" + home, "XDG_CACHE_HOME="}
+	t.Cleanup(func() { _, _ = codemapIn(t, root, shell, "", "watch", "stop", root) })
+	if out, err := codemapIn(t, root, shell, "", "watch", "start", root); err != nil {
+		t.Fatalf("watch start: %v\n%s", err, out)
+	}
+	before := daemonPIDs(t, root)
+	if out, _ := codemapIn(t, root, gui, "", "watch", "start", root); !strings.Contains(out, "already running") {
+		t.Fatalf("second environment: %s", out)
+	}
+	if out, _ := codemapIn(t, root, shell, "", "watch", "start", root); !strings.Contains(out, "already running") {
+		t.Fatalf("first environment again: %s", out)
+	}
+	if after := daemonPIDs(t, root); len(before) != 1 || strings.Join(after, ",") != strings.Join(before, ",") {
+		t.Fatalf("daemons %v became %v", before, after)
+	}
+}
+
+// Losing `watch start` racers succeed quietly with the winner's daemon.
+func TestConcurrentWatchStartsAllSucceedWithOneDaemon(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pgrep")
+	}
+	root := projectpathCanonical(t, stateFixture(t))
+	env := []string{"HOME=" + t.TempDir()}
+	t.Cleanup(func() { _, _ = codemapIn(t, root, env, "", "watch", "stop", root) })
+	const n = 4
+	outs, errs := make([]string, n), make([]error, n)
+	done := make(chan int, n)
+	for i := 0; i < n; i++ {
+		go func(i int) { outs[i], errs[i] = codemapIn(t, root, env, "", "watch", "start", root); done <- i }(i)
+	}
+	for i := 0; i < n; i++ {
+		<-done
+	}
+	for i := range outs {
+		if errs[i] != nil || strings.Contains(outs[i], "Error") {
+			t.Fatalf("start %d: %v\n%s", i, errs[i], outs[i])
+		}
+	}
+	if pids := daemonPIDs(t, root); len(pids) != 1 {
+		t.Fatalf("daemons = %v, want one", pids)
+	}
+}
+
+// A state file replaced by a symlink is never written through.
+func TestPlantedStateFileLinksAreNotWrittenThrough(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks")
+	}
+	root := stateFixture(t)
+	home := t.TempDir()
+	runEveryEntryPoint(t, root, home)
+	stateDir := filepath.Dir(findFile(t, home, "project.json"))
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.WriteFile(outside, []byte("mine\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"agent_edits.jsonl", "events.log", "hubs.txt", "status", "auto-config.json", "subagent-start.json", "handoff.latest.json", "handoff.metrics.log"} {
+		path := filepath.Join(stateDir, name)
+		_ = os.Remove(path)
+		if err := os.Symlink(outside, path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runEveryEntryPoint(t, root, home)
+	if out, err := codemapIn(t, root, []string{"HOME=" + home}, "", "handoff", "."); err == nil {
+		t.Fatalf("handoff saved through a planted link:\n%s", out)
+	}
+	if data, _ := os.ReadFile(outside); string(data) != "mine\n" {
+		t.Fatalf("a state write went through a link: %q", data)
 	}
 }
 
@@ -432,14 +523,17 @@ func TestNoUsableStateDirIsQuiet(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(readOnly, 0o755) })
 	linkCache := t.TempDir()
-	if err := os.Symlink(t.TempDir(), filepath.Join(linkCache, "codemap")); err != nil {
+	if err := os.Mkdir(filepath.Join(linkCache, ".codemap"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(linkCache, ".codemap", "state")); err != nil {
 		t.Fatal(err)
 	}
 	missing := filepath.Join(t.TempDir(), "gone")
 	cases := map[string][]string{
-		"missing home":   {"HOME=" + missing, "XDG_CACHE_HOME=", "CODEMAP_DAEMON_REGISTRY="},
-		"read-only home": {"HOME=" + readOnly, "XDG_CACHE_HOME="},
-		"planted link":   {"XDG_CACHE_HOME=" + linkCache},
+		"missing home":   {"HOME=" + missing, "CODEMAP_DAEMON_REGISTRY="},
+		"read-only home": {"HOME=" + readOnly},
+		"planted link":   {"HOME=" + linkCache},
 	}
 	for name, env := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -476,7 +570,7 @@ func TestNoUsableStateDirIsQuiet(t *testing.T) {
 func TestSubagentStartTimeoutStillFillsTheCache(t *testing.T) {
 	root := stateFixture(t)
 	cache := t.TempDir()
-	out, err := codemapIn(t, root, []string{"XDG_CACHE_HOME=" + cache, "CODEMAP_HOOK_TIMEOUT=1ms"}, `{"cwd":"`+filepath.ToSlash(root)+`"}`, "hook", "subagent-start")
+	out, err := codemapIn(t, root, []string{"HOME=" + cache, "CODEMAP_HOOK_TIMEOUT=1ms"}, `{"cwd":"`+filepath.ToSlash(root)+`"}`, "hook", "subagent-start")
 	if err != nil || out != "" {
 		t.Fatalf("timed-out subagent-start: %v %q", err, out)
 	}

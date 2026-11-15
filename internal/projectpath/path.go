@@ -192,7 +192,7 @@ func CheckedRuntimeCodemapDir(projectRoot string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(selection.RuntimeDir, "projects", ProjectKey(selection.ProjectRoot)), nil
+	return selection.ProjectDir, nil
 }
 
 // CanonicalPath returns an absolute, cleaned path with platform symlinks

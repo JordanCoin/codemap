@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"codemap/internal/projectpath"
+	"codemap/internal/runtimefile"
 	"codemap/limits"
 )
 
@@ -282,10 +283,20 @@ func Load(root string) ProjectConfig {
 func LoadFirst(path string, fallback func() string) ProjectConfig {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		if auto := fallback(); auto != "" {
-			return LoadFile(auto)
+			return LoadAuto(auto)
 		}
 	}
 	return LoadFile(path)
+}
+
+// LoadAuto reads an auto-detected config from the state dir. It refuses a
+// symlink, and a missing or unreadable copy is zero (defaults).
+func LoadAuto(path string) ProjectConfig {
+	var cfg ProjectConfig
+	if data, err := runtimefile.Read(path); err != nil || json.Unmarshal(data, &cfg) != nil {
+		return ProjectConfig{}
+	}
+	return cfg
 }
 
 // LoadFile reads a previously resolved config path.

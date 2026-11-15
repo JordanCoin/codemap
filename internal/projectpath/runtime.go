@@ -15,6 +15,7 @@ type RuntimeSelection struct {
 	ProjectRoot string
 	PolicyDir   string
 	RuntimeDir  string
+	ProjectDir  string // this project's state: RuntimeDir, or RuntimeDir/projects/<key> under --setup-root
 	Source      Source
 }
 
@@ -39,7 +40,7 @@ func SelectRuntime(projectRoot string) (RuntimeSelection, error) {
 		if err != nil {
 			return RuntimeSelection{}, err
 		}
-		result.RuntimeDir = dir
+		result.RuntimeDir, result.ProjectDir = dir, dir
 		return result, nil
 	}
 
@@ -52,7 +53,8 @@ func SelectRuntime(projectRoot string) (RuntimeSelection, error) {
 		}
 	}
 	projects := filepath.Join(result.RuntimeDir, "projects")
-	for _, dir := range []string{projects, filepath.Join(projects, ProjectKey(selection.ProjectRoot))} {
+	result.ProjectDir = filepath.Join(projects, ProjectKey(selection.ProjectRoot))
+	for _, dir := range []string{projects, result.ProjectDir} {
 		if err := ensurePrivateDirectory(dir); err != nil {
 			return RuntimeSelection{}, err
 		}
@@ -65,68 +67,65 @@ func SelectRuntime(projectRoot string) (RuntimeSelection, error) {
 
 // IsSetUp reports whether the project's policy directory (<setup root>/.codemap)
 // exists. Only explicit commands (setup, config init, skill init) create it.
-// It never decides where machine state goes: that is always StateCacheDir.
+// It never decides where machine state goes: that is always UserDir/state.
 func IsSetUp(projectRoot string) bool {
 	info, err := os.Lstat(CodemapDir(projectRoot))
 	return err == nil && info.IsDir()
 }
 
 // ErrNoStateDir reports that there is nowhere safe to keep machine state (no
-// cache dir, not creatable, not writable, or unsafe). Every failure to get the
+// home dir, not creatable, not writable, or unsafe). Every failure to get the
 // private state dir wraps it; callers skip writes and treat state as absent.
 var ErrNoStateDir = errors.New("no usable codemap state directory")
 
-// StateCacheDir is the per-user root for machine state of every project:
-// $XDG_CACHE_HOME/codemap on every OS when it is absolute, else the OS user
-// cache directory. There is deliberately no shared-temp fallback.
-func StateCacheDir() (string, bool) {
-	base := os.Getenv("XDG_CACHE_HOME")
-	if !filepath.IsAbs(base) {
-		var err error
-		if base, err = os.UserCacheDir(); err != nil || !filepath.IsAbs(base) {
-			return "", false
-		}
+// UserDir is the per-user codemap base, ~/.codemap: the daemon registry
+// (daemons/) and every project's machine state (state/<key>/) live under one
+// root, so every process of this user agrees on both whatever its
+// environment. It is not a cache: the OS may purge those, and a handoff is
+// not disposable. There is deliberately no shared-temp fallback.
+func UserDir() (string, bool) {
+	home, err := os.UserHomeDir()
+	if err != nil || !filepath.IsAbs(home) {
+		return "", false
 	}
-	return filepath.Join(base, "codemap"), true
+	return filepath.Join(home, ".codemap"), true
 }
 
-// userStateDir returns <StateCacheDir>/<ProjectKey>, marked with the project
-// root, after creating it and its projects/<ProjectKey> runtime dir.
-func userStateDir(projectRoot string) (string, error) {
-	cacheDir, ok := StateCacheDir()
+// EnsureUserSubdir creates UserDir/<names...>, returning its canonical path.
+// It creates ~/.codemap 0700 when missing but never a missing home. A link at
+// ~/.codemap is the user's and is resolved; from <name> down every level is
+// Lstat-checked, links refused, and it must be a 0700 dir this user owns.
+func EnsureUserSubdir(names ...string) (string, error) {
+	base, ok := UserDir()
 	if !ok {
 		return "", ErrNoStateDir
 	}
-	dir, err := privateStateDir(cacheDir, ProjectKey(projectRoot))
-	if err == nil {
-		err = ensureProjectMarker(dir, CanonicalPath(projectRoot))
+	if _, err := os.Stat(base); os.IsNotExist(err) {
+		if err := os.Mkdir(base, 0o700); err != nil && !os.IsExist(err) {
+			return "", fmt.Errorf("%w: create %q: %w", ErrNoStateDir, base, err)
+		}
 	}
-	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrNoStateDir, err)
+	dir := CanonicalPath(base)
+	for _, name := range names {
+		dir = filepath.Join(dir, name)
+		if err := ensurePrivateDirectory(dir); err != nil {
+			return "", fmt.Errorf("%w: %w", ErrNoStateDir, err)
+		}
 	}
 	return dir, nil
 }
 
-// privateStateDir creates <cacheDir>/<key>/projects/<key>, every level a real
-// 0700 directory owned by this user. Only the OS cache dir itself may be
-// created above that, never its parents, so a missing home stays missing.
-// Links above the cache dir belong to the user or the OS and are resolved;
-// from the codemap leaf down every level is Lstat-checked and links refused.
-func privateStateDir(cacheDir, key string) (string, error) {
-	base := filepath.Dir(cacheDir)
-	if _, err := os.Stat(base); os.IsNotExist(err) {
-		if err := os.Mkdir(base, 0o700); err != nil {
-			return "", fmt.Errorf("create user cache %q: %w", base, err)
-		}
+// userStateDir returns ~/.codemap/state/<ProjectKey>, marked with the
+// project root.
+func userStateDir(projectRoot string) (string, error) {
+	dir, err := EnsureUserSubdir("state", ProjectKey(projectRoot))
+	if err != nil {
+		return "", err
 	}
-	dir := filepath.Join(CanonicalPath(base), filepath.Base(cacheDir))
-	for _, part := range []string{"", key, "projects", key} {
-		dir = filepath.Join(dir, part)
-		if err := ensurePrivateDirectory(dir); err != nil {
-			return "", err
-		}
+	if err := ensureProjectMarker(dir, CanonicalPath(projectRoot)); err != nil {
+		return "", fmt.Errorf("%w: %w", ErrNoStateDir, err)
 	}
-	return filepath.Dir(filepath.Dir(dir)), nil
+	return dir, nil
 }
 
 func ensureRealDirectory(path string) error {
@@ -175,20 +174,24 @@ func ensureProjectMarker(runtimeDir, canonicalRoot string) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err == nil {
-		if _, writeErr := f.Write(payload); writeErr != nil {
-			_ = f.Close()
-			_ = os.Remove(path)
-			return writeErr
-		}
-		if closeErr := f.Close(); closeErr != nil {
-			_ = os.Remove(path)
-			return closeErr
-		}
-		return nil
+	// Written aside and hard-linked into place: the link is exclusive and
+	// atomic, so a concurrent reader never sees an empty marker.
+	f, err := os.CreateTemp(runtimeDir, ".project-*.json")
+	if err != nil {
+		return fmt.Errorf("create runtime identity %q: %w", path, err)
 	}
-	if !os.IsExist(err) {
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	_, err = f.Write(payload)
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	if err := os.Link(tmp, path); err == nil {
+		return nil
+	} else if !os.IsExist(err) {
 		return fmt.Errorf("create runtime identity %q: %w", path, err)
 	}
 	info, statErr := os.Lstat(path)

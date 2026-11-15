@@ -283,7 +283,7 @@ func TestResolveActiveRuntimeFindsRegisteredDaemonOutsideStateDir(t *testing.T) 
 	}
 	root := projectpath.CanonicalPath(project)
 	process := startHelperDaemon(t, root)
-	registerDaemon(root, process.Process.Pid)
+	registerDaemon(root, process.Process.Pid, "")
 
 	active, err := ResolveActiveRuntime(project)
 	if err != nil {
@@ -298,8 +298,35 @@ func TestResolveActiveRuntimeFindsRegisteredDaemonOutsideStateDir(t *testing.T) 
 	if err := Stop(project); err != nil {
 		t.Fatalf("Stop() = %v", err)
 	}
-	if registeredPID(root) != 0 {
+	if _, ok := registeredDaemon(root); ok {
 		t.Fatal("registry entry survived Stop")
+	}
+}
+
+// A daemon under an explicit --setup-root keeps its pid in another current
+// layout; the registry names that dir, so it is used, never replaced.
+func TestResolveActiveRuntimeUsesRegisteredDaemonOfAnotherLayout(t *testing.T) {
+	project := t.TempDir()
+	if err := os.Mkdir(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root := projectpath.CanonicalPath(project)
+	process := startHelperDaemon(t, root)
+	elsewhere := t.TempDir()
+	if err := os.WriteFile(filepath.Join(elsewhere, "watch.pid"), []byte(fmt.Sprint(process.Process.Pid)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	registerDaemon(root, process.Process.Pid, elsewhere)
+
+	active, err := ResolveActiveRuntime(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.Legacy || active.PID != process.Process.Pid || active.Directory != elsewhere {
+		t.Fatalf("ResolveActiveRuntime() = %#v, want the other layout's daemon, not legacy", active)
+	}
+	if !IsRunning(project) {
+		t.Fatal("IsRunning = false for a current daemon under another layout")
 	}
 }
 
@@ -309,7 +336,7 @@ func TestResolveActiveRuntimeIgnoresForeignRegisteredPID(t *testing.T) {
 		t.Fatal(err)
 	}
 	foreign := startHelperDaemon(t, t.TempDir())
-	registerDaemon(project, foreign.Process.Pid)
+	registerDaemon(project, foreign.Process.Pid, "")
 
 	active, err := ResolveActiveRuntime(project)
 	if err != nil {

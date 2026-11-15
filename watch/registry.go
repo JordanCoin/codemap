@@ -27,9 +27,12 @@ const daemonRegistryEnv = "CODEMAP_DAEMON_REGISTRY"
 
 // DaemonInfo is one registered daemon.
 type DaemonInfo struct {
-	PID     int       `json:"pid"`
-	Root    string    `json:"root"`
-	Started time.Time `json:"-"`
+	PID  int    `json:"pid"`
+	Root string `json:"root"`
+	// StateDir holds the daemon's pid file; binaries before it was recorded
+	// leave it empty.
+	StateDir string    `json:"state_dir,omitempty"`
+	Started  time.Time `json:"-"`
 }
 
 type registryEntry struct {
@@ -37,55 +40,55 @@ type registryEntry struct {
 	path string
 }
 
+// daemonRegistryDir is UserDir/daemons, beside the state dirs, unless
+// daemonRegistryEnv overrides it.
 func daemonRegistryDir() (string, error) {
 	if dir := os.Getenv(daemonRegistryEnv); dir != "" {
 		return dir, nil
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
+	base, ok := projectpath.UserDir()
+	if !ok {
+		return "", projectpath.ErrNoStateDir
 	}
-	return filepath.Join(home, ".codemap", "daemons"), nil
+	return filepath.Join(base, "daemons"), nil
 }
 
-// registerDaemon records pid for root. Failures are ignored: a daemon must
-// start even when the home directory is unwritable.
-func registerDaemon(root string, pid int) {
+// registerDaemon records pid and its state dir for root. Failures are
+// ignored: a daemon must start even when the home directory is unwritable.
+func registerDaemon(root string, pid int, stateDir string) {
 	dir, err := daemonRegistryDir()
 	if err != nil {
 		return
 	}
-	// Create .codemap/daemons but never a missing home above it.
-	if _, err := os.Stat(filepath.Dir(filepath.Dir(dir))); err != nil {
-		return
-	}
-	for _, d := range []string{filepath.Dir(dir), dir} {
-		if err := os.Mkdir(d, 0o700); err != nil && !os.IsExist(err) {
+	if os.Getenv(daemonRegistryEnv) == "" {
+		if dir, err = projectpath.EnsureUserSubdir("daemons"); err != nil {
 			return
 		}
+	} else if err := os.MkdirAll(dir, 0o700); err != nil {
+		return
 	}
-	payload, err := json.Marshal(DaemonInfo{PID: pid, Root: canonicalRoot(root)})
+	payload, err := json.Marshal(DaemonInfo{PID: pid, Root: canonicalRoot(root), StateDir: stateDir})
 	if err != nil {
 		return
 	}
 	_ = runtimefile.WriteAtomic(filepath.Join(dir, projectpath.ProjectKey(root)+".json"), payload, 0o600)
 }
 
-// registeredPID returns the pid the registry records for root, or 0.
-func registeredPID(root string) int {
+// registeredDaemon returns the entry the registry records for root, if any.
+func registeredDaemon(root string) (DaemonInfo, bool) {
 	dir, err := daemonRegistryDir()
 	if err != nil {
-		return 0
+		return DaemonInfo{}, false
 	}
 	data, err := runtimefile.Read(filepath.Join(dir, projectpath.ProjectKey(root)+".json"))
 	if err != nil {
-		return 0
+		return DaemonInfo{}, false
 	}
 	var info DaemonInfo
 	if json.Unmarshal(data, &info) != nil || info.PID <= 0 || canonicalRoot(info.Root) != canonicalRoot(root) {
-		return 0
+		return DaemonInfo{}, false
 	}
-	return info.PID
+	return info, true
 }
 
 // unregisterDaemon drops every entry naming pid.

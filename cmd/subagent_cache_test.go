@@ -5,153 +5,136 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-// subagentCacheRepo is a committed git repo with the renderer and the
-// background refresh replaced by counters.
-func subagentCacheRepo(t *testing.T) (root string, renders, refreshes *int) {
+// subagentCacheRepo is a committed git repo whose renderer and detached
+// launcher are replaced: the launcher runs the refresh in a goroutine.
+func subagentCacheRepo(t *testing.T, delay time.Duration) (root string, renders, launches *atomic.Int32) {
 	t.Helper()
 	root = makeRepoOnBranch(t, "main")
-	renders, refreshes = new(int), new(int)
-	origRender, origRefresh := renderSubagentBlock, startSubagentRefresh
-	t.Cleanup(func() { renderSubagentBlock, startSubagentRefresh = origRender, origRefresh })
+	renders, launches = new(atomic.Int32), new(atomic.Int32)
+	origRender, origLaunch := renderSubagentBlock, startSubagentRefresh
+	t.Cleanup(func() { renderSubagentBlock, startSubagentRefresh = origRender, origLaunch })
 	renderSubagentBlock = func(ctx context.Context, root string) (string, error) {
-		*renders++
+		renders.Add(1)
+		time.Sleep(delay)
 		return "block " + subagentCacheKey(root) + "\n", nil
 	}
-	startSubagentRefresh = func(string) { *refreshes++ }
-	return root, renders, refreshes
+	startSubagentRefresh = func(root string) bool {
+		launches.Add(1)
+		go refreshSubagentCache(root)
+		return true
+	}
+	return root, renders, launches
 }
 
-func runSubagentStartHook(t *testing.T, root string) string {
+func waitForSubagentRefresh(t *testing.T, root string) {
 	t.Helper()
-	var out string
-	withStdinInput(t, `{"cwd":"`+filepath.ToSlash(root)+`"}`, func() {
-		out = captureOutput(func() {
-			if err := hookSubagentStart(root, subagentStartTimeout); err != nil {
-				t.Fatalf("hookSubagentStart: %v", err)
-			}
-		})
-	})
-	return out
+	dir, _ := subagentCacheDir(root)
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		_, hit := readSubagentCache(root, subagentCacheKey(root))
+		if _, err := os.Lstat(filepath.Join(dir, subagentRefreshLock)); hit && os.IsNotExist(err) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the refresh never filled the cache and dropped its lock")
+		}
+	}
 }
 
 func TestSubagentStartCachesPerHead(t *testing.T) {
-	root, renders, _ := subagentCacheRepo(t)
-
-	first := runSubagentStartHook(t, root)
-	if *renders != 1 || !strings.HasPrefix(first, "block ") {
-		t.Fatalf("miss: renders=%d out=%q", *renders, first)
+	root, renders, _ := subagentCacheRepo(t, 0)
+	first := subagentStartBlock(root, subagentStartTimeout)
+	if renders.Load() != 1 || !strings.HasPrefix(first, "block ") {
+		t.Fatalf("miss: renders=%d out=%q", renders.Load(), first)
 	}
-	dir, _ := subagentCacheDir(root)
-	if _, err := os.Stat(filepath.Join(dir, subagentCacheFile)); err != nil {
-		t.Fatalf("miss did not store the block: %v", err)
+	waitForSubagentRefresh(t, root)
+	if second := subagentStartBlock(root, subagentStartTimeout); second != first || renders.Load() != 1 {
+		t.Fatalf("hit rendered again: renders=%d out=%q", renders.Load(), second)
 	}
-	if second := runSubagentStartHook(t, root); second != first || *renders != 1 {
-		t.Fatalf("hit rendered again: renders=%d out=%q", *renders, second)
-	}
-
-	oldKey := subagentCacheKey(root)
 	runGitTestCmd(t, root, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "next")
-	if subagentCacheKey(root) == oldKey {
-		t.Fatal("cache key did not change with HEAD")
+	if third := subagentStartBlock(root, subagentStartTimeout); renders.Load() != 2 || third == first {
+		t.Fatalf("new HEAD served the old block: renders=%d out=%q", renders.Load(), third)
 	}
-	if third := runSubagentStartHook(t, root); *renders != 2 || third == first {
-		t.Fatalf("new HEAD served the old block: renders=%d out=%q", *renders, third)
-	}
+	waitForSubagentRefresh(t, root)
 }
 
 func TestSubagentStartCorruptCacheIsAMiss(t *testing.T) {
-	root, renders, _ := subagentCacheRepo(t)
+	root, renders, _ := subagentCacheRepo(t, 0)
 	dir, _ := subagentCacheDir(root)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, subagentCacheFile), []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, subagentCacheFile), []byte("{not json"), 0o644); err != nil {
-		t.Fatal(err)
+	if out := subagentStartBlock(root, subagentStartTimeout); renders.Load() != 1 || !strings.HasPrefix(out, "block ") {
+		t.Fatalf("corrupt cache: renders=%d out=%q", renders.Load(), out)
 	}
-	if out := runSubagentStartHook(t, root); *renders != 1 || !strings.HasPrefix(out, "block ") {
-		t.Fatalf("corrupt cache: renders=%d out=%q", *renders, out)
-	}
+	waitForSubagentRefresh(t, root)
 }
 
-func TestSubagentStartTimeoutPrintsNothingAndRefreshes(t *testing.T) {
-	root, _, refreshes := subagentCacheRepo(t)
-	renderSubagentBlock = func(ctx context.Context, root string) (string, error) {
-		<-ctx.Done()
-		return "", ctx.Err()
+// N subagents starting at once on a new HEAD cost one render, and every one
+// of them gets the block when the render is fast.
+func TestSubagentStartConcurrentMissesLaunchOneRender(t *testing.T) {
+	root, renders, launches := subagentCacheRepo(t, 50*time.Millisecond)
+	const n = 8
+	outs := make([]string, n)
+	var wg sync.WaitGroup
+	for i := range outs {
+		wg.Add(1)
+		go func(i int) { defer wg.Done(); outs[i] = subagentStartBlock(root, subagentStartTimeout) }(i)
 	}
-	start := time.Now()
-	withStdinInput(t, `{"cwd":"`+filepath.ToSlash(root)+`"}`, func() {
-		out := captureOutput(func() { _ = hookSubagentStart(root, subagentStartTimeout) })
-		if out != "" {
-			t.Fatalf("timed-out render printed %q", out)
+	wg.Wait()
+	if launches.Load() != 1 || renders.Load() != 1 {
+		t.Fatalf("launches=%d renders=%d, want exactly one of each", launches.Load(), renders.Load())
+	}
+	for i, out := range outs {
+		if !strings.HasPrefix(out, "block ") {
+			t.Fatalf("caller %d printed %q", i, out)
 		}
-	})
-	if *refreshes != 1 {
-		t.Fatalf("background refreshes = %d, want 1", *refreshes)
 	}
-	if elapsed := time.Since(start); elapsed > subagentStartTimeout+2*time.Second {
-		t.Fatalf("hook took %v past its deadline", elapsed)
+	waitForSubagentRefresh(t, root)
+}
+
+// A render slower than the budget prints nothing for anyone, yet still fills
+// the cache afterwards and drops its lock.
+func TestSubagentStartSlowRenderPrintsNothingAndFillsTheCacheLater(t *testing.T) {
+	root, renders, launches := subagentCacheRepo(t, 300*time.Millisecond)
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if out := subagentStartBlock(root, 20*time.Millisecond); out != "" {
+				t.Errorf("slow render printed %q", out)
+			}
+		}()
+	}
+	wg.Wait()
+	waitForSubagentRefresh(t, root)
+	if launches.Load() != 1 || renders.Load() != 1 {
+		t.Fatalf("launches=%d renders=%d, want one", launches.Load(), renders.Load())
 	}
 }
 
-// The background render starts before the foreground one, so a hook killed by
-// its timeout still leaves one running; a fresh lock means one already is.
-func TestSubagentStartLaunchesRefreshUpFrontUnlessLocked(t *testing.T) {
-	root, renders, refreshes := subagentCacheRepo(t)
-	renderSubagentBlock = func(context.Context, string) (string, error) {
-		*renders++
-		if *refreshes != 1 {
-			t.Errorf("foreground render began before the background refresh (refreshes=%d)", *refreshes)
-		}
-		return "block\n", nil
-	}
-	runSubagentStartHook(t, root)
-
+func TestSubagentStartTakesOverAStaleLock(t *testing.T) {
+	root, renders, launches := subagentCacheRepo(t, 0)
 	dir, _ := subagentCacheDir(root)
-	if err := os.Remove(filepath.Join(dir, subagentCacheFile)); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, subagentRefreshLock), nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	*refreshes = 0
-	renderSubagentBlock = func(context.Context, string) (string, error) { return "block\n", nil }
-	runSubagentStartHook(t, root)
-	if *refreshes != 0 {
-		t.Fatalf("launched a refresh while a fresh lock exists (refreshes=%d)", *refreshes)
-	}
-}
-
-func TestRefreshSubagentCacheHonoursLock(t *testing.T) {
-	root, renders, _ := subagentCacheRepo(t)
-	dir, _ := subagentCacheDir(root)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	lock := filepath.Join(dir, subagentRefreshLock)
-	if err := os.WriteFile(lock, nil, 0o644); err != nil {
+	if err := os.WriteFile(lock, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	refreshSubagentCache(root)
-	if *renders != 0 {
-		t.Fatal("refresh ran while another held the lock")
+	if out := subagentStartBlock(root, 50*time.Millisecond); out != "" || launches.Load() != 0 {
+		t.Fatalf("a fresh lock must hold: out=%q launches=%d", out, launches.Load())
 	}
 	stale := time.Now().Add(-2 * subagentRefreshBound)
 	if err := os.Chtimes(lock, stale, stale); err != nil {
 		t.Fatal(err)
 	}
-	refreshSubagentCache(root)
-	if *renders != 1 {
-		t.Fatalf("stale lock not taken over: renders=%d", *renders)
+	if out := subagentStartBlock(root, subagentStartTimeout); !strings.HasPrefix(out, "block ") || renders.Load() != 1 {
+		t.Fatalf("stale lock not taken over: out=%q renders=%d", out, renders.Load())
 	}
-	if _, ok := readSubagentCache(root, subagentCacheKey(root)); !ok {
-		t.Fatal("refresh did not store the block")
-	}
-	if _, err := os.Stat(lock); !os.IsNotExist(err) {
-		t.Fatalf("lock left behind: %v", err)
-	}
+	waitForSubagentRefresh(t, root)
 }

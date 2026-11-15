@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"codemap/internal/projectpath"
+	"codemap/internal/runtimefile"
 )
 
 var ErrTransitionLocked = errors.New("watch daemon transition already in progress")
@@ -110,7 +111,7 @@ func readTransition(path string) (transitionRecord, error) {
 	if !info.Mode().IsRegular() {
 		return transitionRecord{}, fmt.Errorf("unsafe transition lock %q", path)
 	}
-	data, err := os.ReadFile(path)
+	data, err := runtimefile.Read(path)
 	if err != nil {
 		return transitionRecord{}, err
 	}

@@ -15,6 +15,7 @@ import (
 
 	"codemap/config"
 	"codemap/internal/projectpath"
+	"codemap/internal/runtimefile"
 	"codemap/scanner"
 )
 
@@ -148,7 +149,7 @@ func ReadCache(root string, expected CacheIdentity) (*Graph, bool) {
 
 // ReadCacheAt reads a cache from cacheDir and validates graph paths against root.
 func ReadCacheAt(cacheDir, root string, expected CacheIdentity) (*Graph, bool) {
-	data, err := os.ReadFile(CachePathAt(cacheDir))
+	data, err := runtimefile.Read(CachePathAt(cacheDir))
 	if err != nil {
 		return nil, false
 	}

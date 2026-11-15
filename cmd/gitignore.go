@@ -44,25 +44,29 @@ func reportLegacyState(w io.Writer, root string) {
 	if tracked := trackedMachineState(root); len(tracked) > 0 {
 		fmt.Fprintf(w, "%d codemap machine-state file(s) are committed:\n%s", len(tracked), trackedStateDetail(tracked))
 	}
-	if left := leftoverMachineState(root); len(left) > 0 {
+	left, unknown := leftoverMachineState(root)
+	if len(left) > 0 {
 		fmt.Fprintf(w, "%d codemap machine-state file(s) under .codemap/ are no longer used and are safe to delete:\n%s", len(left), nameList(left))
+	}
+	if len(unknown) > 0 {
+		fmt.Fprintf(w, "%d unrecognised file(s) in .codemap/ (not touched by codemap):\n%s", len(unknown), nameList(unknown))
 	}
 }
 
 // leftoverListMax bounds the leftover list; the count above it is exact.
 const leftoverListMax = 20
 
-// leftoverMachineState lists untracked files under .codemap/ other than
-// config.json, .gitignore and skills/: state from before it moved to the
-// per-user state dir. Symlinks are listed, never followed.
-func leftoverMachineState(root string) []string {
+// leftoverMachineState splits untracked files under .codemap/ other than
+// config.json, .gitignore and skills/ into names an older codemap wrote
+// (state from before it moved to the per-user state dir) and anything else,
+// which may be the user's. Symlinks are listed, never followed.
+func leftoverMachineState(root string) (left, unknown []string) {
 	dir := projectpath.CodemapDir(root)
 	tracked := map[string]bool{}
 	files, _ := gitexclude.TrackedStateFiles(root)
 	for _, f := range files {
 		tracked[f] = true
 	}
-	var left []string
 	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
@@ -72,12 +76,16 @@ func leftoverMachineState(root string) []string {
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
-		if !userAuthored(rel) && !tracked[rel] {
+		switch {
+		case userAuthored(rel) || tracked[rel]:
+		case knownStateFile.MatchString(rel) && !strings.Contains(rel, ".."):
 			left = append(left, rel)
+		default:
+			unknown = append(unknown, rel)
 		}
 		return nil
 	})
-	return left
+	return left, unknown
 }
 
 func userAuthored(rel string) bool {
@@ -135,7 +143,7 @@ func trackedStateDetail(tracked []string) string {
 
 // knownStateFile matches the machine-state paths codemap writes, in the
 // characters [A-Za-z0-9._/-] only.
-var knownStateFile = regexp.MustCompile(`^\.codemap/(state\.json|status|hubs\.txt|agent_edits\.jsonl|events\.log|watch\.pid|sessions\.lock|topology-state\.json|handoff\.[A-Za-z0-9_-]+\.(json|log)|(sessions|projects|runtime)/[A-Za-z0-9._/-]+)$`)
+var knownStateFile = regexp.MustCompile(`^\.codemap/(state\.json|status|hubs\.txt|agent_edits\.jsonl|events\.log|watch\.pid|watch\.transition|project\.json|sessions\.lock|topology-state\.json|handoff\.[A-Za-z0-9_-]+\.(json|log)|(sessions|projects|runtime)/[A-Za-z0-9._/-]+)$`)
 
 // trackedMachineState is gitexclude.TrackedStateFiles minus the user-authored
 // files (config.json, skills/) that are meant to be committed.

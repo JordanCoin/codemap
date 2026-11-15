@@ -11,7 +11,7 @@ codemap config init   # auto-detect top extensions, write config
 codemap config show   # display current config
 ```
 
-Only `codemap setup`, `codemap config init` and `codemap skill init` create `.codemap/`. Commit `.codemap/config.json` and `.codemap/skills/` if you want to share them; the folder's own `.gitignore` ignores anything else (only leftovers from older versions). Machine state lives in the per-user state dir, never in the repo ([INSTALL.md](INSTALL.md#setup)). Without `config.json`, codemap auto-detects `only` and `exclude` once and keeps them as `auto-config.json` in that state dir; it does not track later changes in the file mix, so run `codemap config init` for filters you can tune and commit. An in-repo `config.json` always wins.
+Only `codemap setup`, `codemap config init` and `codemap skill init` create `.codemap/`. Commit `.codemap/config.json` and `.codemap/skills/` if you want to share them; the folder's own `.gitignore` ignores anything else (only leftovers from older versions). Machine state lives in `~/.codemap/state/<project key>/`, never in the repo ([INSTALL.md](INSTALL.md#setup)). Without `config.json`, codemap auto-detects `only` and `exclude` and keeps them as `auto-config.json` in that state dir. Every full scan (`codemap .`) re-derives them from the files it found, so a changing file mix is picked up, and the tree prints `auto filter: only ...; codemap config show` while they apply. Hooks never scan to compute them. Run `codemap config init` for filters you can tune and commit. An in-repo `config.json` always wins.
 
 ```json
 {

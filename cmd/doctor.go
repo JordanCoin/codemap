@@ -236,8 +236,12 @@ func doctorCheckTrackedCodemapState(root string, failures *int) {
 	} else {
 		fmt.Println("OK   tracked codemap state: no machine-state files under .codemap/ are committed (git ls-files .codemap)")
 	}
-	if left := leftoverMachineState(root); len(left) > 0 {
+	left, unknown := leftoverMachineState(root)
+	if len(left) > 0 {
 		fmt.Printf("NOTE leftover codemap state: %d file(s) under .codemap/ from an older codemap are no longer used and are safe to delete:\n%s", len(left), nameList(left))
+	}
+	if len(unknown) > 0 {
+		fmt.Printf("NOTE unrecognised files in .codemap/ (not touched by codemap): %d\n%s", len(unknown), nameList(unknown))
 	}
 }
 

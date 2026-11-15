@@ -657,7 +657,7 @@ func TestRunDoctorReportsTrackedCodemapState(t *testing.T) {
 	runGitTestCmd(t, root, "add", "-f", ".codemap")
 	runGitTestCmd(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "track codemap state")
 	// ...and untracked leftovers nothing reads any more.
-	for _, name := range []string{"hubs.txt", "projects/abc/handoff.latest.json"} {
+	for _, name := range []string{"hubs.txt", "projects/abc/handoff.latest.json", "notes/mine.txt"} {
 		path := filepath.Join(root, ".codemap", filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
@@ -678,6 +678,7 @@ func TestRunDoctorReportsTrackedCodemapState(t *testing.T) {
 		"  untrack with: git rm --cached -- .codemap/state.json\n",
 		"NOTE leftover codemap state: 2 file(s) under .codemap/ from an older codemap are no longer used and are safe to delete:\n" +
 			"  (file names, not commands)\n  .codemap/hubs.txt\n  .codemap/projects/abc/handoff.latest.json\n",
+		"NOTE unrecognised files in .codemap/ (not touched by codemap): 1\n  (file names, not commands)\n  .codemap/notes/mine.txt\n",
 		"OK   state dir: ",
 	} {
 		if !strings.Contains(out, want) {

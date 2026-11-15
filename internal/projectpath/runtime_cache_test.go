@@ -9,61 +9,40 @@ import (
 	"testing"
 )
 
-func TestSelectRuntimeRefusesPlantedStateSymlink(t *testing.T) {
-	root := makeProjectFixture(t)
-	cache := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", cache)
-	planted := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(cache, "codemap"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(planted, filepath.Join(cache, "codemap", ProjectKey(root))); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
-	if _, err := SelectRuntime(root); err == nil {
-		t.Fatal("SelectRuntime accepted a symlinked project state directory")
-	}
-	if _, err := CheckedRuntimeCodemapDir(root); err == nil {
-		t.Fatal("CheckedRuntimeCodemapDir accepted a symlinked project state directory")
-	}
-	if entries, _ := os.ReadDir(planted); len(entries) != 0 {
-		t.Fatalf("wrote through the planted link: %v", entries)
-	}
+func setHome(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 }
 
-func TestSelectRuntimeWithoutCacheDirIsUnavailable(t *testing.T) {
+func TestSelectRuntimeWithoutHomeIsUnavailable(t *testing.T) {
 	root := makeProjectFixture(t)
-	t.Setenv("XDG_CACHE_HOME", "")
-	t.Setenv("HOME", "")
-	t.Setenv("LOCALAPPDATA", "")
-	if _, ok := StateCacheDir(); ok {
-		t.Skip("this OS still reports a user cache dir")
+	setHome(t, "")
+	if _, ok := UserDir(); ok {
+		t.Skip("this OS still reports a home dir")
 	}
 	if _, err := SelectRuntime(root); !errors.Is(err, ErrNoStateDir) {
 		t.Fatalf("SelectRuntime err = %v, want ErrNoStateDir", err)
 	}
 }
 
-// State lives in the cache whether or not the repo is set up, and every
-// directory codemap creates there is 0700.
-func TestSelectRuntimeUsesCacheWhetherOrNotSetUp(t *testing.T) {
+// State lives in ~/.codemap/state/<key> whether or not the repo is set up,
+// whatever XDG_CACHE_HOME says, and every directory codemap creates is 0700.
+func TestSelectRuntimeUsesHomeStateWhetherOrNotSetUp(t *testing.T) {
 	root := makeProjectFixture(t)
-	cache := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", cache)
-	want := filepath.Join(CanonicalPath(cache), "codemap", ProjectKey(root))
+	home := t.TempDir()
+	setHome(t, home)
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	want := filepath.Join(CanonicalPath(home), ".codemap", "state", ProjectKey(root))
 
 	selection, err := SelectRuntime(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if selection.RuntimeDir != want {
-		t.Fatalf("RuntimeDir = %q, want %q", selection.RuntimeDir, want)
+	if selection.RuntimeDir != want || selection.ProjectDir != want {
+		t.Fatalf("RuntimeDir = %q, ProjectDir = %q, want %q", selection.RuntimeDir, selection.ProjectDir, want)
 	}
-	projectDir, err := CheckedRuntimeCodemapDir(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for dir := projectDir; dir != CanonicalPath(cache); dir = filepath.Dir(dir) {
+	for dir := want; dir != CanonicalPath(home); dir = filepath.Dir(dir) {
 		if info, err := os.Lstat(dir); err != nil || !info.IsDir() || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o700) {
 			t.Fatalf("%s: %v, err %v; want a 0700 directory", dir, info, err)
 		}
@@ -75,6 +54,7 @@ func TestSelectRuntimeUsesCacheWhetherOrNotSetUp(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(root, ".codemap"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("XDG_CACHE_HOME", "")
 	if selection, err = SelectRuntime(root); err != nil || selection.RuntimeDir != want || !IsSetUp(root) {
 		t.Fatalf("set-up RuntimeDir = %q, %v; want %q", selection.RuntimeDir, err, want)
 	}
@@ -83,20 +63,20 @@ func TestSelectRuntimeUsesCacheWhetherOrNotSetUp(t *testing.T) {
 	}
 }
 
-// V2: a link at the codemap leaf, or at any level below it, is refused, and
-// nothing is written through it. A link above the cache root is the user's.
-func TestSelectRuntimeRefusesLinksFromTheCodemapLeafDown(t *testing.T) {
+// A link at .codemap/state, or at any level below it, is refused and nothing
+// is written through it. A link at ~/.codemap itself is the user's.
+func TestSelectRuntimeRefusesLinksFromTheStateLevelDown(t *testing.T) {
 	root := makeProjectFixture(t)
 	key := ProjectKey(root)
-	for _, rel := range []string{"codemap", filepath.Join("codemap", key, "projects"), filepath.Join("codemap", key, "projects", key)} {
+	for _, rel := range []string{filepath.Join(".codemap", "state"), filepath.Join(".codemap", "state", key)} {
 		t.Run(rel, func(t *testing.T) {
-			cache := t.TempDir()
-			t.Setenv("XDG_CACHE_HOME", cache)
-			if err := os.MkdirAll(filepath.Dir(filepath.Join(cache, rel)), 0o700); err != nil {
+			home := t.TempDir()
+			setHome(t, home)
+			if err := os.MkdirAll(filepath.Dir(filepath.Join(home, rel)), 0o700); err != nil {
 				t.Fatal(err)
 			}
 			planted := t.TempDir()
-			if err := os.Symlink(planted, filepath.Join(cache, rel)); err != nil {
+			if err := os.Symlink(planted, filepath.Join(home, rel)); err != nil {
 				t.Skipf("symlinks unavailable: %v", err)
 			}
 			if _, err := CheckedRuntimeCodemapDir(root); !errors.Is(err, ErrNoStateDir) || !strings.Contains(err.Error(), "unsafe runtime directory") {
@@ -108,37 +88,30 @@ func TestSelectRuntimeRefusesLinksFromTheCodemapLeafDown(t *testing.T) {
 		})
 	}
 
-	real := t.TempDir()
-	linkedCache := filepath.Join(t.TempDir(), "cache")
-	if err := os.Symlink(real, linkedCache); err != nil {
+	home, real := t.TempDir(), t.TempDir()
+	setHome(t, home)
+	if err := os.Symlink(real, filepath.Join(home, ".codemap")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	t.Setenv("XDG_CACHE_HOME", linkedCache)
 	if _, err := CheckedRuntimeCodemapDir(root); err != nil {
-		t.Fatalf("a symlinked cache root must work: %v", err)
+		t.Fatalf("a symlinked ~/.codemap must work: %v", err)
 	}
-	if _, err := os.Lstat(filepath.Join(real, "codemap", key)); err != nil {
+	if _, err := os.Lstat(filepath.Join(real, "state", key)); err != nil {
 		t.Fatalf("state not under the link's target: %v", err)
 	}
 }
 
-// V1: every failure to get the state dir is ErrNoStateDir, and codemap never
-// creates a missing home: at most the cache dir's last component.
+// Every failure to get the state dir is ErrNoStateDir, and codemap never
+// creates a missing home: at most ~/.codemap.
 func TestSelectRuntimeNeverCreatesAMissingHome(t *testing.T) {
 	root := makeProjectFixture(t)
 	home := filepath.Join(t.TempDir(), "gone")
-	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	setHome(t, home)
 	if _, err := SelectRuntime(root); !errors.Is(err, ErrNoStateDir) {
 		t.Fatalf("err = %v, want ErrNoStateDir", err)
 	}
 	if _, err := os.Lstat(home); !os.IsNotExist(err) {
 		t.Fatalf("created the missing home: %v", err)
-	}
-
-	parent := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", filepath.Join(parent, ".cache"))
-	if _, err := SelectRuntime(root); err != nil {
-		t.Fatalf("the cache dir's own missing leaf should be created: %v", err)
 	}
 	if runtime.GOOS == "windows" || os.Getuid() == 0 {
 		return
@@ -148,7 +121,7 @@ func TestSelectRuntimeNeverCreatesAMissingHome(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(readOnly, 0o755) })
-	t.Setenv("XDG_CACHE_HOME", filepath.Join(readOnly, ".cache"))
+	setHome(t, readOnly)
 	if _, err := SelectRuntime(root); !errors.Is(err, ErrNoStateDir) {
 		t.Fatalf("read-only home: err = %v, want ErrNoStateDir", err)
 	}

@@ -1061,7 +1061,7 @@ func trimEventLogToBytes(path string, maxBytes, keepBytes int64) error {
 		return nil
 	}
 
-	f, err := os.Open(path)
+	f, err := runtimefile.OpenRead(path)
 	if err != nil {
 		return err
 	}
@@ -1085,7 +1085,7 @@ func trimEventLogToBytes(path string, maxBytes, keepBytes int64) error {
 		tail = tail[idx+1:]
 	}
 
-	return os.WriteFile(path, tail, 0o600)
+	return runtimefile.WriteAtomic(path, tail, 0o600)
 }
 
 // countLines counts lines in a file efficiently (no full read into memory)

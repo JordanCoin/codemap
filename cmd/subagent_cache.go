@@ -29,19 +29,6 @@ type subagentCache struct {
 	Block string `json:"block"`
 }
 
-// subagentCacheKey is HEAD plus the format version; "" (no caching) when the
-// repo has no commit yet.
-func subagentCacheKey(root string) string {
-	cmd := exec.Command("git", "rev-parse", "--verify", "-q", "HEAD")
-	cmd.Dir = root
-	out, err := cmd.Output()
-	head := strings.TrimSpace(string(out))
-	if err != nil || head == "" {
-		return ""
-	}
-	return head + "/v" + subagentCacheVersion
-}
-
 func subagentCacheDir(root string) (string, bool) {
 	dir, err := projectpath.CheckedRuntimeCodemapDir(root)
 	return dir, err == nil
@@ -78,31 +65,64 @@ func writeSubagentCache(root, key, block string) {
 	_ = runtimefile.WriteAtomic(filepath.Join(dir, subagentCacheFile), data, 0o600)
 }
 
-// subagentRefreshRunning reports a background render holding a fresh lock.
-func subagentRefreshRunning(root string) bool {
-	dir, ok := subagentCacheDir(root)
-	if !ok {
-		return true // nowhere to write: do not launch one
+// subagentCacheKey is HEAD plus the format version; a repo with no commit yet
+// shares one "unborn" key until its first commit.
+func subagentCacheKey(root string) string {
+	cmd := exec.Command("git", "rev-parse", "--verify", "-q", "HEAD")
+	cmd.Dir = root
+	out, _ := cmd.Output()
+	head := strings.TrimSpace(string(out))
+	if head == "" {
+		head = "unborn"
 	}
-	info, err := os.Stat(filepath.Join(dir, subagentRefreshLock))
-	return err == nil && time.Since(info.ModTime()) < subagentRefreshBound
+	return head + "/v" + subagentCacheVersion
 }
 
-// startSubagentRefresh launches the background render, detached, so the next
-// subagent gets a block; tests replace it.
-var startSubagentRefresh = func(root string) {
+// subagentStartBlock returns the cached block, or "" when none appears within
+// budget. Nobody renders in the foreground: on a miss the one process that
+// wins the lock launches the single detached render, and every caller, the
+// winner included, waits for the cache file. So N subagents starting on a
+// new HEAD cost one render, and a hook killed by its timeout still leaves it
+// running.
+func subagentStartBlock(root string, budget time.Duration) string {
+	key := subagentCacheKey(root)
+	if block, ok := readSubagentCache(root, key); ok {
+		return block
+	}
+	dir, ok := subagentCacheDir(root)
+	if !ok {
+		return ""
+	}
+	if release, won := acquireRefreshLock(filepath.Join(dir, subagentRefreshLock)); won && !startSubagentRefresh(root) {
+		release()
+	}
+	for deadline := time.Now().Add(budget); ; time.Sleep(25 * time.Millisecond) {
+		if block, ok := readSubagentCache(root, key); ok {
+			return block
+		}
+		if time.Now().After(deadline) {
+			return ""
+		}
+	}
+}
+
+// startSubagentRefresh launches the detached render, which owns the lock the
+// caller took; tests replace it. It reports whether the launch happened.
+var startSubagentRefresh = func(root string) bool {
 	exe, err := os.Executable()
 	if err != nil {
-		return
+		return false
 	}
 	cmd := exec.Command(exe, append(projectpath.PrependSetupRootArgs("hook", subagentRefreshHook), root)...)
-	if cmd.Start() == nil {
-		_ = cmd.Process.Release()
+	if cmd.Start() != nil {
+		return false
 	}
+	_ = cmd.Process.Release()
+	return true
 }
 
 // refreshSubagentCache renders and stores the block for the current HEAD,
-// at most one per project at a time and never past subagentRefreshBound.
+// never past subagentRefreshBound, then drops the lock its launcher took.
 func refreshSubagentCache(root string) {
 	resolved, found, err := ResolveNearestGitRoot(root)
 	if err != nil || !found {
@@ -112,15 +132,11 @@ func refreshSubagentCache(root string) {
 		return
 	}
 	dir, ok := subagentCacheDir(root)
-	key := subagentCacheKey(root)
-	if !ok || key == "" {
-		return
-	}
-	release, ok := acquireRefreshLock(filepath.Join(dir, subagentRefreshLock))
 	if !ok {
 		return
 	}
-	defer release()
+	defer os.Remove(filepath.Join(dir, subagentRefreshLock))
+	key := subagentCacheKey(root)
 	if _, hit := readSubagentCache(root, key); hit {
 		return
 	}
@@ -131,8 +147,9 @@ func refreshSubagentCache(root string) {
 	}
 }
 
-// acquireRefreshLock creates lock exclusively. A lock older than the refresh
-// bound belongs to a render that died, so it is taken over.
+// acquireRefreshLock creates lock exclusively (O_EXCL never follows a link).
+// A lock older than the refresh bound belongs to a render that died, so it is
+// taken over.
 func acquireRefreshLock(lock string) (func(), bool) {
 	for attempt := 0; attempt < 2; attempt++ {
 		f, err := os.OpenFile(lock, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -140,7 +157,7 @@ func acquireRefreshLock(lock string) (func(), bool) {
 			_ = f.Close()
 			return func() { _ = os.Remove(lock) }, true
 		}
-		info, statErr := os.Stat(lock)
+		info, statErr := os.Lstat(lock)
 		if statErr != nil || time.Since(info.ModTime()) < subagentRefreshBound {
 			return nil, false
 		}

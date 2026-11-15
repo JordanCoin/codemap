@@ -115,7 +115,7 @@ func NewDaemon(root string, verbose bool) (*Daemon, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve runtime state: %w", err)
 	}
-	runtimeDir := filepath.Join(selection.RuntimeDir, "projects", projectpath.ProjectKey(selection.ProjectRoot))
+	runtimeDir := selection.ProjectDir
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {

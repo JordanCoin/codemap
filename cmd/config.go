@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -85,23 +86,26 @@ func detectNoise(files []scanner.FileInfo) []string {
 	return out
 }
 
-// EnsureAutoConfig stores an auto-detected config in the project's state dir
-// (config.AutoConfigPath) when the git checkout has no .codemap/config.json,
-// so a repo that never ran setup still gets `only` filters (a few Go files
-// among thousands of data files stay under the large-repo cutoff). It is
-// computed once and recomputed only when missing or unreadable: it does not
-// follow later changes in the file mix; `codemap config init` is the
-// explicit, committable path. It never writes inside the repo, and failures
-// are silent. It reports whether it wrote.
-func EnsureAutoConfig(root string) bool {
+// AutoConfigActive reports whether root, a git checkout, has no
+// .codemap/config.json and so runs on the auto-detected config.
+func AutoConfigActive(root string) bool {
 	if _, err := os.Stat(config.ConfigPath(root)); !os.IsNotExist(err) {
 		return false
 	}
-	if _, err := os.Stat(filepath.Join(root, ".git")); err != nil {
-		return false
-	}
+	_, err := os.Stat(filepath.Join(root, ".git"))
+	return err == nil
+}
+
+// EnsureAutoConfig stores an auto-detected config in the project's state dir
+// (config.AutoConfigPath) when it is missing or unreadable, so a repo that
+// never ran setup still gets `only` filters (a few Go files among thousands
+// of data files stay under the large-repo cutoff). It scans, so hooks never
+// call it; the tree keeps the stored copy current through RefreshAutoConfig.
+// `codemap config init` is the explicit, committable path. It never writes
+// inside the repo, and failures are silent. It reports whether it wrote.
+func EnsureAutoConfig(root string) bool {
 	path := config.AutoConfigPath(root)
-	if path == "" {
+	if !AutoConfigActive(root) || path == "" {
 		return false
 	}
 	if data, err := runtimefile.Read(path); err == nil && json.Valid(data) {
@@ -112,6 +116,34 @@ func EnsureAutoConfig(root string) bool {
 		return false
 	}
 	return runtimefile.WriteAtomic(path, encodeConfig(cfg), 0o600) == nil
+}
+
+// RefreshAutoConfig re-derives the auto config from files, the unfiltered
+// result of a scan the caller already ran, and rewrites the stored copy when
+// it changed, so it follows the repo's file mix without a second scan.
+func RefreshAutoConfig(root string, files []scanner.FileInfo) config.ProjectConfig {
+	cfg := configFromFiles(files, &configInitResult{})
+	path := config.AutoConfigPath(root)
+	data := encodeConfig(cfg)
+	if stored, err := runtimefile.Read(path); path != "" && (err != nil || !bytes.Equal(stored, data)) {
+		_ = runtimefile.WriteAtomic(path, data, 0o600)
+	}
+	return cfg
+}
+
+// AutoFilterNote names an auto filter in one line, so it is never silent.
+func AutoFilterNote(cfg config.ProjectConfig) string {
+	if len(cfg.Only) == 0 && len(cfg.Exclude) == 0 {
+		return ""
+	}
+	note := "auto filter:"
+	if len(cfg.Only) > 0 {
+		note += " only " + strings.Join(cfg.Only, ",")
+	}
+	if len(cfg.Exclude) > 0 {
+		note += " exclude " + strings.Join(cfg.Exclude, ",")
+	}
+	return note + "; codemap config show"
 }
 
 // nonCodeExtensions are extensions excluded from "config init" auto-detection.
@@ -220,15 +252,23 @@ func encodeConfig(cfg config.ProjectConfig) []byte {
 	return append(data, '\n')
 }
 
+// scanForConfig is the full scan config detection runs; tests count it.
+var scanForConfig = func(root string) ([]scanner.FileInfo, error) {
+	return scanner.ScanFiles(context.Background(), root, scanner.NewGitIgnoreCache(root), nil, nil)
+}
+
 // detectProjectConfig picks `only` and `exclude` from the files under root
 // and fills result's counts; it writes nothing.
 func detectProjectConfig(root string, result *configInitResult) (config.ProjectConfig, error) {
-	gitCache := scanner.NewGitIgnoreCache(root)
-	files, err := scanner.ScanFiles(context.Background(), root, gitCache, nil, nil)
+	files, err := scanForConfig(root)
 	if err != nil {
 		return config.ProjectConfig{}, fmt.Errorf("scan files: %w", err)
 	}
+	return configFromFiles(files, result), nil
+}
 
+// configFromFiles derives the auto config from an unfiltered file list.
+func configFromFiles(files []scanner.FileInfo, result *configInitResult) config.ProjectConfig {
 	extCount := make(map[string]int)
 	for _, f := range files {
 		ext := strings.TrimPrefix(strings.ToLower(f.Ext), ".")
@@ -280,7 +320,7 @@ func detectProjectConfig(root string, result *configInitResult) (config.ProjectC
 			}
 		}
 	}
-	return cfg, nil
+	return cfg
 }
 
 func configShow(root string) {

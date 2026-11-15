@@ -131,7 +131,7 @@ func WriteProcessPID(root string, pid int) error {
 	if err := runtimefile.WriteAtomic(pidFile, []byte(fmt.Sprintf("%d", pid)), 0o600); err != nil {
 		return err
 	}
-	registerDaemon(root, pid)
+	registerDaemon(root, pid, runtimeDir)
 	return nil
 }
 
@@ -244,11 +244,20 @@ func ResolveActiveRuntime(root string) (ActiveRuntime, error) {
 			return ActiveRuntime{}, ErrDaemonOwnershipUnknown
 		}
 	}
-	if pid := registeredPID(selection.ProjectRoot); pid > 0 && processAlive(pid) &&
-		daemonOwnershipForPID(selection.ProjectRoot, pid) == ownershipOwned {
-		active.PID = pid
-		active.Legacy = true
+	info, ok := registeredDaemon(selection.ProjectRoot)
+	if !ok || !processAlive(info.PID) || daemonOwnershipForPID(selection.ProjectRoot, info.PID) != ownershipOwned {
+		return active, nil
 	}
+	active.PID = info.PID
+	// A daemon whose recorded state dir holds its pid runs under another
+	// current layout (an explicit --setup-root): use it. Without that record
+	// it is an older binary's daemon.
+	if pid, err := readPIDAt(info.StateDir); info.StateDir != "" && err == nil && pid == info.PID {
+		active.Directory = info.StateDir
+		active.StalePIDPath = ""
+		return active, nil
+	}
+	active.Legacy = true
 	return active, nil
 }
 

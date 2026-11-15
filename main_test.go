@@ -42,9 +42,6 @@ func TestMain(m *testing.M) {
 	if os.Getenv("CODEMAP_DAEMON_REGISTRY") == "" {
 		os.Setenv("CODEMAP_DAEMON_REGISTRY", filepath.Join(tmpDir, "daemons"))
 	}
-	if os.Getenv("XDG_CACHE_HOME") == "" {
-		os.Setenv("XDG_CACHE_HOME", filepath.Join(tmpDir, "cache"))
-	}
 	// setup writes Codex config to the user scope by default; never the real one.
 	for _, name := range []string{"HOME", "USERPROFILE"} {
 		os.Setenv(name, tmpDir)

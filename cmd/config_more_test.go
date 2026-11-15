@@ -11,8 +11,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"codemap/config"
+	"codemap/scanner"
 )
 
 func TestInitProjectConfigCreatesAutoDetectedConfig(t *testing.T) {
@@ -248,6 +250,58 @@ func TestEnsureAutoConfigStaysOutOfTheRepo(t *testing.T) {
 	mustWriteConfigFixture(t, filepath.Join(plain, "main.go"), "package main\n")
 	if EnsureAutoConfig(plain) {
 		t.Fatal("must not compute a config outside a repo")
+	}
+}
+
+// Hooks never run a scan to compute the auto config: with none stored they
+// use defaults, and the tree the session-start subprocess runs stores it.
+func TestHooksNeverScanForTheAutoConfig(t *testing.T) {
+	root := makeRepoOnBranch(t, "main")
+	mustWriteConfigFixture(t, filepath.Join(root, "main.go"), "package main\n")
+	scans := 0
+	orig := scanForConfig
+	t.Cleanup(func() { scanForConfig = orig })
+	scanForConfig = func(root string) ([]scanner.FileInfo, error) { scans++; return orig(root) }
+	withHookRuntimeStubs(t, func() (string, error) { return "", errors.New("no subprocess in this test") }, nil, func(string) bool { return true }, func(time.Duration) {})
+
+	edit := `{"session_id":"s","tool_input":{"file_path":"` + filepath.ToSlash(filepath.Join(root, "main.go")) + `"}}`
+	for _, step := range []struct{ hook, stdin string }{
+		{"session-start", `{"session_id":"s"}`},
+		{"prompt-submit", `{"session_id":"s","prompt":"fix main.go"}`},
+		{"pre-edit", edit},
+		{"post-edit", edit},
+		{"pre-compact", `{"session_id":"s"}`},
+		{"session-stop", `{"session_id":"s"}`},
+	} {
+		withStdinInput(t, step.stdin, func() { captureOutput(func() { _ = RunHook(step.hook, root) }) })
+	}
+	if scans != 0 {
+		t.Fatalf("hooks ran %d config scan(s)", scans)
+	}
+	if _, err := os.Stat(config.AutoConfigPath(root)); !os.IsNotExist(err) {
+		t.Fatalf("a hook stored an auto config: %v", err)
+	}
+}
+
+// The tree re-derives the auto config from its own scan, so a repo that
+// gained Go files after a Python-only start shows them on the next tree.
+func TestRefreshAutoConfigFollowsTheFileMix(t *testing.T) {
+	root := t.TempDir()
+	mustWriteConfigFixture(t, filepath.Join(root, ".git", "HEAD"), "ref: refs/heads/main\n")
+	mustWriteConfigFixture(t, filepath.Join(root, "tool.py"), "print(1)\n")
+	files, _ := scanForConfig(root)
+	if got := strings.Join(RefreshAutoConfig(root, files).Only, ","); got != "py" {
+		t.Fatalf("only = %q, want py", got)
+	}
+	mustWriteConfigFixture(t, filepath.Join(root, "pkg", "a.go"), "package pkg\n")
+	mustWriteConfigFixture(t, filepath.Join(root, "pkg", "b.go"), "package pkg\n")
+	files, _ = scanForConfig(root)
+	RefreshAutoConfig(root, files)
+	if got := config.Load(root).Only; !slices.Contains(got, "go") {
+		t.Fatalf("stored only = %v, want go added", got)
+	}
+	if note := AutoFilterNote(config.Load(root)); !strings.HasPrefix(note, "auto filter: only go,py") {
+		t.Fatalf("note = %q", note)
 	}
 }
 

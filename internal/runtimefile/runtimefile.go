@@ -1,11 +1,15 @@
 package runtimefile
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 )
+
+// ErrUnsafe marks a state file that is a symlink or not a regular file.
+var ErrUnsafe = errors.New("unsafe runtime file")
 
 // WriteAtomic replaces a regular runtime file without following its endpoint.
 func WriteAtomic(path string, data []byte, mode os.FileMode) error {
@@ -18,7 +22,7 @@ func WriteAtomic(path string, data []byte, mode os.FileMode) error {
 // WriteAtomicWith replaces a regular runtime file with streamed content.
 func WriteAtomicWith(path string, mode os.FileMode, write func(io.Writer) error) error {
 	if info, err := os.Lstat(path); err == nil && !info.Mode().IsRegular() {
-		return fmt.Errorf("unsafe runtime file %q", path)
+		return fmt.Errorf("%w %q", ErrUnsafe, path)
 	} else if err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -44,12 +48,32 @@ func WriteAtomicWith(path string, mode os.FileMode, write func(io.Writer) error)
 
 // Read rejects symlink and non-regular endpoints.
 func Read(path string) ([]byte, error) {
-	info, err := os.Lstat(path)
+	f, err := OpenRead(path)
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("unsafe runtime file %q", path)
+	defer f.Close()
+	return io.ReadAll(f)
+}
+
+// OpenRead opens a regular file for reading and refuses a symlink, even one
+// swapped in between the check and the open: the opened file must be the one
+// Lstat saw.
+func OpenRead(path string) (*os.File, error) {
+	before, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
 	}
-	return os.ReadFile(path)
+	if !before.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w %q", ErrUnsafe, path)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	if after, err := f.Stat(); err != nil || !os.SameFile(before, after) {
+		_ = f.Close()
+		return nil, fmt.Errorf("%w %q", ErrUnsafe, path)
+	}
+	return f, nil
 }
