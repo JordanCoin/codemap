@@ -783,6 +783,12 @@ func RepairSubagentHook(root, agent string) {
 		return
 	}
 	for _, global := range []bool{false, true} {
+		// A project .codex/hooks.json can come from a cloned repo, and Codex
+		// asks the user to trust new hooks: never tell them to trust a file
+		// codemap did not write. Only the user's own CODEX_HOME is repaired.
+		if agent == "codex" && !global {
+			continue
+		}
 		path, err := pathFor(root, global)
 		if err != nil {
 			continue

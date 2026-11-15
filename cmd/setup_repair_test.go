@@ -50,18 +50,25 @@ func TestRepairSubagentHook(t *testing.T) {
 
 	// Codex: same repair on its own hooks file, with the trust step named.
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-	codexPath, _ := codexHooksPath(root, false)
-	if err := os.MkdirAll(filepath.Dir(codexPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	codexPath, _ := codexHooksPath(root, true)
+	repoPath, _ := codexHooksPath(root, false)
 	oldCodex := `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"codemap hook session-start --agent=codex --integration=codex-setup"}]}]}}`
-	if err := os.WriteFile(codexPath, []byte(oldCodex), 0o644); err != nil {
-		t.Fatal(err)
+	// The project file may come from a cloned repo: it must stay untouched.
+	for _, p := range []string{codexPath, repoPath} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(oldCodex), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	SessionStartNotice = ""
 	RepairSubagentHook(root, "codex")
 	if c, _ := os.ReadFile(codexPath); !strings.Contains(string(c), "hook subagent-start --agent=codex --integration=codex-setup") {
 		t.Fatalf("Codex SubagentStart not added:\n%s", c)
+	}
+	if r, _ := os.ReadFile(repoPath); string(r) != oldCodex || strings.Contains(SessionStartNotice, repoPath) {
+		t.Fatalf("project Codex hooks were repaired or named: %q\n%s", SessionStartNotice, r)
 	}
 	if !strings.Contains(SessionStartNotice, "/hooks in Codex") {
 		t.Fatalf("notice = %q", SessionStartNotice)
