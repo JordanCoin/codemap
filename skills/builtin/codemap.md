@@ -109,6 +109,9 @@ Skills matched: hub-safety, refactor - run `codemap skill show <name>` for guida
 - **Intent categories**: refactor, bugfix, feature, explore, test, docs
 - **Risk levels**: low (no hubs), medium (1 hub), high (2+ hubs or 8+ importers)
 - **Skills are pull-based**: only names are shown, run `codemap skill show` for full body
+- **Suggestions** print only for a named file with dependency evidence; otherwise the marker has `"suggestions":[]`
+
+The edit hooks print hub facts only (hub warning, dependents, `Imported by N`, `Imports N hub(s)`) and stay silent for files outside the project. A subagent gets the top-level directories and the hub list at start, since it never sees the session-start tree.
 
 ## Builtin Skills
 

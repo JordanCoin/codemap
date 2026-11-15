@@ -392,17 +392,10 @@ func TestExtractFilePathAndEditHooks(t *testing.T) {
 		if hookErr != nil {
 			t.Fatalf("hookPreEdit() error: %v", hookErr)
 		}
-		checks := []string{
-			"Before editing: pkg/types.go is a hub with 3 importers.",
-			"Run now:",
-			"codemap --importers pkg/types.go",
-			"codemap --deps",
+		if !strings.Contains(out, "Before editing: pkg/types.go is a hub with 3 importers.") {
+			t.Fatalf("expected hub warning, got:\n%s", out)
 		}
-		for _, check := range checks {
-			if !strings.Contains(out, check) {
-				t.Fatalf("expected %q in output, got:\n%s", check, out)
-			}
-		}
+		assertNoEditNudge(t, out)
 	})
 
 	withStdinInput(t, mustJSONInput(t, map[string]string{"file_path": target}), func() {
@@ -411,18 +404,45 @@ func TestExtractFilePathAndEditHooks(t *testing.T) {
 		if hookErr != nil {
 			t.Fatalf("hookPostEdit() error: %v", hookErr)
 		}
-		checks := []string{
-			"After editing: pkg/types.go still fans out to 3 importers.",
-			"Re-check with:",
-			"codemap --importers pkg/types.go",
-			"codemap --deps",
+		if !strings.Contains(out, "After editing: pkg/types.go still fans out to 3 importers.") {
+			t.Fatalf("expected hub warning, got:\n%s", out)
 		}
-		for _, check := range checks {
-			if !strings.Contains(out, check) {
-				t.Fatalf("expected %q in output, got:\n%s", check, out)
-			}
-		}
+		assertNoEditNudge(t, out)
 	})
+}
+
+func TestEditHooksIgnoreFilesOutsideRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "x.go")
+	writeWatchState(t, root, watch.State{
+		UpdatedAt: time.Now(),
+		FileCount: 1,
+		Importers: map[string][]string{"../x.go": {"a.go", "b.go", "c.go"}},
+	})
+	for _, path := range []string{outside, "../x.go"} {
+		payload := mustJSONInput(t, map[string]string{"file_path": path, "session_id": "s"})
+		for name, hook := range map[string]func(string) error{"pre-edit": hookPreEdit, "post-edit": hookPostEdit} {
+			withStdinInput(t, payload, func() {
+				if out := captureOutput(func() { _ = hook(root) }); out != "" {
+					t.Fatalf("%s on %s printed:\n%s", name, path, out)
+				}
+			})
+		}
+	}
+	if _, err := os.Stat(agentEditsPath(root)); !os.IsNotExist(err) {
+		t.Fatalf("agent edits recorded for outside paths (stat err %v)", err)
+	}
+}
+
+// assertNoEditNudge checks the edit hooks no longer print command lists that
+// agents ignored (0.9% follow-through), while the hub facts stay.
+func assertNoEditNudge(t *testing.T, out string) {
+	t.Helper()
+	for _, gone := range []string{"Run now:", "Re-check with:", "Next codemap:", "codemap --importers", "codemap --deps"} {
+		if strings.Contains(out, gone) {
+			t.Fatalf("edit hook should not print %q, got:\n%s", gone, out)
+		}
+	}
 }
 
 func TestCheckFileImportersAndRouteSuggestions(t *testing.T) {
@@ -461,12 +481,7 @@ func TestCheckFileImportersAndRouteSuggestions(t *testing.T) {
 	if !strings.Contains(out, "Imports 1 hub(s): shared/hub.go") {
 		t.Fatalf("expected hub import summary, got:\n%s", out)
 	}
-	if !strings.Contains(out, "Next codemap:") || !strings.Contains(out, "codemap --importers pkg/types.go") {
-		t.Fatalf("expected actionable codemap guidance, got:\n%s", out)
-	}
-	if !strings.Contains(out, "codemap --deps") {
-		t.Fatalf("expected dependency guidance, got:\n%s", out)
-	}
+	assertNoEditNudge(t, out)
 
 	cfg := config.ProjectConfig{
 		Routing: config.RoutingConfig{
@@ -540,9 +555,6 @@ func TestHookPromptSubmitShowsContextAndProgress(t *testing.T) {
 		checks := []string{
 			"Context for mentioned files",
 			"pkg/types.go is a HUB",
-			"Next codemap:",
-			"codemap --importers pkg/types.go",
-			"codemap --deps",
 			"Suggested context routes",
 			"watching",
 			"Session so far: 2 files edited, 1 hub edits",
@@ -551,6 +563,9 @@ func TestHookPromptSubmitShowsContextAndProgress(t *testing.T) {
 			if !strings.Contains(out, check) {
 				t.Fatalf("expected %q in output, got:\n%s", check, out)
 			}
+		}
+		if strings.Contains(out, "Next codemap:") {
+			t.Fatalf("prompt-submit should not print Next codemap:, got:\n%s", out)
 		}
 	})
 }

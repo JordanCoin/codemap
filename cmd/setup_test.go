@@ -68,6 +68,13 @@ func TestEnsureClaudeHooksCreatesSettings(t *testing.T) {
 			t.Fatalf("expected %q hook command in event %q", spec.Command, spec.Event)
 		}
 	}
+	if subagent := hooks["SubagentStart"]; len(subagent) != 1 || subagent[0].Matcher != "" {
+		t.Fatalf("expected one SubagentStart entry with no matcher, got %v", hooks["SubagentStart"])
+	}
+	again, err := ensureClaudeHooks(settingsPath, false)
+	if err != nil || again.AddedHooks != 0 || again.WroteFile {
+		t.Fatalf("second ensureClaudeHooks should be a no-op, got %+v, err %v", again, err)
+	}
 }
 
 func TestEnsureClaudeHooksPreservesFieldsAndAvoidsDuplicates(t *testing.T) {
@@ -173,7 +180,8 @@ func TestEnsureClaudeHooksAddsMatcherScopedHookWhenMatcherMissing(t *testing.T) 
     "PostToolUse": [{"matcher":"Edit|Write","hooks":[{"type":"command","command":"codemap hook post-edit"}]}],
     "UserPromptSubmit": [{"hooks":[{"type":"command","command":"codemap hook prompt-submit"}]}],
     "PreCompact": [{"hooks":[{"type":"command","command":"codemap hook pre-compact"}]}],
-    "SessionEnd": [{"hooks":[{"type":"command","command":"codemap hook session-stop"}]}]
+    "SessionEnd": [{"hooks":[{"type":"command","command":"codemap hook session-stop"}]}],
+    "SubagentStart": [{"hooks":[{"type":"command","command":"codemap hook subagent-start"}]}]
   }
 }`
 	if err := os.WriteFile(settingsPath, []byte(existing), 0644); err != nil {

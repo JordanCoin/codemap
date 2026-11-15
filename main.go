@@ -117,7 +117,7 @@ func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "hook" {
 		if len(os.Args) < 3 {
 			fmt.Fprintln(os.Stderr, "Usage: codemap hook <hookname>")
-			fmt.Fprintln(os.Stderr, "Available hooks: session-start, pre-edit, post-edit, prompt-submit, pre-compact, session-stop")
+			fmt.Fprintln(os.Stderr, "Available hooks: session-start, subagent-start, pre-edit, post-edit, prompt-submit, pre-compact, session-stop")
 			fmt.Fprintln(os.Stderr, "session-start also starts 'codemap watch daemon <root>' when none is running and writes runtime state under the project's .codemap/ directory. 'codemap watch stop' ends it.")
 			os.Exit(1)
 		}
@@ -626,10 +626,11 @@ func main() {
 			project.Hubs, project.HubNote = treeHubs(absRoot, len(files), filters)
 			project.UntrackedDirs = untrackedDirs(root)
 			lean := os.Getenv(cmd.TreeLeanEnv)
-			if lean != "2" {
+			project.DirsOnly = lean == cmd.TreeLeanDirsOnly
+			if lean != "2" && !project.DirsOnly {
 				project.LineCounts = countLines(absRoot, files)
 			}
-			if lean != "" {
+			if lean == "1" || lean == "2" {
 				project.HubListMax = 3
 			}
 		}

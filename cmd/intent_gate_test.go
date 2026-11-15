@@ -32,23 +32,6 @@ func TestClassifyIntentVCSDoesNotHijackCodePrompts(t *testing.T) {
 	}
 }
 
-func TestPlanCodemapNextStepsForVCSSuggestsDiffNotEditAdvice(t *testing.T) {
-	intent := TaskIntent{Category: "vcs", Confidence: 1}
-	steps := planCodemapNextSteps(intent, nil)
-
-	var commands []string
-	for _, step := range steps {
-		commands = append(commands, step.Command)
-	}
-	joined := strings.Join(commands, "\n")
-	if strings.Contains(joined, "codemap --deps") || joined == "codemap ." {
-		t.Fatalf("VCS workflow got edit-flavored advice: %v", commands)
-	}
-	if !strings.Contains(joined, "codemap --diff") {
-		t.Fatalf("VCS workflow should suggest reviewing the diff, got: %v", commands)
-	}
-}
-
 func TestPromptSubmitSuppressesZeroConfidenceIntent(t *testing.T) {
 	root := t.TempDir()
 
@@ -81,6 +64,14 @@ func TestPromptSubmitEmitsConfidentIntent(t *testing.T) {
 		})
 		if !strings.Contains(out, "codemap:intent") {
 			t.Fatalf("confident intent should emit a marker, got:\n%s", out)
+		}
+		if !strings.Contains(out, `"suggestions":[]`) {
+			t.Fatalf("intent marker should carry an empty suggestions list, got:\n%s", out)
+		}
+		for _, gone := range []string{"Next codemap:", "💡 Suggestions", "risk is unknown"} {
+			if strings.Contains(out, gone) {
+				t.Fatalf("prompt-submit should not print %q, got:\n%s", gone, out)
+			}
 		}
 	})
 }

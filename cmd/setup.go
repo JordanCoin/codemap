@@ -111,6 +111,7 @@ func generatedClaudeHooks(executable string) []claudeHookSpec {
 		{Event: "UserPromptSubmit", Command: command + " hook prompt-submit --integration=claude-setup"},
 		{Event: "PreCompact", Command: command + " hook pre-compact --integration=claude-setup"},
 		{Event: "SessionEnd", Command: command + " hook session-stop --integration=claude-setup"},
+		{Event: "SubagentStart", Command: command + " hook subagent-start --integration=claude-setup"},
 	}
 }
 

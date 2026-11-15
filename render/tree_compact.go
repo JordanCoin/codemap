@@ -20,10 +20,11 @@ type treeMarks struct {
 	hubDirs   map[string]int
 	untracked map[string]bool
 	lines     map[string]int
+	dirsOnly  bool
 }
 
 func newTreeMarks(project scanner.Project) *treeMarks {
-	m := &treeMarks{compact: project.DiffRef == "", hubFiles: map[string]int{}, hubDirs: map[string]int{}, untracked: project.UntrackedDirs, lines: project.LineCounts}
+	m := &treeMarks{compact: project.DiffRef == "", hubFiles: map[string]int{}, hubDirs: map[string]int{}, untracked: project.UntrackedDirs, lines: project.LineCounts, dirsOnly: project.DirsOnly}
 	for _, h := range project.Hubs {
 		if h.IsPackage() {
 			m.hubDirs[strings.TrimSuffix(h.Path, "/")] = h.Importers
@@ -108,6 +109,9 @@ func printTreeNode(w io.Writer, node *treeNode, prefix string, isLast bool, mark
 	}
 	sort.Slice(dirs, func(i, j int) bool { return dirs[i].name < dirs[j].name })
 	sort.Slice(fileNodes, func(i, j int) bool { return fileNodes[i].name < fileNodes[j].name })
+	if marks.dirsOnly {
+		fileNodes = nil
+	}
 
 	for i, dir := range dirs {
 		isLastDir := i == len(dirs)-1 && len(fileNodes) == 0
@@ -173,6 +177,9 @@ func printTreeNode(w io.Writer, node *treeNode, prefix string, isLast bool, mark
 			prefix, connector, BoldBlue, star, mergedName, Reset, count, Dim, strings.Join(statsParts, ", "), Reset)
 
 		if maxDepth > 0 && currentDepth >= maxDepth {
+			if marks.dirsOnly {
+				continue
+			}
 			// One-line single-file dirs cost no depth, so .claude/skills/ and a
 			// deeper plugins/codemap/skills/ render the same shape.
 			allChains := marks.compact && len(current.children) > 0

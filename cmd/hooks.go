@@ -309,6 +309,11 @@ func waitForDaemonState(root string, timeout time.Duration) *watch.State {
 
 // RunHook executes the named hook with the given project root
 func RunHook(hookName, root string) error {
+	if hookName == "subagent-start" {
+		// Never fail a subagent: any error leaves stdout empty and exits 0.
+		_ = emitHookContext("SubagentStart", func() error { return hookSubagentStart(root) }, false)
+		return nil
+	}
 	resolvedRoot, _, err := ResolveNearestGitRoot(root)
 	if err != nil {
 		return err
@@ -333,7 +338,7 @@ func RunHook(hookName, root string) error {
 	case "session-stop":
 		fn = func() error { return hookSessionStop(root) }
 	default:
-		return fmt.Errorf("unknown hook: %s\nAvailable: session-start, pre-edit, post-edit, prompt-submit, pre-compact, session-stop", hookName)
+		return fmt.Errorf("unknown hook: %s\nAvailable: session-start, subagent-start, pre-edit, post-edit, prompt-submit, pre-compact, session-stop", hookName)
 	}
 	return runHookOutput(hookName, fn)
 }
@@ -512,23 +517,8 @@ func hookSessionStart(root string) error {
 		if exeErr != nil {
 			return ""
 		}
-		args := projectpath.PrependSetupRootArgs("--depth", strconv.Itoa(depth))
-		if len(projCfg.Only) > 0 {
-			args = append(args, "--only", strings.Join(projCfg.Only, ","))
-		}
-		if len(projCfg.Exclude) > 0 {
-			args = append(args, "--exclude", strings.Join(projCfg.Exclude, ","))
-		}
-		args = append(args, root)
-		cmd := exec.Command(exe, args...)
-		if lean != "" {
-			cmd.Env = append(os.Environ(), TreeLeanEnv+"="+lean)
-		}
-		var buf strings.Builder
-		cmd.Stdout = &buf
-		cmd.Stderr = os.Stderr
-		cmd.Run()
-		rendered[key] = buf.String() + "\n"
+		out, _ := renderTreeSubprocess(exe, root, projCfg, depth, lean, os.Stderr)
+		rendered[key] = out + "\n"
 		return rendered[key]
 	}
 
@@ -549,9 +539,70 @@ func hookSessionStart(root string) error {
 	return nil
 }
 
+// renderTreeSubprocess renders `codemap --depth N` for root in a child
+// process with the project's filters and the given lean level.
+func renderTreeSubprocess(exe, root string, projCfg config.ProjectConfig, depth int, lean string, stderr io.Writer) (string, error) {
+	args := projectpath.PrependSetupRootArgs("--depth", strconv.Itoa(depth))
+	if len(projCfg.Only) > 0 {
+		args = append(args, "--only", strings.Join(projCfg.Only, ","))
+	}
+	if len(projCfg.Exclude) > 0 {
+		args = append(args, "--exclude", strings.Join(projCfg.Exclude, ","))
+	}
+	args = append(args, root)
+	cmd := exec.Command(exe, args...)
+	if lean != "" {
+		cmd.Env = append(os.Environ(), TreeLeanEnv+"="+lean)
+	}
+	var buf strings.Builder
+	cmd.Stdout = &buf
+	cmd.Stderr = stderr
+	err := cmd.Run()
+	return buf.String(), err
+}
+
+// subagentStartCap bounds the subagent orientation block.
+const subagentStartCap = 2500
+
+// hookSubagentStart orients a subagent, which never gets SessionStart: the
+// top-level directories with hub marks, then the hub list. The payload's cwd
+// wins over the process cwd because a worktree-isolated subagent runs elsewhere.
+func hookSubagentStart(root string) error {
+	if info, err := os.Stdin.Stat(); err == nil && info.Mode()&os.ModeCharDevice == 0 {
+		var payload struct {
+			Cwd string `json:"cwd"`
+		}
+		if input, err := io.ReadAll(os.Stdin); err == nil && json.Unmarshal(input, &payload) == nil && payload.Cwd != "" {
+			root = payload.Cwd
+		}
+	}
+	resolved, found, err := ResolveNearestGitRoot(root)
+	if err != nil || !found {
+		return nil
+	}
+	if root, err = ValidateProjectPath(resolved); err != nil {
+		return err
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	tree, err := renderTreeSubprocess(exe, root, config.Load(root), 1, TreeLeanDirsOnly, io.Discard)
+	if err != nil {
+		return err
+	}
+	out := "📍 codemap orientation: top-level directories (⭐️ marks hubs), then the hub list. Run `codemap .` for the full tree.\n" + tree
+	fmt.Print(cutAtLine(out, subagentStartCap, ""))
+	return nil
+}
+
 // TreeLeanEnv tells a tree render to shed extras: "1" cuts the hub list to
-// three, "2" also drops line counts.
-const TreeLeanEnv = "CODEMAP_TREE_LEAN"
+// three, "2" also drops line counts. TreeLeanDirsOnly keeps only directory
+// lines and the full hub list, with no line counts.
+const (
+	TreeLeanEnv      = "CODEMAP_TREE_LEAN"
+	TreeLeanDirsOnly = "dirs"
+)
 
 // Markers of the tree's own hub trailer (render/tree_compact.go).
 const (
@@ -1091,8 +1142,6 @@ func hookPromptSubmit(root string) error {
 		}
 	}
 
-	showNextCodemapSteps(root, intent, info)
-
 	showRouteSuggestions(prompt, projCfg, topK)
 
 	// Match and inject relevant skills
@@ -1188,121 +1237,6 @@ func showMatchedSkills(root string, intent TaskIntent) {
 			break
 		}
 	}
-}
-
-type codemapNextStep struct {
-	Command string
-	Reason  string
-}
-
-func showNextCodemapSteps(root string, intent TaskIntent, info *hubInfo) {
-	steps := planCodemapNextSteps(intent, info)
-	if len(steps) == 0 {
-		return
-	}
-
-	hint := mcpToolHint(root)
-	fmt.Println()
-	fmt.Println("Next codemap:")
-	for _, step := range steps {
-		fmt.Printf("   • %s%s — %s\n", step.Command, hint(step.Command), step.Reason)
-	}
-}
-
-func planCodemapNextSteps(intent TaskIntent, info *hubInfo) []codemapNextStep {
-	if intent.Confidence < intentConfidenceFloor {
-		return nil
-	}
-
-	var steps []codemapNextStep
-	seen := make(map[string]bool)
-	add := func(command, reason string) {
-		if command == "" || seen[command] {
-			return
-		}
-		seen[command] = true
-		steps = append(steps, codemapNextStep{Command: command, Reason: reason})
-	}
-
-	primaryFile := pickPrimaryCodemapFile(intent.Files, info)
-	if primaryFile != "" {
-		importerCount := 0
-		hubImporterCount := 0
-		if info != nil {
-			importerCount = len(info.Importers[primaryFile])
-			hubImporterCount = scanner.CountHubImporters(info.Importers[primaryFile])
-		}
-
-		reason := "check callers before editing"
-		switch {
-		case hubImporterCount >= scanner.HubThreshold:
-			reason = fmt.Sprintf("check blast radius before editing this hub (%s)", importersNoun(importerCount))
-		case importerCount > 0:
-			reason = fmt.Sprintf("check callers before editing (%s)", importersNoun(importerCount))
-		}
-		add("codemap --importers "+shellQuoteIfNeeded(primaryFile), reason)
-		if hubImporterCount >= scanner.HubThreshold {
-			add("codemap --deps", "trace dependency flow around this hub before changing it")
-		}
-	}
-
-	switch intent.Category {
-	case "vcs":
-		add("codemap --diff", "review what changed before merging, reviewing, or releasing")
-	case "explore":
-		if len(intent.Files) == 0 {
-			add("codemap .", "refresh project structure before diving in")
-		} else {
-			add("codemap --deps", "trace how the mentioned code connects")
-		}
-	case "refactor":
-		add("codemap --deps", "verify dependency flow before refactoring")
-	case "feature":
-		if len(intent.Files) == 0 {
-			add("codemap .", "refresh project structure before choosing edit points")
-		}
-		if len(intent.Files) > 0 || intent.Scope != "single-file" {
-			add("codemap --deps", "feature work tends to cross existing dependencies")
-		}
-	case "bugfix":
-		if len(intent.Files) == 0 {
-			add("codemap --diff", "check recent branch changes before debugging")
-		} else if primaryFile != "" && info != nil && scanner.CountHubImporters(info.Importers[primaryFile]) >= scanner.HubThreshold {
-			add("codemap --deps", "hub fixes can ripple through dependents")
-		}
-	}
-
-	if len(steps) > 2 {
-		steps = steps[:2]
-	}
-	return steps
-}
-
-func pickPrimaryCodemapFile(files []string, info *hubInfo) string {
-	if len(files) == 0 {
-		return ""
-	}
-
-	best := files[0]
-	bestImporters := -1
-	for _, file := range files {
-		importerCount := 0
-		if info != nil {
-			importerCount = len(info.Importers[file])
-		}
-		if importerCount > bestImporters {
-			best = file
-			bestImporters = importerCount
-		}
-	}
-	return best
-}
-
-func shellQuoteIfNeeded(value string) string {
-	if strings.ContainsAny(value, " \t") {
-		return strconv.Quote(value)
-	}
-	return value
 }
 
 // setupNeedsAttention is config.AssessSetup gated for #224: a directory with
@@ -2332,22 +2266,33 @@ func appendUniquePath(paths []string, path string) []string {
 	return append(paths, path)
 }
 
+// projectRelPath returns a hook-supplied path relative to root, or false when
+// it resolves outside root. Relative paths are taken as root-relative; both
+// sides are canonicalised so a symlinked root still matches.
+func projectRelPath(root, path string) (string, bool) {
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(root, path)
+	}
+	rel, err := filepath.Rel(projectpath.CanonicalPath(root), projectpath.CanonicalPath(path))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return rel, true
+}
+
 // checkFileImporters checks if a file is a hub and shows its importers
 func checkFileImporters(root, filePath string) error {
 	return checkFileImportersWithPhase(root, filePath, "")
 }
 
 func checkFileImportersWithPhase(root, filePath, phase string) error {
+	filePath, inRoot := projectRelPath(root, filePath)
+	if !inRoot {
+		return nil
+	}
 	info := getHubInfoNoFallback(root)
 	if info == nil {
 		return nil // silently skip if deps unavailable
-	}
-
-	// Handle absolute paths - convert to relative
-	if filepath.IsAbs(filePath) {
-		if rel, err := filepath.Rel(root, filePath); err == nil {
-			filePath = rel
-		}
 	}
 
 	importers := info.Importers[filePath]
@@ -2402,42 +2347,7 @@ func checkFileImportersWithPhase(root, filePath, phase string) error {
 		fmt.Println()
 	}
 
-	showFileCodemapActions(root, filePath, len(importers), len(hubImports) > 0, phase)
-
 	return nil
-}
-
-func showFileCodemapActions(root, filePath string, importerCount int, importsHub bool, phase string) {
-	steps := []codemapNextStep{
-		{
-			Command: "codemap --importers " + shellQuoteIfNeeded(filePath),
-			Reason:  "review blast radius for this file",
-		},
-	}
-	if importerCount >= 3 || importsHub {
-		steps = append(steps, codemapNextStep{
-			Command: "codemap --deps",
-			Reason:  "verify dependency flow around this change",
-		})
-	}
-
-	if len(steps) == 0 {
-		return
-	}
-
-	switch phase {
-	case "before":
-		fmt.Println("   Run now:")
-	case "after":
-		fmt.Println("   Re-check with:")
-	default:
-		fmt.Println("   Next codemap:")
-	}
-	hint := mcpToolHint(root)
-	for _, step := range steps {
-		fmt.Printf("   • %s%s — %s\n", step.Command, hint(step.Command), step.Reason)
-	}
-	fmt.Println()
 }
 
 // isHub checks if a file is a hub (has HubThreshold+ non-test importers).
@@ -2572,17 +2482,10 @@ func hookSessionStartMultiRepo(root string, childRepos []string) error {
 	return nil
 }
 
-// filesText and importersNoun keep counts grammatical: "1 file", "2 files".
+// filesText keeps counts grammatical: "1 file", "2 files".
 func filesText(n int) string {
 	if n == 1 {
 		return "1 file"
 	}
 	return fmt.Sprintf("%d files", n)
-}
-
-func importersNoun(n int) string {
-	if n == 1 {
-		return "1 importer"
-	}
-	return fmt.Sprintf("%d importers", n)
 }

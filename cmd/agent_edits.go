@@ -56,6 +56,9 @@ func recordAgentEdit(root, sessionID, path string, now time.Time) error {
 	if strings.TrimSpace(path) == "" {
 		return nil
 	}
+	if _, inRoot := projectRelPath(root, path); !inRoot {
+		return nil
+	}
 	if err := gitexclude.MkdirAll(filepath.Join(root, ".codemap"), 0o755); err != nil {
 		return err
 	}
