@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -222,7 +223,12 @@ func discoverInventoryWithLimit(ctx context.Context, root string, providers []Pr
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		// A directory listing can include an entry removed before its
+		// Info/Lstat: skip it rather than aborting the whole inventory (#302).
 		if walkErr != nil {
+			if os.IsNotExist(walkErr) && path != absRoot {
+				return nil
+			}
 			return walkErr
 		}
 		if len(names) > 0 {
@@ -270,6 +276,9 @@ func discoverInventoryWithLimit(ctx context.Context, root string, providers []Pr
 		}
 		info, err := entry.Info()
 		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
 			return err
 		}
 		files = append(files, scanner.FileInfo{Path: filepath.Clean(rel), Size: info.Size(), Ext: ext})

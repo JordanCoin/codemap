@@ -39,6 +39,46 @@ func TestScanFilesSkipsClaudeWorktreesByPath(t *testing.T) {
 	}
 }
 
+// TestScanFilesSkipsVanishedEntry removes a later sibling while the walk is
+// on an earlier file. filepath.Walk Lstats after ReadDir, so that delete
+// surfaces as ENOENT; the walk must skip it and still return the survivors
+// (#302: SessionStart hook died on lstat of a short-lived watch.transition).
+func TestScanFilesSkipsVanishedEntry(t *testing.T) {
+	root := t.TempDir()
+	keep := filepath.Join(projectpath.CanonicalPath(root), "a-keep.go")
+	vanish := filepath.Join(projectpath.CanonicalPath(root), "z-vanish.txt")
+	for _, path := range []string{keep, vanish} {
+		if err := os.WriteFile(path, []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	walkDuringTest = func(path string) {
+		if path == keep {
+			if err := os.Remove(vanish); err != nil {
+				t.Errorf("remove vanished sibling: %v", err)
+			}
+		}
+	}
+	t.Cleanup(func() { walkDuringTest = nil })
+
+	files, err := ScanFiles(context.Background(), root, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("ScanFiles: %v (vanished mid-walk entry must not be fatal)", err)
+	}
+	if len(files) != 1 || files[0].Path != "a-keep.go" {
+		t.Fatalf("files = %v, want [{Path:a-keep.go}]", files)
+	}
+}
+
+func TestScanFilesMissingRootStillErrors(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "no-such-dir")
+	_, err := ScanFiles(context.Background(), missing, nil, nil, nil)
+	if err == nil || !os.IsNotExist(err) {
+		t.Fatalf("missing root err = %v, want IsNotExist", err)
+	}
+}
+
 func TestIgnoredDirs(t *testing.T) {
 	// Verify common directories are in the ignored list
 	expectedIgnored := []string{

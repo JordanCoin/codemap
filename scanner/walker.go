@@ -257,8 +257,9 @@ var IgnoredDirs = map[string]bool{
 	"node_modules": true,
 	"vendor":       true,
 	// codemap's and docmap's own state and caches are never project source
-	// (#196, #184). Hiding them only through a gitignore rule left them in
-	// the tree of any repo whose rule was never written.
+	// (#196, #184, #302). Hiding them only through a gitignore rule left them
+	// in the tree of any repo whose rule was never written; skipping the dir
+	// also avoids races on short-lived files like watch.transition.
 	".codemap": true,
 	".docmap":  true,
 	// Go's own toolchain ignores testdata, and fixture repositories inside it
@@ -493,6 +494,11 @@ func ScanFiles(ctx context.Context, root string, cache *GitIgnoreCache, only []s
 	return files, err
 }
 
+// walkDuringTest, when set, runs at the start of each ScanFilesBounded walk
+// callback. Tests use it to delete a later sibling and prove a vanished entry
+// is skipped rather than fatal (#302).
+var walkDuringTest func(path string)
+
 // ScanFilesBounded walks like ScanFiles but keeps at most the configured
 // number of files (limits.ScanFileBound) and reports how many matched in
 // total, so a caller can say "scanned N of M" instead of presenting the
@@ -513,7 +519,16 @@ func ScanFilesBounded(ctx context.Context, root string, cache *GitIgnoreCache, f
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
+		if walkDuringTest != nil {
+			walkDuringTest(path)
+		}
+		// A directory listing can include an entry that another process
+		// removes before Lstat: treat that race as "skip", not fatal (#302).
+		// Missing walk root still fails so callers learn the path is gone.
 		if err != nil {
+			if os.IsNotExist(err) && path != absRoot {
+				return nil
+			}
 			return err
 		}
 
