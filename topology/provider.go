@@ -187,6 +187,11 @@ func discoverInventory(ctx context.Context, root string, providers []Provider, c
 	return discoverInventoryWithLimit(ctx, root, providers, cfg, includeFiles, maxManifestWalkEntries)
 }
 
+// inventoryWalkDuringTest, when set, runs at the start of each inventory
+// WalkDir callback. Tests use it to delete a later sibling or the current
+// directory and prove ENOENT is skipped rather than fatal (#302).
+var inventoryWalkDuringTest func(path string, entry fs.DirEntry, walkErr error)
+
 func discoverInventoryWithLimit(ctx context.Context, root string, providers []Provider, cfg config.ProjectConfig, includeFiles bool, maxEntries int) ([]scanner.FileInfo, []string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
@@ -222,6 +227,9 @@ func discoverInventoryWithLimit(ctx context.Context, root string, providers []Pr
 	err := filepath.WalkDir(absRoot, func(path string, entry fs.DirEntry, walkErr error) error {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if inventoryWalkDuringTest != nil {
+			inventoryWalkDuringTest(path, entry, walkErr)
 		}
 		// A directory listing can include an entry removed before its
 		// Info/Lstat: skip it rather than aborting the whole inventory (#302).

@@ -340,6 +340,53 @@ func TestDiscoverInventoryReportsManifestWalkLimit(t *testing.T) {
 	}
 }
 
+// TestDiscoverInventorySkipsVanishedEntries deletes a later file and the
+// current directory while WalkDir is in progress. That surfaces as ENOENT
+// from entry.Info and from the directory's ReadDir; both must be skipped
+// rather than failing the inventory (#302).
+func TestDiscoverInventorySkipsVanishedEntries(t *testing.T) {
+	root := t.TempDir()
+	abs := projectpath.CanonicalPath(root)
+	keep := filepath.Join(abs, "a-keep.go")
+	vanish := filepath.Join(abs, "z-vanish.go")
+	vanishDir := filepath.Join(abs, "z-dir")
+	for _, path := range []string{keep, vanish} {
+		if err := os.WriteFile(path, []byte("package p\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(vanishDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	inventoryWalkDuringTest = func(path string, entry os.DirEntry, walkErr error) {
+		if walkErr != nil || entry == nil {
+			return
+		}
+		switch entry.Name() {
+		case "a-keep.go":
+			if err := os.Remove(vanish); err != nil {
+				t.Errorf("remove vanished file: %v", err)
+			}
+		case "z-dir":
+			if err := os.RemoveAll(path); err != nil {
+				t.Errorf("remove vanished dir: %v", err)
+			}
+		}
+	}
+	t.Cleanup(func() { inventoryWalkDuringTest = nil })
+
+	files, _, err := discoverInventory(context.Background(), root, []Provider{stubProvider{
+		name: "go", version: "1", languages: []string{"go"},
+	}}, config.ProjectConfig{}, true)
+	if err != nil {
+		t.Fatalf("discoverInventory: %v (vanished mid-walk entry must not be fatal)", err)
+	}
+	if len(files) != 1 || filepath.ToSlash(files[0].Path) != "a-keep.go" {
+		t.Fatalf("files = %#v, want [{Path:a-keep.go}]", files)
+	}
+}
+
 func TestRegisteredProvidersAreNameSorted(t *testing.T) {
 	providerRegistryMu.Lock()
 	original := append([]Provider(nil), providerRegistry...)
