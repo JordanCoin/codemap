@@ -282,7 +282,10 @@ func discoverInventoryWithLimit(ctx context.Context, root string, providers []Pr
 		if !languages[language] && !languages[strings.TrimPrefix(strings.ToLower(ext), ".")] {
 			return nil
 		}
-		info, err := entry.Info()
+		// Lstat rather than entry.Info: on Windows, DirEntry.Info can return
+		// FindFirstFile-cached metadata after the file was deleted, so a
+		// mid-walk remove would still look present (#302).
+		info, err := os.Lstat(path)
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil
