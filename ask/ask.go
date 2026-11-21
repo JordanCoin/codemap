@@ -26,8 +26,8 @@ import (
 )
 
 const (
-	Schema       = "codemap.ask/v1-experimental"
-	StatusMatch  = "MATCH"
+	Schema        = "codemap.ask/v1-experimental"
+	StatusMatch   = "MATCH"
 	StatusNoMatch = "NO_MATCH"
 
 	// DefaultLimit is how many find hits to consider before adaptive cut.

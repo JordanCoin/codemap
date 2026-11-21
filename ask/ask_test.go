@@ -120,15 +120,38 @@ func TestSelectWithinBudgetKeepsSmallestPrefix(t *testing.T) {
 }
 
 func TestDedupPackageCardsShareLogicalID(t *testing.T) {
-	hit := find.Hit{Path: "pkg/a.go", Package: "example.com/pkg", Score: 1.2, Importers: 3}
-	analysis := scanner.FileAnalysis{Path: "pkg/a.go", Language: "go", Functions: []string{"Load"}}
-	first := buildCard(hit, analysis, nil)
-	second := buildCard(hit, analysis, nil)
+	hit := find.Hit{Path: "pkg/a.go", Package: "example.com/pkg", Score: 1.2, Importers: 3, Hub: true, Matched: []string{"Load"}}
+	analysis := scanner.FileAnalysis{
+		Path:      "pkg/a.go",
+		Functions: []string{"Load", "Save", "Parse", "Validate", "Reset", "Extra"},
+		Types:     []string{"Config"},
+		Imports:   []string{"os"},
+	}
+	graph := &scanner.FileGraph{
+		Importers: map[string][]string{"pkg/a.go": {"b/one.go", "b/two.go", "b/three.go", "b/four.go"}},
+		Imports:   map[string][]string{"pkg/a.go": {"c/dep.go", "c/other.go"}},
+	}
+	first := buildCard(hit, analysis, graph)
+	second := buildCard(hit, analysis, graph)
 	if first.ID != second.ID || first.ID != "package:example.com/pkg" {
 		t.Fatalf("ids = %q %q", first.ID, second.ID)
 	}
 	if first.Revision != second.Revision {
 		t.Fatal("identical capsules should share revision")
+	}
+	if len(first.Links) == 0 || !strings.Contains(first.Capsule, "symbols:") {
+		t.Fatalf("card should include graph links and symbols: %+v", first)
+	}
+	if got := trimTokens(strings.Repeat("word ", 20), 5); len(strings.Fields(got)) != 5 {
+		t.Fatalf("trimTokens = %q", got)
+	}
+	if got := uniqueStable([]string{"", "b", "a", "b"}); strings.Join(got, ",") != "a,b" {
+		t.Fatalf("uniqueStable = %v", got)
+	}
+	var buf strings.Builder
+	Render(&buf, Answer{Schema: Schema, Status: StatusMatch, Message: matchMessage(nil), Cards: []Card{first}, BudgetBytes: 900})
+	if !strings.Contains(buf.String(), first.Paths[0]) {
+		t.Fatalf("Render missing path:\n%s", buf.String())
 	}
 }
 
@@ -136,11 +159,11 @@ func writeAskFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	files := map[string]string{
-		"go.mod":                     "module fixture\n\ngo 1.24\n",
-		"theme/use_theme.go":         "package theme\n\nfunc UseTheme() {}\nfunc SaveTheme() {}\n",
-		"storage/preferences.go":     "package storage\n\nfunc LoadTheme() {}\nfunc PersistPreference() {}\n",
-		"net/client.go":              "package net\n\nfunc FetchJSON() {}\nfunc Retry() {}\n",
-		"unrelated/math.go":          "package unrelated\n\nfunc Add(a, b int) int { return a + b }\n",
+		"go.mod":                 "module fixture\n\ngo 1.24\n",
+		"theme/use_theme.go":     "package theme\n\nfunc UseTheme() {}\nfunc SaveTheme() {}\n",
+		"storage/preferences.go": "package storage\n\nfunc LoadTheme() {}\nfunc PersistPreference() {}\n",
+		"net/client.go":          "package net\n\nfunc FetchJSON() {}\nfunc Retry() {}\n",
+		"unrelated/math.go":      "package unrelated\n\nfunc Add(a, b int) int { return a + b }\n",
 	}
 	for name, body := range files {
 		path := filepath.Join(root, name)

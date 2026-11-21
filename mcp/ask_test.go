@@ -63,3 +63,15 @@ func TestHandleAskRejectsEmptyQuery(t *testing.T) {
 		t.Fatalf("result = %#v", result)
 	}
 }
+
+func TestHandleAskCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	result, _, err := handleAsk(ctx, nil, AskInput{Path: t.TempDir(), Query: "UseTheme SaveTheme"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError || !strings.Contains(strings.ToLower(resultText(t, result)), "cancel") {
+		t.Fatalf("result = %#v", result)
+	}
+}
