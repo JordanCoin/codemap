@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -186,6 +187,11 @@ func discoverInventory(ctx context.Context, root string, providers []Provider, c
 	return discoverInventoryWithLimit(ctx, root, providers, cfg, includeFiles, maxManifestWalkEntries)
 }
 
+// inventoryWalkDuringTest, when set, runs at the start of each inventory
+// WalkDir callback. Tests use it to delete a later sibling or the current
+// directory and prove ENOENT is skipped rather than fatal (#302).
+var inventoryWalkDuringTest func(path string, entry fs.DirEntry, walkErr error)
+
 func discoverInventoryWithLimit(ctx context.Context, root string, providers []Provider, cfg config.ProjectConfig, includeFiles bool, maxEntries int) ([]scanner.FileInfo, []string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
@@ -222,7 +228,15 @@ func discoverInventoryWithLimit(ctx context.Context, root string, providers []Pr
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if inventoryWalkDuringTest != nil {
+			inventoryWalkDuringTest(path, entry, walkErr)
+		}
+		// A directory listing can include an entry removed before its
+		// Info/Lstat: skip it rather than aborting the whole inventory (#302).
 		if walkErr != nil {
+			if os.IsNotExist(walkErr) && path != absRoot {
+				return nil
+			}
 			return walkErr
 		}
 		if len(names) > 0 {
@@ -268,8 +282,14 @@ func discoverInventoryWithLimit(ctx context.Context, root string, providers []Pr
 		if !languages[language] && !languages[strings.TrimPrefix(strings.ToLower(ext), ".")] {
 			return nil
 		}
-		info, err := entry.Info()
+		// Lstat rather than entry.Info: on Windows, DirEntry.Info can return
+		// FindFirstFile-cached metadata after the file was deleted, so a
+		// mid-walk remove would still look present (#302).
+		info, err := os.Lstat(path)
 		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
 			return err
 		}
 		files = append(files, scanner.FileInfo{Path: filepath.Clean(rel), Size: info.Size(), Ext: ext})
