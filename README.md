@@ -117,14 +117,19 @@ codemap --deps .            # dependency flow
 codemap --importers <file>  # who imports a file
 codemap blast-radius        # review bundle: diff + deps + importers
 codemap find "<query>"      # where is X defined
+codemap ask "<question>"    # EXPERIMENTAL: smallest-sufficient cards or NO_MATCH
 codemap handoff .           # save a handoff for the next agent
 codemap doctor              # validate agent integrations
 ```
 
+### Experimental: `codemap ask` (bartender)
+
+Opt-in prototype of [bartender](https://github.com/everoo/bartender) ideas from [everoo](https://github.com/everoo): compact, deduplicated summary cards from codemap's map, Adaptive Fuzzy Retrieval-style shortlisting, and an explicit `NO_MATCH` when nothing is reliable enough. Default commands are unchanged. Design map and open questions: [docs/design/BARTENDER-ASK.md](docs/design/BARTENDER-ASK.md).
+
 ## Agent integration
 
 - **Hooks**: automatic context at session start, before and after edits, and at compaction. [docs/HOOKS.md](docs/HOOKS.md)
-- **MCP**: `codemap mcp` serves 19 tools over stdio. [docs/MCP.md](docs/MCP.md)
+- **MCP**: `codemap mcp` serves 20 tools over stdio (including experimental `ask`). [docs/MCP.md](docs/MCP.md)
 - **Codex**: `codemap setup` configures it; trust the hooks once from `/hooks`. [docs/MCP.md](docs/MCP.md#codex)
 
 ## Go deeper
@@ -137,6 +142,7 @@ codemap doctor              # validate agent integrations
 | see every flag and mode | [docs/COMMANDS.md](docs/COMMANDS.md) |
 | tune what the agent sees | [docs/CONFIG.md](docs/CONFIG.md) |
 | use the MCP tools or Codex | [docs/MCP.md](docs/MCP.md) |
+| try experimental ask / bartender cards | [docs/design/BARTENDER-ASK.md](docs/design/BARTENDER-ASK.md) |
 | add a language | [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-new-language) |
 
 ## Roadmap

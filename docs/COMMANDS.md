@@ -10,6 +10,7 @@ codemap --importers f  # who imports a file
 codemap blast-radius   # review bundle: diff + deps + importers
 codemap collide        # rank open PRs by shared-file merge-order hazard
 codemap find "<query>" # where is X defined: rank by path, symbol names, then body text ("(body)" tag), with importer counts
+codemap ask "<question>" # EXPERIMENTAL: smallest-sufficient summary cards or NO_MATCH (bartender)
 codemap handoff .      # save layered handoff for cross-agent continuation
 codemap context        # machine-readable project context JSON
 codemap doctor         # validate agent integrations
@@ -144,11 +145,24 @@ codemap blast-radius --json --ref main .
 codemap blast-radius --text --ref main .
 ```
 
+### Ask (experimental)
+
+Bartender-inspired smallest-sufficient context. Opt-in; does not change other commands.
+
+```bash
+codemap ask "where is theme persistence handled?"
+codemap ask --json --budget 900 "hub config loading"
+```
+
+Returns compact deduplicated summary cards from codemap's map, or an explicit
+`NO_MATCH`. Design map and credit: [BARTENDER-ASK.md](design/BARTENDER-ASK.md).
+
 ### Skyline
 
 ```bash
 codemap --skyline --animate
 ```
+
 
 ![codemap skyline](../assets/skyline-animated.gif)
 

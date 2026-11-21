@@ -68,6 +68,7 @@ func TestTextResultCallerClassification(t *testing.T) {
 		"handleGetDependencies": {1, 0},
 		"handleGetDiff":         {2, 0},
 		"handleFind":            {1, 0},
+		"handleAsk":             {1, 0},
 		"handleFindFile":        {3, 0},
 		"handleStatus":          {1, 0},
 		"handleListProjects":    {4, 0},
@@ -191,6 +192,7 @@ func TestStatusInventoryExactlyMatchesRegisteredTools(t *testing.T) {
 	sort.Strings(registered)
 
 	expected := []string{
+		"ask",
 		"find",
 		"find_file",
 		"get_activity",

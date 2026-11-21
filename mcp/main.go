@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"codemap/analysis"
+	"codemap/ask"
 	"codemap/config"
 	"codemap/find"
 	"codemap/handoff"
@@ -79,6 +80,7 @@ var statusTools = []statusTool{
 	{"find_file", "Search by filename"},
 	{"get_importers", "Find what imports a file"},
 	{"find", "Rank files by path and symbol match"},
+	{"ask", "[EXPERIMENTAL] Smallest-sufficient cards or NO_MATCH"},
 	{"status", "Verify MCP connection"},
 	{"start_watch", "Start watching a project"},
 	{"stop_watch", "Stop watching a project"},
@@ -192,6 +194,13 @@ type FindQueryInput struct {
 	Limit int    `json:"limit,omitempty" jsonschema:"Maximum hits to return (default 10)"`
 }
 
+type AskInput struct {
+	Path   string `json:"path" jsonschema:"Path to the project directory"`
+	Query  string `json:"query" jsonschema:"Question about the codebase (goal + necessary constraints)"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"Maximum candidate cards before adaptive cut (default 8)"`
+	Budget int    `json:"budget,omitempty" jsonschema:"Byte budget for the compact answer (default 1200)"`
+}
+
 type ImportersInput struct {
 	Path string `json:"path" jsonschema:"Path to the project directory"`
 	File string `json:"file" jsonschema:"Relative path to the file to check (e.g. src/utils.ts)"`
@@ -276,6 +285,13 @@ func NewServer(options RuntimeOptions) *mcp.Server {
 		Name:        "find",
 		Description: "Rank project files by how well their path and function/type names match a query (lexical BM25 over split identifiers). Good for \"where is X defined\" when the query uses words from the code's names. Each hit reports importer count and hub status, so it also says how risky the file is to edit. Also scores file contents; hits that matched only in a body are tagged \"(body)\". For a free-text symptom, grep the body text too.",
 	}, handleFind)
+
+	// Tool: ask - EXPERIMENTAL bartender-inspired smallest-sufficient retrieval
+	mcp.AddTool(server, &mcp.Tool{
+		Name:         "ask",
+		Description:  "[EXPERIMENTAL bartender prototype] Ask a question about the codebase and receive the smallest sufficient context built from compact deduplicated summary cards of codemap's map, or an explicit NO_MATCH when nothing is reliable enough. Prefer this over dumping get_structure/get_dependencies when you only need a short answer. Does not change other tools. Design credit: https://github.com/everoo/bartender",
+		OutputSchema: mustSchemaFor[ask.Answer](),
+	}, handleAsk)
 
 	// Tool: status - Verify MCP connection
 	mcp.AddTool(server, &mcp.Tool{
@@ -1005,6 +1021,30 @@ func handleFind(ctx context.Context, req *mcp.CallToolRequest, input FindQueryIn
 	var buf strings.Builder
 	find.Render(&buf, report)
 	return textResult(buf.String()), nil, nil
+}
+
+func handleAsk(ctx context.Context, req *mcp.CallToolRequest, input AskInput) (*mcp.CallToolResult, any, error) {
+	if cancelled := cancellationResult(ctx, "Ask"); cancelled != nil {
+		return cancelled, nil, nil
+	}
+	absRoot, invalid := validateProjectPath(input.Path)
+	if invalid != nil {
+		return invalid, nil, nil
+	}
+	if strings.TrimSpace(input.Query) == "" {
+		return errorResult("ask needs a query"), nil, nil
+	}
+	answer, err := ask.Run(ctx, absRoot, scanner.ConfiguredFilters(absRoot), input.Query, ask.Options{
+		Limit:       input.Limit,
+		BudgetBytes: input.Budget,
+	})
+	if err != nil {
+		if cancelled := cancellationResult(ctx, "Ask"); cancelled != nil {
+			return cancelled, nil, nil
+		}
+		return errorResult("Failed to answer question: " + err.Error()), nil, nil
+	}
+	return textResult(ask.RenderText(answer)), answer, nil
 }
 
 func normalizeImporterFile(root, file string) string {

@@ -255,6 +255,15 @@ func main() {
 		return
 	}
 
+	// Handle "ask" subcommand before global flag parsing (EXPERIMENTAL bartender prototype).
+	if len(os.Args) >= 2 && os.Args[1] == "ask" {
+		root, _ := os.Getwd()
+		if code := runAskSubcommand(os.Args[2:], root); code != 0 {
+			os.Exit(code)
+		}
+		return
+	}
+
 	// Handle "collide" subcommand before global flag parsing
 	if len(os.Args) >= 2 && os.Args[1] == "collide" {
 		root, _ := os.Getwd()
@@ -367,6 +376,7 @@ func main() {
 		fmt.Println("  codemap blast-radius [path]     # Compact bounded blast-radius bundle")
 		fmt.Println("  codemap collide                 # Rank open PRs by shared-file merge-order hazard")
 		fmt.Println("  codemap find <query>            # Where is X defined: rank by path, symbol names, then body text")
+		fmt.Println("  codemap ask <question>          # EXPERIMENTAL: smallest-sufficient cards or NO_MATCH (bartender)")
 		fmt.Println()
 		fmt.Println("Project config:")
 		fmt.Println("  codemap config init             # Create .codemap/config.json (auto-detects extensions)")

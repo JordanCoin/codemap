@@ -125,11 +125,11 @@ Both values may be repository roots or subdirectories. An explicit
 `--setup-root` preserves the existing shared policy-and-runtime-state behavior,
 and managed MCP definitions created while it is active retain it automatically.
 
-## Available Tools (19)
+## Available Tools (20)
 
-`codemap mcp` serves 19 tools over stdio. When it is registered, hook nudges name the matching tool next to the CLI command, for example `codemap --importers X (MCP: get_importers)`.
+`codemap mcp` serves 20 tools over stdio. When it is registered, hook nudges name the matching tool next to the CLI command, for example `codemap --importers X (MCP: get_importers)`.
 
-`get_structure`, `get_diff`, `get_importers`, `get_dependencies`, and `get_handoff` declare an `OutputSchema` and return typed structured content alongside the text response, so callers get parseable results instead of prose.
+`get_structure`, `get_diff`, `get_importers`, `get_dependencies`, `get_handoff`, and experimental `ask` declare an `OutputSchema` and return typed structured content alongside the text response, so callers get parseable results instead of prose.
 
 ### Project Analysis
 
@@ -139,6 +139,7 @@ and managed MCP definitions created while it is active retain it automatically.
 | `get_dependencies` | Dependency flow with imports, functions, and hub files |
 | `get_diff` | Changed files with line counts and impact analysis |
 | `find` | Rank files by path and function/type names, then body text (`(body)` tag), with importer count and hub status per hit |
+| `ask` | **[EXPERIMENTAL]** Smallest-sufficient summary cards from the map, or explicit `NO_MATCH` (bartender prototype; see [BARTENDER-ASK.md](design/BARTENDER-ASK.md)) |
 | `find_file` | Find files by name pattern |
 | `get_importers` | Find all files that import a specific file |
 | `get_hubs` | List all hub files (3+ importers) with dependent counts |
@@ -187,6 +188,7 @@ Once configured, Claude can use these tools automatically. Try asking:
 - "What have I been editing this session?"
 - "What skills are available for refactoring?"
 - "Build a handoff summary I can continue in another agent"
+- "Ask for the smallest sufficient context about theme persistence (experimental ask tool)"
 
 ## Handoff Tool Notes
 
